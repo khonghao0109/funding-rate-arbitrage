@@ -225,19 +225,31 @@ Thứ tự bắt buộc: **sync trước, commit sau** — để đồ thị ph�
 codegraph sync
 codegraph status          # xác nhận số node/edge đã đổi hợp lý
 
-# 2. Gộp về MỘT commit duy nhất cho bước này
-git add -A
+# 2. Kiểm phạm vi TRƯỚC khi stage — luôn luôn
+git status --short        # có file nào không thuộc bước này không?
+
+# 3. Gộp về MỘT commit duy nhất cho bước này
+git add -A                # chỉ an toàn khi nhánh chỉ chứa đúng bước này
 git commit                # nếu đây là commit đầu của nhánh
 # hoặc, nếu đã có commit vặt ở local:
 git reset --soft $(git merge-base HEAD main) && git commit
 
-# 3. Đưa về main
+# 4. Đưa về main
 git switch main
 git merge --ff-only step/1.1-staleness-filter
 git branch -d step/1.1-staleness-filter
 ```
 
 `.codegraph/` đã nằm trong `.gitignore` — chỉ số không bao giờ đi vào commit.
+
+> ⚠️ **`git add -A` chỉ an toàn khi nhánh chứa đúng một bước và không có gì khác.** Khi làm việc trên `main`, hoặc khi working tree còn thứ thuộc bước khác, **stage tường minh từng đường dẫn**:
+>
+> ```bash
+> git add main.go exchanges/          # không phải git add -A
+> git diff --cached --stat            # xác nhận đúng những gì định commit
+> ```
+>
+> Đây là lỗi thật đã xảy ra khi chạy hai commit nền ở phụ lục — xem bên dưới.
 
 #### Định dạng commit
 
@@ -346,7 +358,9 @@ go test -race ./...
 
 # ── Git ─────────────────────────────────────────────
 git switch -c step/<G.S>-<slug>
-git diff --stat
+git status --short                     # kiểm phạm vi trước khi stage
+git add <đường dẫn cụ thể>              # -A chỉ khi nhánh chỉ có bước này
+git diff --cached --stat               # xác nhận đúng thứ định commit
 git reset --soft $(git merge-base HEAD main) && git commit   # squash
 git switch main && git merge --ff-only step/<G.S>-<slug>
 ```
@@ -397,27 +411,61 @@ git branch -d step/1.1-staleness-filter
 
 ---
 
-## PHỤ LỤC — TÌNH TRẠNG HIỆN TẠI CỦA REPO
+## PHỤ LỤC — HAI COMMIT NỀN CỦA GIAI ĐOẠN 0
 
-Tại thời điểm viết tài liệu này, repo **chưa ở trạng thái quy trình trên mô tả**:
+**Đã thực hiện xong 2026-08-28.** Ghi lại vì đây là ví dụ đầy đủ đầu tiên về kỷ luật commit trong repo này, và vì nó chứa một lỗi đáng học.
+
+### Bối cảnh
+
+Trước khi bắt đầu Bước 1.1, repo chưa ở trạng thái mà quy trình này mô tả:
 
 - Lịch sử git chỉ có 1 commit (`11acd1a`).
-- Toàn bộ tài liệu và cấu trúc `internal/` **đang chưa commit**.
-- 9 file Go hiện có **chưa gofmt-clean** (171 dòng khoảng trắng, không đổi ngữ nghĩa).
+- Toàn bộ tài liệu và cấu trúc `internal/` chưa commit.
+- 9 file Go chưa gofmt-clean (171 dòng khoảng trắng, không đổi ngữ nghĩa).
 
-**Cách đưa về trạng thái chuẩn trước khi bắt đầu Bước 1.1** — đây là công việc nền của Giai đoạn 0, không thuộc bước nào, nên gom thành hai commit theo chủ đề:
+Đây là công việc nền của Giai đoạn 0, không thuộc bước nào trong lộ trình, nên được gom thành **hai commit theo chủ đề** thay vì áp quy tắc 1-bước-1-commit.
+
+### Lệnh đã chạy
 
 ```bash
-# 1. Chuẩn hoá định dạng — tách riêng để diff của các bước sau sạch
+# ── Commit 1: chuẩn hoá định dạng ──────────────────────────
 gofmt -w main.go exchanges/*.go
-codegraph sync
-git add -A && git commit -m "chore: apply gofmt to existing sources"
 
-# 2. Nền tài liệu và cấu trúc package
+# Kiểm chứng KHÔNG có thay đổi ngữ nghĩa trước khi commit
+gofmt -l . && go build ./... && go vet ./...
+git diff -w main.go exchanges/ | grep '^[+-][^+-]' | sed 's/^.//' | tr -d '[:space:]' | grep -c .
+#   → 0   (0 dòng có nội dung bị đổi — thuần khoảng trắng)
+
 codegraph sync
-git add -A && git commit -m "docs: add roadmap, data requirements, conventions and workflow"
+git add main.go exchanges/        # ⚠️ stage tường minh, KHÔNG dùng -A
+git diff --cached --stat          # xác nhận đúng 9 file Go
+git commit                        # → 694b3ed
+
+# ── Commit 2: nền tài liệu và cấu trúc ─────────────────────
+codegraph sync
+git add -A                        # an toàn: phần còn lại đều thuộc commit này
+git status --short
+git commit                        # → cb3337c
 ```
 
-Tách gofmt thành commit riêng là có chủ đích: trộn 171 dòng thay đổi khoảng trắng vào một commit có ý nghĩa sẽ khiến diff đó không đọc được, và mọi `git blame` sau này đều trỏ nhầm.
+### Lỗi đã mắc
 
-Từ Bước 1.1 trở đi, áp dụng đúng quy tắc **1 bước = 1 commit**.
+Bản đầu của phụ lục này viết `git add -A` cho **cả hai** commit. Chạy đúng như thế thì commit 1 sẽ nuốt luôn `docs/`, `internal/`, `CLAUDE.md` và `README.md` — đúng thứ mà việc tách hai commit nhằm tránh. Lỗi được phát hiện lúc chuẩn bị stage và sửa thành `git add main.go exchanges/`.
+
+**Bài học đã đưa thành quy tắc ở [P8](#p8--sync--commit):** `git add -A` chỉ an toàn khi nhánh chứa đúng một bước. Ở mọi tình huống khác, stage tường minh và kiểm `git diff --cached --stat` trước khi commit.
+
+### Vì sao tách gofmt riêng
+
+Trộn 104 dòng thay đổi khoảng trắng vào một commit có ý nghĩa sẽ khiến diff đó không đọc được, và mọi `git blame` sau này trên các dòng đó đều trỏ vào commit sai thay vì commit thực sự viết ra logic.
+
+### Trạng thái sau hai commit
+
+```
+cb3337c  docs: add roadmap, data requirements, conventions and workflow
+694b3ed  chore: apply gofmt to existing sources
+11acd1a  Initial commit: crypto futures funding rate arbitrage scanner
+```
+
+Working tree sạch · `gofmt` sạch · `go build` và `go vet` OK · CodeGraph đồng bộ (20 file, 201 node, 372 edge).
+
+Từ **Bước 1.1** trở đi, áp dụng đúng vòng lặp 9 pha và quy tắc **1 bước = 1 commit**.
