@@ -1,0 +1,11 @@
+.env
+.env.local
+
+# Go build artifacts
+crypto-futures-arbitrage-scanner
+*.exe
+*.test
+*.out
+
+# macOS
+.DS_Store
