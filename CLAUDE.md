@@ -27,9 +27,10 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** Not started. The immediate next task is step 1.1:
-add a staleness filter by replacing `map[string]float64` with a price type that
-carries a receive timestamp, in [main.go](main.go).
+**Phase 1 — Hardening.** Not started, 7 steps. The immediate next task is step
+1.0: freeze the WebSocket JSON contract for the whole phase and update
+[static/app.js](static/app.js) once, so steps 1.1–1.3 only fill data into it
+instead of reshaping the frontend three times.
 
 ---
 
@@ -201,7 +202,13 @@ phase 1.
 
 - `Timestamp` is discarded when order book data becomes a price
   ([main.go](main.go)), so a disconnected venue keeps producing signals from a
-  frozen price.
+  frozen price. Worse, the field means two different things: Binance, OKX,
+  Gate, Hyperliquid and Pyth fill it with the venue's own time, while Bybit,
+  Paradex and Kraken fill it with `time.Now()`. It cannot be used as the basis
+  for staleness — a receive timestamp set in one place is needed instead.
+- Pyth is treated as a tradeable venue. `checkArbitrage` walks every entry in
+  the price map, so the scanner can report "buy on Pyth, sell on Binance",
+  which is meaningless — Pyth is an oracle.
 - `checkArbitrage` takes min/max across *all* sources, mixing spot and perp into
   one comparison. That produces "opportunities" that cannot be executed — what
   it is actually measuring, spot vs perp, is basis.
@@ -210,7 +217,10 @@ phase 1.
   deadline.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- Zero test coverage.
+- Zero test coverage, and no `exchanges/testdata/` — golden tests need real
+  payloads captured from a running scanner first.
+- `go.mod` marks `godotenv` as `// indirect` although main.go imports it
+  directly.
 
 ---
 

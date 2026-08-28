@@ -73,6 +73,8 @@
 | 10 | **Alert ra ngoài** (Telegram/Discord) | Phải ngồi nhìn màn hình | GĐ 3 |
 | 11 | **Instrument metadata** (`stepSize`, `tickSize`, `minNotional`, contract size) | Không tính được size delta-neutral đúng — hai chân lệch nhau ngay lệnh đầu | GĐ 2 |
 | 12 | **Bảng ánh xạ spot↔perp có xác thực** | Nguy cơ mở vị thế lệch coin | GĐ 2 |
+| 13 | **`Timestamp` mang hai nghĩa tuỳ sàn** — 3/8 sàn điền thời điểm nhận thay vì thời gian sàn | Không dùng làm cơ sở staleness được | GĐ 1.1 |
+| 14 | **Pyth bị tính như sàn giao dịch** trong `checkArbitrage` | Sinh "cơ hội" mua/bán trên oracle | GĐ 1.2 |
 
 ---
 
@@ -89,12 +91,12 @@
 
 ## 3. BẢNG TỔNG HỢP CÁC GIAI ĐOẠN
 
-**Tổng: 9 giai đoạn (GĐ 0 → GĐ 8), 40 bước.**
+**Tổng: 9 giai đoạn (GĐ 0 → GĐ 8), 41 bước.**
 
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 6 | 2–3 tuần | ⬜ Chưa bắt đầu | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ⬜ Chưa bắt đầu | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -103,7 +105,7 @@
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
 | **8** | Cross-Chain / Statistical | 1 (phác thảo) | 12+ tháng | 🔒 Khoá | — |
 
-**Tổng thời gian tới bot Funding Rate chạy production (GĐ 1→5): khoảng 5 – 6,5 tháng.**
+**Tổng thời gian tới bot Funding Rate chạy production (GĐ 1→5): khoảng 5,5 – 7 tháng.**
 
 ---
 
@@ -132,46 +134,78 @@
 ### GIAI ĐOẠN 1 — CỦNG CỐ LÕI (HARDENING)
 
 **Mục tiêu:** Biến scanner từ "chạy được" thành "tin được". Đây là giai đoạn **bắt buộc** trước khi thêm bất kỳ tính năng mới nào.
-**Thời gian:** 2–3 tuần · **6 bước**
+**Thời gian:** 3–4 tuần · **7 bước**
+
+> **Cập nhật sau kiểm tra tiền-giai-đoạn (2026-08-28):** tăng từ 6 lên 7 bước. Kiểm tra code thật phát hiện 3 vấn đề chặn mà bản kế hoạch đầu không thấy: `Timestamp` mang hai nghĩa khác nhau tuỳ sàn nên không dùng làm cơ sở staleness được; một ngưỡng staleness duy nhất sẽ báo nhầm sàn thanh khoản mỏng; và ba bước 1.1–1.3 đều đổi hợp đồng JSON với frontend. Bước 1.0 được thêm để chốt hợp đồng một lần thay vì sửa `app.js` ba lần. Refactor `Feeds` cũng được kéo từ Bước 2.2 lên 1.5 để chỉ sửa 10 call site một lần.
+
+#### Bước 1.0 — Chốt hợp đồng WebSocket
+- Thiết kế **một lần** toàn bộ shape JSON mà GĐ 1 sẽ cần: cờ trạng thái nguồn (live/stale/disconnected), ba khối spread tách biệt, số đã trừ phí, metadata nguồn.
+- Cập nhật `app.js` **một lần** theo shape mới. Backend gửi giá trị mặc định hoặc rỗng cho phần chưa có dữ liệu.
+- Từ 1.1 đến 1.3 chỉ **điền dữ liệu** vào hợp đồng này, không đổi shape nữa.
+- Dọn kèm: `go mod tidy` — `godotenv` đang bị đánh dấu `// indirect` sai, nó được import trực tiếp tại [main.go:14](../main.go#L14).
+- **Nghiệm thu:** dashboard chạy đúng như trước trên hợp đồng mới, với mọi trường mới ở giá trị mặc định.
+
+> Lý do tồn tại bước này: `app.js` có 925 dòng và hardcode danh sách nguồn ở 4 chỗ ([42-53](../static/app.js#L42-L53), [241-250](../static/app.js#L241-L250), [538-547](../static/app.js#L538-L547), [614](../static/app.js#L614)). Sửa nó ba lần liên tiếp mà không có test nào bảo vệ là ba lần có nguy cơ vỡ dashboard.
 
 #### Bước 1.1 — Lọc dữ liệu cũ (staleness filter)
-- Lưu `Timestamp` cùng giá thay vì vứt bỏ (`main.go:63-72` hiện chỉ giữ `Price`).
-- Đổi `map[string]float64` → `map[string]PricePoint{Price, Timestamp, ReceivedAt}`.
-- Loại khỏi mọi phép tính nếu `now - ReceivedAt > staleThreshold` (mặc định 5s).
-- Hiển thị trạng thái STALE / DISCONNECTED trên UI thay vì im lặng.
-- **Nghiệm thu:** ngắt mạng 1 sàn → sàn đó biến mất khỏi ma trận trong ≤ 5s, không sinh cảnh báo giả.
+- ⚠️ **Không dùng `Timestamp` hiện tại làm cơ sở.** Field này mang hai nghĩa khác nhau: Binance/OKX/Gate/Hyperliquid/Pyth điền thời gian sàn phát, còn Bybit/Paradex/Kraken điền `time.Now().UnixMilli()` — tức với 3 sàn đó nó luôn "mới" kể cả khi sàn đã ngừng gửi dữ liệu.
+- Tách rõ hai field: `VenueTimeMs` (0 nếu sàn không cấp) và `RecvAtMs` (**luôn do bot đặt, tại một chỗ duy nhất**). Staleness đo bằng `RecvAtMs`.
+- Đổi `map[string]float64` → `map[string]PricePoint`.
+- **Ngưỡng cấu hình được theo từng sàn**, mặc định 10s — một ngưỡng duy nhất sẽ đánh dấu nhầm sàn thanh khoản mỏng đang yên ắng hợp lệ là chết. Ngưỡng thích ứng để sau, không làm ở giai đoạn này.
+- Hiển thị trạng thái STALE / DISCONNECTED trên UI (dùng hợp đồng đã chốt ở 1.0).
+- Việc lấy venue time thật cho Bybit/Kraken/Paradex tách riêng, không thuộc bước này.
+- **Nghiệm thu:** chặn kết nối 1 sàn → sàn đó chuyển STALE trong ≤ ngưỡng của nó, không sinh cảnh báo nào từ dữ liệu đóng băng.
 
-#### Bước 1.2 — Tách bạch Spot ↔ Perpetual
-- Thêm trường `MarketType` (`spot` / `perp` / `future` / `oracle`) vào struct thay vì suy ra từ hậu tố chuỗi.
-- Chia làm 3 phép tính riêng biệt, không trộn lẫn:
-  - **Cross-exchange spread**: perp ↔ perp, hoặc spot ↔ spot (thực thi được)
-  - **Basis**: spot ↔ perp *cùng sàn* (nền tảng cho GĐ 2)
-  - **Oracle deviation**: Pyth ↔ sàn (chỉ tham chiếu, không giao dịch)
-- Sửa `checkArbitrage` (`main.go:107-135`) hiện đang lấy min/max trên toàn bộ source.
-- **Nghiệm thu:** UI hiển thị 3 khối riêng, không còn cặp "mua spot sàn A / bán perp sàn B".
+#### Bước 1.2 — Tách bạch Spot ↔ Perpetual ↔ Oracle
+- Thêm trường `MarketType` (`spot` / `perp` / `future` / `oracle`) thay vì suy ra từ hậu tố chuỗi.
+- 🐛 **Loại Pyth khỏi so sánh giao dịch được.** `checkArbitrage` hiện duyệt toàn bộ `s.prices[symbol]`, nên scanner có thể báo *"mua ở Pyth, bán ở Binance"* — vô nghĩa vì Pyth là oracle không giao dịch được. `MarketType = oracle` chỉ dùng làm tham chiếu.
+- ⚠️ **Kraken quote là USD, không phải USDT.** Chênh lệch `PF_XBTUSD` với `BTCUSDT` chứa cả chênh USD/USDT. Loại khỏi so sánh chéo mặc định, hiển thị riêng có ghi chú.
+- Chia làm 3 phép tính riêng biệt, không trộn:
+  - **Cross-venue spread**: perp↔perp hoặc spot↔spot, cùng quote (thực thi được)
+  - **Basis**: spot↔perp *cùng sàn* (nền tảng cho GĐ 2)
+  - **Oracle deviation**: Pyth ↔ sàn (chỉ tham chiếu)
+- Sửa `checkArbitrage` ([main.go:107-135](../main.go#L107-L135)).
+- **Nghiệm thu:** UI hiện 3 khối riêng; không còn cặp trộn spot/perp; Pyth không xuất hiện trong khối giao dịch được.
 
-#### Bước 1.3 — Mô hình phí
-- Tạo `internal/fees/` chứa bảng phí maker/taker theo từng sàn và từng loại thị trường.
-- Mọi `ProfitPct` hiển thị đổi thành **lợi nhuận ròng** = spread thô − phí vào − phí ra.
-- Ghi rõ trên UI: đây là ước tính, chưa gồm slippage.
-- **Nghiệm thu:** có unit test cho hàm tính phí; UI hiển thị lợi nhuận ròng và bỏ được cảnh báo "spread thô" trong README.
+#### Bước 1.3 — Mô hình phí giao dịch
+- Tạo `internal/fees/` chứa bảng phí maker/taker theo sàn và loại thị trường (bậc mặc định, chưa VIP).
+- ⚠️ **Gọi đúng tên: "đã trừ phí giao dịch", KHÔNG phải "lợi nhuận ròng".** Slippage cần độ sâu sổ lệnh, mà hiện chỉ có `bookTicker` tức đỉnh sổ — phải tới GĐ 2 mới có. Đặt tên sai ở đây là lặp lại đúng lỗi mà README vừa được sửa.
+- Giả định bảo thủ: taker cả hai chân.
+- **Nghiệm thu:** unit test cho hàm tính phí; UI ghi rõ số đang hiển thị đã trừ gì và chưa trừ gì.
 
 #### Bước 1.4 — Cấu hình hoá
-- Chuyển symbol, danh sách sàn, ngưỡng cảnh báo, `staleThreshold` từ hardcode sang `config.yaml` (hoặc env).
-- **Nghiệm thu:** thêm 1 cặp mới không cần sửa code Go.
+- Chuyển symbol, danh sách sàn, ngưỡng cảnh báo, ngưỡng staleness theo sàn từ hardcode sang `config.yaml`.
+- Backend gửi kèm **metadata nguồn**, FE tự dựng danh sách thay vì hardcode ở 4 chỗ.
+- **Nghiệm thu:** thêm 1 cặp hoặc 1 sàn mới không cần sửa code Go **lẫn** JavaScript.
 
-#### Bước 1.5 — Kết nối bền bỉ
-- Exponential backoff (2s → 4s → 8s → … → tối đa 60s) thay cho `time.Sleep` cố định.
+#### Bước 1.5 — Kết nối bền bỉ + refactor `Feeds`
+- **Gộp refactor `Feeds` từ Bước 2.2 lên đây** — cả hai bước đều sửa chữ ký của 10 connector ([main.go:357-372](../main.go#L357-L372)), làm rời nhau là sửa hai lần:
+
+```go
+type Feeds struct {
+    Ctx       context.Context
+    Price     chan<- PriceData
+    Orderbook chan<- OrderbookData
+    Trade     chan<- TradeData
+    Funding   chan<- FundingData  // khai báo sẵn, chưa dùng tới GĐ 2
+}
+
+func ConnectBinanceFutures(symbols []string, f Feeds)
+```
+
+- Exponential backoff (2s → 4s → … → tối đa 60s) thay `time.Sleep` cố định.
 - Ping/pong keepalive + `SetReadDeadline` cho từng connector.
+- Mọi goroutine có điều kiện thoát qua `ctx`.
 - Metric per-sàn: uptime, số lần reconnect, độ trễ message cuối.
-- **Nghiệm thu:** chạy liên tục 72h không cần can thiệp; log rõ sàn nào rớt lúc nào.
+- **Nghiệm thu:** chạy 72h không can thiệp; `ctx` huỷ làm mọi connector dừng sạch trong ≤5s.
 
 #### Bước 1.6 — Bộ test đầu tiên
-- Unit test cho: tính mid-price, tính phí, tính spread, staleness filter.
-- Golden test: nạp message JSON mẫu của từng sàn → khẳng định parse ra đúng struct.
-- **Nghiệm thu:** `go test ./...` xanh; coverage ≥ 60% ở phần logic tính toán.
+- Tạo `exchanges/testdata/` — **phải chạy scanner và dump payload thật** của từng sàn trước, chưa có sẵn.
+- Golden test: nạp payload mẫu → khẳng định parse ra đúng struct.
+- Unit test: mid-price, tính phí, spread, staleness filter, chuyển đổi đơn vị.
+- **Nghiệm thu:** `go test ./...` xanh, `-race` sạch; coverage ≥ 60% ở phần logic tính toán.
 
-> **Nợ kỹ thuật ghi nhận, chưa xử lý ở GĐ này:** `broadcastSpreads` (`main.go:170`) chạy ma trận O(n²) + `WriteJSON` tới mọi client trên *mỗi* tick giá. Chấp nhận được ở quy mô hiện tại; xử lý ở GĐ 5 nếu thành nút thắt.
+> **Nợ kỹ thuật ghi nhận, chưa xử lý ở GĐ này:** tầng broadcast (xem [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast)); lấy venue time thật cho Bybit/Kraken/Paradex; ngưỡng staleness thích ứng.
 
 ---
 
@@ -194,7 +228,7 @@
   1. `FundingModel` enum (`discrete` / `continuous`) — Paradex không có mốc funding.
   2. Giữ **cả** `RawRate` (debug) **lẫn** rate chuẩn hoá (`RatePerInterval`, `RatePer8h`, `APRAnnualized`).
   3. `IntervalSec` — chuẩn hoá về **giây ngay tại tầng connector**. Tầng signal không bao giờ thấy phút/giờ/giây lẫn lộn.
-- Gom 3 channel thành `Feeds{Price, Orderbook, Trade, Funding}` thay vì thêm tham số thứ 4 vào 10 call site.
+- ~~Gom 3 channel thành `Feeds`~~ — đã thực hiện ở **Bước 1.5**. Ở đây chỉ cần nối channel `Funding` đã khai báo sẵn.
 - **Nghiệm thu:** unit test chuyển đổi đơn vị cho cả 7 sàn từ payload mẫu.
 
 #### Bước 2.3 — Instrument registry
@@ -533,7 +567,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   0/6 bước   ← BẮT ĐẦU TỪ ĐÂY
+[  ] GĐ 1  Củng cố lõi                   0/7 bước   ← BẮT ĐẦU TỪ ĐÂY
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
