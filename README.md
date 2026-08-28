@@ -1,66 +1,243 @@
-# ⚡ crypto arbitrage scanner
+# ⚡ Crypto Arbitrage Scanner
 
-real-time crypto futures arbitrage scanner, built in go and plain javascript. connect to multiple exchanges right at the websocket layer. shows live price gaps and where the spread hides.
+**Scanner chênh lệch giá crypto real-time** — kết nối trực tiếp tầng WebSocket của 7 sàn giao dịch, chuẩn hoá dữ liệu sổ lệnh, và hiển thị khe hở giá ngay khi nó xuất hiện.
 
-## what's this about?
+Viết bằng Go và JavaScript thuần. Không framework, không phụ thuộc nặng.
 
-market microstructure is the study of how prices form in split-up, messy markets. a single asset never has a single price. every exchange has its own order book, its own little quirks. so, the price drifts—sometimes by a lot, usually for just milliseconds.
+> ### ⚠️ Trạng thái hiện tại: **CÔNG CỤ QUAN SÁT, CHƯA PHẢI BOT GIAO DỊCH**
+>
+> Dự án hiện **chỉ đọc dữ liệu công khai**. Nó không giữ API key, không đặt lệnh, không lưu trữ gì — mọi con số đều tính từ dữ liệu trong RAM.
+>
+> Mục tiêu dài hạn là phát triển thành **bot Funding Rate Arbitrage**. Lộ trình đầy đủ: [docs/PLAN.md](docs/PLAN.md).
 
-in crypto, this isn't hidden behind expensive pro feeds. you can actually see the gaps yourself if you have the right tools. that's what this project does: surfaces live, structural arbitrage opportunities, so you can watch price discovery as it happens.
+---
 
-## what can it do?
+## Mục lục
 
-- connect to 9 spot/futures exchanges (binance, bybit, hyperliquid, kraken, okx, gate.io, paradex) over websockets
-- live arbitrage matrix: highlights when the price difference is big enough
-- watch multiple pairs: btcusdt, ethusdt, xrpusdt, solusdt
-- auto adjusts decimals by asset/price
-- live tradingview lightweight charts
-- spot and alert on inefficient price gaps, in real time
+- [Bối cảnh](#bối-cảnh)
+- [Hiện tại làm được gì](#hiện-tại-làm-được-gì)
+- [Chưa làm được gì](#chưa-làm-được-gì)
+- [Mục tiêu dự án](#mục-tiêu-dự-án)
+- [Sàn và cặp hỗ trợ](#sàn-và-cặp-hỗ-trợ)
+- [Cách hoạt động](#cách-hoạt-động)
+- [Cài đặt và chạy](#cài-đặt-và-chạy)
+- [Cấu trúc thư mục](#cấu-trúc-thư-mục)
+- [Tài liệu](#tài-liệu)
+- [Đóng góp](#đóng-góp)
+- [Cảnh báo rủi ro](#cảnh-báo-rủi-ro)
 
-## how does it work?
+---
 
-- **backend (go):**
-    - every exchange runs in its own goroutine, fetches orderbook data live via websockets
-    - calculates mid-price using (best bid + best ask) / 2
-    - all the data gets passed through go channels, no locks slowing things down
-    - once prices land, calculates spreads & arbitrage. broadcasts over one websocket to all frontends
+## Bối cảnh
 
-- **frontend:**
-    - vanilla js
-    - uses tradingview lightweight charts
+Vi cấu trúc thị trường (*market microstructure*) là ngành nghiên cứu cách giá hình thành trong những thị trường phân mảnh và hỗn độn. Một tài sản không bao giờ có **một** mức giá duy nhất. Mỗi sàn có sổ lệnh riêng, dòng lệnh riêng, những đặc tính riêng. Vì thế giá luôn trôi lệch nhau — đôi khi rất nhiều, thường thì chỉ trong vài mili-giây.
 
-## how to run
+Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đắt tiền**. Bạn hoàn toàn có thể tự nhìn thấy những khe hở đó nếu có đúng công cụ.
 
-1. open a terminal, start the backend:
+Đó là việc dự án này làm: đưa quá trình khám phá giá (*price discovery*) ra trước mắt bạn, theo thời gian thực.
 
-    ```
-    go run main.go
-    ```
+---
 
-2. open your browser. head over to `http://localhost:8082`
+## Hiện tại làm được gì
 
-## pairs & exchanges
+| Tính năng | Mô tả |
+|---|---|
+| **10 luồng dữ liệu real-time** | 7 sàn futures + 2 sàn spot + 1 oracle, mỗi luồng một goroutine riêng |
+| **Ma trận spread** | Chênh lệch từng cặp sàn, tô màu khi vượt ngưỡng |
+| **Cảnh báo cơ hội** | Phát hiện khoảng cách giá bất thường, có throttle chống spam |
+| **Mid-price chuẩn** | `(best bid + best ask) / 2` thay vì giá khớp lệnh cuối |
+| **Biểu đồ live** | TradingView Lightweight Charts, nhiều sàn trên cùng một khung |
+| **Tự điều chỉnh số thập phân** | Theo từng tài sản và vùng giá |
+| **Tự kết nối lại** | Mỗi sàn tự reconnect khi rớt WebSocket |
 
-- btcusdt
-- ethusdt
-- xrpusdt
-- solusdt
+---
 
-covers:
+## Chưa làm được gì
 
-**futures exchanges:**
-- binance futures
-- bybit futures
-- hyperliquid (dex) futures
-- kraken futures
-- okx futures
-- gate.io futures
-- paradex futures
+Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 
-**spot exchanges:**
-- binance spot
-- bybit spot
+| Chưa có | Hệ quả |
+|---|---|
+| **Mô hình phí** | Số hiển thị là **spread thô**, chưa trừ phí maker/taker, chưa trừ slippage. Chưa dùng để ra quyết định vốn được |
+| **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
+| **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
+| **Lọc dữ liệu cũ** | Sàn rớt kết nối vẫn có thể sinh tín hiệu từ giá đóng băng |
+| **Tách spot / perp** | Logic hiện so sánh min/max trên *toàn bộ* nguồn, trộn lẫn spot với perp |
+| **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
+| **Test tự động** | Chưa có |
 
-## config
+Toàn bộ các mục trên đều đã có kế hoạch xử lý theo giai đoạn trong [docs/PLAN.md](docs/PLAN.md).
 
-set your own minimum spread for alerts in the ui (default is 0.05%, after estimated fees).
+---
+
+## Mục tiêu dự án
+
+Phát triển scanner này thành **bot Funding Rate Arbitrage**: giữ đồng thời vị thế spot long và perpetual short cùng giá trị danh nghĩa, thu phí funding mỗi chu kỳ, duy trì trung hoà rủi ro giá (delta ≈ 0).
+
+**Kỳ vọng lợi nhuận: 5–15%/năm.** Đây là chiến lược thu phí ổn định, không phải chiến lược lợi suất cao.
+
+Lộ trình chia **9 giai đoạn / 40 bước**:
+
+| GĐ | Nội dung | Trạng thái |
+|---|---|---|
+| 0 | Nền tảng scanner | ✅ Xong ~90% |
+| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | ⬜ Tiếp theo |
+| 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
+| 3 | Signal, Alert & Backtest | ⬜ |
+| 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |
+| 5 | Risk & Vận hành production | ⬜ |
+| 6 | Basis Trade | ⬜ |
+| 7–8 | CEX-DEX, Cross-Chain, Statistical | 🔒 Khoá |
+
+Chi tiết từng bước kèm **tiêu chí nghiệm thu**: [docs/PLAN.md](docs/PLAN.md).
+
+---
+
+## Sàn và cặp hỗ trợ
+
+**Cặp:** `BTCUSDT` · `ETHUSDT` · `XRPUSDT` · `SOLUSDT`
+
+| Nguồn | Loại | Ghi chú |
+|---|---|---|
+| Binance | Futures + Spot | |
+| Bybit | Futures + Spot | |
+| OKX | Futures | Ký hiệu `BTC-USDT-SWAP` |
+| Gate.io | Futures | Đặt lệnh theo **contract** |
+| Kraken | Futures | Ký hiệu `PF_XBTUSD`, quote là **USD** không phải USDT |
+| Hyperliquid | Futures (DEX) | Funding chu kỳ **1 giờ** |
+| Paradex | Futures (DEX) | Funding **liên tục**, không có mốc rời rạc |
+| Pyth | Oracle | Chỉ tham chiếu, không giao dịch |
+
+> Bảy sàn này bất đồng với nhau nhiều hơn vẻ ngoài — khảo sát chi tiết ở [docs/DATA-REQUIREMENTS.md](docs/DATA-REQUIREMENTS.md#3-khảo-sát-funding-rate-7-sàn).
+
+---
+
+## Cách hoạt động
+
+**Backend (Go)**
+
+- Mỗi sàn chạy trong một goroutine độc lập, nhận sổ lệnh qua WebSocket
+- Tính mid-price `(best bid + best ask) / 2`
+- Dữ liệu truyền qua channel, không tranh chấp lock trên đường đi
+- Tính spread và cơ hội, broadcast qua một WebSocket duy nhất tới mọi frontend
+
+**Frontend**
+
+- JavaScript thuần, không framework
+- TradingView Lightweight Charts
+
+---
+
+## Cài đặt và chạy
+
+**Yêu cầu:** Go 1.23.5 trở lên.
+
+```bash
+git clone <repo>
+cd crypto-futures-arbitrage-scanner
+go run main.go
+```
+
+Mở trình duyệt tại **http://localhost:8082**
+
+### Cấu hình
+
+Hiện tại rất tối giản — file `.env`:
+
+```env
+PORT=8082
+```
+
+Ngưỡng cảnh báo spread đặt trực tiếp trong giao diện (mặc định **0,05%**).
+
+> ⚠️ Ngưỡng này áp lên **spread thô**, chưa trừ phí. Với phí taker thông thường của cả hai chân, chi phí vòng lặp đã vượt xa 0,05% — nên con số hiển thị hiện tại phản ánh *cấu trúc thị trường*, không phải *cơ hội có thể thực thi*. Mô hình phí nằm ở Bước 1.3 trong lộ trình.
+
+Symbol, danh sách sàn và các ngưỡng khác hiện đang hardcode; chuyển sang file cấu hình ở Bước 1.4.
+
+---
+
+## Cấu trúc thư mục
+
+```
+.
+├── main.go                    # entrypoint, WebSocket server, logic spread
+├── CLAUDE.md                  # tổng quan cho AI agent
+├── exchanges/                 # connector — CHỈ dữ liệu công khai, không credential
+│   ├── types.go               # kiểu dùng chung
+│   └── <venue>.go             # binance, bybit, okx, gate, kraken, hyperliquid, paradex, pyth
+├── internal/                  # các package đang xây dựng theo lộ trình
+│   ├── instruments/           # registry, ánh xạ spot↔perp, sizing delta-neutral
+│   ├── fees/                  # bảng phí, lợi nhuận ròng
+│   ├── store/                 # SQLite
+│   ├── strategy/              # APR, tín hiệu vào/ra
+│   ├── backtest/              # replay lịch sử
+│   ├── notify/                # Telegram, Discord
+│   ├── broker/                # ⚠️ package DUY NHẤT giữ credential
+│   ├── execution/             # vị thế delta-neutral
+│   └── risk/                  # margin, kill switch, giới hạn vốn
+├── static/                    # dashboard
+└── docs/                      # PLAN, WORKFLOW, DATA-REQUIREMENTS, CONVENTIONS
+```
+
+Các package `internal/` hiện chỉ chứa `doc.go` mô tả trách nhiệm và ranh giới. **Đọc `doc.go` trước khi thêm code vào package đó.**
+
+**Luật phụ thuộc — vi phạm là lỗi chặn merge:**
+
+```
+exchanges/        KHÔNG import bất kỳ internal/ nào
+internal/broker/  KHÔNG reachable từ luồng nhận dữ liệu
+```
+
+Dữ liệu công khai và credential nằm hai phía khác nhau của ranh giới này.
+
+---
+
+## Tài liệu
+
+| File | Nội dung |
+|---|---|
+| [docs/PLAN.md](docs/PLAN.md) | Lộ trình 9 giai đoạn / 40 bước, tiêu chí nghiệm thu, sổ rủi ro, quyết định cần chốt |
+| [docs/WORKFLOW.md](docs/WORKFLOW.md) | Quy trình code & review 9 pha, checklist review, quy tắc commit |
+| [docs/DATA-REQUIREMENTS.md](docs/DATA-REQUIREMENTS.md) | Dữ liệu cần từ sàn, khảo sát funding 7 sàn, thiết kế `FundingData`, các bẫy dữ liệu |
+| [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Quy ước đặt tên, cấu trúc, lỗi, đồng thời, test, luật phụ thuộc |
+| [CLAUDE.md](CLAUDE.md) | Tổng quan cho AI agent — luật, bẫy đã biết, điểm yếu hiện tại |
+
+---
+
+## Đóng góp
+
+Mọi thay đổi đi theo vòng lặp 9 pha trong [docs/WORKFLOW.md](docs/WORKFLOW.md) — đối chiếu hiện trạng trước khi code, review trước khi commit, **một bước trong lộ trình = một commit**.
+
+Trước khi viết code, đọc [docs/CONVENTIONS.md](docs/CONVENTIONS.md). Vài điểm quan trọng nhất:
+
+- Tên định danh, comment, commit message: **tiếng Anh**. Tài liệu: tiếng Việt.
+- **Mọi biến mang đơn vị phải nói ra đơn vị:** `IntervalSec`, `RatePer8hFrac`, `NotionalUSD`, `TakerFeeBps`, `QtyContracts`. Một biến tên `rate` hay `size` trần trụi đi qua ranh giới hàm là **lỗi**, không phải vấn đề thẩm mỹ.
+- Không hardcode chu kỳ funding. Không bao giờ.
+
+Trước mỗi commit:
+
+```bash
+gofmt -l .          # phải không in ra gì
+go vet ./...
+go test ./...
+go test -race ./... # khi đụng tới goroutine
+```
+
+---
+
+## Cảnh báo rủi ro
+
+Đây là **phần mềm thử nghiệm**, không phải lời khuyên đầu tư.
+
+- Số liệu hiển thị **chưa trừ phí giao dịch, phí rút và slippage**. Spread trông có lãi trên màn hình thường không còn lãi sau chi phí.
+- Arbitrage crypto mang rủi ro thật: rủi ro thực thi, rủi ro thanh lý, rủi ro đối tác (sàn), rủi ro kỹ thuật.
+- Không có chiến lược nào ở đây được kiểm chứng bằng vốn thật. Cho tới khi hoàn thành Giai đoạn 3, **chưa có bằng chứng nào cho thấy chiến lược sinh lời**.
+- Nếu và khi dự án đến giai đoạn giao dịch: bắt đầu với vốn tối thiểu, tắt quyền rút tiền trên API key, và backtest trước khi bỏ vốn thật.
+
+---
+
+## Ghi công
+
+Phần nền scanner (kiến trúc connector đa sàn, ma trận spread, dashboard) khởi nguồn từ dự án mã nguồn mở của [jose-donato](https://github.com/jose-donato). Phần lộ trình funding rate arbitrage, tài liệu dữ liệu và cấu trúc `internal/` là phát triển riêng của repo này.
+
+> 📄 Repo hiện **chưa có file LICENSE**. Nếu có ý định chia sẻ công khai, nên bổ sung giấy phép và đối chiếu với giấy phép của dự án gốc.

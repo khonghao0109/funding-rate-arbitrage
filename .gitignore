@@ -9,3 +9,6 @@ crypto-futures-arbitrage-scanner
 
 # macOS
 .DS_Store
+
+# CodeGraph index (local, machine-specific)
+.codegraph/

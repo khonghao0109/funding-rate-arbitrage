@@ -1,2 +1,0 @@
-- convert to (best bid + best ask) / 2
-- integrate spot feeds
