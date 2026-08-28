@@ -27,11 +27,11 @@ type BybitFuturesOrderbook struct {
 	Topic string `json:"topic"`
 	Type  string `json:"type"`
 	Data  struct {
-		Symbol string     `json:"s"`
-		Bids   [][]string `json:"b"`
-		Asks   [][]string `json:"a"`
-		UpdateID int64    `json:"u"`
-		SeqNum   int64    `json:"seq"`
+		Symbol   string     `json:"s"`
+		Bids     [][]string `json:"b"`
+		Asks     [][]string `json:"a"`
+		UpdateID int64      `json:"u"`
+		SeqNum   int64      `json:"seq"`
 	} `json:"data"`
 }
 
@@ -77,9 +77,9 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 
 			// Try to parse as orderbook first
 			var orderbookMsg BybitFuturesOrderbook
-			if err := json.Unmarshal(message, &orderbookMsg); err == nil && 
-			   len(orderbookMsg.Data.Asks) > 0 && len(orderbookMsg.Data.Bids) > 0 {
-				
+			if err := json.Unmarshal(message, &orderbookMsg); err == nil &&
+				len(orderbookMsg.Data.Asks) > 0 && len(orderbookMsg.Data.Bids) > 0 {
+
 				bidPrice, err1 := strconv.ParseFloat(orderbookMsg.Data.Bids[0][0], 64)
 				askPrice, err2 := strconv.ParseFloat(orderbookMsg.Data.Asks[0][0], 64)
 				if err1 != nil || err2 != nil {
@@ -100,9 +100,9 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 
 			// Try to parse as trade message
 			var tradeMsg BybitFuturesTrade
-			if err := json.Unmarshal(message, &tradeMsg); err == nil && 
-			   (tradeMsg.Type == "snapshot" || tradeMsg.Type == "delta") {
-				
+			if err := json.Unmarshal(message, &tradeMsg); err == nil &&
+				(tradeMsg.Type == "snapshot" || tradeMsg.Type == "delta") {
+
 				for _, trade := range tradeMsg.Data {
 					price, err := strconv.ParseFloat(trade.Price, 64)
 					if err != nil {
@@ -153,11 +153,11 @@ type BybitSpotOrderbook struct {
 	Topic string `json:"topic"`
 	Type  string `json:"type"`
 	Data  struct {
-		Symbol string     `json:"s"`
-		Bids   [][]string `json:"b"`
-		Asks   [][]string `json:"a"`
-		UpdateID int64    `json:"u"`
-		SeqNum   int64    `json:"seq"`
+		Symbol   string     `json:"s"`
+		Bids     [][]string `json:"b"`
+		Asks     [][]string `json:"a"`
+		UpdateID int64      `json:"u"`
+		SeqNum   int64      `json:"seq"`
 	} `json:"data"`
 }
 
@@ -204,9 +204,9 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 
 			// Try to parse as orderbook first
 			var orderbookMsg BybitSpotOrderbook
-			if err := json.Unmarshal(message, &orderbookMsg); err == nil && 
-			   len(orderbookMsg.Data.Asks) > 0 && len(orderbookMsg.Data.Bids) > 0 {
-				
+			if err := json.Unmarshal(message, &orderbookMsg); err == nil &&
+				len(orderbookMsg.Data.Asks) > 0 && len(orderbookMsg.Data.Bids) > 0 {
+
 				bidPrice, err1 := strconv.ParseFloat(orderbookMsg.Data.Bids[0][0], 64)
 				askPrice, err2 := strconv.ParseFloat(orderbookMsg.Data.Asks[0][0], 64)
 				if err1 != nil || err2 != nil {
@@ -227,9 +227,9 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 
 			// Try to parse as trade message
 			var tradeMsg BybitSpotTrade
-			if err := json.Unmarshal(message, &tradeMsg); err == nil && 
-			   (tradeMsg.Type == "snapshot" || tradeMsg.Type == "delta") {
-				
+			if err := json.Unmarshal(message, &tradeMsg); err == nil &&
+				(tradeMsg.Type == "snapshot" || tradeMsg.Type == "delta") {
+
 				for _, trade := range tradeMsg.Data {
 					price, err := strconv.ParseFloat(trade.Price, 64)
 					if err != nil {

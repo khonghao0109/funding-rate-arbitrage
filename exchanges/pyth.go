@@ -52,19 +52,19 @@ func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookCh
 	// Filter symbols to only those we have price feed IDs for
 	var validSymbols []string
 	var priceFeedIDs []string
-	
+
 	for _, symbol := range symbols {
 		if feedID, exists := pythPriceFeedIDs[symbol]; exists {
 			validSymbols = append(validSymbols, symbol)
 			priceFeedIDs = append(priceFeedIDs, feedID)
 		}
 	}
-	
+
 	if len(priceFeedIDs) == 0 {
 		log.Printf("No valid Pyth price feed IDs found for symbols: %v", symbols)
 		return
 	}
-		
+
 	// Create the SSE URL with price feed IDs using array format
 	var idParams []string
 	for _, id := range priceFeedIDs {
@@ -72,37 +72,37 @@ func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookCh
 	}
 	idsParam := strings.Join(idParams, "&")
 	sseURL := fmt.Sprintf("https://hermes.pyth.network/v2/updates/price/stream?%s", idsParam)
-	
-	for {		
+
+	for {
 		resp, err := http.Get(sseURL)
 		if err != nil {
 			log.Printf("Pyth SSE connection error: %v", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
-		
+
 		log.Printf("Connected to Pyth SSE")
-		
+
 		scanner := bufio.NewScanner(resp.Body)
 		for scanner.Scan() {
 			line := scanner.Text()
-			
+
 			// SSE format: lines starting with "data:" contain the JSON data
 			if strings.HasPrefix(line, "data:") {
 				data := strings.TrimPrefix(line, "data:")
 				data = strings.TrimSpace(data)
-				
+
 				// Skip empty data lines or heartbeat messages
 				if data == "" || data == "heartbeat" {
 					continue
 				}
-				
+
 				var response PythSSEResponse
 				if err := json.Unmarshal([]byte(data), &response); err != nil {
 					log.Printf("Pyth JSON unmarshal error: %v", err)
 					continue
 				}
-				
+
 				// Process each parsed price feed
 				for _, feed := range response.Parsed {
 					// Find the symbol for this price feed ID
@@ -113,18 +113,18 @@ func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookCh
 							break
 						}
 					}
-					
+
 					if symbol == "" {
 						continue
 					}
-					
+
 					// Parse the price using the exponent
 					price, err := ParsePythPrice(feed.Price.Price, feed.Price.Expo)
 					if err != nil {
 						log.Printf("Pyth price parsing error for %s: %v", symbol, err)
 						continue
 					}
-										
+
 					// Create price data
 					priceData := PriceData{
 						Symbol:    symbol,
@@ -132,16 +132,16 @@ func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookCh
 						Price:     price,
 						Timestamp: feed.Price.PublishTime * 1000, // Convert to milliseconds
 					}
-					
+
 					priceChan <- priceData
 				}
 			}
 		}
-		
+
 		if err := scanner.Err(); err != nil {
 			log.Printf("Pyth SSE scanner error: %v", err)
 		}
-		
+
 		resp.Body.Close()
 		log.Printf("Pyth SSE connection closed, reconnecting in 5 seconds...")
 		time.Sleep(5 * time.Second)

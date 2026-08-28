@@ -69,7 +69,7 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 		for _, symbol := range symbols {
 			// Convert symbol format (BTCUSDT -> BTC-USDT-SWAP for perpetual futures)
 			okxSymbol := convertToOKXSymbol(symbol)
-			
+
 			// Subscribe to trades
 			subscribeArgs = append(subscribeArgs, struct {
 				Channel string `json:"channel"`
@@ -78,7 +78,7 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 				Channel: "trades",
 				InstID:  okxSymbol,
 			})
-			
+
 			// Subscribe to orderbooks (books5 for top 5 levels)
 			subscribeArgs = append(subscribeArgs, struct {
 				Channel string `json:"channel"`

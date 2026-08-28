@@ -99,9 +99,9 @@ func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbo
 
 			// Try to parse as market summary event
 			var marketEvent ParadexMarketSummaryEvent
-			if err := json.Unmarshal(message, &marketEvent); err == nil && 
-			   marketEvent.Method == "subscription" && marketEvent.Params.Channel == "markets_summary" {
-				
+			if err := json.Unmarshal(message, &marketEvent); err == nil &&
+				marketEvent.Method == "subscription" && marketEvent.Params.Channel == "markets_summary" {
+
 				symbol := convertFromParadexSymbol(marketEvent.Params.Data.Symbol)
 				if symbol == "" {
 					continue // Skip unsupported symbols
@@ -110,7 +110,7 @@ func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbo
 				// Parse bid and ask prices
 				bidPrice, err1 := strconv.ParseFloat(marketEvent.Params.Data.Bid, 64)
 				askPrice, err2 := strconv.ParseFloat(marketEvent.Params.Data.Ask, 64)
-				
+
 				if err1 != nil || err2 != nil {
 					continue
 				}

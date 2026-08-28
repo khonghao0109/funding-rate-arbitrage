@@ -23,9 +23,9 @@ type BinanceFuturesTrade struct {
 }
 
 type BinanceFuturesBookTicker struct {
-	EventType   string `json:"e"`
-	EventTime   int64  `json:"E"`
-	Symbol      string `json:"s"`
+	EventType    string `json:"e"`
+	EventTime    int64  `json:"E"`
+	Symbol       string `json:"s"`
 	BestBidPrice string `json:"b"`
 	BestBidQty   string `json:"B"`
 	BestAskPrice string `json:"a"`

@@ -64,14 +64,14 @@ func (s *FuturesScanner) processOrderbooks() {
 	for orderbookData := range s.orderbookChan {
 		// Calculate mid price from best bid and best ask
 		midPrice := (orderbookData.BestBid + orderbookData.BestAsk) / 2
-		
+
 		priceData := exchanges.PriceData{
 			Symbol:    orderbookData.Symbol,
 			Source:    orderbookData.Source,
 			Price:     midPrice,
 			Timestamp: orderbookData.Timestamp,
 		}
-		
+
 		s.updatePrice(priceData)
 	}
 }
@@ -81,7 +81,6 @@ func (s *FuturesScanner) processTrades() {
 		// Keep trade data for future use but don't use for pricing
 	}
 }
-
 
 func (s *FuturesScanner) updatePrice(data exchanges.PriceData) {
 	s.pricesMutex.Lock()
@@ -138,11 +137,11 @@ func (s *FuturesScanner) checkArbitrage(symbol string) {
 	// Only alert if profit is significant (>0.05%) and we haven't alerted recently
 	if profitPct > 0.05 {
 		opportunityKey := fmt.Sprintf("%s_%s_%s", symbol, minSource, maxSource)
-		
+
 		s.opportunityMutex.RLock()
 		lastAlert, exists := s.lastOpportunity[opportunityKey]
 		s.opportunityMutex.RUnlock()
-		
+
 		now := time.Now()
 		// Only send alert if it's been more than 10 seconds since last alert for this pair
 		// This prevents spam while still allowing frequent updates for crypto markets
@@ -164,7 +163,7 @@ func (s *FuturesScanner) checkArbitrage(symbol string) {
 			s.broadcastOpportunity(opportunity)
 		}
 	}
-	
+
 	// Always broadcast current spreads for the spread matrix using the copy
 	s.broadcastSpreads(symbol, pricesCopy)
 }
@@ -215,7 +214,7 @@ func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string
 
 	// Calculate all pairwise spreads
 	spreads := make(map[string]map[string]float64)
-	
+
 	for buySource, buyPrice := range sourcePrices {
 		spreads[buySource] = make(map[string]float64)
 		for sellSource, sellPrice := range sourcePrices {
@@ -255,7 +254,6 @@ func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string
 		s.clientsMutex.Unlock()
 	}
 }
-
 
 func (s *FuturesScanner) broadcastPrices() {
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -311,7 +309,7 @@ func (s *FuturesScanner) broadcastPrices() {
 
 func (s *FuturesScanner) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("WebSocket connection attempt from %s", r.RemoteAddr)
-	
+
 	conn, err := s.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("WebSocket upgrade error from %s: %v", r.RemoteAddr, err)
@@ -364,11 +362,11 @@ func main() {
 	go exchanges.ConnectOKXFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
 	go exchanges.ConnectGateFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
 	go exchanges.ConnectParadexFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	
+
 	// Start spot exchange connections with orderbook feeds
 	go exchanges.ConnectBinanceSpot(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
 	go exchanges.ConnectBybitSpot(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	
+
 	// Start Pyth price feed connection
 	go exchanges.ConnectPythPrices(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
 

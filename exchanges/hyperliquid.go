@@ -15,11 +15,11 @@ type HyperliquidTrade struct {
 }
 
 type HyperliquidTradeData struct {
-	Coin      string  `json:"coin"`
-	Price     string  `json:"px"`
-	Size      string  `json:"sz"`
-	Side      string  `json:"side"`
-	Timestamp int64   `json:"time"`
+	Coin      string `json:"coin"`
+	Price     string `json:"px"`
+	Size      string `json:"sz"`
+	Side      string `json:"side"`
+	Timestamp int64  `json:"time"`
 }
 
 type HyperliquidL2Book struct {
@@ -34,9 +34,9 @@ type HyperliquidLevel struct {
 }
 
 type HyperliquidL2BookData struct {
-	Coin   string              `json:"coin"`
+	Coin   string               `json:"coin"`
 	Levels [][]HyperliquidLevel `json:"levels"`
-	Time   int64               `json:"time"`
+	Time   int64                `json:"time"`
 }
 
 func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
@@ -102,7 +102,7 @@ func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, ord
 			if err := json.Unmarshal(message, &tradeMessage); err == nil && tradeMessage.Channel == "trades" && len(tradeMessage.Data) > 0 {
 				// Handle both array and single object formats
 				var trades []HyperliquidTradeData
-				
+
 				// Try to unmarshal as array first
 				if err := json.Unmarshal(tradeMessage.Data, &trades); err != nil {
 					// If that fails, try as single object
