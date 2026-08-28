@@ -316,21 +316,21 @@
             font-weight: bold;
         }
 
-        .profit-cell {
+        .spread-cell-value {
             color: #ff6b6b;
             font-weight: bold;
             text-align: right;
         }
 
-        .profit-cell.high {
+        .spread-cell-value.high {
             color: #ff4444;
         }
 
-        .profit-cell.medium {
+        .spread-cell-value.medium {
             color: #ff8844;
         }
 
-        .profit-cell.low {
+        .spread-cell-value.low {
             color: #ffaa44;
         }
 
@@ -411,6 +411,106 @@
 
         .clear-opportunities:hover {
             background: #444;
+        }
+
+        .spread-groups {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            width: 100%;
+        }
+
+        .spread-group-title {
+            font-size: 9px;
+            font-weight: bold;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 3px;
+        }
+
+        .spread-group-tag {
+            color: #ffa500;
+            border: 1px solid #ffa500;
+            border-radius: 2px;
+            padding: 0 3px;
+            font-size: 8px;
+        }
+
+        .spread-group-note {
+            font-size: 9px;
+            color: #777;
+            line-height: 1.4;
+            margin-bottom: 5px;
+        }
+
+        .spread-excluded {
+            font-size: 9px;
+            color: #777;
+            margin: 0;
+            padding-left: 14px;
+        }
+
+        .cost-basis-note {
+            font-size: 9px;
+            color: #999;
+            line-height: 1.5;
+            margin-top: 10px;
+            padding: 6px;
+            border-left: 2px solid #ffa500;
+            background: rgba(255, 165, 0, 0.06);
+        }
+
+        .cost-basis-note strong {
+            color: #ffa500;
+        }
+
+        .source-status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        .source-status-dot.live {
+            background: #00ff88;
+        }
+
+        .source-status-dot.stale {
+            background: #ff4444;
+        }
+
+        /* Connection state outranks data freshness: a disconnected venue is not
+           merely stale. Both are filled by steps 1.1 and 1.5. */
+        .source-status-dot.reconnecting {
+            background: #ffa500;
+        }
+
+        .source-status-dot.disconnected {
+            background: #ff4444;
+            box-shadow: 0 0 0 1px #ff4444;
+        }
+
+        /* No staleness measurement exists until step 1.1; grey says exactly that. */
+        .source-status-dot.unknown {
+            background: #555;
+        }
+
+        .spread-basis-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 10px;
+            padding: 3px 4px;
+            background: #222;
+            border-radius: 2px;
+            margin-bottom: 2px;
+        }
+
+        .spread-basis-row .up {
+            color: #00ff88;
+        }
+
+        .spread-basis-row .down {
+            color: #ff4444;
         }
 
         .spreads-matrix {
@@ -593,10 +693,7 @@
                 <div class="panel-content">
                     <div class="symbol-selector">
                         <select id="symbolSelect" class="symbol-input">
-                            <option value="BTCUSDT">BTCUSDT</option>
-                            <option value="ETHUSDT">ETHUSDT</option>
-                            <option value="XRPUSDT">XRPUSDT</option>
-                            <option value="SOLUSDT">SOLUSDT</option>
+                            <!-- Filled from the meta message. See docs/WS-CONTRACT.md §3. -->
                         </select>
                     </div>
                 </div>
@@ -614,9 +711,10 @@
             <div class="panel">
                 <div class="panel-header">Current Spreads</div>
                 <div class="panel-content">
-                    <div id="spreadsMatrix" class="spreads-matrix">
+                    <div id="spreadsMatrix" class="spread-groups">
                         <div class="loading">Waiting for price data...</div>
                     </div>
+                    <div id="costBasisNote" class="cost-basis-note"></div>
                 </div>
             </div>
 
@@ -625,7 +723,7 @@
                 <div class="opportunities-controls">
                     <div style="display: flex; gap: 8px; align-items: center;">
                         <label style="font-size: 10px; color: #888;">Min %:</label>
-                        <input type="number" id="minProfitFilter" class="opportunities-filter" placeholder="0.05"
+                        <input type="number" id="minSpreadFilter" class="opportunities-filter" placeholder="0.05"
                             step="0.01" min="0" value="0.05">
                     </div>
                     <div class="opportunities-stats" id="opportunitiesStats">0 alerts</div>
@@ -636,12 +734,12 @@
                         <thead>
                             <tr>
                                 <th class="sortable" data-sort="symbol">Symbol</th>
-                                <th class="sortable" data-sort="profit">Profit %</th>
+                                <th class="sortable" data-sort="spread_gross_pct">Spread thô %</th>
                                 <th class="sortable" data-sort="buy_source">Buy</th>
                                 <th class="sortable" data-sort="buy_price">Buy $</th>
                                 <th class="sortable" data-sort="sell_source">Sell</th>
                                 <th class="sortable" data-sort="sell_price">Sell $</th>
-                                <th class="sortable" data-sort="timestamp">Time</th>
+                                <th class="sortable" data-sort="detected_at_ms">Time</th>
                             </tr>
                         </thead>
                     </table>

@@ -27,10 +27,13 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** Not started, 7 steps. The immediate next task is step
-1.0: freeze the WebSocket JSON contract for the whole phase and update
-[static/app.js](static/app.js) once, so steps 1.1–1.3 only fill data into it
-instead of reshaping the frontend three times.
+**Phase 1 — Hardening.** 1 of 7 steps done. Step 1.0 froze the WebSocket JSON
+contract for the whole phase — it is specified in
+[docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
+phase 2: steps 1.1–1.3 fill data into fields that already exist. The next task is
+step 1.1, the staleness filter; `recv_at_ms`, `venue_time_ms`, `age_ms`, `status`
+and `stale_after_sec` are already on the wire carrying their documented
+defaults.
 
 ---
 
@@ -121,6 +124,14 @@ snapshot, throttles the matrix rebuild to 300ms, and updates charts
 incrementally. The waste is server-side: `broadcastSpreads` fires on every tick
 and ships every symbol to every client. Fix the broadcast layer first. See
 docs/PLAN.md §7.3 for scale thresholds.
+
+**12. The WebSocket contract is frozen for phase 1.**
+[docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) is authoritative. Add a field with a
+documented default; never rename one, change its type, or remove it. Every field
+carrying a unit says so in its name, on the wire as well as in Go. No field is
+ever named `profit_*`: a figure with nothing deducted is `*_gross_pct`. The
+frontend builds its source list, symbol selector and cost disclaimer from the
+`meta` message — do not reintroduce a hardcoded source list.
 
 ---
 
@@ -213,7 +224,9 @@ phase 1.
   frozen price. Worse, the field means two different things: Binance, OKX,
   Gate, Hyperliquid and Pyth fill it with the venue's own time, while Bybit,
   Paradex and Kraken fill it with `time.Now()`. It cannot be used as the basis
-  for staleness — a receive timestamp set in one place is needed instead.
+  for staleness — a receive timestamp set in one place is needed instead. The
+  wire already carries `recv_at_ms` and `venue_time_ms` separately; step 1.1
+  fills them.
 - Top-of-book size is parsed and thrown away. `OrderbookData` carries only
   prices, while the connectors already decode quantities (Binance `B`/`A`,
   Bybit `v`, OKX `sz`). That is a free first-order liquidity filter going
@@ -223,16 +236,17 @@ phase 1.
   which is meaningless — Pyth is an oracle.
 - `checkArbitrage` takes min/max across *all* sources, mixing spot and perp into
   one comparison. That produces "opportunities" that cannot be executed — what
-  it is actually measuring, spot vs perp, is basis.
+  it is actually measuring, spot vs perp, is basis. The spread matrix now
+  declares itself `tradable: false` for this reason, but the **alerts table is
+  still built from the mixed comparison**; step 1.2 fixes the calculation.
 - No fee model anywhere.
 - Reconnect uses a fixed sleep with no backoff, no ping/keepalive, no read
   deadline.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- Zero test coverage, and no `exchanges/testdata/` — golden tests need real
-  payloads captured from a running scanner first.
-- `go.mod` marks `godotenv` as `// indirect` although main.go imports it
-  directly.
+- No `exchanges/testdata/` and no connector tests — golden tests need real
+  payloads captured from a running scanner first. `main` has 25 tests covering
+  the wire contract (46.6% of statements); `exchanges/` is still at zero.
 
 ---
 
@@ -244,4 +258,5 @@ phase 1.
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | The 9-phase loop every change follows, review checklist, commit rules |
 | [docs/DATA-REQUIREMENTS.md](docs/DATA-REQUIREMENTS.md) | What data is needed from a venue, 7-venue funding survey, `FundingData` design, data traps |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Naming, structure, errors, concurrency, testing, dependency rules |
+| [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) | The frozen backend↔dashboard JSON contract, and which field carries real data at which step |
 | [README.md](README.md) | Project introduction, current capabilities and gaps, setup, risk notice |

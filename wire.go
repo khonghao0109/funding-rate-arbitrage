@@ -1,0 +1,487 @@
+package main
+
+import (
+	"fmt"
+	"math"
+	"sort"
+)
+
+// The types in this file are the frozen WebSocket contract between the scanner
+// and the dashboard. The full specification, including which field carries real
+// data at which step, is docs/WS-CONTRACT.md. Everything named wire* is on the
+// wire: renaming a field or changing its type breaks static/app.js, which has no
+// tests to catch it.
+//
+// Steps 1.1 to 1.3 fill these fields with real values. They must not reshape
+// them.
+
+// wireVersion is the contract version echoed in every message. The dashboard
+// warns when it receives anything else.
+const wireVersion = 1
+
+// defaultStaleAfterSec is the fallback staleness threshold. It is per source
+// because a thinly traded pair going quiet for a minute is normal, and a single
+// global threshold would mark a healthy venue dead. Step 1.4 moves the value to
+// config.yaml; step 1.1 starts enforcing it.
+const defaultStaleAfterSec = 10
+
+// Data-level status of one price, decided by the backend. The browser clock is
+// not comparable with the server clock, so the frontend only renders these.
+const (
+	statusLive    = "live"
+	statusStale   = "stale"
+	statusUnknown = "unknown" // no staleness measurement exists yet (step 1.1)
+)
+
+// Connection-level state of one source, filled at step 1.5.
+const (
+	stateConnected    = "connected"
+	stateReconnecting = "reconnecting"
+	stateDisconnected = "disconnected"
+	stateUnknown      = "unknown"
+)
+
+// alertMinSpreadPct is the dashboard's default alert filter, and the threshold
+// checkArbitrage uses to decide an opportunity is worth broadcasting.
+const alertMinSpreadPct = 0.05
+
+// sourceMeta describes one data source to the dashboard: what it is, how to draw
+// it, and how it should be treated. It exists so the frontend stops hardcoding
+// the source list, which it previously did in five separate places.
+//
+// Step 1.4 loads these from config.yaml instead of the literal below.
+type sourceMeta struct {
+	Source     string `json:"source"`      // wire key, venue + "_" + market type
+	Venue      string `json:"venue"`       // binance, bybit, ...
+	MarketType string `json:"market_type"` // spot | perp | future | oracle
+	QuoteAsset string `json:"quote_asset"`
+	Tradable   bool   `json:"tradable"`
+
+	Label            string `json:"label"`
+	ShortLabel       string `json:"short_label"` // matrix column header
+	Color            string `json:"color"`
+	LineStyle        string `json:"line_style"` // solid | dashed | dotted
+	EnabledByDefault bool   `json:"enabled_by_default"`
+
+	StaleAfterSec int64 `json:"stale_after_sec"`
+	MakerFeeBps   int   `json:"maker_fee_bps"` // 0 until step 1.3
+	TakerFeeBps   int   `json:"taker_fee_bps"` // 0 until step 1.3
+}
+
+// sourceRegistry is the single source of truth for what the dashboard renders.
+// Order matters: it fixes the column order of the spread matrix, which used to
+// reshuffle on every message because it came from Go map iteration.
+//
+// MarketType and QuoteAsset are static facts about each venue and are recorded
+// here now; step 1.2 is what starts *using* them to split the comparison into
+// separate blocks. Fee fields stay at zero until step 1.3 builds the fee table.
+var sourceRegistry = []sourceMeta{
+	{Source: "binance_futures", Venue: "binance", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
+		Label: "Binance Futures", ShortLabel: "BIN-F", Color: "#f0b90b", LineStyle: "solid",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	{Source: "bybit_futures", Venue: "bybit", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
+		Label: "Bybit Futures", ShortLabel: "BYB-F", Color: "#f7931a", LineStyle: "solid",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	{Source: "hyperliquid_futures", Venue: "hyperliquid", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
+		Label: "Hyperliquid Futures", ShortLabel: "HYP", Color: "#97FCE4", LineStyle: "solid",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	// Kraken quotes in USD, not USDT: PF_XBTUSD against BTCUSDT carries the
+	// USD/USDT spread as well. Step 1.2 puts it in its own group for that reason.
+	// See docs/DATA-REQUIREMENTS.md §3.
+	{Source: "kraken_futures", Venue: "kraken", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
+		Label: "Kraken Futures", ShortLabel: "KRK-F", Color: "#5a5aff", LineStyle: "solid",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	{Source: "okx_futures", Venue: "okx", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
+		Label: "OKX Futures", ShortLabel: "OKX-F", Color: "#1890ff", LineStyle: "solid",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	{Source: "gate_futures", Venue: "gate", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
+		Label: "Gate.io Futures", ShortLabel: "GAT-F", Color: "#6c5ce7", LineStyle: "solid",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	{Source: "paradex_futures", Venue: "paradex", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
+		Label: "Paradex Futures", ShortLabel: "PDX", Color: "#ff6b6b", LineStyle: "solid",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	{Source: "binance_spot", Venue: "binance", MarketType: "spot", QuoteAsset: "USDT", Tradable: true,
+		Label: "Binance Spot", ShortLabel: "BIN-S", Color: "#ffb347", LineStyle: "dashed",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	{Source: "bybit_spot", Venue: "bybit", MarketType: "spot", QuoteAsset: "USDT", Tradable: true,
+		Label: "Bybit Spot", ShortLabel: "BYB-S", Color: "#f7931a", LineStyle: "dashed",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+	// Pyth is a price oracle, not a venue. Nothing can be bought or sold on it,
+	// so it must never appear in a tradable comparison. Step 1.2 enforces this
+	// in the grouping logic; the flag is recorded here.
+	{Source: "pyth", Venue: "pyth", MarketType: "oracle", QuoteAsset: "USD", Tradable: false,
+		Label: "Pyth Oracle", ShortLabel: "PYTH", Color: "#00ff88", LineStyle: "dotted",
+		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+}
+
+// sourceOrder maps a source to its position in sourceRegistry, for deterministic
+// ordering of anything derived from a map.
+var sourceOrder = func() map[string]int {
+	order := make(map[string]int, len(sourceRegistry))
+	for i, s := range sourceRegistry {
+		order[s.Source] = i
+	}
+	return order
+}()
+
+// sortSources orders sources by their position in the registry. Anything not in
+// the registry sorts last, alphabetically, so an unregistered source is visible
+// rather than silently dropped.
+func sortSources(sources []string) {
+	sort.Slice(sources, func(i, j int) bool {
+		oi, iKnown := sourceOrder[sources[i]]
+		oj, jKnown := sourceOrder[sources[j]]
+		switch {
+		case iKnown && jKnown:
+			return oi < oj
+		case iKnown != jKnown:
+			return iKnown
+		default:
+			return sources[i] < sources[j]
+		}
+	})
+}
+
+// sortExcluded keeps the exclusion list in registry order so it does not
+// reshuffle between messages.
+func sortExcluded(excluded []wireExcludedSource) {
+	sort.Slice(excluded, func(i, j int) bool {
+		oi, iKnown := sourceOrder[excluded[i].Source]
+		oj, jKnown := sourceOrder[excluded[j].Source]
+		switch {
+		case iKnown && jKnown:
+			return oi < oj
+		case iKnown != jKnown:
+			return iKnown
+		default:
+			return excluded[i].Source < excluded[j].Source
+		}
+	})
+}
+
+// wireCostBasis states which costs have been deducted from the after-fee numbers
+// and which have not. It is the contract's guard against presenting a gross
+// figure as profit: the dashboard renders `excluded` verbatim.
+type wireCostBasis struct {
+	Model    string   `json:"model"` // none | taker_both_legs (step 1.3)
+	Applied  []string `json:"applied"`
+	Excluded []string `json:"excluded"`
+	NoteVI   string   `json:"note_vi"`
+}
+
+type wireMeta struct {
+	Type              string        `json:"type"`
+	V                 int           `json:"v"`
+	ServerTimeMs      int64         `json:"server_time_ms"`
+	Symbols           []string      `json:"symbols"`
+	DefaultSymbol     string        `json:"default_symbol"`
+	AlertMinSpreadPct float64       `json:"alert_min_spread_pct"`
+	CostBasis         wireCostBasis `json:"cost_basis"`
+	Sources           []sourceMeta  `json:"sources"`
+}
+
+// wirePricePoint is one price plus everything needed to judge whether it can be
+// trusted. Staleness is measured from RecvAtMs, never from VenueTimeMs: three of
+// the eight venues fill their own timestamp field with time.Now(), so it always
+// looks fresh even when the venue has stopped sending. See docs/WS-CONTRACT.md §4.1.
+type wirePricePoint struct {
+	Price       float64 `json:"price"`
+	VenueTimeMs int64   `json:"venue_time_ms"` // 0 when the venue does not provide one
+	RecvAtMs    int64   `json:"recv_at_ms"`    // 0 until step 1.1
+	AgeMs       int64   `json:"age_ms"`        // -1 when not measurable
+	Status      string  `json:"status"`
+
+	// Top of book. Reserved by step 1.0 and filled by step 1.2, which stops
+	// discarding the quantities Binance, Bybit and OKX already parse.
+	//
+	// This is a first-order liquidity filter only: it says what is available at
+	// the best price, not what a $60k order would actually fill at. Full depth
+	// arrives over REST at step 2.7. See PLAN.md §7.4.
+	//
+	// 0 means "not known", which at step 1.0 is every source. Quantities are in
+	// coin, not contracts - OKX, Gate and Kraken denominate in contracts and the
+	// connector must convert before filling these.
+	BestBid        float64 `json:"best_bid"`
+	BestAsk        float64 `json:"best_ask"`
+	BestBidQtyCoin float64 `json:"best_bid_qty_coin"`
+	BestAskQtyCoin float64 `json:"best_ask_qty_coin"`
+}
+
+// wireSourceStatus is connection health, which is a property of the source and
+// not of any one symbol: a venue can stay connected while a thin pair goes quiet.
+type wireSourceStatus struct {
+	State          string `json:"state"`
+	LastMsgAtMs    int64  `json:"last_msg_at_ms"`  // step 1.1
+	ReconnectCount int    `json:"reconnect_count"` // step 1.5
+	UptimeSec      int64  `json:"uptime_sec"`      // step 1.5
+}
+
+type wirePrices struct {
+	Type         string                               `json:"type"`
+	V            int                                  `json:"v"`
+	ServerTimeMs int64                                `json:"server_time_ms"`
+	Prices       map[string]map[string]wirePricePoint `json:"prices"`
+	SourceStatus map[string]wireSourceStatus          `json:"source_status"`
+}
+
+// wireSpreadCell keeps the gross figure and the after-fee figure in separate
+// fields so neither can be mistaken for the other. SpreadAfterFeesPct is null
+// until step 1.3, and even then it is not net profit: slippage needs order book
+// depth, which does not arrive before phase 2.
+type wireSpreadCell struct {
+	SpreadGrossPct     float64  `json:"spread_gross_pct"`
+	SpreadAfterFeesPct *float64 `json:"spread_after_fees_pct"`
+}
+
+// wireCrossVenueGroup is a set of sources that can meaningfully be compared with
+// each other: same market type and same quote asset. A matrix is only ever built
+// within a group, never across two.
+type wireCrossVenueGroup struct {
+	GroupID    string `json:"group_id"`
+	LabelVI    string `json:"label_vi"`
+	MarketType string `json:"market_type"`
+	QuoteAsset string `json:"quote_asset"`
+	Tradable   bool   `json:"tradable"`
+	NoteVI     string `json:"note_vi"`
+
+	Sources []string                             `json:"sources"`
+	Matrix  map[string]map[string]wireSpreadCell `json:"matrix"`
+}
+
+// wireBasis is spot against perp on the same venue. Empty until step 1.2.
+type wireBasis struct {
+	Venue         string  `json:"venue"`
+	SpotSource    string  `json:"spot_source"`
+	PerpSource    string  `json:"perp_source"`
+	SpotPrice     float64 `json:"spot_price"`
+	PerpPrice     float64 `json:"perp_price"`
+	BasisAbsQuote float64 `json:"basis_abs_quote"` // in the group's quote asset, not USD
+	BasisPct      float64 `json:"basis_pct"`
+}
+
+// wireOracleDeviation is reference only and never produces an alert.
+type wireOracleDeviation struct {
+	OracleSource string  `json:"oracle_source"`
+	Source       string  `json:"source"`
+	DeviationPct float64 `json:"deviation_pct"`
+}
+
+// wireExcludedSource explains why a source with a price is absent from every
+// group, so the dashboard can say what happened instead of silently dropping it.
+type wireExcludedSource struct {
+	Source string `json:"source"`
+	// no_price is the only reason emitted at step 1.0; the rest arrive with the
+	// grouping and staleness work in steps 1.1 and 1.2.
+	Reason string `json:"reason"` // no_price | oracle | quote_mismatch | stale | disconnected | no_peer
+	NoteVI string `json:"note_vi"`
+}
+
+type wireSpreads struct {
+	Type         string `json:"type"`
+	V            int    `json:"v"`
+	ServerTimeMs int64  `json:"server_time_ms"`
+	Symbol       string `json:"symbol"`
+
+	CrossVenueGroups []wireCrossVenueGroup `json:"cross_venue_groups"`
+	Basis            []wireBasis           `json:"basis"`
+	OracleDeviation  []wireOracleDeviation `json:"oracle_deviation"`
+	ExcludedSources  []wireExcludedSource  `json:"excluded_sources"`
+}
+
+type wireOpportunity struct {
+	ID     string `json:"id"`
+	Symbol string `json:"symbol"`
+	// Kind is cross_venue | basis.
+	//
+	// NOT YET ENFORCED: checkArbitrage still scans every source, so an oracle
+	// can appear as buy_source or sell_source today. Step 1.2 is what restricts
+	// this to tradable sources; until then the alerts table can show a pair that
+	// cannot be executed.
+	Kind       string `json:"kind"`
+	GroupID    string `json:"group_id"`
+	BuySource  string `json:"buy_source"`
+	SellSource string `json:"sell_source"`
+
+	BuyPrice  float64 `json:"buy_price"`
+	SellPrice float64 `json:"sell_price"`
+
+	SpreadGrossPct     float64  `json:"spread_gross_pct"`
+	SpreadAfterFeesPct *float64 `json:"spread_after_fees_pct"`
+
+	DetectedAtMs int64 `json:"detected_at_ms"`
+}
+
+type wireArbitrage struct {
+	Type         string          `json:"type"`
+	V            int             `json:"v"`
+	ServerTimeMs int64           `json:"server_time_ms"`
+	Opportunity  wireOpportunity `json:"opportunity"`
+}
+
+// newWireMeta builds the one-off message the dashboard uses to construct its
+// source list, symbol selector and cost disclaimer.
+func newWireMeta(symbols []string, nowMs int64) wireMeta {
+	defaultSymbol := ""
+	if len(symbols) > 0 {
+		defaultSymbol = symbols[0]
+	}
+
+	return wireMeta{
+		Type:              "meta",
+		V:                 wireVersion,
+		ServerTimeMs:      nowMs,
+		Symbols:           symbols,
+		DefaultSymbol:     defaultSymbol,
+		AlertMinSpreadPct: alertMinSpreadPct,
+		CostBasis: wireCostBasis{
+			Model:    "none",
+			Applied:  []string{},
+			Excluded: []string{"taker_fee", "maker_fee", "slippage", "funding"},
+			NoteVI:   "Số hiển thị là chênh lệch THÔ, chưa trừ bất kỳ chi phí nào.",
+		},
+		Sources: sourceRegistry,
+	}
+}
+
+// newWirePrices wraps the current price snapshot. Every staleness field carries
+// its documented default: no receive time is recorded anywhere yet, so claiming
+// a price is live would be an unverified number.
+func newWirePrices(prices map[string]map[string]float64, nowMs int64) wirePrices {
+	out := wirePrices{
+		Type:         "prices",
+		V:            wireVersion,
+		ServerTimeMs: nowMs,
+		Prices:       make(map[string]map[string]wirePricePoint, len(prices)),
+		SourceStatus: make(map[string]wireSourceStatus),
+	}
+
+	for symbol, sourcePrices := range prices {
+		points := make(map[string]wirePricePoint, len(sourcePrices))
+		for source, price := range sourcePrices {
+			// The source is known either way, but a non-positive price is not
+			// data: shipping it renders as "$0.000000" and drags the chart line
+			// to zero. checkArbitrage drops it for the same reason.
+			if _, seen := out.SourceStatus[source]; !seen {
+				out.SourceStatus[source] = wireSourceStatus{State: stateUnknown}
+			}
+			if !isUsablePrice(price) {
+				continue
+			}
+			points[source] = wirePricePoint{
+				Price:       price,
+				VenueTimeMs: 0,
+				RecvAtMs:    0,
+				AgeMs:       -1,
+				Status:      statusUnknown,
+				// Top of book is not collected yet; step 1.2 fills these.
+				BestBid:        0,
+				BestAsk:        0,
+				BestBidQtyCoin: 0,
+				BestAskQtyCoin: 0,
+			}
+		}
+		out.Prices[symbol] = points
+	}
+
+	return out
+}
+
+// isUsablePrice reports whether a price can be compared and serialized.
+//
+// The test is deliberately positive: `price <= 0` is false for NaN, so a NaN
+// would pass an exclusion test, survive to json.Marshal and fail there. A venue
+// can produce one - strconv.ParseFloat accepts the literal "NaN" with a nil
+// error - so a malformed payload reaches this.
+func isUsablePrice(price float64) bool {
+	return price > 0 && !math.IsInf(price, 0)
+}
+
+// spreadGrossPct is the percentage move from buyPrice to sellPrice, before any
+// cost is deducted. A venue reporting zero yields zero rather than an infinity,
+// which would serialize to invalid JSON and drop the whole message.
+func spreadGrossPct(buyPrice, sellPrice float64) float64 {
+	if !isUsablePrice(buyPrice) || !isUsablePrice(sellPrice) {
+		return 0
+	}
+	return ((sellPrice - buyPrice) / buyPrice) * 100
+}
+
+// newWireSpreads builds the spread message for one symbol.
+//
+// Step 1.0 emits a single group holding every source, which reproduces today's
+// matrix exactly. That group is marked tradable=false because it still mixes
+// spot, perpetual and an oracle into one comparison — the mix step 1.2 exists to
+// separate. The frontend already iterates the group array, so step 1.2 splits
+// the groups without touching app.js again.
+func newWireSpreads(symbol string, sourcePrices map[string]float64, excluded []wireExcludedSource, nowMs int64) wireSpreads {
+	if excluded == nil {
+		excluded = []wireExcludedSource{}
+	}
+	sortExcluded(excluded)
+
+	// The builder does not trust its caller to have filtered: an unusable price
+	// reaching here would list the source with a column of meaningless zeros.
+	sources := make([]string, 0, len(sourcePrices))
+	for source, price := range sourcePrices {
+		if !isUsablePrice(price) {
+			continue
+		}
+		sources = append(sources, source)
+	}
+	sortSources(sources)
+
+	matrix := make(map[string]map[string]wireSpreadCell, len(sources))
+	for _, buySource := range sources {
+		row := make(map[string]wireSpreadCell, len(sources)-1)
+		for _, sellSource := range sources {
+			if buySource == sellSource {
+				continue
+			}
+			row[sellSource] = wireSpreadCell{
+				SpreadGrossPct:     spreadGrossPct(sourcePrices[buySource], sourcePrices[sellSource]),
+				SpreadAfterFeesPct: nil,
+			}
+		}
+		matrix[buySource] = row
+	}
+
+	return wireSpreads{
+		Type:         "spreads",
+		V:            wireVersion,
+		ServerTimeMs: nowMs,
+		Symbol:       symbol,
+		CrossVenueGroups: []wireCrossVenueGroup{{
+			GroupID:    "all",
+			LabelVI:    "Tất cả nguồn",
+			MarketType: "unknown",
+			QuoteAsset: "",
+			Tradable:   false,
+			NoteVI: "Khối này còn trộn spot, perpetual và oracle vào cùng một so sánh, " +
+				"nên chưa phải cơ hội thực thi được. Bước 1.2 tách thành các khối riêng.",
+			Sources: sources,
+			Matrix:  matrix,
+		}},
+		Basis:           []wireBasis{},
+		OracleDeviation: []wireOracleDeviation{},
+		ExcludedSources: excluded,
+	}
+}
+
+// newWireOpportunity builds one detected opportunity. The identifier is derived
+// from the pair and the instant rather than generated in the browser, so the same
+// event keeps the same identity across reconnects and future persistence.
+func newWireOpportunity(symbol, buySource, sellSource string, buyPrice, sellPrice float64, detectedAtMs int64) wireOpportunity {
+	return wireOpportunity{
+		ID:                 fmt.Sprintf("%s|all|%s|%s|%d", symbol, buySource, sellSource, detectedAtMs),
+		Symbol:             symbol,
+		Kind:               "cross_venue",
+		GroupID:            "all",
+		BuySource:          buySource,
+		SellSource:         sellSource,
+		BuyPrice:           buyPrice,
+		SellPrice:          sellPrice,
+		SpreadGrossPct:     spreadGrossPct(buyPrice, sellPrice),
+		SpreadAfterFeesPct: nil,
+		DetectedAtMs:       detectedAtMs,
+	}
+}

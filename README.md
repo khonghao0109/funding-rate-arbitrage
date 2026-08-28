@@ -49,6 +49,8 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Biểu đồ live** | TradingView Lightweight Charts, nhiều sàn trên cùng một khung |
 | **Tự điều chỉnh số thập phân** | Theo từng tài sản và vùng giá |
 | **Tự kết nối lại** | Mỗi sàn tự reconnect khi rớt WebSocket |
+| **Nói rõ số đang hiển thị là gì** | Dashboard ghi thẳng chi phí nào đã trừ và chưa trừ; khối ma trận tự đánh dấu **"tham chiếu"** vì còn trộn spot, perp và oracle |
+| **Dashboard tự dựng theo máy chủ** | Danh sách nguồn, màu, nhãn và danh sách cặp đến từ message `meta`, không hardcode trong JavaScript |
 
 ---
 
@@ -64,7 +66,8 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | **Lọc dữ liệu cũ** | Sàn rớt kết nối vẫn có thể sinh tín hiệu từ giá đóng băng |
 | **Tách spot / perp** | Logic hiện so sánh min/max trên *toàn bộ* nguồn, trộn lẫn spot với perp |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | Chưa có |
+| **Test tự động** | Mới có cho hợp đồng WebSocket (25 test). Connector chưa có test nào, chưa có `exchanges/testdata/` |
+| **Tách oracle khỏi cảnh báo** | Ma trận đã đánh dấu là tham chiếu, nhưng **bảng cảnh báo vẫn có thể nêu Pyth** — Pyth là oracle, không mua bán được. Sửa ở Bước 1.2 |
 
 Toàn bộ các mục trên đều đã có kế hoạch xử lý theo giai đoạn trong [docs/PLAN.md](docs/PLAN.md).
 
@@ -162,7 +165,7 @@ PORT=8082
 
 Ngưỡng cảnh báo spread đặt trực tiếp trong giao diện (mặc định **0,05%**).
 
-> ⚠️ Ngưỡng này áp lên **spread thô**, chưa trừ phí. Với phí taker thông thường của cả hai chân, chi phí vòng lặp đã vượt xa 0,05% — nên con số hiển thị hiện tại phản ánh *cấu trúc thị trường*, không phải *cơ hội có thể thực thi*. Mô hình phí nằm ở Bước 1.3 trong lộ trình.
+> ⚠️ Ngưỡng này áp lên **spread thô**, chưa trừ phí. Dashboard ghi rõ điều này ngay dưới ma trận. Với phí taker thông thường của cả hai chân, chi phí vòng lặp đã vượt xa 0,05% — nên con số hiển thị hiện tại phản ánh *cấu trúc thị trường*, không phải *cơ hội có thể thực thi*. Mô hình phí nằm ở Bước 1.3 trong lộ trình.
 
 Symbol, danh sách sàn và các ngưỡng khác hiện đang hardcode; chuyển sang file cấu hình ở Bước 1.4.
 
@@ -177,6 +180,7 @@ Symbol, danh sách sàn và các ngưỡng khác hiện đang hardcode; chuyển
 ├── exchanges/                 # connector — CHỈ dữ liệu công khai, không credential
 │   ├── types.go               # kiểu dùng chung
 │   └── <venue>.go             # binance, bybit, okx, gate, kraken, hyperliquid, paradex, pyth
+├── wire.go                    # hợp đồng JSON với dashboard — xem docs/WS-CONTRACT.md
 ├── internal/                  # các package đang xây dựng theo lộ trình
 │   ├── instruments/           # registry, ánh xạ spot↔perp, sizing delta-neutral
 │   ├── fees/                  # bảng phí, lợi nhuận ròng
@@ -188,7 +192,7 @@ Symbol, danh sách sàn và các ngưỡng khác hiện đang hardcode; chuyển
 │   ├── execution/             # vị thế delta-neutral
 │   └── risk/                  # margin, kill switch, giới hạn vốn
 ├── static/                    # dashboard
-└── docs/                      # PLAN, WORKFLOW, DATA-REQUIREMENTS, CONVENTIONS
+└── docs/                      # PLAN, WORKFLOW, DATA-REQUIREMENTS, CONVENTIONS, WS-CONTRACT
 ```
 
 Các package `internal/` hiện chỉ chứa `doc.go` mô tả trách nhiệm và ranh giới. **Đọc `doc.go` trước khi thêm code vào package đó.**
@@ -212,6 +216,7 @@ Dữ liệu công khai và credential nằm hai phía khác nhau của ranh gi�
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | Quy trình code & review 9 pha, checklist review, quy tắc commit |
 | [docs/DATA-REQUIREMENTS.md](docs/DATA-REQUIREMENTS.md) | Dữ liệu cần từ sàn, khảo sát funding 7 sàn, thiết kế `FundingData`, các bẫy dữ liệu |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Quy ước đặt tên, cấu trúc, lỗi, đồng thời, test, luật phụ thuộc |
+| [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) | Hợp đồng JSON backend ↔ dashboard, trường nào mang dữ liệu thật ở bước nào |
 | [CLAUDE.md](CLAUDE.md) | Tổng quan cho AI agent — luật, bẫy đã biết, điểm yếu hiện tại |
 
 ---

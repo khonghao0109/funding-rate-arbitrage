@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -14,17 +15,16 @@ import (
 	"github.com/joho/godotenv"
 )
 
-type ArbitrageOpportunity struct {
-	Symbol     string  `json:"symbol"`
-	BuySource  string  `json:"buy_source"`
-	SellSource string  `json:"sell_source"`
-	BuyPrice   float64 `json:"buy_price"`
-	SellPrice  float64 `json:"sell_price"`
-	ProfitPct  float64 `json:"profit_pct"`
-	Timestamp  int64   `json:"timestamp"`
-}
+// wsWriteTimeout bounds a single write to one dashboard client. The write mutex
+// is shared by every broadcast, so an unbounded write would let one stalled
+// browser stop the whole scanner.
+const wsWriteTimeout = 2 * time.Second
+
+// opportunityCooldown throttles repeat alerts for the same pair.
+const opportunityCooldown = 10 * time.Second
 
 type FuturesScanner struct {
+	symbols          []string
 	prices           map[string]map[string]float64
 	pricesMutex      sync.RWMutex
 	wsClients        map[*websocket.Conn]bool
@@ -36,10 +36,15 @@ type FuturesScanner struct {
 	tradeChan        chan exchanges.TradeData
 	lastOpportunity  map[string]time.Time // Track last alert per symbol
 	opportunityMutex sync.RWMutex
+
+	// onOpportunity receives every raised opportunity. Production leaves it nil
+	// and broadcasts; tests set it to observe the alert path directly.
+	onOpportunity func(wireOpportunity)
 }
 
-func NewFuturesScanner() *FuturesScanner {
+func NewFuturesScanner(symbols []string) *FuturesScanner {
 	return &FuturesScanner{
+		symbols:         symbols,
 		prices:          make(map[string]map[string]float64),
 		wsClients:       make(map[*websocket.Conn]bool),
 		priceChan:       make(chan exchanges.PriceData, 1000),
@@ -96,17 +101,38 @@ func (s *FuturesScanner) updatePrice(data exchanges.PriceData) {
 func (s *FuturesScanner) checkArbitrage(symbol string) {
 	s.pricesMutex.RLock()
 	sourcePrices, exists := s.prices[symbol]
-	if !exists || len(sourcePrices) < 2 {
+	if !exists {
 		s.pricesMutex.RUnlock()
 		return
 	}
 
 	// Create a copy of the prices map to avoid race conditions
 	pricesCopy := make(map[string]float64)
+	var excluded []wireExcludedSource
 	for source, price := range sourcePrices {
+		// An unusable price is not data. Keeping it would make it the minimum,
+		// drive every spread against it and suppress real alerts. Dropping it
+		// silently would be just as bad, so say so on the wire.
+		if !isUsablePrice(price) {
+			excluded = append(excluded, wireExcludedSource{
+				Source: source,
+				Reason: "no_price",
+				NoteVI: "Sàn đang gửi giá không dùng được, đã loại khỏi so sánh",
+			})
+			continue
+		}
 		pricesCopy[source] = price
 	}
 	s.pricesMutex.RUnlock()
+
+	// The matrix is always republished, including when it shrinks to nothing.
+	// Returning here instead would leave the previous matrix frozen on screen
+	// with no field contradicting it.
+	defer s.broadcastSpreads(symbol, pricesCopy, excluded)
+
+	if len(pricesCopy) < 2 {
+		return
+	}
 
 	var minPrice, maxPrice float64
 	var minSource, maxSource string
@@ -132,43 +158,45 @@ func (s *FuturesScanner) checkArbitrage(symbol string) {
 		}
 	}
 
-	profitPct := ((maxPrice - minPrice) / minPrice) * 100
+	// This is a GROSS spread: no fee, funding or slippage has been deducted.
+	// Step 1.3 adds the fee model; slippage needs order book depth and does not
+	// arrive before phase 2.
+	grossPct := spreadGrossPct(minPrice, maxPrice)
 
-	// Only alert if profit is significant (>0.05%) and we haven't alerted recently
-	if profitPct > 0.05 {
+	// Only alert if the gross spread is significant and we haven't alerted recently
+	if grossPct > alertMinSpreadPct {
 		opportunityKey := fmt.Sprintf("%s_%s_%s", symbol, minSource, maxSource)
 
-		s.opportunityMutex.RLock()
-		lastAlert, exists := s.lastOpportunity[opportunityKey]
-		s.opportunityMutex.RUnlock()
-
 		now := time.Now()
-		// Only send alert if it's been more than 10 seconds since last alert for this pair
-		// This prevents spam while still allowing frequent updates for crypto markets
-		if !exists || now.Sub(lastAlert) > 10*time.Second {
-			s.opportunityMutex.Lock()
+
+		// Claiming the window must be atomic: two ingestion goroutines reaching
+		// here together would otherwise both pass the check and emit the same
+		// alert twice, with the same derived id.
+		s.opportunityMutex.Lock()
+		lastAlert, exists := s.lastOpportunity[opportunityKey]
+		claimed := !exists || now.Sub(lastAlert) > opportunityCooldown
+		if claimed {
 			s.lastOpportunity[opportunityKey] = now
-			s.opportunityMutex.Unlock()
+		}
+		s.opportunityMutex.Unlock()
 
-			opportunity := ArbitrageOpportunity{
-				Symbol:     symbol,
-				BuySource:  minSource,
-				SellSource: maxSource,
-				BuyPrice:   minPrice,
-				SellPrice:  maxPrice,
-				ProfitPct:  profitPct,
-				Timestamp:  now.UnixMilli(),
+		if claimed {
+			opportunity := newWireOpportunity(
+				symbol, minSource, maxSource, minPrice, maxPrice, now.UnixMilli(),
+			)
+			if s.onOpportunity != nil {
+				s.onOpportunity(opportunity)
 			}
-
 			s.broadcastOpportunity(opportunity)
 		}
 	}
 
-	// Always broadcast current spreads for the spread matrix using the copy
-	s.broadcastSpreads(symbol, pricesCopy)
 }
 
-func (s *FuturesScanner) broadcastOpportunity(opportunity ArbitrageOpportunity) {
+// broadcast writes one contract message to every connected client and drops the
+// clients that fail. All three message types share it so the fan-out and the
+// client cleanup exist in exactly one place.
+func (s *FuturesScanner) broadcast(message any) {
 	s.clientsMutex.RLock()
 	clients := make([]*websocket.Conn, 0, len(s.wsClients))
 	for client := range s.wsClients {
@@ -176,25 +204,16 @@ func (s *FuturesScanner) broadcastOpportunity(opportunity ArbitrageOpportunity) 
 	}
 	s.clientsMutex.RUnlock()
 
-	message := map[string]interface{}{
-		"type":        "arbitrage",
-		"opportunity": opportunity,
+	if len(clients) == 0 {
+		return
 	}
 
-	s.wsWriteMutex.Lock()
-	defer s.wsWriteMutex.Unlock()
-
-	var toRemove []*websocket.Conn
-	for _, client := range clients {
-		err := client.WriteJSON(message)
-		if err != nil {
-			log.Printf("WebSocket write error: %v", err)
-			client.Close()
-			toRemove = append(toRemove, client)
-		}
+	toRemove, err := s.writeToClients(clients, message)
+	if err != nil {
+		log.Printf("WebSocket broadcast dropped: %v", err)
+		return
 	}
 
-	// Remove failed clients
 	if len(toRemove) > 0 {
 		s.clientsMutex.Lock()
 		for _, client := range toRemove {
@@ -204,32 +223,21 @@ func (s *FuturesScanner) broadcastOpportunity(opportunity ArbitrageOpportunity) 
 	}
 }
 
-func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string]float64) {
-	s.clientsMutex.RLock()
-	clients := make([]*websocket.Conn, 0, len(s.wsClients))
-	for client := range s.wsClients {
-		clients = append(clients, client)
-	}
-	s.clientsMutex.RUnlock()
-
-	// Calculate all pairwise spreads
-	spreads := make(map[string]map[string]float64)
-
-	for buySource, buyPrice := range sourcePrices {
-		spreads[buySource] = make(map[string]float64)
-		for sellSource, sellPrice := range sourcePrices {
-			if buySource != sellSource {
-				spreadPct := ((sellPrice - buyPrice) / buyPrice) * 100
-				spreads[buySource][sellSource] = spreadPct
-			}
-		}
-	}
-
-	message := map[string]interface{}{
-		"type":    "spreads",
-		"symbol":  symbol,
-		"spreads": spreads,
-		"prices":  sourcePrices,
+// writeToClients holds the shared write mutex for the shortest possible span and
+// returns the clients whose write failed.
+//
+// The deadline bounds one write, so a client that stops reading is dropped
+// instead of blocking forever. It does not make this cheap: broadcast still runs
+// synchronously on the ingestion path, so N stalled clients cost up to
+// N*wsWriteTimeout before the tick completes. Removing that needs a per-client
+// send queue, which belongs with the broadcast rework in PLAN.md §7.3.
+func (s *FuturesScanner) writeToClients(clients []*websocket.Conn, message any) ([]*websocket.Conn, error) {
+	// Encode once. WriteJSON per client would also make an encoding failure look
+	// like a transport failure, evicting every connected dashboard over one
+	// unencodable value, and sending each a truncated frame first.
+	payload, err := json.Marshal(message)
+	if err != nil {
+		return nil, fmt.Errorf("encode %T: %w", message, err)
 	}
 
 	s.wsWriteMutex.Lock()
@@ -237,22 +245,44 @@ func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string
 
 	var toRemove []*websocket.Conn
 	for _, client := range clients {
-		err := client.WriteJSON(message)
-		if err != nil {
+		if err := client.SetWriteDeadline(time.Now().Add(wsWriteTimeout)); err != nil {
+			log.Printf("WebSocket set deadline error: %v", err)
+			client.Close()
+			toRemove = append(toRemove, client)
+			continue
+		}
+		if err := client.WriteMessage(websocket.TextMessage, payload); err != nil {
 			log.Printf("WebSocket write error: %v", err)
 			client.Close()
 			toRemove = append(toRemove, client)
 		}
 	}
+	return toRemove, nil
+}
 
-	// Remove failed clients
-	if len(toRemove) > 0 {
-		s.clientsMutex.Lock()
-		for _, client := range toRemove {
-			delete(s.wsClients, client)
-		}
-		s.clientsMutex.Unlock()
+func (s *FuturesScanner) broadcastOpportunity(opportunity wireOpportunity) {
+	s.broadcast(wireArbitrage{
+		Type:         "arbitrage",
+		V:            wireVersion,
+		ServerTimeMs: time.Now().UnixMilli(),
+		Opportunity:  opportunity,
+	})
+}
+
+func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string]float64, excluded []wireExcludedSource) {
+	// Build the O(n^2) matrix only if there is somebody to send it to.
+	if !s.hasClients() {
+		return
 	}
+	s.broadcast(newWireSpreads(symbol, sourcePrices, excluded, time.Now().UnixMilli()))
+}
+
+// hasClients reports whether any dashboard is connected, so the broadcast path
+// can skip building a message nobody will receive.
+func (s *FuturesScanner) hasClients() bool {
+	s.clientsMutex.RLock()
+	defer s.clientsMutex.RUnlock()
+	return len(s.wsClients) > 0
 }
 
 func (s *FuturesScanner) broadcastPrices() {
@@ -260,49 +290,22 @@ func (s *FuturesScanner) broadcastPrices() {
 	defer ticker.Stop()
 
 	for range ticker.C {
+		if !s.hasClients() {
+			continue
+		}
+
 		s.pricesMutex.RLock()
-		pricesCopy := make(map[string]map[string]float64)
+		pricesCopy := make(map[string]map[string]float64, len(s.prices))
 		for symbol, prices := range s.prices {
-			pricesCopy[symbol] = make(map[string]float64)
-			for exchange, price := range prices {
-				pricesCopy[symbol][exchange] = price
+			pricesCopy[symbol] = make(map[string]float64, len(prices))
+			for source, price := range prices {
+				pricesCopy[symbol][source] = price
 			}
 		}
 		s.pricesMutex.RUnlock()
 
 		if len(pricesCopy) > 0 {
-			message := map[string]interface{}{
-				"type":   "prices",
-				"prices": pricesCopy,
-			}
-
-			s.clientsMutex.RLock()
-			clients := make([]*websocket.Conn, 0, len(s.wsClients))
-			for client := range s.wsClients {
-				clients = append(clients, client)
-			}
-			s.clientsMutex.RUnlock()
-
-			s.wsWriteMutex.Lock()
-			var toRemove []*websocket.Conn
-			for _, client := range clients {
-				err := client.WriteJSON(message)
-				if err != nil {
-					log.Printf("WebSocket write error: %v", err)
-					client.Close()
-					toRemove = append(toRemove, client)
-				}
-			}
-			s.wsWriteMutex.Unlock()
-
-			// Remove failed clients
-			if len(toRemove) > 0 {
-				s.clientsMutex.Lock()
-				for _, client := range toRemove {
-					delete(s.wsClients, client)
-				}
-				s.clientsMutex.Unlock()
-			}
+			s.broadcast(newWirePrices(pricesCopy, time.Now().UnixMilli()))
 		}
 	}
 }
@@ -316,6 +319,20 @@ func (s *FuturesScanner) handleWebSocket(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	defer conn.Close()
+
+	// The dashboard builds its source list, symbol selector and cost disclaimer
+	// from this message, so it has to arrive before any data. Sending it before
+	// the client joins wsClients guarantees no broadcast can overtake it.
+	failed, err := s.writeToClients([]*websocket.Conn{conn}, newWireMeta(s.symbols, time.Now().UnixMilli()))
+	if err != nil || len(failed) > 0 {
+		// Registering a client that never received meta would leave a blank
+		// dashboard reading "Connected".
+		if err == nil {
+			err = fmt.Errorf("client dropped the connection")
+		}
+		log.Printf("WebSocket meta write failed for %s, dropping connection: %v", r.RemoteAddr, err)
+		return
+	}
 
 	s.clientsMutex.Lock()
 	s.wsClients[conn] = true
@@ -345,9 +362,9 @@ func main() {
 		log.Println("No .env file found, using system environment variables")
 	}
 
-	scanner := NewFuturesScanner()
-
 	symbols := []string{"BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT"}
+
+	scanner := NewFuturesScanner(symbols)
 
 	// Start processing goroutines
 	go scanner.processPrices()

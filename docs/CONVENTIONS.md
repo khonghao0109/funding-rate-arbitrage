@@ -371,7 +371,7 @@ Ghi nhận, không cần sửa ngay — xử lý dần theo giai đoạn tương
 |---|---|---|
 | `convertToOKXSymbol` v.v. hardcode `switch` trong từng connector | `okx.go`, `gate.go`, `kraken.go`, `paradex.go` | GĐ 2.4 → `instruments` |
 | `coin := symbol[:3]` cắt cứng 3 ký tự | `hyperliquid.go:58` | GĐ 2.4 (bug) |
-| `ProfitPct` không nói rõ Pct hay Frac ở tầng tính | `main.go` | GĐ 1.3 |
+| ~~`ProfitPct` không nói rõ Pct hay Frac~~ — ✅ trả xong ở GĐ 1.0: trên wire là `spread_gross_pct` / `spread_after_fees_pct`, FE dùng `minSpreadFilterPct`. Không còn định danh nào gọi số thô là "profit" | ~~`main.go`~~ | ✅ GĐ 1.0 |
 | Không có `ctx`, goroutine không có điều kiện thoát | tất cả connector | GĐ 1.5 |
 | `PriceData.Timestamp` không phân biệt thời điểm sàn phát và thời điểm nhận | `types.go` | GĐ 1.1 |
 | Struct trùng lặp `BinanceFuturesTrade` / `BinanceSpotTrade` giống hệt nhau | `binance.go` | GĐ 1.6 |

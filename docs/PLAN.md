@@ -31,10 +31,10 @@
 | Ngôn ngữ | Go 1.23.5 |
 | Dependency | `gorilla/websocket` v1.5.3, `joho/godotenv` v1.5.1 |
 | Tổng dòng code Go | 2.144 dòng (`main.go` 387 + `exchanges/` 1.757) |
-| Frontend | Vanilla JS 925 dòng + HTML 682 dòng, TradingView Lightweight Charts |
+| Frontend | Vanilla JS ~1.100 dòng + HTML ~760 dòng, TradingView Lightweight Charts. Danh sách nguồn và symbol **dựng từ message `meta`**, không còn hardcode |
 | Số nguồn dữ liệu | 10 (7 futures + 2 spot + 1 oracle) |
 | Cặp giao dịch | BTCUSDT, ETHUSDT, XRPUSDT, SOLUSDT (hardcode tại `main.go:352`) |
-| Test coverage | **0%** — không có file `_test.go` nào |
+| Test coverage | **46,6%** ở `main` (25 test, Bước 1.0); `exchanges/` vẫn 0% |
 | Persistence | **Không có** — toàn bộ state nằm trong RAM |
 
 ### 1.2. Đã có gì
@@ -68,7 +68,7 @@
 | 5 | **Khái niệm vị thế / margin / PnL** | Không quản trị được rủi ro | GĐ 5 |
 | 6 | **Lọc dữ liệu cũ (staleness)** — `Timestamp` bị vứt bỏ tại `main.go:63-72` | Sàn rớt kết nối → giá cũ vẫn sinh tín hiệu giả | GĐ 1 |
 | 7 | **Tách bạch spot ↔ perp trong logic** — `main.go:107-135` lấy min/max trên toàn bộ source | Sinh "cơ hội" không thực thi được | GĐ 1 |
-| 8 | **Test tự động** | Không an toàn khi động đến tiền thật | GĐ 1 |
+| 8 | **Test tự động** — 🔄 25 test cho hợp đồng wire ở Bước 1.0; `exchanges/` và `testdata/` vẫn trống | Connector đổi định dạng không ai biết | GĐ 1.6 |
 | 9 | **Cấu hình** — symbol, ngưỡng, sàn đều hardcode | Không vận hành linh hoạt được | GĐ 1 |
 | 10 | **Alert ra ngoài** (Telegram/Discord) | Phải ngồi nhìn màn hình | GĐ 3 |
 | 11 | **Instrument metadata** (`stepSize`, `tickSize`, `minNotional`, contract size) | Không tính được size delta-neutral đúng — hai chân lệch nhau ngay lệnh đầu | GĐ 2 |
@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ⬜ Chưa bắt đầu | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **1/7 bước** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -128,7 +128,7 @@
 
 > Hai mục trong `PLAN.md` ở thư mục gốc đều đã xong — file đó nên được xoá hoặc thay bằng file này.
 
-**Còn nợ 10%:** không có test, không có config, không có xử lý staleness → chuyển sang GĐ 1.
+**Còn nợ 10%:** không có config, không có xử lý staleness, connector chưa có test → chuyển sang GĐ 1. Hợp đồng WebSocket đã chốt và có test ở Bước 1.0.
 
 ---
 
@@ -139,14 +139,30 @@
 
 > **Cập nhật sau kiểm tra tiền-giai-đoạn (2026-08-28):** tăng từ 6 lên 7 bước. Kiểm tra code thật phát hiện 3 vấn đề chặn mà bản kế hoạch đầu không thấy: `Timestamp` mang hai nghĩa khác nhau tuỳ sàn nên không dùng làm cơ sở staleness được; một ngưỡng staleness duy nhất sẽ báo nhầm sàn thanh khoản mỏng; và ba bước 1.1–1.3 đều đổi hợp đồng JSON với frontend. Bước 1.0 được thêm để chốt hợp đồng một lần thay vì sửa `app.js` ba lần. Refactor `Feeds` cũng được kéo từ Bước 2.2 lên 1.5 để chỉ sửa 10 call site một lần.
 
-#### Bước 1.0 — Chốt hợp đồng WebSocket
+#### Bước 1.0 — Chốt hợp đồng WebSocket ✅
 - Thiết kế **một lần** toàn bộ shape JSON mà GĐ 1 sẽ cần: cờ trạng thái nguồn (live/stale/disconnected), ba khối spread tách biệt, số đã trừ phí, metadata nguồn, **và chỗ cho dữ liệu thanh khoản** (khối lượng đỉnh sổ ngay bây giờ, độ sâu đầy đủ ở GĐ 2 — xem [§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
 - Cập nhật `app.js` **một lần** theo shape mới. Backend gửi giá trị mặc định hoặc rỗng cho phần chưa có dữ liệu.
 - Từ 1.1 đến 1.3 chỉ **điền dữ liệu** vào hợp đồng này, không đổi shape nữa.
 - Dọn kèm: `go mod tidy` — `godotenv` đang bị đánh dấu `// indirect` sai, nó được import trực tiếp tại [main.go:14](../main.go#L14).
 - **Nghiệm thu:** dashboard chạy đúng như trước trên hợp đồng mới, với mọi trường mới ở giá trị mặc định.
 
-> Lý do tồn tại bước này: `app.js` có 925 dòng và hardcode danh sách nguồn ở 4 chỗ ([42-53](../static/app.js#L42-L53), [241-250](../static/app.js#L241-L250), [538-547](../static/app.js#L538-L547), [614](../static/app.js#L614)). Sửa nó ba lần liên tiếp mà không có test nào bảo vệ là ba lần có nguy cơ vỡ dashboard.
+**Đã làm (2026-08-28).** Hợp đồng đầy đủ ở [WS-CONTRACT.md](WS-CONTRACT.md): 4 message type (`meta`, `prices`, `spreads`, `arbitrage`), phong bì `{type, v, server_time_ms}`. `meta` gửi một lần lúc connect và **xoá cả 5 chỗ hardcode** trong `app.js` (PLAN cũ ghi 4 — thiếu `getShortSourceName`). Ma trận thành **mảng nhóm** ngay từ 1.0 (một nhóm `all`, `tradable:false`) để 1.2 chỉ tách nhóm chứ không sửa lại `app.js`. Ô ma trận là object `{spread_gross_pct, spread_after_fees_pct}` — trên wire **không còn trường nào tên `profit_*`**. Chỗ cho thanh khoản (`best_bid`/`best_ask`/`best_bid_qty_coin`/`best_ask_qty_coin`) đã có theo [§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh). `go mod tidy` đã bỏ `// indirect` sai của `godotenv`.
+
+**Bug có sẵn được sửa kèm** (đều nằm trong đúng vùng code của bước, không phải "tiện tay"):
+- `checkArbitrage` chia cho `minPrice` có thể bằng 0 → `+Inf` → `json.Marshal` lỗi → **rớt toàn bộ client**. Nay `isUsablePrice` loại giá ≤ 0, NaN và vô cực, và **nói ra lý do** qua `excluded_sources`.
+- Dedup cảnh báo là check-then-act qua hai vùng khoá khác nhau; `processPrices` và `processOrderbooks` chạy song song nên hai goroutine cùng qua cửa → cảnh báo trùng.
+- `WriteJSON` cho từng client: một giá trị không mã hoá được sẽ **đuổi mọi client** sau khi gửi cho mỗi client một frame cụt. Nay mã hoá một lần rồi mới fan-out.
+- `changeSymbol` deref `#symbolStatus` — phần tử này **chưa bao giờ tồn tại** trong `index.html`, nên mọi lần đổi symbol đều ném TypeError.
+- Cột "Profit %" sắp xếp theo `data-sort="profit"` trong khi dữ liệu là `profit_pct` → sắp xếp theo cột đó không bao giờ hoạt động.
+
+**Phát hiện ngoài phạm vi — ghi nhận, chưa xử lý:**
+- `checkArbitrage` vẫn duyệt mọi nguồn nên **Pyth vẫn có thể xuất hiện trong bảng cảnh báo**. Ma trận đã được đánh dấu `tradable:false` nên không tô cơ hội, nhưng bảng cảnh báo thì chưa. → **Bước 1.2**.
+- Hợp đồng mới làm payload `spreads` **to gấp 2,8 lần** (6.861 B so với 2.475 B ở 10 nguồn) và vẫn gửi metadata tĩnh của nhóm mỗi tick. → [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
+- `broadcast` chạy **đồng bộ trên luồng ingest**; deadline ghi 2s mới thêm chỉ chặn được vô hạn, chưa chặn được N×2s. Cần hàng đợi gửi riêng cho từng client. → [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
+- `wire_test.go` chép tay danh sách 10 nguồn của `main()`; thêm connector mà quên đăng ký thì test không bắt được. → **Bước 1.4**, khi `config.yaml` thành nguồn sự thật duy nhất cho cả wiring lẫn `meta`.
+- `#symbolStatus` vẫn không tồn tại trong `index.html`; lời gọi nay đã được guard nhưng phần hiển thị đó là code chết. → **Bước 1.4**.
+
+> Lý do tồn tại bước này: `app.js` có 925 dòng và hardcode danh sách nguồn ở 5 chỗ ([42-53](../static/app.js#L42-L53), [241-250](../static/app.js#L241-L250), [538-547](../static/app.js#L538-L547), [614](../static/app.js#L614)). Sửa nó ba lần liên tiếp mà không có test nào bảo vệ là ba lần có nguy cơ vỡ dashboard.
 
 #### Bước 1.1 — Lọc dữ liệu cũ (staleness filter)
 - ⚠️ **Không dùng `Timestamp` hiện tại làm cơ sở.** Field này mang hai nghĩa khác nhau: Binance/OKX/Gate/Hyperliquid/Pyth điền thời gian sàn phát, còn Bybit/Paradex/Kraken điền `time.Now().UnixMilli()` — tức với 3 sàn đó nó luôn "mới" kể cả khi sàn đã ngừng gửi dữ liệu.
@@ -548,9 +564,11 @@ Chi phí thật nằm ở **CPU mã hoá JSON phía Go và băng thông**, khôn
 
 Thứ tự sửa, rẻ nhất trước:
 
+0. **Đo được ở Bước 1.0:** hợp đồng mới làm payload `spreads` to gấp **2,8 lần** (6.861 B so với 2.475 B, 10 nguồn) vì mỗi tick gửi lại metadata tĩnh của nhóm (`note_vi`, `market_type`, `quote_asset`) và một `spread_after_fees_pct: null` cho mỗi ô. Đây là cái giá đã biết của việc chốt hợp đồng một lần, và nó làm ba việc dưới đây đáng làm sớm hơn.
 1. Throttle `broadcastSpreads` bằng ticker giống `broadcastPrices` đã làm — ~10 dòng, ăn phần lớn lợi ích
 2. Client gửi symbol đang xem, server chỉ đẩy symbol đó — bỏ lãng phí N×
 3. FE bỏ `innerHTML` dựng lại toàn bộ, chuyển sang cập nhật `textContent` từng ô — chỉ cần khi vượt ~20 symbol
+4. **Hàng đợi gửi riêng cho từng client.** `broadcast` hiện chạy đồng bộ trên luồng ingest dưới `wsWriteMutex`; deadline 2s thêm ở Bước 1.0 biến "treo vô hạn" thành "treo có chặn", nhưng N client kẹt vẫn tốn N×2s mỗi tick, đủ để `priceChan` đầy và chặn ngược các connector
 
 ### 7.4. Chiến lược độ sâu sổ lệnh
 
@@ -635,7 +653,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   0/7 bước   ← BẮT ĐẦU TỪ ĐÂY
+[  ] GĐ 1  Củng cố lõi                   1/7 bước   ← ĐANG LÀM
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -645,4 +663,4 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** Bước 1.1 — thêm staleness filter, đổi `map[string]float64` thành `map[string]PricePoint` trong `main.go`.
+**Việc tiếp theo cụ thể:** Bước 1.1 — thêm staleness filter. Hợp đồng đã có sẵn `recv_at_ms`, `venue_time_ms`, `age_ms`, `status` và `stale_after_sec`; bước 1.1 chỉ điền dữ liệu thật vào, không đổi shape ([WS-CONTRACT.md](WS-CONTRACT.md)).
