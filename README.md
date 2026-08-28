@@ -126,6 +126,18 @@ Chi tiết từng bước kèm **tiêu chí nghiệm thu**: [docs/PLAN.md](docs/
 - JavaScript thuần, không framework
 - TradingView Lightweight Charts
 
+### Quyết định kỹ thuật
+
+| Quyết định | Lý do ngắn gọn |
+|---|---|
+| **Toàn bộ backend là Go** — kể cả REST khi thêm sau | REST và WS dùng chung bộ kiểu dữ liệu và tầng chuẩn hoá đơn vị. Tách ngôn ngữ nghĩa là viết logic chuẩn hoá từng sàn hai lần |
+| **Backtest cũng là Go**, import thẳng `internal/strategy` | Backtest và production phải chạy cùng một đoạn code, nếu không thì cổng kiểm chứng ở Bước 3.5 mất giá trị chẩn đoán |
+| **Python chỉ đọc SQLite** để vẽ và khám phá dữ liệu | Không bao giờ nằm trong vòng lặp giao dịch. Trở thành bắt buộc ở GĐ 8 (thống kê/ML) |
+| **Không dùng CCXT** | Nó chuẩn hoá đi đúng những khác biệt giữa các sàn mà dự án này cần nhìn thấy |
+| **Giữ vanilla JS** | FE không phải nút thắt — lãng phí nằm ở tầng broadcast phía server |
+
+Lập luận đầy đủ: [docs/PLAN.md §7](docs/PLAN.md#7-quyết-định).
+
 ---
 
 ## Cài đặt và chạy

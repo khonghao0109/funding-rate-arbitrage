@@ -86,6 +86,33 @@ duration. (Paradex is the exception — it accrues continuously.)
 **7. Positions are read from the venue, never from local state.** Local
 bookkeeping is a cache and is assumed stale until reconciled.
 
+**8. Go owns everything that decides or executes a trade.** Ingestion, REST,
+instrument registry, strategy, backtest, execution and risk are Go, in one
+process. Do not propose splitting any of them into another language: REST and
+WebSocket share the same types and the same unit-normalization layer, and a
+second implementation of "normalize Kraken's relative funding rate" will drift
+from the first.
+
+The backtest engine specifically must import `internal/strategy` and call the
+production entry/exit functions — never a reimplementation, never a port. Phase
+3 step 3.5 gates the project on backtest results matching paper trading; that
+gate is meaningless if the two sides run different code.
+
+Python is read-only and lives outside the process: it reads SQLite to plot and
+explore. It becomes necessary at phase 8 (cointegration, VECM/GARCH, ML), where
+Go has no equivalent — not before, and never inside the trading loop.
+
+**9. Do not introduce CCXT.** It normalizes away exactly the venue differences
+this project has found to be decisive (see the trap table below). Seven
+hand-written connectors already work.
+
+**10. The frontend is not the bottleneck — do not propose a framework.** The
+vanilla JS already batches messages at 50ms, keeps only the newest spread
+snapshot, throttles the matrix rebuild to 300ms, and updates charts
+incrementally. The waste is server-side: `broadcastSpreads` fires on every tick
+and ships every symbol to every client. Fix the broadcast layer first. See
+docs/PLAN.md §7.3 for scale thresholds.
+
 ---
 
 ## Domain traps already discovered

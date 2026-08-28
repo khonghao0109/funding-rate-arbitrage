@@ -3,6 +3,20 @@
 // It reports cumulative return, realized APR, max drawdown, funding reversal
 // count, and the share of periods that were profitable.
 //
+// This package MUST import package strategy and call the same entry and exit
+// functions production calls. It must never reimplement them, and the rules
+// must never be ported to another language.
+//
+// The reason is phase 3 step 3.5: the run is gated on backtest results
+// matching a live paper-trading period. That gate only diagnoses anything if
+// both sides execute identical code. With two implementations, a mismatch no
+// longer distinguishes "the strategy is wrong" from "the two implementations
+// drifted" — and the gate stops being worth running.
+//
+// Parameter sweeps run as parallel goroutines. Results are written to the
+// store; plotting and ad-hoc exploration happen outside this process, reading
+// what it wrote.
+//
 // Two correctness rules that separate a useful backtest from a misleading one:
 //
 //   - Funding is a DISCRETE event. A position earns nothing unless it is open

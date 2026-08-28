@@ -227,6 +227,7 @@
 - Bảng funding hiện tại theo sàn × cặp, **quy về cùng đơn vị 8h** để so sánh công bằng, tô màu theo mức hấp dẫn.
 - Đếm ngược mốc funding kế tiếp (ẩn với sàn `continuous`).
 - Biểu đồ lịch sử funding + basis spot↔perp cùng sàn (thành quả Bước 1.2).
+- ⚠️ Nếu mở rộng quá ~20 symbol, tầng broadcast phải sửa trước — xem [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
 - **Nghiệm thu:** nhìn dashboard biết ngay nên vào cặp nào, sàn nào — và biết con số đang so sánh là cùng đơn vị.
 
 ---
@@ -247,9 +248,12 @@
 - **Nghiệm thu:** tín hiệu ghi log đầy đủ lý do vào/ra.
 
 #### Bước 3.3 — Backtest engine
+- **Viết bằng Go, import trực tiếp `internal/strategy`** — không viết lại luật vào/ra (quyết định Q8, §7.1). Backtest và production phải chạy cùng một đoạn code, nếu không thì Bước 3.5 mất giá trị chẩn đoán.
 - Chạy lại logic tín hiệu trên dữ liệu lịch sử của Bước 2.4.
-- Báo cáo: tổng lợi nhuận, APY thực tế, max drawdown, số lần đảo chiều funding, tỉ lệ chu kỳ có lãi.
-- **Nghiệm thu:** có báo cáo backtest 6 tháng cho ít nhất 2 cặp.
+- Funding là **sự kiện rời rạc**: đếm số mốc settle đã đi qua, không nhân APY với thời gian nắm giữ. Lọc `rateType = Special`.
+- Báo cáo: tổng lợi nhuận, APR thực tế, max drawdown, số lần đảo chiều funding, tỉ lệ chu kỳ có lãi. Ghi ra SQLite/CSV để phân tích ngoài.
+- Quét tham số chạy song song bằng goroutine.
+- **Nghiệm thu:** có báo cáo backtest 6 tháng cho ít nhất 2 cặp; engine dùng đúng hàm tín hiệu mà production sẽ dùng (kiểm bằng cách đọc import).
 
 #### Bước 3.4 — Alert ra ngoài
 - Telegram bot (ưu tiên) / Discord webhook.
@@ -333,7 +337,7 @@
 #### Bước 5.5 — Vận hành production
 - Deploy VPS gần vùng máy chủ sàn, systemd/Docker, auto-restart.
 - Báo cáo PnL hằng ngày qua Telegram.
-- Tối ưu `broadcastSpreads` nếu đã thành nút thắt (nợ kỹ thuật từ GĐ 1).
+- Tối ưu tầng broadcast nếu đã thành nút thắt — throttle `broadcastSpreads`, client đăng ký symbol. Ngưỡng và thứ tự sửa ở [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
 - **Nghiệm thu:** chạy 30 ngày không cần can thiệp thủ công.
 
 **🎯 Đến đây: hoàn thành Bot Funding Rate Arbitrage. Kỳ vọng 5–15%/năm.**
@@ -426,18 +430,85 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 
 ---
 
-## 7. QUYẾT ĐỊNH CẦN CHỐT
+## 7. QUYẾT ĐỊNH
 
-Những mục dưới đây cần bạn quyết trước khi bước vào giai đoạn tương ứng:
+### 7.1. Đã chốt
+
+| # | Quyết định | Chốt ngày |
+|---|---|---|
+| **Q7** | **Backend dùng Go cho toàn bộ** — WS, REST, registry, signal, execution, risk. Không thêm ngôn ngữ vào đường đi của tiền | 2026-08-28 |
+| **Q8** | **Engine backtest viết bằng Go, dùng chung `internal/strategy` với production.** Python chỉ đọc kết quả để phân tích | 2026-08-28 |
+| **Q9** | **Không dùng CCXT.** Giữ connector tự viết | 2026-08-28 |
+| **Q10** | **Giữ frontend vanilla JS.** Sửa backend broadcast trước, không đổi framework | 2026-08-28 |
+
+#### Q7 — Vì sao Go cho cả REST
+
+REST và WS chia sẻ **cùng bộ kiểu dữ liệu và cùng tầng chuẩn hoá đơn vị**: `fundingInfo` (REST) quyết định `IntervalSec` mà `markPrice` (WS) dùng; instrument registry (REST) quyết định `stepSize` mà execution dùng. Tách ngôn ngữ nghĩa là viết logic chuẩn hoá Kraken/OKX **hai lần** — đúng chỗ mà [DATA-REQUIREMENTS.md §3](DATA-REQUIREMENTS.md#3-khảo-sát-funding-rate-7-sàn) chỉ ra là nơi bug sinh ra.
+
+REST trong Go không cần thư viện ngoài: `crypto/hmac` + `crypto/sha256` cho signing, `net/http` + `context` cho client, `golang.org/x/time/rate` cho rate limit.
+
+#### Q8 — Vì sao backtest cũng Go
+
+Quyết định này bị ràng buộc bởi chính **Bước 3.5** — cổng kiểm chứng backtest với mô phỏng thực tế. Cổng đó chỉ có giá trị chẩn đoán khi backtest và production chạy **cùng một đoạn code**. Nếu logic tín hiệu ở `internal/strategy` (Go) còn backtest viết lại bằng Python, khi hai bên lệch nhau sẽ không phân biệt được *chiến lược sai* hay *hai bản triển khai đã trôi khỏi nhau* — mất luôn thứ mà cổng tồn tại để phát hiện.
+
+Thêm nữa, backtest funding arb là **máy trạng thái duyệt chuỗi sự kiện settle**, không phải đại số ma trận: không vectorize được, nên lợi thế lớn nhất của pandas biến mất. Các thư viện `backtrader`/`vectorbt`/`zipline` đều giả định chiến lược theo nến OHLCV một chân — không mô hình hoá được funding hai chân với chu kỳ khác nhau giữa các sàn.
+
+Quét tham số cũng nhanh hơn hàng chục lần nhờ goroutine song song.
+
+**Ranh giới với Python:**
+
+```
+Go     → strategy, backtest engine, execution, risk    (giữ state + chạm tiền)
+SQLite → ranh giới duy nhất
+Python → đọc kết quả: vẽ equity curve, khám phá ad-hoc  (CHỈ ĐỌC)
+```
+
+Python trở thành **bắt buộc** ở GĐ 8 (cointegration, VECM/GARCH, ML) — không có tương đương trong Go. Ranh giới SQLite ở trên đã sẵn sàng cho lúc đó.
+
+#### Q9 — Vì sao không CCXT
+
+CCXT **chuẩn hoá đi** đúng những khác biệt giữa các sàn mà khảo sát phát hiện là có ý nghĩa sống còn: ngữ nghĩa `fundingTime` của OKX, giá trị tuyệt đối của Kraken, mô hình liên tục của Paradex. Một lớp trừu tượng không nhìn thấy bên trong sẽ giấu chính xác những thứ cần nhìn thấy. Cộng thêm việc 7 connector tự viết đã chạy tốt.
+
+#### Q10 — Vì sao giữ vanilla JS
+
+FE hiện tại **đã tối ưu đúng cách** và không phải nút thắt: hàng đợi message gom lô 50ms ([app.js:357](../static/app.js#L357)), chỉ xử lý spread mới nhất và vứt phần còn lại ([app.js:400](../static/app.js#L400)), throttle 300ms cho việc dựng lại ma trận ([app.js:784](../static/app.js#L784)), chart dùng `series.update()` tăng dần.
+
+Lãng phí nằm ở **backend** — xem §7.3. React/Vue giúp quản lý độ phức tạp ứng dụng, không giúp render dữ liệu tần suất cao; muốn đạt hiệu năng như hiện tại còn phải bypass cơ chế reconcile của chúng.
+
+### 7.2. Còn cần chốt
 
 | # | Câu hỏi | Cần trước | Gợi ý |
 |---|---|---|---|
 | Q1 | Sàn nào làm sàn chính cho execution? | GĐ 4.2 | Binance — tài liệu tốt nhất, có testnet, thanh khoản cao |
 | Q2 | Database: SQLite hay PostgreSQL/TimescaleDB? | GĐ 2.3 | SQLite là đủ ở quy mô này; đổi sau nếu cần |
 | Q3 | Vốn thật dự kiến cho GĐ 4.6? | GĐ 4.6 | $200–500 để kiểm chứng, không phải để kiếm lời |
-| Q4 | Có giữ frontend vanilla JS hay chuyển framework? | GĐ 2.5 | Giữ vanilla — 925 dòng vẫn quản được, đừng đổi lúc này |
 | Q5 | Kênh alert: Telegram hay Discord? | GĐ 3.4 | Telegram — tiện trên điện thoại hơn |
 | Q6 | Chấp nhận đòn bẩy tối đa bao nhiêu ở chân perp? | GĐ 5.4 | 2–3x; cao hơn thì rủi ro thanh lý vượt lợi ích |
+
+> Q4 (framework FE) đã chuyển thành Q10 ở §7.1.
+
+### 7.3. Ngưỡng mở rộng của tầng broadcast
+
+Phân tích 2026-08-28. Nút thắt **không nằm ở FE** mà ở backend:
+
+- `broadcastSpreads` chạy trên **mỗi tick giá từ bất kỳ sàn nào** ([main.go:168](../main.go#L168)) — dựng ma trận O(n²) rồi `WriteJSON` tới mọi client. FE nhận hàng trăm message/giây rồi vứt gần hết, chỉ giữ cái cuối.
+- Backend gửi spread của **tất cả symbol** cho mọi client, FE tự lọc symbol đang xem. Hiện lãng phí 4×; ở 50 symbol sẽ là 50×.
+
+Chi phí thật nằm ở **CPU mã hoá JSON phía Go và băng thông**, không phải DOM.
+
+| Quy mô | Tình trạng |
+|---|---|
+| 4 symbol × 10 sàn (hiện tại) | ✅ Thoải mái |
+| ~20 symbol | ⚠️ Cần throttle backend + client đăng ký symbol |
+| 50–100 symbol | ❌ Phải lọc/xếp hạng phía server, chỉ đẩy top N |
+
+**Ngưỡng gãy phụ thuộc số SYMBOL, không phải số sàn** — và điều này chạm trực tiếp mục tiêu funding arb, vì cơ hội tốt thường nằm ở cặp thanh khoản mỏng, nghĩa là sẽ muốn quét nhiều cặp. Dashboard ở **Bước 2.7** sẽ chạm ngưỡng này đầu tiên.
+
+Thứ tự sửa, rẻ nhất trước:
+
+1. Throttle `broadcastSpreads` bằng ticker giống `broadcastPrices` đã làm — ~10 dòng, ăn phần lớn lợi ích
+2. Client gửi symbol đang xem, server chỉ đẩy symbol đó — bỏ lãng phí N×
+3. FE bỏ `innerHTML` dựng lại toàn bộ, chuyển sang cập nhật `textContent` từng ô — chỉ cần khi vượt ~20 symbol
 
 ---
 
