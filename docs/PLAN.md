@@ -75,6 +75,7 @@
 | 12 | **Bảng ánh xạ spot↔perp có xác thực** | Nguy cơ mở vị thế lệch coin | GĐ 2 |
 | 13 | **`Timestamp` mang hai nghĩa tuỳ sàn** — 3/8 sàn điền thời điểm nhận thay vì thời gian sàn | Không dùng làm cơ sở staleness được | GĐ 1.1 |
 | 14 | **Pyth bị tính như sàn giao dịch** trong `checkArbitrage` | Sinh "cơ hội" mua/bán trên oracle | GĐ 1.2 |
+| 15 | **Khối lượng đỉnh sổ bị vứt** — connector đã parse nhưng `OrderbookData` không có field | Không lọc được thanh khoản dù dữ liệu đã có sẵn miễn phí | GĐ 1.2 |
 
 ---
 
@@ -139,7 +140,7 @@
 > **Cập nhật sau kiểm tra tiền-giai-đoạn (2026-08-28):** tăng từ 6 lên 7 bước. Kiểm tra code thật phát hiện 3 vấn đề chặn mà bản kế hoạch đầu không thấy: `Timestamp` mang hai nghĩa khác nhau tuỳ sàn nên không dùng làm cơ sở staleness được; một ngưỡng staleness duy nhất sẽ báo nhầm sàn thanh khoản mỏng; và ba bước 1.1–1.3 đều đổi hợp đồng JSON với frontend. Bước 1.0 được thêm để chốt hợp đồng một lần thay vì sửa `app.js` ba lần. Refactor `Feeds` cũng được kéo từ Bước 2.2 lên 1.5 để chỉ sửa 10 call site một lần.
 
 #### Bước 1.0 — Chốt hợp đồng WebSocket
-- Thiết kế **một lần** toàn bộ shape JSON mà GĐ 1 sẽ cần: cờ trạng thái nguồn (live/stale/disconnected), ba khối spread tách biệt, số đã trừ phí, metadata nguồn.
+- Thiết kế **một lần** toàn bộ shape JSON mà GĐ 1 sẽ cần: cờ trạng thái nguồn (live/stale/disconnected), ba khối spread tách biệt, số đã trừ phí, metadata nguồn, **và chỗ cho dữ liệu thanh khoản** (khối lượng đỉnh sổ ngay bây giờ, độ sâu đầy đủ ở GĐ 2 — xem [§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
 - Cập nhật `app.js` **một lần** theo shape mới. Backend gửi giá trị mặc định hoặc rỗng cho phần chưa có dữ liệu.
 - Từ 1.1 đến 1.3 chỉ **điền dữ liệu** vào hợp đồng này, không đổi shape nữa.
 - Dọn kèm: `go mod tidy` — `godotenv` đang bị đánh dấu `// indirect` sai, nó được import trực tiếp tại [main.go:14](../main.go#L14).
@@ -158,6 +159,7 @@
 
 #### Bước 1.2 — Tách bạch Spot ↔ Perpetual ↔ Oracle
 - Thêm trường `MarketType` (`spot` / `perp` / `future` / `oracle`) thay vì suy ra từ hậu tố chuỗi.
+- 💰 **Thu khối lượng đỉnh sổ — đang miễn phí mà bị vứt.** `OrderbookData` chỉ có giá, trong khi Binance ([binance.go:30,32](../exchanges/binance.go#L30-L32)), Bybit ([bybit.go:19](../exchanges/bybit.go#L19)) và OKX ([okx.go:23](../exchanges/okx.go#L23)) đã parse sẵn khối lượng rồi bỏ đi. Thêm `BestBidQtyCoin` / `BestAskQtyCoin` → bộ lọc thanh khoản bậc một, không tốn thêm băng thông.
 - 🐛 **Loại Pyth khỏi so sánh giao dịch được.** `checkArbitrage` hiện duyệt toàn bộ `s.prices[symbol]`, nên scanner có thể báo *"mua ở Pyth, bán ở Binance"* — vô nghĩa vì Pyth là oracle không giao dịch được. `MarketType = oracle` chỉ dùng làm tham chiếu.
 - ⚠️ **Kraken quote là USD, không phải USDT.** Chênh lệch `PF_XBTUSD` với `BTCUSDT` chứa cả chênh USD/USDT. Loại khỏi so sánh chéo mặc định, hiển thị riêng có ghi chú.
 - Chia làm 3 phép tính riêng biệt, không trộn:
@@ -261,6 +263,8 @@ func ConnectBinanceFutures(symbols []string, f Feeds)
 - Bảng funding hiện tại theo sàn × cặp, **quy về cùng đơn vị 8h** để so sánh công bằng, tô màu theo mức hấp dẫn.
 - Đếm ngược mốc funding kế tiếp (ẩn với sàn `continuous`).
 - Biểu đồ lịch sử funding + basis spot↔perp cùng sàn (thành quả Bước 1.2).
+- **Lấy độ sâu sổ lệnh qua REST `depth?limit=100`** cho các cặp ứng viên, mỗi 1–4h — cả spot lẫn perp. Xếp hạng cơ hội **phải** kèm thanh khoản, nếu không screener sẽ đẩy cặp APR cao/sổ mỏng lên đầu ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
+- ⚠️ Kiểm **phía bid của chân spot** — đó là chỗ kẹt lúc thoát, không phải phía ask lúc vào.
 - ⚠️ Nếu mở rộng quá ~20 symbol, tầng broadcast phải sửa trước — xem [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
 - **Nghiệm thu:** nhìn dashboard biết ngay nên vào cặp nào, sàn nào — và biết con số đang so sánh là cùng đơn vị.
 
@@ -271,10 +275,12 @@ func ConnectBinanceFutures(symbols []string, f Feeds)
 **Mục tiêu:** Từ dữ liệu thô ra tín hiệu có kiểm chứng, chưa đặt lệnh.
 **Thời gian:** 3–4 tuần · **5 bước**
 
-#### Bước 3.1 — Máy tính APY
-- `APY = FundingRate × (24 / IntervalHours) × 365` — chuẩn hoá theo chu kỳ thật của từng sàn.
-- Tính **APY ròng** = APY thô − phí vào/ra khấu hao theo thời gian giữ dự kiến.
-- **Nghiệm thu:** có unit test đối chiếu với tính tay trên nhiều chu kỳ khác nhau.
+#### Bước 3.1 — Máy tính APR
+- `APR = RatePerInterval × (31.536.000 / IntervalSec)` — chuẩn hoá theo chu kỳ thật của từng sàn.
+- Tính **APR ròng** = APR thô − phí vào/ra − **slippage ước tính từ độ sâu** (thành quả Bước 2.7), khấu hao theo thời gian giữ dự kiến.
+- Đây là chỗ đầu tiên trong lộ trình được phép dùng chữ "ròng" — trước đó chưa có độ sâu nên chưa có slippage ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
+- Slippage phải tính cho **đúng size dự kiến**, không phải cho size tối thiểu.
+- **Nghiệm thu:** unit test đối chiếu với tính tay trên nhiều chu kỳ; APR ròng của một cặp sổ mỏng phải thấp hơn rõ rệt so với khi bỏ qua slippage.
 
 #### Bước 3.2 — Sinh tín hiệu
 - Điều kiện vào lệnh: funding rate > ngưỡng **VÀ** duy trì qua N chu kỳ **VÀ** APY ròng > sàn tối thiểu **VÀ** thanh khoản đủ.
@@ -330,6 +336,8 @@ func ConnectBinanceFutures(symbols []string, f Feeds)
 #### Bước 4.4 — Mở vị thế delta-neutral
 - Đặt đồng thời Spot Long + Perp Short cùng notional.
 - Tính chính xác khối lượng để `|Delta| ≈ 0` sau khi làm tròn.
+- **Bật WS `depth` incremental trong lúc vào/ra lệnh, tắt khi đang giữ vị thế** — đây là chỗ duy nhất trong lộ trình cần sổ lệnh realtime ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
+- Kiểm độ sâu ngay trước khi đặt: nếu sổ đã mỏng đi so với lúc sinh tín hiệu, huỷ thay vì vào ở giá xấu.
 - **Xử lý khớp lệnh một phần** — rủi ro lớn nhất của bước này: nếu 1 chân khớp còn chân kia không, bot đang **trần (unhedged)**. Bắt buộc có logic rollback/hedge khẩn cấp.
 - **Nghiệm thu:** test tình huống bơm lỗi (chân 2 thất bại) → bot tự đóng chân 1 trong vài giây.
 
@@ -543,6 +551,66 @@ Thứ tự sửa, rẻ nhất trước:
 1. Throttle `broadcastSpreads` bằng ticker giống `broadcastPrices` đã làm — ~10 dòng, ăn phần lớn lợi ích
 2. Client gửi symbol đang xem, server chỉ đẩy symbol đó — bỏ lãng phí N×
 3. FE bỏ `innerHTML` dựng lại toàn bộ, chuyển sang cập nhật `textContent` từng ô — chỉ cần khi vượt ~20 symbol
+
+### 7.4. Chiến lược độ sâu sổ lệnh
+
+Phân tích 2026-08-28. Câu hỏi: dự án có cần thu thập độ sâu sổ lệnh không?
+
+**Có — nhưng không phải dạng stream realtime, và không phải ở GĐ 1.**
+
+#### Vì sao funding arb ít nhạy với slippage hơn arbitrage giá
+
+Lợi nhuận đến từ **phí funding**, không phải chênh lệch giá. Chi phí vào/ra là chi phí **một lần**, khấu hao theo thời gian giữ — khác hẳn arbitrage chéo sàn nơi slippage ăn thẳng vào biên vốn đã mỏng.
+
+```
+Binance, taker cả hai chân:
+  Vào:  spot 0,10% + perp 0,05% = 0,15%
+  Ra:   spot 0,10% + perp 0,05% = 0,15%
+  Riêng phí:                      0,30%
+
+  Funding 0,01%/8h = 0,03%/ngày → hoà vốn sau ~10 ngày
+  Thêm slippage 0,20%  → tổng 0,50% → hoà vốn sau ~17 ngày
+```
+
+Slippage **không giết giao dịch, nhưng kéo thời gian hoà vốn tăng ~70%**. Nó quyết định *cơ hội nào đủ tiêu chuẩn*, không quyết định *giao dịch có khả thi không*.
+
+#### Ba chỗ độ sâu là bắt buộc
+
+1. **Xác định size — cổng chặn cứng.** Muốn vào $60.000 mà sổ chỉ có $10.000 trong phạm vi 0,1% thì không vào được ở mức giá đã mô hình hoá.
+2. **Bất đối xứng lúc thoát.** Vào lệnh khi funding hấp dẫn (thị trường bình thường); thoát khi funding đảo chiều — mà điều đó **tương quan với căng thẳng thị trường**, đúng lúc sổ mỏng đi. **Độ sâu lúc vào không dự báo được độ sâu lúc ra.** Chân đau nhất là phía bid của spot lúc thoát.
+3. **Xếp hạng cơ hội.** Funding cao thường nằm ở alt thanh khoản mỏng. Thiếu độ sâu, screener sẽ xếp *200% APR với sổ $2.000* trên *15% APR với sổ $500.000* — không phải thiếu thông tin mà là **thông tin sai hướng**.
+
+#### Nhưng không cần stream realtime
+
+| Cách | Chi phí | Cần không |
+|---|---|---|
+| WS `depth` incremental | Dựng lại sổ lệnh, quản sequence number, phát hiện gap, resync | ❌ Chỉ khi **đang đặt lệnh** |
+| REST `depth?limit=100` định kỳ | Một request mỗi vài phút cho cặp ứng viên | ✅ Đủ cho screening |
+
+Funding arb giữ vị thế **hàng ngày đến hàng tuần**. Không có lý do biết sổ lệnh đổi từng mili-giây khi mỗi tuần chỉ giao dịch một lần.
+
+#### Thứ đang miễn phí mà bị vứt đi
+
+`OrderbookData` chỉ có `BestBid`/`BestAsk`, **không có khối lượng** — trong khi connector đã parse sẵn rồi vứt:
+
+```
+binance.go:30,32   BestBidQty `json:"B"` / BestAskQty `json:"A"`
+bybit.go:19,145    Size `json:"v"`
+okx.go:23          Size `json:"sz"`
+```
+
+Khối lượng đỉnh sổ không thay được độ sâu đầy đủ, nhưng cho **bộ lọc thanh khoản bậc một miễn phí** — không subscribe thêm, không tốn băng thông. Đưa vào GĐ 1 vì hợp đồng JSON ở Bước 1.0 phải có sẵn chỗ, nếu không lại sửa `app.js` thêm lần nữa ở GĐ 2.
+
+#### Lịch trình
+
+| Cần gì | Bước |
+|---|---|
+| Khối lượng đỉnh sổ (miễn phí) | **1.0** (chỗ trong hợp đồng) + **1.2** (field) |
+| Độ sâu REST định kỳ để xếp hạng | **2.7** |
+| Mô hình slippage từ độ sâu → APR ròng thật | **3.1** |
+| WS depth khi đang đặt lệnh | **4.4** |
+
+Đây cũng là lý do Bước 1.3 phải gọi là **"đã trừ phí giao dịch"** chứ không phải "ròng": chưa có độ sâu thì chưa có slippage, chưa có slippage thì chưa phải ròng.
 
 ---
 

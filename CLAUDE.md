@@ -107,7 +107,15 @@ Go has no equivalent — not before, and never inside the trading loop.
 this project has found to be decisive (see the trap table below). Seven
 hand-written connectors already work.
 
-**10. The frontend is not the bottleneck — do not propose a framework.** The
+**10. Do not stream order book depth continuously.** Funding positions are held
+for days to weeks, so incremental `depth` — with its sequence numbers, gap
+detection and resync — is only justified while an order is actually being
+placed (phase 4.4). Periodic REST snapshots (`depth?limit=100`, every few
+minutes, candidate pairs only) are what screening needs. Depth also gates
+opportunity ranking: without it a 200% APR pair with a $2k book outranks a 15%
+pair with a $500k book. See docs/PLAN.md §7.4.
+
+**11. The frontend is not the bottleneck — do not propose a framework.** The
 vanilla JS already batches messages at 50ms, keeps only the newest spread
 snapshot, throttles the matrix rebuild to 300ms, and updates charts
 incrementally. The waste is server-side: `broadcastSpreads` fires on every tick
@@ -206,6 +214,10 @@ phase 1.
   Gate, Hyperliquid and Pyth fill it with the venue's own time, while Bybit,
   Paradex and Kraken fill it with `time.Now()`. It cannot be used as the basis
   for staleness — a receive timestamp set in one place is needed instead.
+- Top-of-book size is parsed and thrown away. `OrderbookData` carries only
+  prices, while the connectors already decode quantities (Binance `B`/`A`,
+  Bybit `v`, OKX `sz`). That is a free first-order liquidity filter going
+  unused.
 - Pyth is treated as a tradeable venue. `checkArbitrage` walks every entry in
   the price map, so the scanner can report "buy on Pyth, sell on Binance",
   which is meaningless — Pyth is an oracle.

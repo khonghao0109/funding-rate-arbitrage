@@ -58,10 +58,16 @@ E. NGOÀI SÀN   → 1 lần/giờ                → nguồn khác
 | Lịch sử funding 90–180 kỳ | `fundingRate` | Tỷ lệ kỳ dương, trung vị, độ lệch chuẩn — **điểm bền vững**, không phải rate tức thời |
 | Backfill 6–12 tháng | `fundingRate` (chạy 1 lần, riêng) | Kho dữ liệu backtest ở GĐ 3 |
 | Volume 24h | `ticker/24hr` | Lọc thanh khoản sơ bộ |
-| **Độ sâu sổ lệnh, spot lẫn perp, `limit ≥ 100`** | `depth` | Tính slippage cho đúng size. Dùng best bid/ask để ước lượng là **nguồn sai số lớn nhất** giữa backtest và thực tế |
+| **Độ sâu sổ lệnh, spot lẫn perp, `limit ≥ 100`** | `depth` | Tính slippage cho đúng size. Dùng best bid/ask để ước lượng là **nguồn sai số lớn nhất** giữa backtest và thực tế. Cũng là dữ liệu bắt buộc để **xếp hạng cơ hội** — thiếu nó, screener đẩy cặp APR cao/sổ mỏng lên đầu |
 | Open interest theo thời gian | `openInterestHist` | Tuỳ chọn — funding cao + OI tăng nhanh = cấu hình dễ đảo chiều |
 
 > Với độ sâu sổ lệnh: kiểm **phía bid của chân spot**, vì đó là chỗ bạn kẹt lúc thoát, không phải phía ask lúc vào.
+>
+> Và độ sâu **lúc vào không dự báo được độ sâu lúc ra**. Bạn vào khi funding hấp dẫn, tức thị trường bình thường; bạn thoát khi funding đảo chiều — điều này tương quan với căng thẳng thị trường, đúng lúc sổ mỏng đi. Đây là bất đối xứng cấu trúc, không phải rủi ro đuôi.
+
+**Khối lượng đỉnh sổ — đang có sẵn miễn phí:** `OrderbookData` hiện chỉ mang giá, nhưng connector đã parse sẵn khối lượng rồi bỏ đi — Binance `B`/`A`, Bybit `v`, OKX `sz`. Không thay được độ sâu đầy đủ, nhưng cho bộ lọc thanh khoản bậc một mà không tốn thêm băng thông. Thu ở **Bước 1.2**.
+
+**Vì sao funding arb ít nhạy với slippage hơn arbitrage giá:** lợi nhuận đến từ phí funding, còn chi phí vào/ra là chi phí một lần khấu hao theo thời gian giữ. Với Binance taker cả hai chân, riêng phí đã là 0,30% vòng lặp; ở funding 0,01%/8h thì hoà vốn sau ~10 ngày, thêm 0,20% slippage thành ~17 ngày. Slippage **không giết giao dịch mà kéo dài thời gian hoà vốn ~70%** — nó quyết định cơ hội nào đủ tiêu chuẩn. Lập luận đầy đủ ở [PLAN.md §7.4](PLAN.md#74-chiến-lược-độ-sâu-sổ-lệnh).
 
 ### C. REALTIME — WebSocket, không poll
 
@@ -70,7 +76,7 @@ E. NGOÀI SÀN   → 1 lần/giờ                → nguồn khác
 | `markPrice@1s` | Mark price, **funding rate ước tính đang chạy**, mốc funding kế tiếp, index price | Stream quan trọng nhất. Mark price là thứ tính giá thanh lý **và** tính phí funding — không phải giá last, không phải giá spot |
 | `bookTicker` (spot + perp) | Best bid/ask | Theo dõi delta, định giá lệnh maker — **đã có trong repo** |
 | **User data stream** | Fill lệnh, đổi vị thế, đổi số dư/ký quỹ | Thay thế hoàn toàn polling. ⚠️ Cần refresh `listenKey` định kỳ + tự reconnect. Mất stream mà không biết là kịch bản nguy hiểm |
-| `depth` incremental | Sổ lệnh | **Chỉ bật lúc vào/ra lệnh, tắt khi giữ vị thế** |
+| `depth` incremental | Sổ lệnh | **Chỉ bật lúc vào/ra lệnh, tắt khi giữ vị thế.** Funding arb giữ vị thế hàng ngày đến hàng tuần — không có lý do dựng lại sổ lệnh realtime (sequence number, phát hiện gap, resync) khi mỗi tuần chỉ giao dịch một lần |
 
 > Funding rate ước tính **biến động suốt cửa sổ funding** và chỉ chốt tại thời điểm settle. Ra quyết định dựa trên giá trị đọc ở đầu cửa sổ là sai lệch hệ thống.
 
