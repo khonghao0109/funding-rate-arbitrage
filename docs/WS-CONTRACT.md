@@ -42,7 +42,7 @@ tại trên wire nhưng đang mang giá trị mặc định.
 | `prices[sym][src].age_ms` | ⬜ `-1` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `prices[sym][src].best_bid` / `best_ask` | ⬜ `0` | ⬜ | ✅ | ✅ | ✅ | ✅ |
 | `prices[sym][src].best_bid_qty_coin` / `best_ask_qty_coin` | ⬜ `0` | ⬜ | ✅ | ✅ | ✅ | ✅ |
-| `source_status[src].state` | ⬜ `unknown` | 🟡 | 🟡 | 🟡 | 🟡 | ✅ |
+| `source_status[src].state` | ⬜ `unknown` | 🟡 suy ra từ im lặng | 🟡 | 🟡 | 🟡 | ✅ connector tự báo |
 | `source_status[src].reconnect_count` | ⬜ `0` | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 | `source_status[src].uptime_sec` | ⬜ `0` | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 | `meta.sources[].market_type` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
@@ -126,7 +126,7 @@ Mọi message đều có:
 | `sources[].market_type` | string | giá trị thật | `spot` \| `perp` \| `future` \| `oracle`. Là **dữ kiện tĩnh** của sàn nên điền đúng ngay từ 1.0; Bước 1.2 là lúc bắt đầu **dùng** nó để tách nhóm |
 | `sources[].quote_asset` | string | `"USDT"`/`"USD"` | Kraken là `USD` — không so sánh chéo với USDT (Bước 1.2) |
 | `sources[].tradable` | bool | giá trị thật | Pyth là `false` ngay từ 1.0. Bước 1.2 là lúc grouping bắt đầu dựa vào cờ này |
-| `sources[].stale_after_sec` | int | `10` | Ngưỡng staleness **theo từng sàn** (Bước 1.1) |
+| `sources[].stale_after_sec` | int | 10–20 | Ngưỡng staleness **theo từng sàn**, **đo từ dữ liệu thật** (Bước 1.1): mỗi sàn dư ~3× so với khoảng cách cập nhật tệ nhất quan sát được. Xem comment trên `sourceRegistry` ở [wire.go](../wire.go) |
 | `sources[].maker_fee_bps` / `taker_fee_bps` | int | `0` | **Bps, số nguyên** — không dùng float cho phí niêm yết ([CONVENTIONS §1.2](CONVENTIONS.md)) |
 
 ---
@@ -171,15 +171,27 @@ Thay cho `map[symbol]map[source]float64` phẳng hiện tại.
 | Trường | Kiểu | Mặc định 1.0 | Ghi chú |
 |---|---|---|---|
 | `price` | float | — | Mid-price `(bid+ask)/2` |
-| `venue_time_ms` | int64 | `0` | Thời gian **sàn phát**. `0` = sàn không cấp. ⚠️ Bybit/Paradex/Kraken hiện điền `time.Now()` — Bước 1.1 sửa thành `0` |
-| `recv_at_ms` | int64 | `0` | Thời điểm **bot nhận**, đặt tại **một chỗ duy nhất**. Đây là cơ sở duy nhất của staleness |
+| `venue_time_ms` | int64 | `0` | Thời gian **sàn phát**. `0` = connector không đọc được mốc thời gian nào từ message đó. ✅ Bước 1.1 đã dọn xong: **không sàn nào còn điền đồng hồ nội bộ** — Bybit/Paradex/Kraken trước đây điền `time.Now()`, OKX/Gate rơi về `time.Now()` khi parse lỗi; nay tất cả để `0`. Chỉ dùng để chẩn đoán, **không bao giờ** để tính staleness |
+| `recv_at_ms` | int64 | `0` | Thời điểm **bot nhận**, đặt tại **một chỗ duy nhất** (`updatePrice` trong [main.go](../main.go)). Đây là cơ sở **duy nhất** của staleness |
 | `age_ms` | int64 | `-1` | `server_time_ms - recv_at_ms`. `-1` = chưa đo được |
-| `status` | string | `"unknown"` | `live` \| `stale` \| `unknown`. **Backend tính**, FE chỉ hiển thị |
+| `status` | string | `live` \| `stale` | **Backend tính** từ `recv_at_ms`, FE chỉ hiển thị. `unknown` chỉ còn khi chưa từng nhận được gì |
 | `best_bid` / `best_ask` | float | `0` | Đỉnh sổ. `0` = chưa biết. Bước 1.2 điền |
 | `best_bid_qty_coin` / `best_ask_qty_coin` | float | `0` | Khối lượng đỉnh sổ, **tính theo coin không phải contract** — OKX/Gate/Kraken niêm yết theo contract, connector phải quy đổi trước khi điền ([CONVENTIONS §1.4](CONVENTIONS.md)). Đây là **bộ lọc thanh khoản bậc một**, không phải độ sâu: nó nói có bao nhiêu ở giá tốt nhất, không nói lệnh $60k khớp ở đâu. Độ sâu đầy đủ về qua REST ở Bước 2.7 ([PLAN §7.4](PLAN.md#74-chiến-lược-độ-sâu-sổ-lệnh)) |
 
 > ⚠️ `venue_time_ms` **không bao giờ** được dùng để tính staleness. Nó chỉ để chẩn
 > đoán độ trễ đường truyền. Lý do đầy đủ ở [PLAN.md Bước 1.1](PLAN.md).
+>
+> Đo thật lúc chạy Bước 1.1: `venue_time_ms` của Binance lớn hơn `recv_at_ms`
+> **80ms** — đồng hồ sàn chạy trước đồng hồ ta. Lấy hiệu hai mốc đó ra sẽ đo
+> **lệch đồng hồ**, không phải độ mới của dữ liệu.
+>
+> Từ Bước 1.1, **mọi nguồn đã đăng ký đều xuất hiện trong `source_status`**, kể cả
+> nguồn chưa từng gửi gì. Bỏ nó đi khiến một sàn không bao giờ kết nối trông y hệt
+> một sàn không tồn tại — đúng cách Pyth từng biến mất khỏi dashboard không dấu vết.
+>
+> Giá `stale` **vẫn nằm trong `prices`** kèm giá cuối cùng, chỉ bị loại khỏi phép
+> so sánh. Xoá hẳn hàng đó khỏi snapshot sẽ khiến sàn chết biến mất khỏi màn hình,
+> đọc thành "không có gì để báo" thay vì "feed này đã chết".
 
 ### 4.2. `source_status[source]` — trạng thái mức KẾT NỐI
 
@@ -188,8 +200,8 @@ sàn có thể còn kết nối nhưng ngừng đẩy một cặp thanh khoản 
 
 | Trường | Kiểu | Mặc định 1.0 | Ghi chú |
 |---|---|---|---|
-| `state` | string | `"unknown"` | `connected` \| `reconnecting` \| `disconnected` \| `unknown` (Bước 1.5) |
-| `last_msg_at_ms` | int64 | `0` | Message cuối nhận được từ sàn, bất kể symbol (Bước 1.1) |
+| `state` | string | giá trị thật | `connected` \| `reconnecting` \| `disconnected` \| `unknown`. ⚠️ **Ở Bước 1.1 đây là SUY LUẬN từ im lặng**, không phải điều connector biết: `connected` = có nhận được gì đó (bất kỳ symbol nào, **kể cả trade**) gần đây; `disconnected` = im lặng quá **ngưỡng mất-kết-nối** (3× `stale_after_sec`, tối thiểu 45s — cố ý dài hơn hẳn ngưỡng giá cũ), hoặc chưa gửi gì sau **90s** kể từ lúc khởi động (thời gian ân hạn khởi động dài hơn ngưỡng mất-kết-nối: đồng hồ bắt đầu chạy trước cả khi connector kịp quay số, nên sàn chưa từng gửi phải được đối xử khoan dung hơn sàn từng gửi rồi chết). `reconnecting`, `uptime_sec` và `reconnect_count` đến ở Bước 1.5 |
+| `last_msg_at_ms` | int64 | giá trị thật | Message cuối nhận được từ sàn, **bất kể symbol và bất kể loại** (giá hay trade). Đây là thứ phân biệt "sàn chết" với "một cặp thanh khoản mỏng đang yên ắng" |
 | `reconnect_count` | int | `0` | Số lần reconnect từ lúc khởi động (Bước 1.5) |
 | `uptime_sec` | int64 | `0` | Thời gian kết nối liên tục hiện tại (Bước 1.5) |
 
@@ -302,7 +314,11 @@ một sàn biến mất khỏi ma trận thay vì im lặng bỏ đi. `[]` ở B
 
 `reason`: `no_price` | `oracle` | `quote_mismatch` | `stale` | `disconnected` | `no_peer`.
 
-`no_price` được dùng ngay từ Bước 1.0: nguồn gửi giá không dùng được (≤ 0, NaN, vô cực) bị loại khỏi ma trận và phải nói ra lý do, không được im lặng biến mất.
+`no_price` được dùng từ Bước 1.0: nguồn gửi giá không dùng được (≤ 0, NaN, vô cực) bị loại khỏi ma trận và phải nói ra lý do, không được im lặng biến mất.
+
+`stale` được dùng từ Bước 1.1: nguồn ngừng gửi quá ngưỡng của nó. Giá cuối **vẫn
+nằm trong `prices`** kèm `status: "stale"` để dashboard hiển thị được sàn đó đang
+chết — nó chỉ bị loại khỏi phép so sánh, không bị xoá khỏi màn hình.
 
 ---
 

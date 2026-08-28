@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,10 +25,35 @@ const wsWriteTimeout = 2 * time.Second
 // opportunityCooldown throttles repeat alerts for the same pair.
 const opportunityCooldown = 10 * time.Second
 
+// stalenessRefreshInterval is how often every symbol is re-examined even when
+// nothing arrives for it.
+const stalenessRefreshInterval = time.Second
+
+// PricePoint is one venue's latest price for one symbol, with everything needed
+// to decide whether it can still be trusted.
+//
+// RecvAt is the only basis for staleness. VenueTimeMs is diagnostic: it is 0 for
+// the venues that publish no timestamp, and comparing venue clocks with ours
+// would measure clock skew, not freshness.
+type PricePoint struct {
+	Price       float64
+	VenueTimeMs int64
+	RecvAt      time.Time
+}
+
 type FuturesScanner struct {
-	symbols          []string
-	prices           map[string]map[string]float64
-	pricesMutex      sync.RWMutex
+	symbols     []string
+	prices      map[string]map[string]PricePoint
+	pricesMutex sync.RWMutex
+
+	// sourceLastMsgAt is the last time anything at all arrived from a source,
+	// across every symbol. A venue can be healthy while one thin pair goes
+	// quiet, so connection state and price freshness are measured separately.
+	//
+	// It has its own mutex: trades update it at roughly a thousand messages a
+	// second and must not contend with every price read.
+	sourceLastMsgAt  map[string]time.Time
+	lastMsgMutex     sync.RWMutex
 	wsClients        map[*websocket.Conn]bool
 	clientsMutex     sync.RWMutex
 	wsWriteMutex     sync.Mutex // Protects WebSocket writes
@@ -37,26 +64,44 @@ type FuturesScanner struct {
 	lastOpportunity  map[string]time.Time // Track last alert per symbol
 	opportunityMutex sync.RWMutex
 
+	// lastUsableSet is the set of sources last published per symbol, so the
+	// staleness timer can skip republishing an identical matrix.
+	lastUsableSet map[string]string
+	usableMutex   sync.Mutex
+
 	// onOpportunity receives every raised opportunity. Production leaves it nil
 	// and broadcasts; tests set it to observe the alert path directly.
 	onOpportunity func(wireOpportunity)
+
+	// now is the scanner's clock, injectable so staleness can be tested without
+	// sleeping.
+	now func() time.Time
+
+	// startedAt distinguishes "this venue has not sent anything yet" at startup
+	// from "this venue never connected".
+	startedAt time.Time
 }
 
 func NewFuturesScanner(symbols []string) *FuturesScanner {
-	return &FuturesScanner{
+	s := &FuturesScanner{
 		symbols:         symbols,
-		prices:          make(map[string]map[string]float64),
+		now:             time.Now,
+		prices:          make(map[string]map[string]PricePoint),
+		sourceLastMsgAt: make(map[string]time.Time),
 		wsClients:       make(map[*websocket.Conn]bool),
 		priceChan:       make(chan exchanges.PriceData, 1000),
 		orderbookChan:   make(chan exchanges.OrderbookData, 1000),
 		tradeChan:       make(chan exchanges.TradeData, 1000),
 		lastOpportunity: make(map[string]time.Time),
+		lastUsableSet:   make(map[string]string),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
 			},
 		},
 	}
+	s.startedAt = s.now()
+	return s
 }
 
 func (s *FuturesScanner) processPrices() {
@@ -71,10 +116,10 @@ func (s *FuturesScanner) processOrderbooks() {
 		midPrice := (orderbookData.BestBid + orderbookData.BestAsk) / 2
 
 		priceData := exchanges.PriceData{
-			Symbol:    orderbookData.Symbol,
-			Source:    orderbookData.Source,
-			Price:     midPrice,
-			Timestamp: orderbookData.Timestamp,
+			Symbol:      orderbookData.Symbol,
+			Source:      orderbookData.Source,
+			Price:       midPrice,
+			VenueTimeMs: orderbookData.VenueTimeMs,
 		}
 
 		s.updatePrice(priceData)
@@ -82,23 +127,89 @@ func (s *FuturesScanner) processOrderbooks() {
 }
 
 func (s *FuturesScanner) processTrades() {
-	for range s.tradeChan {
-		// Keep trade data for future use but don't use for pricing
+	for tradeData := range s.tradeChan {
+		// Trades are not used for pricing, but one arriving proves the socket is
+		// alive. Without this, a venue whose book simply has not moved looks
+		// disconnected on a change-driven feed in a quiet market.
+		s.markSourceAlive(tradeData.Source, s.now())
 	}
 }
 
+// updatePrice is the single place the scanner stamps a receive time. Every
+// staleness decision downstream is measured from it, so it must not be set
+// anywhere else - a second stamping site is how the two-meaning Timestamp field
+// this step replaces came about.
 func (s *FuturesScanner) updatePrice(data exchanges.PriceData) {
+	recvAt := s.now()
+
 	s.pricesMutex.Lock()
 	if s.prices[data.Symbol] == nil {
-		s.prices[data.Symbol] = make(map[string]float64)
+		s.prices[data.Symbol] = make(map[string]PricePoint)
 	}
-	s.prices[data.Symbol][data.Source] = data.Price
+	s.prices[data.Symbol][data.Source] = PricePoint{
+		Price:       data.Price,
+		VenueTimeMs: data.VenueTimeMs,
+		RecvAt:      recvAt,
+	}
 	s.pricesMutex.Unlock()
+
+	s.markSourceAlive(data.Source, recvAt)
 
 	s.checkArbitrage(data.Symbol)
 }
 
+// usableSetChanged reports whether the set of sources usable for this symbol
+// differs from the last time it was published, and records the new set.
+func (s *FuturesScanner) usableSetChanged(symbol string, usable map[string]float64) bool {
+	sources := make([]string, 0, len(usable))
+	for source := range usable {
+		sources = append(sources, source)
+	}
+	sort.Strings(sources)
+	signature := strings.Join(sources, ",")
+
+	s.usableMutex.Lock()
+	defer s.usableMutex.Unlock()
+
+	if previous, seen := s.lastUsableSet[symbol]; seen && previous == signature {
+		return false
+	}
+	s.lastUsableSet[symbol] = signature
+	return true
+}
+
+// markSourceAlive records that something arrived from a source, whatever it was.
+func (s *FuturesScanner) markSourceAlive(source string, at time.Time) {
+	s.lastMsgMutex.Lock()
+	s.sourceLastMsgAt[source] = at
+	s.lastMsgMutex.Unlock()
+}
+
+func (s *FuturesScanner) snapshotLastMsgAt() map[string]time.Time {
+	s.lastMsgMutex.RLock()
+	defer s.lastMsgMutex.RUnlock()
+
+	out := make(map[string]time.Time, len(s.sourceLastMsgAt))
+	for source, at := range s.sourceLastMsgAt {
+		out[source] = at
+	}
+	return out
+}
+
 func (s *FuturesScanner) checkArbitrage(symbol string) {
+	s.evaluate(symbol, true)
+}
+
+// republishSpreads recomputes and publishes the matrix WITHOUT raising alerts.
+//
+// refreshStaleness fires on a timer with no new quote behind it. An alert from
+// there would be stamped with the current time while describing prices observed
+// seconds earlier.
+func (s *FuturesScanner) republishSpreads(symbol string) {
+	s.evaluate(symbol, false)
+}
+
+func (s *FuturesScanner) evaluate(symbol string, raiseAlerts bool) {
 	s.pricesMutex.RLock()
 	sourcePrices, exists := s.prices[symbol]
 	if !exists {
@@ -107,13 +218,14 @@ func (s *FuturesScanner) checkArbitrage(symbol string) {
 	}
 
 	// Create a copy of the prices map to avoid race conditions
+	now := s.now()
 	pricesCopy := make(map[string]float64)
 	var excluded []wireExcludedSource
-	for source, price := range sourcePrices {
+	for source, point := range sourcePrices {
 		// An unusable price is not data. Keeping it would make it the minimum,
 		// drive every spread against it and suppress real alerts. Dropping it
 		// silently would be just as bad, so say so on the wire.
-		if !isUsablePrice(price) {
+		if !isUsablePrice(point.Price) {
 			excluded = append(excluded, wireExcludedSource{
 				Source: source,
 				Reason: "no_price",
@@ -121,14 +233,35 @@ func (s *FuturesScanner) checkArbitrage(symbol string) {
 			})
 			continue
 		}
-		pricesCopy[source] = price
+		// A venue that stopped sending keeps its last price in state, and that
+		// frozen number would go on producing spreads and alerts against a
+		// market that may no longer exist.
+		if priceStatus(point, staleAfter(source), now) == statusStale {
+			excluded = append(excluded, wireExcludedSource{
+				Source: source,
+				Reason: "stale",
+				NoteVI: fmt.Sprintf("Không nhận được dữ liệu quá %s, giá đã đóng băng",
+					staleAfter(source)),
+			})
+			continue
+		}
+		pricesCopy[source] = point.Price
 	}
 	s.pricesMutex.RUnlock()
 
-	// The matrix is always republished, including when it shrinks to nothing.
-	// Returning here instead would leave the previous matrix frozen on screen
-	// with no field contradicting it.
-	defer s.broadcastSpreads(symbol, pricesCopy, excluded)
+	// The matrix is always republished when a price arrives, including when it
+	// shrinks to nothing: returning instead would leave the previous matrix
+	// frozen on screen with no field contradicting it.
+	//
+	// The timer path publishes only when the usable set actually changed. In
+	// steady state that is never, and an identical matrix every second would
+	// only add contention on the write mutex that ingestion also holds.
+	// Called unconditionally: || would short-circuit on the alert path and never
+	// record what was published, so the timer would see a change every tick.
+	changed := s.usableSetChanged(symbol, pricesCopy)
+	if raiseAlerts || changed {
+		defer s.broadcastSpreads(symbol, pricesCopy, excluded, now)
+	}
 
 	if len(pricesCopy) < 2 {
 		return
@@ -164,10 +297,8 @@ func (s *FuturesScanner) checkArbitrage(symbol string) {
 	grossPct := spreadGrossPct(minPrice, maxPrice)
 
 	// Only alert if the gross spread is significant and we haven't alerted recently
-	if grossPct > alertMinSpreadPct {
+	if raiseAlerts && grossPct > alertMinSpreadPct {
 		opportunityKey := fmt.Sprintf("%s_%s_%s", symbol, minSource, maxSource)
-
-		now := time.Now()
 
 		// Claiming the window must be atomic: two ingestion goroutines reaching
 		// here together would otherwise both pass the check and emit the same
@@ -264,17 +395,25 @@ func (s *FuturesScanner) broadcastOpportunity(opportunity wireOpportunity) {
 	s.broadcast(wireArbitrage{
 		Type:         "arbitrage",
 		V:            wireVersion,
-		ServerTimeMs: time.Now().UnixMilli(),
+		ServerTimeMs: s.now().UnixMilli(),
 		Opportunity:  opportunity,
 	})
 }
 
-func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string]float64, excluded []wireExcludedSource) {
+// snapshotAt is the moment the prices in this message were read, not the moment
+// it is sent. checkArbitrage and refreshStaleness both publish per symbol, so
+// stamping at send time would let an older matrix carry a later timestamp.
+//
+// This orders messages the frontend compares; it does not serialise the two
+// producers. Two matrices computed microseconds apart can still be delivered in
+// either order, and the older one wins only if it also carries the later
+// snapshot time - which this prevents.
+func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string]float64, excluded []wireExcludedSource, snapshotAt time.Time) {
 	// Build the O(n^2) matrix only if there is somebody to send it to.
 	if !s.hasClients() {
 		return
 	}
-	s.broadcast(newWireSpreads(symbol, sourcePrices, excluded, time.Now().UnixMilli()))
+	s.broadcast(newWireSpreads(symbol, sourcePrices, excluded, snapshotAt.UnixMilli()))
 }
 
 // hasClients reports whether any dashboard is connected, so the broadcast path
@@ -295,17 +434,48 @@ func (s *FuturesScanner) broadcastPrices() {
 		}
 
 		s.pricesMutex.RLock()
-		pricesCopy := make(map[string]map[string]float64, len(s.prices))
+		pricesCopy := make(map[string]map[string]PricePoint, len(s.prices))
 		for symbol, prices := range s.prices {
-			pricesCopy[symbol] = make(map[string]float64, len(prices))
-			for source, price := range prices {
-				pricesCopy[symbol][source] = price
+			pricesCopy[symbol] = make(map[string]PricePoint, len(prices))
+			for source, point := range prices {
+				pricesCopy[symbol][source] = point
 			}
 		}
 		s.pricesMutex.RUnlock()
 
-		if len(pricesCopy) > 0 {
-			s.broadcast(newWirePrices(pricesCopy, time.Now().UnixMilli()))
+		lastMsgCopy := s.snapshotLastMsgAt()
+
+		// Sent even with no prices at all: the message carries the status of
+		// every registered source, and a total outage is precisely when the
+		// dashboard needs to be told.
+		s.broadcast(newWirePrices(pricesCopy, lastMsgCopy, s.startedAt, s.now()))
+	}
+}
+
+// refreshStaleness re-evaluates every symbol on a timer.
+//
+// checkArbitrage only runs when a price arrives, so a symbol whose sources have
+// all gone quiet would never be re-examined: the dashboard would keep showing
+// the last matrix, and the opportunities in it, for as long as the silence
+// lasted. Nothing arriving is exactly the case staleness has to catch.
+func (s *FuturesScanner) refreshStaleness() {
+	ticker := time.NewTicker(stalenessRefreshInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if !s.hasClients() {
+			continue
+		}
+
+		s.pricesMutex.RLock()
+		symbols := make([]string, 0, len(s.prices))
+		for symbol := range s.prices {
+			symbols = append(symbols, symbol)
+		}
+		s.pricesMutex.RUnlock()
+
+		for _, symbol := range symbols {
+			s.republishSpreads(symbol)
 		}
 	}
 }
@@ -323,7 +493,7 @@ func (s *FuturesScanner) handleWebSocket(w http.ResponseWriter, r *http.Request)
 	// The dashboard builds its source list, symbol selector and cost disclaimer
 	// from this message, so it has to arrive before any data. Sending it before
 	// the client joins wsClients guarantees no broadcast can overtake it.
-	failed, err := s.writeToClients([]*websocket.Conn{conn}, newWireMeta(s.symbols, time.Now().UnixMilli()))
+	failed, err := s.writeToClients([]*websocket.Conn{conn}, newWireMeta(s.symbols, s.now().UnixMilli()))
 	if err != nil || len(failed) > 0 {
 		// Registering a client that never received meta would leave a blank
 		// dashboard reading "Connected".
@@ -388,6 +558,7 @@ func main() {
 	go exchanges.ConnectPythPrices(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
 
 	go scanner.broadcastPrices()
+	go scanner.refreshStaleness()
 
 	http.HandleFunc("/ws", scanner.handleWebSocket)
 	http.Handle("/", http.FileServer(http.Dir("./static/")))

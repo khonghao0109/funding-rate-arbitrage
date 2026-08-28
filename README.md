@@ -50,6 +50,7 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Tự điều chỉnh số thập phân** | Theo từng tài sản và vùng giá |
 | **Tự kết nối lại** | Mỗi sàn tự reconnect khi rớt WebSocket |
 | **Nói rõ số đang hiển thị là gì** | Dashboard ghi thẳng chi phí nào đã trừ và chưa trừ; khối ma trận tự đánh dấu **"tham chiếu"** vì còn trộn spot, perp và oracle |
+| **Lọc dữ liệu cũ** | Sàn ngừng gửi quá ngưỡng riêng của nó bị loại khỏi so sánh và hiện nhãn **CŨ** / **MẤT KẾT NỐI**. Ngưỡng đo từ dữ liệu thật, 10–20s tuỳ sàn |
 | **Dashboard tự dựng theo máy chủ** | Danh sách nguồn, màu, nhãn và danh sách cặp đến từ message `meta`, không hardcode trong JavaScript |
 
 ---
@@ -63,13 +64,14 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | **Mô hình phí** | Số hiển thị là **spread thô**, chưa trừ phí maker/taker, chưa trừ slippage. Chưa dùng để ra quyết định vốn được |
 | **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
 | **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
-| **Lọc dữ liệu cũ** | Sàn rớt kết nối vẫn có thể sinh tín hiệu từ giá đóng băng |
 | **Tách spot / perp** | Logic hiện so sánh min/max trên *toàn bộ* nguồn, trộn lẫn spot với perp |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | Mới có cho hợp đồng WebSocket (25 test). Connector chưa có test nào, chưa có `exchanges/testdata/` |
+| **Test tự động** | Mới có cho hợp đồng WebSocket và bộ lọc dữ liệu cũ (39 test). Connector chưa có test nào, chưa có `exchanges/testdata/` |
 | **Tách oracle khỏi cảnh báo** | Ma trận đã đánh dấu là tham chiếu, nhưng **bảng cảnh báo vẫn có thể nêu Pyth** — Pyth là oracle, không mua bán được. Sửa ở Bước 1.2 |
 
 Toàn bộ các mục trên đều đã có kế hoạch xử lý theo giai đoạn trong [docs/PLAN.md](docs/PLAN.md).
+
+> Về staleness: ngưỡng hiện đo trên **4 cặp lớn trong giờ hoạt động**. Cặp thanh khoản mỏng hoặc giờ đêm có thể vượt ngưỡng một cách hợp lệ và bị đánh dấu CŨ nhầm — ngưỡng thích ứng nằm ở giai đoạn sau.
 
 ---
 

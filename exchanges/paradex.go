@@ -117,11 +117,17 @@ func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbo
 
 				// Send orderbook data
 				orderbookChan <- OrderbookData{
-					Symbol:    symbol,
-					Source:    "paradex_futures",
-					BestBid:   bidPrice,
-					BestAsk:   askPrice,
-					Timestamp: time.Now().UnixMilli(),
+					Symbol:  symbol,
+					Source:  "paradex_futures",
+					BestBid: bidPrice,
+					BestAsk: askPrice,
+					// This connector does not parse a venue timestamp out of this
+					// message. Writing the local clock here instead would report our
+					// own time as the venue's and make a dead feed look current
+					// forever. Leave it 0; the scanner stamps its own receive time.
+					// Capturing the venue's real timestamp is step 1.5's work.
+					// See docs/WS-CONTRACT.md §4.1.
+					VenueTimeMs: 0,
 				}
 			}
 		}

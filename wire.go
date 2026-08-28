@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"time"
 )
 
 // The types in this file are the frozen WebSocket contract between the scanner
@@ -24,6 +25,18 @@ const wireVersion = 1
 // global threshold would mark a healthy venue dead. Step 1.4 moves the value to
 // config.yaml; step 1.1 starts enforcing it.
 const defaultStaleAfterSec = 10
+
+// startupGrace is how long a source may take to deliver its first message before
+// it is called disconnected.
+//
+// It must be at least minDisconnectAfter: a venue that has never delivered
+// should not be called dead sooner than one that delivered and then stopped. The
+// clock starts before the connectors have even dialled, so this is the more
+// forgiving of the two cases, not the less.
+const startupGrace = 90 * time.Second
+
+// minDisconnectAfter is the floor for the silence that counts as a dead venue.
+const minDisconnectAfter = 45 * time.Second
 
 // Data-level status of one price, decided by the backend. The browser clock is
 // not comparable with the server clock, so the frontend only renders these.
@@ -72,6 +85,24 @@ type sourceMeta struct {
 // Order matters: it fixes the column order of the spread matrix, which used to
 // reshuffle on every message because it came from Go map iteration.
 //
+// StaleAfterSec is measured, not guessed. Over a 5 minute observation of all
+// four symbols during active trading, the worst gap between two consecutive
+// updates was:
+//
+//	hyperliquid 6.05s · bybit_spot 4.02s · binance_spot 3.85s · gate 3.37s
+//	kraken 2.95s · bybit 2.25s · paradex 1.86s · okx 1.00s · binance 0.85s
+//
+// Each threshold leaves roughly 3x headroom over its own worst observed gap.
+// These feeds are change-driven, so a genuinely quiet market produces long gaps
+// with nothing wrong; a single global threshold would mark the slower venues
+// dead. The numbers hold for four majors in active hours - thin pairs and quiet
+// hours will need revisiting, which is the adaptive-threshold work PLAN.md
+// records as phase 1 debt.
+//
+// Pyth is the exception: it delivered nothing at all during the observation, so
+// it has no measurement and keeps the default. Its real cadence has to be
+// measured once its feed works.
+//
 // MarketType and QuoteAsset are static facts about each venue and are recorded
 // here now; step 1.2 is what starts *using* them to split the comparison into
 // separate blocks. Fee fields stay at zero until step 1.3 builds the fee table.
@@ -84,7 +115,7 @@ var sourceRegistry = []sourceMeta{
 		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
 	{Source: "hyperliquid_futures", Venue: "hyperliquid", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
 		Label: "Hyperliquid Futures", ShortLabel: "HYP", Color: "#97FCE4", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+		EnabledByDefault: true, StaleAfterSec: 20}, // worst observed gap 6.05s
 	// Kraken quotes in USD, not USDT: PF_XBTUSD against BTCUSDT carries the
 	// USD/USDT spread as well. Step 1.2 puts it in its own group for that reason.
 	// See docs/DATA-REQUIREMENTS.md §3.
@@ -96,16 +127,16 @@ var sourceRegistry = []sourceMeta{
 		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
 	{Source: "gate_futures", Venue: "gate", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
 		Label: "Gate.io Futures", ShortLabel: "GAT-F", Color: "#6c5ce7", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+		EnabledByDefault: true, StaleAfterSec: 15}, // worst observed gap 3.37s, and its book_ticker is change-driven
 	{Source: "paradex_futures", Venue: "paradex", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
 		Label: "Paradex Futures", ShortLabel: "PDX", Color: "#ff6b6b", LineStyle: "solid",
 		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
 	{Source: "binance_spot", Venue: "binance", MarketType: "spot", QuoteAsset: "USDT", Tradable: true,
 		Label: "Binance Spot", ShortLabel: "BIN-S", Color: "#ffb347", LineStyle: "dashed",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+		EnabledByDefault: true, StaleAfterSec: 15}, // worst observed gap 3.85s
 	{Source: "bybit_spot", Venue: "bybit", MarketType: "spot", QuoteAsset: "USDT", Tradable: true,
 		Label: "Bybit Spot", ShortLabel: "BYB-S", Color: "#f7931a", LineStyle: "dashed",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+		EnabledByDefault: true, StaleAfterSec: 15}, // worst observed gap 4.02s
 	// Pyth is a price oracle, not a venue. Nothing can be bought or sold on it,
 	// so it must never appear in a tradable comparison. Step 1.2 enforces this
 	// in the grouping logic; the flag is recorded here.
@@ -157,6 +188,80 @@ func sortExcluded(excluded []wireExcludedSource) {
 			return excluded[i].Source < excluded[j].Source
 		}
 	})
+}
+
+// staleAfter is how long a source may go without sending before its data stops
+// being usable.
+//
+// It is per source on purpose: a thinly traded pair going quiet for a minute is
+// normal, and one global threshold would either mark a healthy venue dead or be
+// so loose that a genuinely dead feed keeps producing signals. An unregistered
+// source gets the default rather than zero, which would mark it stale instantly.
+func staleAfter(source string) time.Duration {
+	if index, ok := sourceOrder[source]; ok {
+		// A registered source with the threshold left unset must not get zero:
+		// that marks every one of its prices stale on arrival and drops it from
+		// every comparison while it is streaming perfectly well.
+		if sec := sourceRegistry[index].StaleAfterSec; sec > 0 {
+			return time.Duration(sec) * time.Second
+		}
+	}
+	return defaultStaleAfterSec * time.Second
+}
+
+// disconnectAfter is how long a source may be silent before it is called
+// disconnected, as opposed to merely holding a stale quote.
+//
+// It is deliberately much longer than staleAfter. Those are different claims:
+// "this quote is too old to compare" is routine on a change-driven feed in a
+// quiet market, while "this venue is gone" is an alarm. Gate, Kraken, Paradex
+// and Pyth deliver no trades at all, so their only liveness signal is a book
+// change - sharing the price threshold would paint a healthy socket dead.
+func disconnectAfter(source string) time.Duration {
+	if d := staleAfter(source) * 3; d > minDisconnectAfter {
+		return d
+	}
+	return minDisconnectAfter
+}
+
+// priceStatus decides whether a price can still be trusted.
+//
+// It measures from RecvAt and nothing else. VenueTimeMs is not consulted: it is
+// 0 for the venues that publish no timestamp, and where it does exist it
+// measures the venue's clock against ours, which is skew, not freshness.
+func priceStatus(point PricePoint, threshold time.Duration, now time.Time) string {
+	if point.RecvAt.IsZero() {
+		return statusUnknown
+	}
+	if now.Sub(point.RecvAt) > threshold {
+		return statusStale
+	}
+	return statusLive
+}
+
+// sourceState is connection health, inferred at step 1.1 from silence across
+// every symbol rather than reported by the connector.
+//
+// A venue can be connected while one thin pair goes quiet, which is why this is
+// separate from priceStatus. Step 1.5 replaces the inference with what the
+// connector actually knows, and fills reconnect_count and uptime_sec.
+// startedAt is when the scanner came up, used to judge a source that has never
+// sent anything: "nothing yet" is unknown for the first few seconds and
+// disconnected after that.
+func sourceState(lastMsgAt time.Time, threshold time.Duration, startedAt, now time.Time) string {
+	if lastMsgAt.IsZero() {
+		// A registered source that has never delivered. Reporting it as unknown
+		// forever would hide a venue that never connected at all - which is how
+		// Pyth silently disappeared from the dashboard entirely.
+		if !startedAt.IsZero() && now.Sub(startedAt) > startupGrace {
+			return stateDisconnected
+		}
+		return stateUnknown
+	}
+	if now.Sub(lastMsgAt) > threshold {
+		return stateDisconnected
+	}
+	return stateConnected
 }
 
 // wireCostBasis states which costs have been deducted from the after-fee numbers
@@ -343,36 +448,48 @@ func newWireMeta(symbols []string, nowMs int64) wireMeta {
 	}
 }
 
-// newWirePrices wraps the current price snapshot. Every staleness field carries
-// its documented default: no receive time is recorded anywhere yet, so claiming
-// a price is live would be an unverified number.
-func newWirePrices(prices map[string]map[string]float64, nowMs int64) wirePrices {
+// newWirePrices wraps the current snapshot.
+//
+// A stale price is kept and labelled, not dropped: removing the row would make a
+// dead venue disappear from the dashboard, which reads as "nothing to report"
+// rather than "this feed died".
+func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string]time.Time, startedAt, now time.Time) wirePrices {
 	out := wirePrices{
 		Type:         "prices",
 		V:            wireVersion,
-		ServerTimeMs: nowMs,
+		ServerTimeMs: now.UnixMilli(),
 		Prices:       make(map[string]map[string]wirePricePoint, len(prices)),
 		SourceStatus: make(map[string]wireSourceStatus),
 	}
 
 	for symbol, sourcePrices := range prices {
 		points := make(map[string]wirePricePoint, len(sourcePrices))
-		for source, price := range sourcePrices {
+		for source, point := range sourcePrices {
 			// The source is known either way, but a non-positive price is not
 			// data: shipping it renders as "$0.000000" and drags the chart line
 			// to zero. checkArbitrage drops it for the same reason.
 			if _, seen := out.SourceStatus[source]; !seen {
-				out.SourceStatus[source] = wireSourceStatus{State: stateUnknown}
+				out.SourceStatus[source] = newWireSourceStatus(source, lastMsgAt[source], startedAt, now)
 			}
-			if !isUsablePrice(price) {
+			if !isUsablePrice(point.Price) {
 				continue
 			}
+
+			ageMs := int64(-1)
+			if !point.RecvAt.IsZero() {
+				ageMs = now.Sub(point.RecvAt).Milliseconds()
+			}
+			recvAtMs := int64(0)
+			if !point.RecvAt.IsZero() {
+				recvAtMs = point.RecvAt.UnixMilli()
+			}
+
 			points[source] = wirePricePoint{
-				Price:       price,
-				VenueTimeMs: 0,
-				RecvAtMs:    0,
-				AgeMs:       -1,
-				Status:      statusUnknown,
+				Price:       point.Price,
+				VenueTimeMs: point.VenueTimeMs,
+				RecvAtMs:    recvAtMs,
+				AgeMs:       ageMs,
+				Status:      priceStatus(point, staleAfter(source), now),
 				// Top of book is not collected yet; step 1.2 fills these.
 				BestBid:        0,
 				BestAsk:        0,
@@ -383,7 +500,32 @@ func newWirePrices(prices map[string]map[string]float64, nowMs int64) wirePrices
 		out.Prices[symbol] = points
 	}
 
+	// Every registered source belongs in the status map, including one that has
+	// never delivered a single message. Omitting it makes a venue that never
+	// connected indistinguishable from one that does not exist - which is
+	// exactly how a dead Pyth feed vanished from the dashboard without a trace.
+	for _, meta := range sourceRegistry {
+		if _, seen := out.SourceStatus[meta.Source]; !seen {
+			out.SourceStatus[meta.Source] = newWireSourceStatus(meta.Source, lastMsgAt[meta.Source], startedAt, now)
+		}
+	}
+
 	return out
+}
+
+func newWireSourceStatus(source string, lastMsgAt, startedAt, now time.Time) wireSourceStatus {
+	lastMsgAtMs := int64(0)
+	if !lastMsgAt.IsZero() {
+		lastMsgAtMs = lastMsgAt.UnixMilli()
+	}
+	return wireSourceStatus{
+		State:       sourceState(lastMsgAt, disconnectAfter(source), startedAt, now),
+		LastMsgAtMs: lastMsgAtMs,
+		// Filled by step 1.5, which is where the connector reports what it
+		// actually knows about its own connection.
+		ReconnectCount: 0,
+		UptimeSec:      0,
+	}
 }
 
 // isUsablePrice reports whether a price can be compared and serialized.

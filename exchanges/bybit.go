@@ -87,11 +87,17 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 				}
 
 				orderbookData := OrderbookData{
-					Symbol:    orderbookMsg.Data.Symbol,
-					Source:    "bybit_futures",
-					BestBid:   bidPrice,
-					BestAsk:   askPrice,
-					Timestamp: time.Now().UnixMilli(),
+					Symbol:  orderbookMsg.Data.Symbol,
+					Source:  "bybit_futures",
+					BestBid: bidPrice,
+					BestAsk: askPrice,
+					// This connector does not parse a venue timestamp out of this
+					// message. Writing the local clock here instead would report our
+					// own time as the venue's and make a dead feed look current
+					// forever. Leave it 0; the scanner stamps its own receive time.
+					// Capturing the venue's real timestamp is step 1.5's work.
+					// See docs/WS-CONTRACT.md §4.1.
+					VenueTimeMs: 0,
 				}
 
 				orderbookChan <- orderbookData
@@ -118,12 +124,12 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 					}
 
 					tradeData := TradeData{
-						Symbol:    trade.Symbol,
-						Source:    "bybit_futures",
-						Price:     price,
-						Quantity:  trade.Size,
-						Side:      side,
-						Timestamp: trade.Timestamp,
+						Symbol:      trade.Symbol,
+						Source:      "bybit_futures",
+						Price:       price,
+						Quantity:    trade.Size,
+						Side:        side,
+						VenueTimeMs: trade.Timestamp,
 					}
 
 					tradeChan <- tradeData
@@ -214,11 +220,17 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 				}
 
 				orderbookData := OrderbookData{
-					Symbol:    orderbookMsg.Data.Symbol,
-					Source:    "bybit_spot",
-					BestBid:   bidPrice,
-					BestAsk:   askPrice,
-					Timestamp: time.Now().UnixMilli(),
+					Symbol:  orderbookMsg.Data.Symbol,
+					Source:  "bybit_spot",
+					BestBid: bidPrice,
+					BestAsk: askPrice,
+					// This connector does not parse a venue timestamp out of this
+					// message. Writing the local clock here instead would report our
+					// own time as the venue's and make a dead feed look current
+					// forever. Leave it 0; the scanner stamps its own receive time.
+					// Capturing the venue's real timestamp is step 1.5's work.
+					// See docs/WS-CONTRACT.md §4.1.
+					VenueTimeMs: 0,
 				}
 
 				orderbookChan <- orderbookData
@@ -245,12 +257,12 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 					}
 
 					tradeData := TradeData{
-						Symbol:    trade.Symbol,
-						Source:    "bybit_spot",
-						Price:     price,
-						Quantity:  trade.Size,
-						Side:      side,
-						Timestamp: trade.Timestamp,
+						Symbol:      trade.Symbol,
+						Source:      "bybit_spot",
+						Price:       price,
+						Quantity:    trade.Size,
+						Side:        side,
+						VenueTimeMs: trade.Timestamp,
 					}
 
 					tradeChan <- tradeData

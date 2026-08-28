@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"testing"
+	"time"
 )
 
 // expectedSources is the set of sources main() currently connects. The registry
@@ -119,8 +120,12 @@ func TestNewWireMeta_Defaults(t *testing.T) {
 	}
 
 	for _, s := range meta.Sources {
-		if s.StaleAfterSec != defaultStaleAfterSec {
-			t.Errorf("%s: stale_after_sec = %d, want %d", s.Source, s.StaleAfterSec, defaultStaleAfterSec)
+		// Thresholds are per venue and measured, so they are not all equal. What
+		// must hold is that none is below the default: a shorter one would mark
+		// a healthy but slower feed dead.
+		if s.StaleAfterSec < defaultStaleAfterSec {
+			t.Errorf("%s: stale_after_sec = %d, below the %d default",
+				s.Source, s.StaleAfterSec, defaultStaleAfterSec)
 		}
 		if s.MakerFeeBps != 0 || s.TakerFeeBps != 0 {
 			t.Errorf("%s: fees must stay 0 until step 1.3, got maker=%d taker=%d",
@@ -312,44 +317,6 @@ func TestNewWireSpreads_EmptyAndSingleSource(t *testing.T) {
 	}
 }
 
-func TestNewWirePrices_DefaultsUntilStep11(t *testing.T) {
-	prices := map[string]map[string]float64{
-		"BTCUSDT": {"binance_futures": 65000},
-	}
-	msg := newWirePrices(prices, 1756368000000)
-
-	if msg.Type != "prices" || msg.V != wireVersion {
-		t.Errorf("envelope = %q v%d", msg.Type, msg.V)
-	}
-	p := msg.Prices["BTCUSDT"]["binance_futures"]
-	if p.Price != 65000 {
-		t.Errorf("price = %g", p.Price)
-	}
-	// Staleness does not exist until step 1.1. Claiming "live" here would be the
-	// unverified number this phase exists to remove.
-	if p.Status != statusUnknown {
-		t.Errorf("status = %q, want %q before step 1.1", p.Status, statusUnknown)
-	}
-	if p.RecvAtMs != 0 || p.VenueTimeMs != 0 {
-		t.Errorf("recv_at_ms/venue_time_ms = %d/%d, want 0 before step 1.1", p.RecvAtMs, p.VenueTimeMs)
-	}
-	if p.AgeMs != -1 {
-		t.Errorf("age_ms = %d, want -1 (not measurable) before step 1.1", p.AgeMs)
-	}
-
-	// Connection state is per source, not per symbol, and is filled at step 1.5.
-	st, ok := msg.SourceStatus["binance_futures"]
-	if !ok {
-		t.Fatal("source_status missing an entry for a source that has prices")
-	}
-	if st.State != stateUnknown {
-		t.Errorf("state = %q, want %q before step 1.5", st.State, stateUnknown)
-	}
-	if st.ReconnectCount != 0 || st.UptimeSec != 0 || st.LastMsgAtMs != 0 {
-		t.Errorf("source_status must be zeroed before step 1.5, got %+v", st)
-	}
-}
-
 func TestNewWireOpportunity_NamesGrossAsGross(t *testing.T) {
 	opp := newWireOpportunity("BTCUSDT", "binance_futures", "bybit_futures", 100, 101, 1756368000000)
 
@@ -455,9 +422,14 @@ func TestCheckArbitrage_SkipsSymbolWithFewerThanTwoUsablePrices(t *testing.T) {
 }
 
 func TestNewWirePrices_DropsNonPositivePriceButKeepsTheSource(t *testing.T) {
-	msg := newWirePrices(map[string]map[string]float64{
-		"BTCUSDT": {"binance_futures": 65000, "okx_futures": 0, "gate_futures": -1},
-	}, 1)
+	now := time.Now()
+	msg := newWirePrices(map[string]map[string]PricePoint{
+		"BTCUSDT": {
+			"binance_futures": {Price: 65000, RecvAt: now},
+			"okx_futures":     {Price: 0, RecvAt: now},
+			"gate_futures":    {Price: -1, RecvAt: now},
+		},
+	}, map[string]time.Time{}, time.Time{}, now)
 
 	points := msg.Prices["BTCUSDT"]
 	if _, ok := points["okx_futures"]; ok {
@@ -544,9 +516,10 @@ func TestNewWireSpreads_ReportsWhyASourceIsMissing(t *testing.T) {
 // of reshaping the contract, and so phase 2 does not force a second app.js
 // rewrite. See PLAN.md §7.4.
 func TestNewWirePrices_ReservesTopOfBookSlot(t *testing.T) {
-	raw, err := json.Marshal(newWirePrices(map[string]map[string]float64{
-		"BTCUSDT": {"binance_futures": 65000},
-	}, 1))
+	now := time.Now()
+	raw, err := json.Marshal(newWirePrices(map[string]map[string]PricePoint{
+		"BTCUSDT": {"binance_futures": {Price: 65000, RecvAt: now}},
+	}, map[string]time.Time{}, time.Time{}, now))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

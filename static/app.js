@@ -47,7 +47,6 @@ class FuturesArbitrageScanner {
         this.absentSources = new Set();
         this.maxHistoryPoints = 500; // Reduced from 1000
         this.maxOpportunities = 25; // Reduced from 50
-        this.connectedSources = new Set();
         this.currentSort = { field: 'detected_at_ms', direction: 'desc' };
         this.minSpreadFilterPct = 0.05;
         
@@ -484,6 +483,7 @@ class FuturesArbitrageScanner {
                 console.log('WebSocket disconnected');
                 wsStatus.className = 'status-dot disconnected';
                 wsStatusText.textContent = 'Disconnected';
+                this.invalidateFreshness();
                 this.scheduleReconnect();
             };
 
@@ -491,6 +491,7 @@ class FuturesArbitrageScanner {
                 console.error('WebSocket error:', error);
                 wsStatus.className = 'status-dot disconnected';
                 wsStatusText.textContent = 'Error';
+                this.invalidateFreshness();
             };
 
         } catch (error) {
@@ -512,6 +513,28 @@ class FuturesArbitrageScanner {
     // freshness calculation instead of Date.now().
     serverNowMs() {
         return Date.now() + this.clockOffsetMs;
+    }
+
+    // Called when our own connection to the scanner drops. Every "live" badge on
+    // screen was justified by a message that is no longer arriving, so none of
+    // them can be trusted any more. Prices stay visible for context; the claim
+    // that they are fresh does not.
+    invalidateFreshness() {
+        this.sources.forEach(data => {
+            data.status = 'unknown';
+            data.ageMs = -1;
+        });
+        this.sourceStatus.forEach(status => {
+            status.state = 'unknown';
+        });
+        // Absence was a claim about the venue. With our own socket down we no
+        // longer know anything about any venue.
+        this.absentSources.clear();
+        // The chart must show the same gap a venue-side stall would produce;
+        // otherwise a scanner outage is drawn as a continuous line.
+        this.sourceMeta.forEach((_meta, source) => this.breakChartLine(source));
+        this.sourceListDirty = true;
+        this.updateSourceList();
     }
 
     queueMessage(data) {
@@ -610,7 +633,16 @@ class FuturesArbitrageScanner {
             if (symbol === this.currentSymbol) {
                 for (const [source, point] of Object.entries(sourcePrices)) {
                     this.updateSourcePrice(source, point, serverTimeMs);
-                    this.addPriceToHistory(source, point.price);
+                    // Only a live price is a new observation. A stale one is the
+                    // same frozen number resent: charting it draws a flat line
+                    // that reads as a quiet market, and skipping it outright
+                    // makes the chart interpolate straight across the outage.
+                    // Break the line instead, so the gap is visible as a gap.
+                    if (point.status === 'stale') {
+                        this.breakChartLine(source);
+                    } else {
+                        this.addPriceToHistory(source, point.price);
+                    }
                 }
                 // The message is a full snapshot, so absence means the source
                 // has no usable price right now. Keeping its last row would
@@ -619,12 +651,10 @@ class FuturesArbitrageScanner {
                 this.sourceMeta.forEach((_meta, source) => {
                     if (!(source in sourcePrices)) this.absentSources.add(source);
                 });
-                for (const source of [...this.sources.keys()]) {
-                    if (!(source in sourcePrices)) {
-                        this.sources.delete(source);
-                        this.connectedSources.delete(source);
-                    }
-                }
+                // A source with no price is not removed from the panel: a venue
+                // that never connected, or died, has to stay visible and say so.
+                // Only its chart line is dropped, above.
+
                 // UI updates will be handled by processMessageQueue
                 break;
             }
@@ -632,13 +662,24 @@ class FuturesArbitrageScanner {
     }
 
     addPriceToHistory(source, price, timestamp = null) {
-        const ts = timestamp ? timestamp / 1000 : Date.now() / 1000;
+        // The series is stamped with the server clock throughout, including the
+        // whitespace points breakChartLine inserts. Mixing in Date.now() makes
+        // times non-monotonic under clock skew, which either throws in
+        // series.update() or silently hides the gap.
+        const ts = timestamp ? timestamp / 1000 : this.serverNowMs() / 1000;
         
         if (!this.priceHistory.has(source)) {
             this.priceHistory.set(source, []);
         }
 
         const history = this.priceHistory.get(source);
+        // Series times must strictly increase. serverNowMs() can step backwards
+        // when the clock offset is re-estimated, and a non-monotonic point
+        // throws in series.update() and corrupts the array for every later
+        // setData().
+        if (history.length > 0 && ts <= history[history.length - 1][0]) {
+            return;
+        }
         const newDataPoint = [ts, price];
         history.push(newDataPoint);
 
@@ -664,6 +705,25 @@ class FuturesArbitrageScanner {
         }
     }
 
+    // Records a gap in a source's series. TradingView treats a point with a time
+    // but no value as whitespace, which ends the line rather than bridging it.
+    breakChartLine(source) {
+        const history = this.priceHistory.get(source);
+        if (!history || history.length === 0) return;
+
+        const last = history[history.length - 1];
+        if (last[1] === null) return; // already broken
+
+        const ts = this.serverNowMs() / 1000;
+        if (ts <= last[0]) return; // series time must strictly increase
+        history.push([ts, null]);
+
+        const series = this.chartSeries.get(source);
+        if (series && this.isSourceEnabled(source)) {
+            series.update({ time: ts });
+        }
+    }
+
     updateSourcePrice(source, point, serverTimeMs) {
         const price = point.price;
         const previousPrice = this.sources.get(source)?.price || price;
@@ -685,7 +745,6 @@ class FuturesArbitrageScanner {
             lastUpdate: Date.now()
         });
 
-        this.connectedSources.add(source);
     }
 
     // Maps a source onto the CSS modifier for its status dot. Connection state
@@ -695,6 +754,13 @@ class FuturesArbitrageScanner {
         if (state === 'disconnected') return 'disconnected';
         if (state === 'reconnecting') return 'reconnecting';
 
+        // Absent from the latest snapshot means the backend rejected whatever
+        // this venue last sent. The row keeps its old price for context, but it
+        // must not be drawn as live. A source that has never delivered at all is
+        // waiting, not stale - a red dot there is a false alarm on every load.
+        if (this.absentSources.has(source) && this.sources.has(source)) return 'stale';
+        if (!this.sources.has(source)) return 'unknown';
+
         const status = this.sources.get(source)?.status;
         if (status === 'live') return 'live';
         if (status === 'stale') return 'stale';
@@ -703,17 +769,59 @@ class FuturesArbitrageScanner {
 
     statusTitle(source) {
         const data = this.sources.get(source);
-        if (!data) return 'Chưa có dữ liệu';
-        const conn = this.sourceStatus.get(source);
-        const parts = [];
-        if (data.status === 'unknown') {
-            parts.push('Chưa đo được độ mới của dữ liệu (Bước 1.1)');
-        } else {
-            parts.push(`Dữ liệu: ${data.status}`);
-            if (data.ageMs >= 0) parts.push(`tuổi ${data.ageMs}ms`);
+        if (!data) {
+            const conn = this.sourceStatus.get(source);
+            return conn && conn.state === 'disconnected'
+                ? 'Sàn chưa gửi dữ liệu nào — coi như mất kết nối'
+                : 'Đang chờ dữ liệu đầu tiên';
         }
-        if (conn && conn.state !== 'unknown') parts.push(`Kết nối: ${conn.state}`);
+
+        const parts = [];
+        if (data.status === 'stale') {
+            parts.push('Dữ liệu CŨ — đã loại khỏi so sánh');
+        } else if (data.status === 'live') {
+            parts.push('Dữ liệu mới');
+        } else {
+            parts.push('Chưa đo được độ mới của dữ liệu');
+        }
+        if (data.ageMs >= 0) parts.push(`nhận cách đây ${this.formatAge(data.ageMs)}`);
+
+        const conn = this.sourceStatus.get(source);
+        if (conn && conn.state === 'disconnected') {
+            parts.push('Sàn không gửi gì cho bất kỳ cặp nào');
+        }
         return parts.join(' · ');
+    }
+
+    formatAge(ageMs) {
+        if (ageMs < 1000) return `${ageMs}ms`;
+        if (ageMs < 60000) return `${(ageMs / 1000).toFixed(1)}s`;
+        return `${Math.floor(ageMs / 60000)}m`;
+    }
+
+    // Short badge shown beside the price. A red dot alone is easy to miss, and a
+    // frozen price that looks healthy is the failure this step exists to remove.
+    statusBadge(source) {
+        // Our own socket is down: nothing on screen can be called fresh, and the
+        // venue is not the one at fault.
+        if (this.ws && this.ws.readyState !== 1 && this.sources.has(source)) {
+            return '<span class="source-badge waiting">MẤT KẾT NỐI MÁY CHỦ</span>';
+        }
+        const conn = this.sourceStatus.get(source);
+        if (conn && conn.state === 'disconnected') {
+            return '<span class="source-badge disconnected">MẤT KẾT NỐI</span>';
+        }
+        if (this.sources.get(source)?.status === 'stale') {
+            return '<span class="source-badge stale">CŨ</span>';
+        }
+        if (!this.sources.has(source)) {
+            return '<span class="source-badge waiting">CHỜ</span>';
+        }
+        // Still connected, but the last thing it sent was not a usable price.
+        if (this.absentSources.has(source)) {
+            return '<span class="source-badge stale">KHÔNG GIÁ</span>';
+        }
+        return '';
     }
 
     updateSourceList() {
@@ -731,10 +839,25 @@ class FuturesArbitrageScanner {
         }
     }
     
+    // Every source the server told us about gets a row, whether or not it has a
+    // price. A venue that never connected is exactly the thing worth showing.
+    displayedSources() {
+        const seen = new Set();
+        const out = [];
+        this.sourceMeta.forEach((_meta, source) => {
+            seen.add(source);
+            out.push(source);
+        });
+        for (const source of this.sources.keys()) {
+            if (!seen.has(source)) out.push(source);
+        }
+        return out;
+    }
+
     performSourceListUpdate() {
         const sourceList = document.getElementById('sourceList');
         
-        if (this.sources.size === 0) {
+        if (this.displayedSources().length === 0) {
             sourceList.innerHTML = '<div class="loading">No data available</div>';
             return;
         }
@@ -742,9 +865,10 @@ class FuturesArbitrageScanner {
         // Check if we need to recreate HTML (structure changed) or just update prices
         const existingItems = [...sourceList.querySelectorAll('.source-item')];
         const rendered = new Set(existingItems.map(el => el.dataset.source));
+        const wanted = this.displayedSources();
         const needsRecreation = this.sourceListDirty
-            || rendered.size !== this.sources.size
-            || [...this.sources.keys()].some(source => !rendered.has(source));
+            || rendered.size !== wanted.length
+            || wanted.some(source => !rendered.has(source));
         this.sourceListDirty = false;
         
         if (needsRecreation) {
@@ -761,7 +885,7 @@ class FuturesArbitrageScanner {
 
         // Registry order, so a source that drops out and comes back returns to
         // its own row instead of the bottom of the list.
-        const ordered = [...this.sources.keys()].sort((a, b) => {
+        const ordered = this.displayedSources().sort((a, b) => {
             const ia = this.sourceOrderIndex(a);
             const ib = this.sourceOrderIndex(b);
             return ia === ib ? a.localeCompare(b) : ia - ib;
@@ -770,8 +894,9 @@ class FuturesArbitrageScanner {
         let html = '';
         for (const source of ordered) {
             const data = this.sources.get(source);
-            const changeClass = data.change >= 0 ? 'up' : 'down';
-            const changeSymbol = data.change >= 0 ? '↑' : '↓';
+            const hasPrice = data !== undefined;
+            const changeClass = hasPrice && data.change >= 0 ? 'up' : 'down';
+            const changeSymbol = hasPrice && data.change >= 0 ? '↑' : '↓';
             const color = this.sourceMeta.get(source)?.color || '#888';
             const isEnabled = this.isSourceEnabled(source);
             const opacity = isEnabled ? '1' : '0.4';
@@ -788,9 +913,10 @@ class FuturesArbitrageScanner {
                         <div class="source-name">${esc(this.formatSourceName(source))}</div>
                     </div>
                     <div>
-                        <span class="source-price">$${this.formatPrice(data.price)}</span>
+                        ${this.statusBadge(source)}
+                        <span class="source-price">${hasPrice ? '$' + this.formatPrice(data.price) : '—'}</span>
                         <span class="price-change ${changeClass}">
-                            ${changeSymbol} ${Math.abs(data.changePercent).toFixed(3)}%
+                            ${hasPrice ? `${changeSymbol} ${Math.abs(data.changePercent).toFixed(3)}%` : ''}
                         </span>
                     </div>
                 </div>
@@ -807,27 +933,47 @@ class FuturesArbitrageScanner {
     }
 
     updateSourcePrices() {
-        for (const [source, data] of this.sources.entries()) {
+        for (const source of this.displayedSources()) {
+            const data = this.sources.get(source);
             const sourceItem = document.querySelector(`[data-source="${source}"]`);
             if (sourceItem) {
                 const priceElement = sourceItem.querySelector('.source-price');
                 const changeElement = sourceItem.querySelector('.price-change');
                 
                 if (priceElement) {
-                    priceElement.textContent = `$${this.formatPrice(data.price)}`;
+                    priceElement.textContent = data ? `$${this.formatPrice(data.price)}` : '—';
                 }
                 
                 if (changeElement) {
-                    const changeClass = data.change >= 0 ? 'up' : 'down';
-                    const changeSymbol = data.change >= 0 ? '↑' : '↓';
-                    changeElement.className = `price-change ${changeClass}`;
-                    changeElement.textContent = `${changeSymbol} ${Math.abs(data.changePercent).toFixed(3)}%`;
+                    if (data) {
+                        const changeClass = data.change >= 0 ? 'up' : 'down';
+                        const changeSymbol = data.change >= 0 ? '↑' : '↓';
+                        changeElement.className = `price-change ${changeClass}`;
+                        changeElement.textContent = `${changeSymbol} ${Math.abs(data.changePercent).toFixed(3)}%`;
+                    } else {
+                        // No price for this source on this symbol. Leaving the
+                        // old number here shows the previous symbol's change
+                        // beside a "-" price.
+                        changeElement.textContent = '';
+                    }
                 }
 
                 const statusElement = sourceItem.querySelector('.source-status-dot');
                 if (statusElement) {
                     statusElement.className = `source-status-dot ${this.statusClass(source)}`;
                     statusElement.title = this.statusTitle(source);
+                }
+
+                // The badge appears and disappears as a feed dies and recovers,
+                // so it has to be refreshed on the cheap path too.
+                const badge = sourceItem.querySelector('.source-badge');
+                const wanted = this.statusBadge(source);
+                if ((badge ? badge.outerHTML : '') !== wanted) {
+                    if (badge) badge.remove();
+                    if (wanted) {
+                        const priceEl = sourceItem.querySelector('.source-price');
+                        if (priceEl) priceEl.insertAdjacentHTML('beforebegin', wanted);
+                    }
                 }
             }
         }
@@ -859,10 +1005,11 @@ class FuturesArbitrageScanner {
                 const history = this.priceHistory.get(source) || [];
                 if (history.length > 0) {
                     // Convert data to TradingView format: { time: timestamp, value: price }
-                    const seriesData = history.map(([timestamp, price]) => ({
-                        time: timestamp,
-                        value: price
-                    }));
+                    // A null price is a deliberate gap: TradingView renders a
+                    // point with no value as whitespace and ends the line there.
+                    const seriesData = history.map(([timestamp, price]) => (
+                        price === null ? { time: timestamp } : { time: timestamp, value: price }
+                    ));
                     
                     series.setData(seriesData);
                 } else {

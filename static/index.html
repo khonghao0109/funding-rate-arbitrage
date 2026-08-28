@@ -167,6 +167,30 @@
             flex-shrink: 0;
         }
 
+        .source-badge {
+            font-size: 8px;
+            font-weight: bold;
+            padding: 1px 4px;
+            border-radius: 2px;
+            margin-right: 4px;
+            vertical-align: middle;
+        }
+
+        .source-badge.stale {
+            color: #ff4444;
+            border: 1px solid #ff4444;
+        }
+
+        .source-badge.waiting {
+            color: #888;
+            border: 1px solid #444;
+        }
+
+        .source-badge.disconnected {
+            color: #fff;
+            background: #ff4444;
+        }
+
         .source-price {
             font-weight: bold;
             color: #e0e0e0;

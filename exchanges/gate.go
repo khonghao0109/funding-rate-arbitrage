@@ -164,15 +164,18 @@ func ConnectGateFutures(symbols []string, priceChan chan<- PriceData, orderbookC
 				if bookTickerMsg.Result.Timestamp > 0 {
 					timestamp = bookTickerMsg.Result.Timestamp
 				} else {
-					timestamp = time.Now().UnixMilli()
+					// No venue timestamp in this message. Substituting the local
+					// clock would report our own time as the venue's and make a
+					// dead feed look current. Leave it 0.
+					timestamp = 0
 				}
 
 				orderbookData := OrderbookData{
-					Symbol:    standardSymbol,
-					Source:    "gate_futures",
-					BestBid:   bestBid,
-					BestAsk:   bestAsk,
-					Timestamp: timestamp,
+					Symbol:      standardSymbol,
+					Source:      "gate_futures",
+					BestBid:     bestBid,
+					BestAsk:     bestAsk,
+					VenueTimeMs: timestamp,
 				}
 
 				orderbookChan <- orderbookData

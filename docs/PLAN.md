@@ -34,7 +34,7 @@
 | Frontend | Vanilla JS ~1.100 dòng + HTML ~760 dòng, TradingView Lightweight Charts. Danh sách nguồn và symbol **dựng từ message `meta`**, không còn hardcode |
 | Số nguồn dữ liệu | 10 (7 futures + 2 spot + 1 oracle) |
 | Cặp giao dịch | BTCUSDT, ETHUSDT, XRPUSDT, SOLUSDT (hardcode tại `main.go:352`) |
-| Test coverage | **46,6%** ở `main` (25 test, Bước 1.0); `exchanges/` vẫn 0% |
+| Test coverage | **52,5%** ở `main` (39 test, Bước 1.0–1.1); `exchanges/` vẫn 0% |
 | Persistence | **Không có** — toàn bộ state nằm trong RAM |
 
 ### 1.2. Đã có gì
@@ -66,14 +66,14 @@
 | 3 | **REST client + HMAC signing** — cả repo chỉ có 1 lời gọi HTTP (`pyth.go:77`) | Không thể đặt lệnh | GĐ 4 |
 | 4 | **Mô hình phí** — không có dòng code nào tính phí (README đã sửa lại cho đúng, nay ghi rõ số hiển thị là spread thô) | Tín hiệu lợi nhuận là lợi nhuận thô, không phải ròng | GĐ 1 |
 | 5 | **Khái niệm vị thế / margin / PnL** | Không quản trị được rủi ro | GĐ 5 |
-| 6 | **Lọc dữ liệu cũ (staleness)** — `Timestamp` bị vứt bỏ tại `main.go:63-72` | Sàn rớt kết nối → giá cũ vẫn sinh tín hiệu giả | GĐ 1 |
+| 6 | ~~**Lọc dữ liệu cũ (staleness)**~~ — ✅ xong ở GĐ 1.1: `RecvAt` do scanner đặt, ngưỡng theo từng sàn, giá cũ bị loại khỏi so sánh và hiển thị STALE | — | ✅ GĐ 1.1 |
 | 7 | **Tách bạch spot ↔ perp trong logic** — `main.go:107-135` lấy min/max trên toàn bộ source | Sinh "cơ hội" không thực thi được | GĐ 1 |
 | 8 | **Test tự động** — 🔄 25 test cho hợp đồng wire ở Bước 1.0; `exchanges/` và `testdata/` vẫn trống | Connector đổi định dạng không ai biết | GĐ 1.6 |
 | 9 | **Cấu hình** — symbol, ngưỡng, sàn đều hardcode | Không vận hành linh hoạt được | GĐ 1 |
 | 10 | **Alert ra ngoài** (Telegram/Discord) | Phải ngồi nhìn màn hình | GĐ 3 |
 | 11 | **Instrument metadata** (`stepSize`, `tickSize`, `minNotional`, contract size) | Không tính được size delta-neutral đúng — hai chân lệch nhau ngay lệnh đầu | GĐ 2 |
 | 12 | **Bảng ánh xạ spot↔perp có xác thực** | Nguy cơ mở vị thế lệch coin | GĐ 2 |
-| 13 | **`Timestamp` mang hai nghĩa tuỳ sàn** — 3/8 sàn điền thời điểm nhận thay vì thời gian sàn | Không dùng làm cơ sở staleness được | GĐ 1.1 |
+| 13 | ~~**`Timestamp` mang hai nghĩa tuỳ sàn**~~ — ✅ xong ở GĐ 1.1: đổi thành `VenueTimeMs`, không sàn nào còn điền đồng hồ nội bộ (5 sàn đã sửa: Bybit, Kraken, Paradex, OKX, Gate) | — | ✅ GĐ 1.1 |
 | 14 | **Pyth bị tính như sàn giao dịch** trong `checkArbitrage` | Sinh "cơ hội" mua/bán trên oracle | GĐ 1.2 |
 | 15 | **Khối lượng đỉnh sổ bị vứt** — connector đã parse nhưng `OrderbookData` không có field | Không lọc được thanh khoản dù dữ liệu đã có sẵn miễn phí | GĐ 1.2 |
 
@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **1/7 bước** | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **2/7 bước** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -164,7 +164,7 @@
 
 > Lý do tồn tại bước này: `app.js` có 925 dòng và hardcode danh sách nguồn ở 5 chỗ ([42-53](../static/app.js#L42-L53), [241-250](../static/app.js#L241-L250), [538-547](../static/app.js#L538-L547), [614](../static/app.js#L614)). Sửa nó ba lần liên tiếp mà không có test nào bảo vệ là ba lần có nguy cơ vỡ dashboard.
 
-#### Bước 1.1 — Lọc dữ liệu cũ (staleness filter)
+#### Bước 1.1 — Lọc dữ liệu cũ (staleness filter) ✅
 - ⚠️ **Không dùng `Timestamp` hiện tại làm cơ sở.** Field này mang hai nghĩa khác nhau: Binance/OKX/Gate/Hyperliquid/Pyth điền thời gian sàn phát, còn Bybit/Paradex/Kraken điền `time.Now().UnixMilli()` — tức với 3 sàn đó nó luôn "mới" kể cả khi sàn đã ngừng gửi dữ liệu.
 - Tách rõ hai field: `VenueTimeMs` (0 nếu sàn không cấp) và `RecvAtMs` (**luôn do bot đặt, tại một chỗ duy nhất**). Staleness đo bằng `RecvAtMs`.
 - Đổi `map[string]float64` → `map[string]PricePoint`.
@@ -172,6 +172,45 @@
 - Hiển thị trạng thái STALE / DISCONNECTED trên UI (dùng hợp đồng đã chốt ở 1.0).
 - Việc lấy venue time thật cho Bybit/Kraken/Paradex tách riêng, không thuộc bước này.
 - **Nghiệm thu:** chặn kết nối 1 sàn → sàn đó chuyển STALE trong ≤ ngưỡng của nó, không sinh cảnh báo nào từ dữ liệu đóng băng.
+
+**Đã làm (2026-08-28).** `Timestamp` đổi thành `VenueTimeMs` ở cả 8 connector và **không sàn nào còn điền đồng hồ nội bộ** vào nó — Bybit/Kraken/Paradex trước đây điền `time.Now()`, OKX/Gate rơi về `time.Now()` khi parse lỗi; nay tất cả để 0. `RecvAt` do scanner đặt tại **đúng một chỗ** (`updatePrice`). Ngưỡng theo từng sàn. Giá stale **vẫn gửi** kèm `status:"stale"` để dashboard hiện được sàn chết, nhưng bị loại khỏi ma trận kèm lý do `stale`.
+
+**Ngưỡng được ĐO, không đoán.** Quan sát 5 phút trên cả 4 cặp lúc thị trường hoạt động, khoảng cách lớn nhất giữa hai lần cập nhật:
+
+| Sàn | Gap lớn nhất | Ngưỡng đặt |
+|---|---|---|
+| hyperliquid | 6,05s | 20s |
+| bybit_spot | 4,02s | 15s |
+| binance_spot | 3,85s | 15s |
+| gate | 3,37s | 15s |
+| kraken | 2,95s | 10s |
+| bybit | 2,25s | 10s |
+| paradex | 1,86s | 10s |
+| okx | 1,00s | 10s |
+| binance | 0,85s | 10s |
+
+Mỗi ngưỡng dư khoảng 3× so với gap tệ nhất của chính sàn đó. **Pyth không có trong bảng** vì suốt buổi đo nó không gửi gì — nó giữ mặc định và cần đo lại khi feed hoạt động. **Chỉ đúng cho 4 cặp lớn trong giờ hoạt động** — cặp thanh khoản mỏng và giờ đêm cần đo lại (nợ ngưỡng thích ứng, đã ghi ở cuối giai đoạn).
+
+Ngưỡng "mất kết nối" **tách khỏi** ngưỡng "giá cũ" (3× ngưỡng giá, tối thiểu 45s). Hai điều này khác nhau: "báo giá quá cũ để so sánh" là chuyện thường ở feed đẩy-theo-thay-đổi lúc thị trường yên, còn "sàn đã chết" là báo động. Gate, Kraken, Paradex và Pyth **không gửi trade nào**, nên tín hiệu sống duy nhất của chúng là sổ lệnh thay đổi — dùng chung ngưỡng sẽ tô đỏ một socket hoàn toàn khoẻ.
+
+**Nghiệm thu đã thực hiện:** dựng một sàn giả cục bộ nói đúng giao thức Binance, trỏ connector Binance thật vào đó, rồi cho nó **im lặng mà vẫn giữ kết nối** (trường hợp khó hơn đóng TCP — im lặng phải suy ra, không được báo).
+
+```
+sàn im lặng → báo STALE:            10,20s  (ngưỡng 10s + 1 nhịp broadcast 200ms)
+sàn im lặng → loại khỏi so sánh:    10,01s
+cảnh báo sinh từ giá đóng băng:     0
+```
+
+**Bug có sẵn được sửa kèm:**
+- `now := time.Now()` trong khối cooldown **che mất đồng hồ tiêm vào**, khiến chính test nghiệm thu của bước này vẫn xanh khi gỡ bộ lọc. Phát hiện bằng kiểm chứng đột biến, không phải bằng đọc code.
+- `checkArbitrage` chỉ chạy khi có giá về, nên một symbol mà **mọi** nguồn cùng im lặng sẽ không bao giờ được xét lại — ma trận đóng băng vĩnh viễn trên màn hình. Thêm `refreshStaleness` chạy mỗi giây.
+- Nguồn chưa từng gửi gì (Pyth trong lần chạy thật) **vắng mặt hoàn toàn** khỏi `source_status`, nên dashboard không thể báo là mất kết nối. Nay mọi nguồn đã đăng ký đều được báo cáo.
+- `broadcastSpreads`/`broadcastOpportunity`/`meta` vẫn dùng `time.Now()` trong khi phần còn lại dùng đồng hồ tiêm — phá vỡ đẳng thức `age_ms = server_time_ms - recv_at_ms` của chính hợp đồng.
+
+**Phát hiện ngoài phạm vi — ghi nhận:**
+- ⚠️ **`RecvAt` được đóng dấu lúc lấy khỏi channel, không phải lúc đọc socket.** `broadcast` chạy đồng bộ trên cùng goroutine đó, nên một trình duyệt treo (deadline 2s) chặn ingest, `orderbookChan` (1000 chỗ) đầy dần, rồi cả đống tồn đọng được đóng dấu cùng một mốc `now` — báo giá cũ vài giây lên wire với `age_ms ≈ 0` và `status: live`, tức **đúng cái sai mà bước này tồn tại để dẹp**. Cách sửa đúng là đóng dấu ngay lúc đọc socket, và việc đó thuộc **Bước 1.5** (refactor `Feeds` chạm cả 10 connector) cộng với hàng đợi gửi riêng cho từng client ở [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast). Ở quy mô hiện tại (9 sàn, 4 cặp, 1–2 client) chưa quan sát thấy, nhưng nó có thật.
+- Ngưỡng mới chỉ đo trên 4 cặp lớn. Thêm cặp thanh khoản mỏng ở GĐ 2 sẽ cần đo lại hoặc chuyển sang ngưỡng thích ứng.
+- Lấy venue time thật cho Bybit/Kraken/Paradex vẫn chưa làm (nằm ngoài bước này theo PLAN); ba sàn đó hiện gửi `venue_time_ms: 0`.
 
 #### Bước 1.2 — Tách bạch Spot ↔ Perpetual ↔ Oracle
 - Thêm trường `MarketType` (`spot` / `perp` / `future` / `oracle`) thay vì suy ra từ hậu tố chuỗi.
@@ -211,6 +250,7 @@ type Feeds struct {
 func ConnectBinanceFutures(symbols []string, f Feeds)
 ```
 
+- **Đóng dấu `RecvAt` ngay lúc đọc socket**, không phải lúc lấy khỏi channel — xem phát hiện ghi ở Bước 1.1. Đây là lúc chạm cả 10 connector nên là chỗ rẻ nhất để làm.
 - Exponential backoff (2s → 4s → … → tối đa 60s) thay `time.Sleep` cố định.
 - Ping/pong keepalive + `SetReadDeadline` cho từng connector.
 - Mọi goroutine có điều kiện thoát qua `ctx`.
@@ -653,7 +693,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   1/7 bước   ← ĐANG LÀM
+[  ] GĐ 1  Củng cố lõi                   2/7 bước   ← ĐANG LÀM
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -663,4 +703,4 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** Bước 1.1 — thêm staleness filter. Hợp đồng đã có sẵn `recv_at_ms`, `venue_time_ms`, `age_ms`, `status` và `stale_after_sec`; bước 1.1 chỉ điền dữ liệu thật vào, không đổi shape ([WS-CONTRACT.md](WS-CONTRACT.md)).
+**Việc tiếp theo cụ thể:** Bước 1.2 — tách Spot ↔ Perpetual ↔ Oracle. Hợp đồng đã có sẵn `cross_venue_groups[]`, `basis[]`, `oracle_deviation[]` và cờ `tradable`/`market_type`/`quote_asset`; frontend đã render cả ba khối. Bước 1.2 chỉ đổi **cách backend chia nhóm**, không đổi shape và không sửa `app.js`.

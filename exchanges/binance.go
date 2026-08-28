@@ -78,11 +78,11 @@ func ConnectBinanceFutures(symbols []string, priceChan chan<- PriceData, orderbo
 				}
 
 				orderbookData := OrderbookData{
-					Symbol:    bookTicker.Symbol,
-					Source:    "binance_futures",
-					BestBid:   bidPrice,
-					BestAsk:   askPrice,
-					Timestamp: bookTicker.EventTime,
+					Symbol:      bookTicker.Symbol,
+					Source:      "binance_futures",
+					BestBid:     bidPrice,
+					BestAsk:     askPrice,
+					VenueTimeMs: bookTicker.EventTime,
 				}
 
 				orderbookChan <- orderbookData
@@ -107,12 +107,12 @@ func ConnectBinanceFutures(symbols []string, priceChan chan<- PriceData, orderbo
 				}
 
 				tradeData := TradeData{
-					Symbol:    trade.Symbol,
-					Source:    "binance_futures",
-					Price:     price,
-					Quantity:  trade.Quantity,
-					Side:      side,
-					Timestamp: trade.TradeTime,
+					Symbol:      trade.Symbol,
+					Source:      "binance_futures",
+					Price:       price,
+					Quantity:    trade.Quantity,
+					Side:        side,
+					VenueTimeMs: trade.TradeTime,
 				}
 
 				tradeChan <- tradeData
@@ -192,11 +192,11 @@ func ConnectBinanceSpot(symbols []string, priceChan chan<- PriceData, orderbookC
 				}
 
 				orderbookData := OrderbookData{
-					Symbol:    bookTicker.Symbol,
-					Source:    "binance_spot",
-					BestBid:   bidPrice,
-					BestAsk:   askPrice,
-					Timestamp: bookTicker.EventTime,
+					Symbol:      bookTicker.Symbol,
+					Source:      "binance_spot",
+					BestBid:     bidPrice,
+					BestAsk:     askPrice,
+					VenueTimeMs: bookTicker.EventTime,
 				}
 
 				orderbookChan <- orderbookData
@@ -221,12 +221,12 @@ func ConnectBinanceSpot(symbols []string, priceChan chan<- PriceData, orderbookC
 				}
 
 				tradeData := TradeData{
-					Symbol:    trade.Symbol,
-					Source:    "binance_spot",
-					Price:     price,
-					Quantity:  trade.Quantity,
-					Side:      side,
-					Timestamp: trade.TradeTime,
+					Symbol:      trade.Symbol,
+					Source:      "binance_spot",
+					Price:       price,
+					Quantity:    trade.Quantity,
+					Side:        side,
+					VenueTimeMs: trade.TradeTime,
 				}
 
 				tradeChan <- tradeData

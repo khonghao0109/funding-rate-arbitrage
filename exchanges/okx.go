@@ -120,22 +120,24 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 						continue
 					}
 
-					// Convert timestamp from string to int64
+					// Convert timestamp from string to int64. An unparseable
+					// value means the venue gave us nothing usable; substituting
+					// the local clock would report our time as the venue's.
 					timestamp, err := strconv.ParseInt(trade.Timestamp, 10, 64)
 					if err != nil {
-						timestamp = time.Now().UnixMilli()
+						timestamp = 0
 					}
 
 					// Convert OKX symbol back to standard format
 					standardSymbol := convertFromOKXSymbol(trade.InstID)
 
 					tradeData := TradeData{
-						Symbol:    standardSymbol,
-						Source:    "okx_futures",
-						Price:     price,
-						Quantity:  trade.Size,
-						Side:      trade.Side, // OKX already provides "buy" or "sell"
-						Timestamp: timestamp,
+						Symbol:      standardSymbol,
+						Source:      "okx_futures",
+						Price:       price,
+						Quantity:    trade.Size,
+						Side:        trade.Side, // OKX already provides "buy" or "sell"
+						VenueTimeMs: timestamp,
 					}
 
 					tradeChan <- tradeData
@@ -158,21 +160,23 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 						continue
 					}
 
-					// Convert timestamp from string to int64
+					// Convert timestamp from string to int64. An unparseable
+					// value means the venue gave us nothing usable; substituting
+					// the local clock would report our time as the venue's.
 					timestamp, err := strconv.ParseInt(book.Timestamp, 10, 64)
 					if err != nil {
-						timestamp = time.Now().UnixMilli()
+						timestamp = 0
 					}
 
 					// Convert OKX symbol back to standard format
 					standardSymbol := convertFromOKXSymbol(book.InstID)
 
 					orderbookData := OrderbookData{
-						Symbol:    standardSymbol,
-						Source:    "okx_futures",
-						BestBid:   bestBid,
-						BestAsk:   bestAsk,
-						Timestamp: timestamp,
+						Symbol:      standardSymbol,
+						Source:      "okx_futures",
+						BestBid:     bestBid,
+						BestAsk:     bestAsk,
+						VenueTimeMs: timestamp,
 					}
 
 					orderbookChan <- orderbookData

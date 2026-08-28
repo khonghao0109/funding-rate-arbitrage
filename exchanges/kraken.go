@@ -45,11 +45,18 @@ func processKrakenOrderbook(productID string, orderBook *KrakenOrderBook, orderb
 	bestAsk := orderBook.Asks[0].Price
 
 	orderbookData := OrderbookData{
-		Symbol:    symbol,
-		Source:    "kraken_futures",
-		BestBid:   bestBid,
-		BestAsk:   bestAsk,
-		Timestamp: time.Now().UnixMilli(),
+		Symbol:  symbol,
+		Source:  "kraken_futures",
+		BestBid: bestBid,
+		BestAsk: bestAsk,
+		// KrakenOrderBookData.Timestamp is decoded from the feed, but this
+		// function only receives the assembled book, not the delta that
+		// produced it, so no venue timestamp is available here. Writing the
+		// local clock instead would report our own time as the venue's and make
+		// a dead feed look current forever. Leave it 0; the scanner stamps its
+		// own receive time. Threading the real timestamp through is step 1.5's
+		// work. See docs/WS-CONTRACT.md §4.1.
+		VenueTimeMs: 0,
 	}
 
 	orderbookChan <- orderbookData

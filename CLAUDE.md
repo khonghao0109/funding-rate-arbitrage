@@ -27,13 +27,14 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** 1 of 7 steps done. Step 1.0 froze the WebSocket JSON
+**Phase 1 — Hardening.** 2 of 7 steps done. Step 1.0 froze the WebSocket JSON
 contract for the whole phase — it is specified in
 [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
-phase 2: steps 1.1–1.3 fill data into fields that already exist. The next task is
-step 1.1, the staleness filter; `recv_at_ms`, `venue_time_ms`, `age_ms`, `status`
-and `stale_after_sec` are already on the wire carrying their documented
-defaults.
+phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added the staleness filter. The next task is
+step 1.2, separating spot from perpetual from oracle; the contract already has
+`cross_venue_groups[]`, `basis[]`, `oracle_deviation[]` and the
+`market_type`/`quote_asset`/`tradable` flags, and the dashboard already renders
+all three blocks, so 1.2 only changes how the backend groups sources.
 
 ---
 
@@ -133,6 +134,14 @@ ever named `profit_*`: a figure with nothing deducted is `*_gross_pct`. The
 frontend builds its source list, symbol selector and cost disclaimer from the
 `meta` message — do not reintroduce a hardcoded source list.
 
+**13. Freshness is measured from the receive time only.** `VenueTimeMs` is the
+venue's own clock and is 0 for the venues that publish none; a real measurement
+showed Binance's running 80ms *ahead* of ours, so differencing the two measures
+skew, not age. The scanner stamps `RecvAt` in exactly one place
+([main.go](main.go) `updatePrice`) — never add a second. Staleness thresholds are
+per venue and measured; the numbers and how they were obtained are on
+`sourceRegistry` in [wire.go](wire.go).
+
 ---
 
 ## Domain traps already discovered
@@ -219,14 +228,10 @@ and user-facing UI strings are Vietnamese. Full conventions in
 Do not build on top of these without addressing them; they are scheduled in
 phase 1.
 
-- `Timestamp` is discarded when order book data becomes a price
-  ([main.go](main.go)), so a disconnected venue keeps producing signals from a
-  frozen price. Worse, the field means two different things: Binance, OKX,
-  Gate, Hyperliquid and Pyth fill it with the venue's own time, while Bybit,
-  Paradex and Kraken fill it with `time.Now()`. It cannot be used as the basis
-  for staleness — a receive timestamp set in one place is needed instead. The
-  wire already carries `recv_at_ms` and `venue_time_ms` separately; step 1.1
-  fills them.
+- ~~`Timestamp` is discarded, and means two different things depending on the
+  venue.~~ Fixed in step 1.1: the field is `VenueTimeMs`, no venue fills it with
+  the local clock, and `RecvAt` is stamped by the scanner in exactly one place
+  (`updatePrice`). Staleness is measured only from `RecvAt`.
 - Top-of-book size is parsed and thrown away. `OrderbookData` carries only
   prices, while the connectors already decode quantities (Binance `B`/`A`,
   Bybit `v`, OKX `sz`). That is a free first-order liquidity filter going
@@ -245,8 +250,8 @@ phase 1.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
 - No `exchanges/testdata/` and no connector tests — golden tests need real
-  payloads captured from a running scanner first. `main` has 25 tests covering
-  the wire contract (46.6% of statements); `exchanges/` is still at zero.
+  payloads captured from a running scanner first. `main` has 39 tests covering
+  the wire contract and the staleness filter (52.5% of statements); `exchanges/` is still at zero.
 
 ---
 

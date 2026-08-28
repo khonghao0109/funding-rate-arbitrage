@@ -127,10 +127,10 @@ func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookCh
 
 					// Create price data
 					priceData := PriceData{
-						Symbol:    symbol,
-						Source:    "pyth",
-						Price:     price,
-						Timestamp: feed.Price.PublishTime * 1000, // Convert to milliseconds
+						Symbol:      symbol,
+						Source:      "pyth",
+						Price:       price,
+						VenueTimeMs: feed.Price.PublishTime * 1000, // Convert to milliseconds
 					}
 
 					priceChan <- priceData
