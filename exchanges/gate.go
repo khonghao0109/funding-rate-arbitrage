@@ -1,7 +1,6 @@
 package exchanges
 
 import (
-	"encoding/json"
 	"log"
 	"strconv"
 	"time"
@@ -78,118 +77,85 @@ type GateSubscribeMessage struct {
 	Payload []string `json:"payload"`
 }
 
-func ConnectGateFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
-	wsURL := "wss://fx-ws.gateio.ws/v4/ws/usdt"
+// Gate is the one venue that documents the protocol-level mechanism as the
+// preferred one: "the server will initiate a ping message actively. If the
+// client does not reply, the client will be disconnected", and it recommends the
+// WebSocket protocol layer ping/pong over its application-level `futures.ping`
+// channel. https://www.gate.com/docs/developers/futures/ws/en/
+//
+// So Ping is left nil - runStream sends a protocol ping frame - and the ping
+// handler there answers the server's own pings and counts them as activity.
+func ConnectGateFutures(source string, symbols []Symbol, f Feeds) {
+	runStream(f, streamConfig{
+		Source: source,
+		URL:    "wss://fx-ws.gateio.ws/v4/ws/usdt",
+		Subscribe: func(conn *websocket.Conn) error {
+			// config.yaml supplies the venue identifiers (symbol_format
+			// "{base}_{quote}"), so this connector no longer keeps its own table.
+			return conn.WriteJSON(GateSubscribeMessage{
+				Time:    time.Now().Unix(),
+				Channel: "futures.book_ticker",
+				Event:   "subscribe",
+				Payload: VenueSymbols(symbols),
+			})
+		},
+		Handle: func(raw []byte, recvAt time.Time) {
+			handleGateFrame(source, symbols, f, raw, recvAt)
+		},
+	})
+}
 
-	for {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			log.Printf("Gate.io connection error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
+func handleGateFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+	// First, check for errors and subscription acknowledgements.
+	var wsMsg GateWebSocketMessage
+	if decode(raw, &wsMsg) {
+		if wsMsg.Error != nil {
+			log.Printf("%s: WebSocket error %d - %s", source, wsMsg.Error.Code, wsMsg.Error.Message)
+			return
 		}
-
-		log.Printf("Connected to Gate.io futures WebSocket")
-
-		// config.yaml supplies the venue identifiers (symbol_format
-		// "{base}_{quote}"), so this connector no longer keeps its own table.
-		gateSymbols := VenueSymbols(symbols)
-
-		// Subscribe to book ticker for all symbols - this provides best bid/ask
-		bookTickerSubscribeMsg := GateSubscribeMessage{
-			Time:    time.Now().Unix(),
-			Channel: "futures.book_ticker",
-			Event:   "subscribe",
-			Payload: gateSymbols,
+		if wsMsg.Event == "subscribe" {
+			return
 		}
-
-		err = conn.WriteJSON(bookTickerSubscribeMsg)
-		if err != nil {
-			log.Printf("Gate.io book ticker subscription error: %v", err)
-			conn.Close()
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		if err != nil {
-			continue
-		}
-
-		for {
-			var message json.RawMessage
-			err := conn.ReadJSON(&message)
-			if err != nil {
-				log.Printf("Gate.io read error: %v", err)
-				conn.Close()
-				break
-			}
-
-			// First, try to parse as a general WebSocket message to check for errors
-			var wsMsg GateWebSocketMessage
-			if err := json.Unmarshal(message, &wsMsg); err == nil {
-				if wsMsg.Error != nil {
-					log.Printf("Gate.io WebSocket error: %d - %s", wsMsg.Error.Code, wsMsg.Error.Message)
-					continue
-				}
-
-				// Skip subscription confirmation messages
-				if wsMsg.Event == "subscribe" {
-					continue
-				}
-			}
-
-			// Try to parse as book ticker message
-			var bookTickerMsg GateBookTickerMessage
-			if err := json.Unmarshal(message, &bookTickerMsg); err == nil &&
-				bookTickerMsg.Channel == "futures.book_ticker" &&
-				bookTickerMsg.Event == "update" {
-
-				// Parse best bid and ask
-				bestBid, err1 := strconv.ParseFloat(bookTickerMsg.Result.BestBid, 64)
-				bestAsk, err2 := strconv.ParseFloat(bookTickerMsg.Result.BestAsk, 64)
-				if err1 != nil || err2 != nil {
-					log.Printf("Gate.io: Error parsing prices - bid: %v, ask: %v", err1, err2)
-					continue
-				}
-
-				standardSymbol := StandardOf(symbols, bookTickerMsg.Result.Symbol)
-				if standardSymbol == "" {
-					continue // a contract this connector never subscribed to
-				}
-
-				// Use timestamp from message
-				var timestamp int64
-				if bookTickerMsg.Result.Timestamp > 0 {
-					timestamp = bookTickerMsg.Result.Timestamp
-				} else {
-					// No venue timestamp in this message. Substituting the local
-					// clock would report our own time as the venue's and make a
-					// dead feed look current. Leave it 0.
-					timestamp = 0
-				}
-
-				// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0.
-				// GateBookTickerResult.BestBidSize/BestAskSize are int64, which
-				// cannot express a fractional coin amount at all, and measured
-				// 2026-09-03 BTC_USDT published 10099 with BTC near $77.5k - a
-				// contract count, not coins. Converting needs quanto_multiplier
-				// per contract, which arrives with the instrument registry
-				// (internal/instruments, phase 2).
-				orderbookData := OrderbookData{
-					Symbol:      standardSymbol,
-					Source:      source,
-					BestBid:     bestBid,
-					BestAsk:     bestAsk,
-					VenueTimeMs: timestamp,
-				}
-
-				orderbookChan <- orderbookData
-				continue
-			}
-
-			// Silently ignore unhandled message types
-		}
-
-		time.Sleep(2 * time.Second)
 	}
+
+	var bookTickerMsg GateBookTickerMessage
+	if !decode(raw, &bookTickerMsg) ||
+		bookTickerMsg.Channel != "futures.book_ticker" ||
+		bookTickerMsg.Event != "update" {
+		return // any other message type is ignored
+	}
+
+	bestBid, err1 := strconv.ParseFloat(bookTickerMsg.Result.BestBid, 64)
+	bestAsk, err2 := strconv.ParseFloat(bookTickerMsg.Result.BestAsk, 64)
+	if err1 != nil || err2 != nil {
+		log.Printf("%s: error parsing prices - bid: %v, ask: %v", source, err1, err2)
+		return
+	}
+
+	standardSymbol := StandardOf(symbols, bookTickerMsg.Result.Symbol)
+	if standardSymbol == "" {
+		return // a contract this connector never subscribed to
+	}
+
+	// A missing venue timestamp stays 0. Substituting the local clock would
+	// report our own time as the venue's; RecvAt is our clock and says so.
+	var venueTimeMs int64
+	if bookTickerMsg.Result.Timestamp > 0 {
+		venueTimeMs = bookTickerMsg.Result.Timestamp
+	}
+
+	// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0.
+	// GateBookTickerResult.BestBidSize/BestAskSize are int64, which cannot
+	// express a fractional coin amount at all, and measured 2026-09-03 BTC_USDT
+	// published 10099 with BTC near $77.5k - a contract count, not coins.
+	// Converting needs quanto_multiplier per contract, which arrives with the
+	// instrument registry (internal/instruments, phase 2).
+	f.SendOrderbook(OrderbookData{
+		Symbol:      standardSymbol,
+		Source:      source,
+		BestBid:     bestBid,
+		BestAsk:     bestAsk,
+		VenueTimeMs: venueTimeMs,
+		RecvAt:      recvAt,
+	})
 }

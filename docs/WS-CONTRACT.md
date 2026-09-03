@@ -202,10 +202,24 @@ sàn có thể còn kết nối nhưng ngừng đẩy một cặp thanh khoản 
 
 | Trường | Kiểu | Mặc định 1.0 | Ghi chú |
 |---|---|---|---|
-| `state` | string | giá trị thật | `connected` \| `reconnecting` \| `disconnected` \| `unknown`. ⚠️ **Ở Bước 1.1 đây là SUY LUẬN từ im lặng**, không phải điều connector biết: `connected` = có nhận được gì đó (bất kỳ symbol nào, **kể cả trade**) gần đây; `disconnected` = im lặng quá **ngưỡng mất-kết-nối** (3× `stale_after_sec`, tối thiểu 45s — cố ý dài hơn hẳn ngưỡng giá cũ), hoặc chưa gửi gì sau **90s** kể từ lúc khởi động (thời gian ân hạn khởi động dài hơn ngưỡng mất-kết-nối: đồng hồ bắt đầu chạy trước cả khi connector kịp quay số, nên sàn chưa từng gửi phải được đối xử khoan dung hơn sàn từng gửi rồi chết). `reconnecting`, `uptime_sec` và `reconnect_count` đến ở Bước 1.5 |
+| `state` | string | giá trị thật | `connected` \| `reconnecting` \| `disconnected` \| `unknown`. **Từ Bước 1.5 connector tự báo** thay vì chỉ suy ra từ im lặng — nhưng KHÔNG thay thế: kết quả là **hợp** của hai nguồn (xem ghi chú dưới bảng) |
 | `last_msg_at_ms` | int64 | giá trị thật | Message cuối nhận được từ sàn, **bất kể symbol và bất kể loại** (giá hay trade). Đây là thứ phân biệt "sàn chết" với "một cặp thanh khoản mỏng đang yên ắng" |
-| `reconnect_count` | int | `0` | Số lần reconnect từ lúc khởi động (Bước 1.5) |
-| `uptime_sec` | int64 | `0` | Thời gian kết nối liên tục hiện tại (Bước 1.5) |
+| `reconnect_count` | int | `0` | Số lần nối lại **kể từ lúc khởi động**, không tính lần kết nối đầu (Bước 1.5). Đây là con số trả lời "đêm qua sàn nào chập chờn" sau một phiên chạy không người trông |
+| `uptime_sec` | int64 | `0` | Độ dài kết nối **hiện tại**, không cộng dồn qua các lần đứt (Bước 1.5). Bằng `0` khi `state` khác `connected`, để không có chuyện báo tuổi socket bên cạnh trạng thái mất kết nối |
+
+**`state` được quyết bởi HAI nguồn, vì không nguồn nào đủ:**
+
+- **Connector** biết thứ im lặng không biết: sàn có thể mất kết nối ngay một giây
+  sau tick cuối, mà suy luận từ im lặng vẫn gọi nó khoẻ thêm 45 giây nữa. Chỉ
+  connector báo được `reconnecting` — trạng thái này trước Bước 1.5 **chưa bao giờ
+  xuất hiện trên wire**.
+- **Im lặng** biết thứ connector không biết, và đây mới là lỗi hay lẩn: một
+  subscription bị sàn âm thầm huỷ để lại socket **thật sự đang mở**, khoẻ theo mọi
+  thước đo connector có, và không bao giờ đẩy thêm dữ liệu nữa.
+
+Nên: connector báo `connected` **cộng** im lặng vượt ngưỡng mất-kết-nối → vẫn là
+`disconnected`. Ngưỡng im lặng giữ nguyên như Bước 1.1: 3× `stale_after_sec`, tối
+thiểu 45s, và 90s ân hạn khởi động cho sàn chưa từng gửi gì.
 
 ---
 
@@ -421,6 +435,12 @@ phép **thêm** một trường kèm giá trị mặc định có ghi tài liệ
 | 1.3 | `meta.sources[].fee_verified` | `false` |
 | 1.3 | `meta.sources[].maker_fee_bps`/`taker_fee_bps` đổi từ **int** sang **float** | `0` — JSON chỉ có một kiểu số nên shape trên wire không đổi; xem §3 |
 | 1.3 | `cost_basis.model` nhận giá trị `taker_round_trip` (bản 1.0 dự kiến `taker_both_legs`) | `"none"` |
+| 1.5 | **không thêm trường nào** — chỉ đổ dữ liệu thật vào `state`, `reconnect_count`, `uptime_sec` đã đặt sẵn từ 1.0 | — |
+
+Bước 1.5 là bằng chứng cho lý do Bước 1.0 tồn tại: metric kết nối cần đúng ba
+trường, cả ba đã có sẵn trên wire từ đầu với mặc định ghi rõ, nên đổ dữ liệu vào
+chúng **không cần một dòng JavaScript nào**. `state: "reconnecting"` cũng vậy — FE
+đã có sẵn chấm trạng thái cho nó từ 1.1, chỉ là backend chưa bao giờ gửi.
 
 Từ Giai đoạn 2 (`funding`, đăng ký symbol theo client): thêm message type mới và
 thêm trường mới có mặc định — **không** đổi tên và **không** đổi kiểu trường đang có.

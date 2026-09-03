@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -60,8 +61,16 @@ type Scanner struct {
 	//
 	// It has its own mutex: trades update it at roughly a thousand messages a
 	// second and must not contend with every price read.
-	sourceLastMsgAt  map[string]time.Time
-	lastMsgMutex     sync.RWMutex
+	sourceLastMsgAt map[string]time.Time
+	lastMsgMutex    sync.RWMutex
+
+	// sourceConn is what each connector reports about its OWN socket, as
+	// opposed to what silence implies. The two answer different questions and
+	// both are needed: this one knows a venue is unreachable while the last
+	// message is still recent, and silence catches a socket that stayed open
+	// and stopped delivering. Step 1.1 could only infer.
+	sourceConn       map[string]sourceConn
+	connMutex        sync.RWMutex
 	wsClients        map[*websocket.Conn]bool
 	clientsMutex     sync.RWMutex
 	wsWriteMutex     sync.Mutex // Protects WebSocket writes
@@ -69,6 +78,7 @@ type Scanner struct {
 	priceChan        chan exchanges.PriceData
 	orderbookChan    chan exchanges.OrderbookData
 	tradeChan        chan exchanges.TradeData
+	connChan         chan exchanges.ConnEvent
 	lastOpportunity  map[string]time.Time // Track last alert per symbol
 	opportunityMutex sync.RWMutex
 
@@ -100,6 +110,10 @@ func New(symbols []string) *Scanner {
 		priceChan:       make(chan exchanges.PriceData, 1000),
 		orderbookChan:   make(chan exchanges.OrderbookData, 1000),
 		tradeChan:       make(chan exchanges.TradeData, 1000),
+		// Connection events are rare and must never block a connector, so the
+		// buffer only has to absorb every source flapping at once.
+		connChan:        make(chan exchanges.ConnEvent, 256),
+		sourceConn:      make(map[string]sourceConn),
 		lastOpportunity: make(map[string]time.Time),
 		lastUsableSet:   make(map[string]string),
 		upgrader: websocket.Upgrader{
@@ -112,49 +126,150 @@ func New(symbols []string) *Scanner {
 	return s
 }
 
-func (s *Scanner) processPrices() {
-	for priceData := range s.priceChan {
-		s.updatePrice(priceData)
-	}
-}
-
-func (s *Scanner) processOrderbooks() {
-	for orderbookData := range s.orderbookChan {
-		// Calculate mid price from best bid and best ask
-		midPrice := (orderbookData.BestBid + orderbookData.BestAsk) / 2
-
-		priceData := exchanges.PriceData{
-			Symbol:      orderbookData.Symbol,
-			Source:      orderbookData.Source,
-			Price:       midPrice,
-			VenueTimeMs: orderbookData.VenueTimeMs,
-			// The book was parsed and thrown away before step 1.2. It is the
-			// first-order liquidity filter, and it costs no extra bandwidth.
-			BestBid:        orderbookData.BestBid,
-			BestAsk:        orderbookData.BestAsk,
-			BestBidQtyCoin: orderbookData.BestBidQtyCoin,
-			BestAskQtyCoin: orderbookData.BestAskQtyCoin,
+func (s *Scanner) processPrices(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case priceData, ok := <-s.priceChan:
+			if !ok {
+				return
+			}
+			s.updatePrice(priceData)
 		}
-
-		s.updatePrice(priceData)
 	}
 }
 
-func (s *Scanner) processTrades() {
-	for tradeData := range s.tradeChan {
-		// Trades are not used for pricing, but one arriving proves the socket is
-		// alive. Without this, a venue whose book simply has not moved looks
-		// disconnected on a change-driven feed in a quiet market.
-		s.markSourceAlive(tradeData.Source, s.now())
+func (s *Scanner) processOrderbooks(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case orderbookData, ok := <-s.orderbookChan:
+			if !ok {
+				return
+			}
+			// Calculate mid price from best bid and best ask
+			midPrice := (orderbookData.BestBid + orderbookData.BestAsk) / 2
+
+			s.updatePrice(exchanges.PriceData{
+				Symbol:      orderbookData.Symbol,
+				Source:      orderbookData.Source,
+				Price:       midPrice,
+				VenueTimeMs: orderbookData.VenueTimeMs,
+				// Carried through, not re-stamped: this is when the venue's
+				// message came off the socket, and re-taking it here would
+				// measure how long the message sat in the channel above.
+				RecvAt: orderbookData.RecvAt,
+				// The book was parsed and thrown away before step 1.2. It is the
+				// first-order liquidity filter, and it costs no extra bandwidth.
+				BestBid:        orderbookData.BestBid,
+				BestAsk:        orderbookData.BestAsk,
+				BestBidQtyCoin: orderbookData.BestBidQtyCoin,
+				BestAskQtyCoin: orderbookData.BestAskQtyCoin,
+			})
+		}
 	}
 }
 
-// updatePrice is the single place the scanner stamps a receive time. Every
-// staleness decision downstream is measured from it, so it must not be set
-// anywhere else - a second stamping site is how the two-meaning Timestamp field
-// this step replaces came about.
+func (s *Scanner) processTrades(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case tradeData, ok := <-s.tradeChan:
+			if !ok {
+				return
+			}
+			// Trades are not used for pricing, but one arriving proves the socket
+			// is alive. Without this, a venue whose book simply has not moved
+			// looks disconnected on a change-driven feed in a quiet market.
+			s.markSourceAlive(tradeData.Source, s.receivedAt(tradeData.RecvAt))
+		}
+	}
+}
+
+// processConnEvents records what the connectors say about their own sockets.
+func (s *Scanner) processConnEvents(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-s.connChan:
+			if !ok {
+				return
+			}
+			s.applyConnEvent(event)
+		}
+	}
+}
+
+// applyConnEvent folds one connector-reported transition into the source's
+// connection record.
+func (s *Scanner) applyConnEvent(event exchanges.ConnEvent) {
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+
+	current := s.sourceConn[event.Source]
+	switch event.State {
+	case exchanges.ConnConnected:
+		// The first connection is not a reconnection. Counting it would report
+		// every venue as having reconnected once before anything went wrong,
+		// which makes the number useless for spotting the venue that actually
+		// flapped overnight - the reason it is on the wire at all.
+		//
+		// The test is "has this source ever been CONNECTED", not "has it ever
+		// reported": a source whose first dial fails reports reconnecting first,
+		// and keying on any prior report would count its first working
+		// connection as a reconnect.
+		if current.EverConnected {
+			current.ReconnectCount++
+		}
+		current.EverConnected = true
+		current.ConnectedSince = event.At
+	default:
+		// Uptime measures the CURRENT unbroken connection, so it restarts from
+		// nothing rather than accumulating across outages.
+		current.ConnectedSince = time.Time{}
+	}
+	current.State = event.State
+	s.sourceConn[event.Source] = current
+}
+
+// snapshotConn copies the connection records for one broadcast.
+func (s *Scanner) snapshotConn() map[string]sourceConn {
+	s.connMutex.RLock()
+	defer s.connMutex.RUnlock()
+
+	out := make(map[string]sourceConn, len(s.sourceConn))
+	for source, conn := range s.sourceConn {
+		out[source] = conn
+	}
+	return out
+}
+
+// receivedAt is when a message came off the socket.
+//
+// The connector stamps it there, before parsing and before queueing, because the
+// ingestion channels hold 1000 messages and a stamp taken at this end would
+// measure our own backlog rather than the venue's silence - a scanner falling
+// behind would report every venue as stale. Zero means the data never crossed a
+// socket (a test injecting straight into a channel), and only then does the
+// scanner fall back to its own clock. See CLAUDE.md rule 13.
+func (s *Scanner) receivedAt(stamped time.Time) time.Time {
+	if stamped.IsZero() {
+		return s.now()
+	}
+	return stamped
+}
+
+// updatePrice records one venue's latest price.
+//
+// The receive time comes from the connector, which stamped it at the socket
+// read; see receivedAt. Until step 1.5 this function took the stamp itself, at
+// which point the message had already been through a 1000-deep channel.
 func (s *Scanner) updatePrice(data exchanges.PriceData) {
-	recvAt := s.now()
+	recvAt := s.receivedAt(data.RecvAt)
 
 	s.pricesMutex.Lock()
 	if s.prices[data.Symbol] == nil {
@@ -439,11 +554,17 @@ func (s *Scanner) hasClients() bool {
 	return len(s.wsClients) > 0
 }
 
-func (s *Scanner) broadcastPrices() {
+func (s *Scanner) broadcastPrices(ctx context.Context) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
 		if !s.hasClients() {
 			continue
 		}
@@ -459,11 +580,12 @@ func (s *Scanner) broadcastPrices() {
 		s.pricesMutex.RUnlock()
 
 		lastMsgCopy := s.snapshotLastMsgAt()
+		connCopy := s.snapshotConn()
 
 		// Sent even with no prices at all: the message carries the status of
 		// every registered source, and a total outage is precisely when the
 		// dashboard needs to be told.
-		s.broadcast(newWirePrices(pricesCopy, lastMsgCopy, s.startedAt, s.now()))
+		s.broadcast(newWirePrices(pricesCopy, lastMsgCopy, connCopy, s.startedAt, s.now()))
 	}
 }
 
@@ -473,11 +595,17 @@ func (s *Scanner) broadcastPrices() {
 // all gone quiet would never be re-examined: the dashboard would keep showing
 // the last matrix, and the opportunities in it, for as long as the silence
 // lasted. Nothing arriving is exactly the case staleness has to catch.
-func (s *Scanner) refreshStaleness() {
+func (s *Scanner) refreshStaleness(ctx context.Context) {
 	ticker := time.NewTicker(stalenessRefreshInterval)
 	defer ticker.Stop()
 
-	for range ticker.C {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
 		if !s.hasClients() {
 			continue
 		}
@@ -541,20 +669,36 @@ func (s *Scanner) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// Run starts the scanner's internal goroutines: channel consumers, the price
-// broadcaster and the staleness refresher. It does not start venue connectors
-// or the HTTP server - wiring those is the entrypoint's job (cmd/scanner).
-func (s *Scanner) Run() {
-	go s.processPrices()
-	go s.processOrderbooks()
-	go s.processTrades()
-	go s.broadcastPrices()
-	go s.refreshStaleness()
+// Run starts the scanner's internal goroutines: channel consumers, the
+// connection-event reader, the price broadcaster and the staleness refresher.
+// It does not start venue connectors or the HTTP server - wiring those is the
+// entrypoint's job (cmd/scanner).
+//
+// Every one of them returns when ctx is cancelled. Before step 1.5 they ranged
+// over channels nobody closed and ran until the process died, which is also why
+// a test could not stop the goroutine it started: one leaked into the next test
+// and read a package-level registry that test was rewriting.
+func (s *Scanner) Run(ctx context.Context) {
+	go s.processPrices(ctx)
+	go s.processOrderbooks(ctx)
+	go s.processTrades(ctx)
+	go s.processConnEvents(ctx)
+	go s.broadcastPrices(ctx)
+	go s.refreshStaleness(ctx)
 }
 
-// PriceFeed, OrderbookFeed and TradeFeed expose the ingestion channels the
-// venue connectors write into. Step 1.5 replaces these three with the Feeds
-// struct from PLAN.md; until then the trio mirrors the connector signatures.
-func (s *Scanner) PriceFeed() chan<- exchanges.PriceData         { return s.priceChan }
-func (s *Scanner) OrderbookFeed() chan<- exchanges.OrderbookData { return s.orderbookChan }
-func (s *Scanner) TradeFeed() chan<- exchanges.TradeData         { return s.tradeChan }
+// Feeds is what the venue connectors write into, and what tells them to stop.
+//
+// It replaced the three separate channel accessors this had until step 1.5. The
+// gain is not at this end but at the connectors': a fourth feed - the funding
+// data phase 2 collects - becomes one new field here and no change to any of the
+// ten connector signatures.
+func (s *Scanner) Feeds(ctx context.Context) exchanges.Feeds {
+	return exchanges.Feeds{
+		Ctx:       ctx,
+		Price:     s.priceChan,
+		Orderbook: s.orderbookChan,
+		Trade:     s.tradeChan,
+		Conn:      s.connChan,
+	}
+}

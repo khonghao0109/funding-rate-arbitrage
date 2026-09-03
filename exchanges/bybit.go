@@ -1,16 +1,17 @@
 package exchanges
 
 import (
-	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-type BybitFuturesTrade struct {
+// BybitTrade and BybitOrderbook are the two payload shapes. Linear futures and
+// spot publish them identically, so the separate BybitSpot* copies of these
+// structs - byte-for-byte duplicates - went away with the shared handler below.
+type BybitTrade struct {
 	Topic string `json:"topic"`
 	Type  string `json:"type"`
 	Data  []struct {
@@ -23,7 +24,7 @@ type BybitFuturesTrade struct {
 	} `json:"data"`
 }
 
-type BybitFuturesOrderbook struct {
+type BybitOrderbook struct {
 	Topic string `json:"topic"`
 	Type  string `json:"type"`
 	Data  struct {
@@ -35,291 +36,130 @@ type BybitFuturesOrderbook struct {
 	} `json:"data"`
 }
 
-func ConnectBybitFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
-	wsURL := "wss://stream.bybit.com/v5/public/linear"
+// Bybit documents an application-level heartbeat rather than a protocol ping:
+// "send the ping heartbeat packet every 20 seconds to maintain the WebSocket
+// connection", and "if there is no ping-pong and no stream data sent from server
+// end, the connection will be cut off after 10 minutes".
+// https://bybit-exchange.github.io/docs/v5/ws/connect
+const bybitPingEvery = 20 * time.Second
 
-	for {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			log.Printf("Bybit futures connection error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+var bybitPing = jsonPing(map[string]string{"op": "ping"})
 
-		log.Printf("Connected to Bybit futures WebSocket")
-
-		subscribeMsg := map[string]interface{}{
-			"op":   "subscribe",
-			"args": make([]string, len(symbols)*2),
-		}
-
+// bybitSubscribe asks for the top of book and the trade feed for every symbol.
+func bybitSubscribe(symbols []Symbol) func(*websocket.Conn) error {
+	return func(conn *websocket.Conn) error {
+		args := make([]string, len(symbols)*2)
 		for i, symbol := range symbols {
-			subscribeMsg["args"].([]string)[i*2] = fmt.Sprintf("orderbook.1.%s", symbol.Venue)
-			subscribeMsg["args"].([]string)[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol.Venue)
+			args[i*2] = fmt.Sprintf("orderbook.1.%s", symbol.Venue)
+			args[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol.Venue)
 		}
-
-		err = conn.WriteJSON(subscribeMsg)
-		if err != nil {
-			log.Printf("Bybit futures subscription error: %v", err)
-			conn.Close()
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		for {
-			var message json.RawMessage
-			err := conn.ReadJSON(&message)
-			if err != nil {
-				log.Printf("Bybit futures read error: %v", err)
-				conn.Close()
-				break
-			}
-
-			// Try to parse as orderbook first
-			var orderbookMsg BybitFuturesOrderbook
-			if err := json.Unmarshal(message, &orderbookMsg); err == nil &&
-				len(orderbookMsg.Data.Asks) > 0 && len(orderbookMsg.Data.Bids) > 0 {
-
-				bidPrice, err1 := strconv.ParseFloat(orderbookMsg.Data.Bids[0][0], 64)
-				askPrice, err2 := strconv.ParseFloat(orderbookMsg.Data.Asks[0][0], 64)
-				if err1 != nil || err2 != nil {
-					continue
-				}
-
-				// Each level is [price, size]; only index 0 was read before, so
-				// the size was decoded and dropped. A malformed level must not
-				// discard the price, so a missing or unparseable size is left at
-				// 0 - which means "not known". Unit is base coin, see
-				// OrderbookData.
-				var bidQtyCoin, askQtyCoin float64
-				if len(orderbookMsg.Data.Bids[0]) > 1 {
-					bidQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Bids[0][1], 64)
-				}
-				if len(orderbookMsg.Data.Asks[0]) > 1 {
-					askQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Asks[0][1], 64)
-				}
-
-				standardSymbol := StandardOf(symbols, orderbookMsg.Data.Symbol)
-				if standardSymbol == "" {
-					continue // a market this connector never subscribed to
-				}
-
-				orderbookData := OrderbookData{
-					Symbol:         standardSymbol,
-					Source:         source,
-					BestBid:        bidPrice,
-					BestAsk:        askPrice,
-					BestBidQtyCoin: bidQtyCoin,
-					BestAskQtyCoin: askQtyCoin,
-					// This connector does not parse a venue timestamp out of this
-					// message. Writing the local clock here instead would report our
-					// own time as the venue's and make a dead feed look current
-					// forever. Leave it 0; the scanner stamps its own receive time.
-					// Capturing the venue's real timestamp is step 1.5's work.
-					// See docs/WS-CONTRACT.md §4.1.
-					VenueTimeMs: 0,
-				}
-
-				orderbookChan <- orderbookData
-				continue
-			}
-
-			// Try to parse as trade message
-			var tradeMsg BybitFuturesTrade
-			if err := json.Unmarshal(message, &tradeMsg); err == nil &&
-				(tradeMsg.Type == "snapshot" || tradeMsg.Type == "delta") {
-
-				for _, trade := range tradeMsg.Data {
-					price, err := strconv.ParseFloat(trade.Price, 64)
-					if err != nil {
-						continue
-					}
-
-					// Normalize trade side (Bybit uses "Buy" and "Sell")
-					var side string
-					if trade.Side == "Buy" {
-						side = "buy"
-					} else {
-						side = "sell"
-					}
-
-					standardSymbol := StandardOf(symbols, trade.Symbol)
-					if standardSymbol == "" {
-						continue
-					}
-
-					tradeData := TradeData{
-						Symbol:      standardSymbol,
-						Source:      source,
-						Price:       price,
-						Quantity:    trade.Size,
-						Side:        side,
-						VenueTimeMs: trade.Timestamp,
-					}
-
-					tradeChan <- tradeData
-				}
-			}
-		}
-
-		time.Sleep(2 * time.Second)
+		return conn.WriteJSON(map[string]any{"op": "subscribe", "args": args})
 	}
 }
 
-// BybitSpotTrade represents the structure for Bybit spot trade data
-type BybitSpotTrade struct {
-	Topic string `json:"topic"`
-	Type  string `json:"type"`
-	Data  []struct {
-		Symbol    string `json:"s"`
-		Price     string `json:"p"`
-		Size      string `json:"v"`
-		Side      string `json:"S"`
-		Timestamp int64  `json:"T"`
-		TradeID   string `json:"i"`
-	} `json:"data"`
+func ConnectBybitFutures(source string, symbols []Symbol, f Feeds) {
+	runStream(f, streamConfig{
+		Source:    source,
+		URL:       "wss://stream.bybit.com/v5/public/linear",
+		Subscribe: bybitSubscribe(symbols),
+		Ping:      bybitPing,
+		PingEvery: bybitPingEvery,
+		Handle: func(raw []byte, recvAt time.Time) {
+			handleBybitFrame(source, symbols, f, raw, recvAt)
+		},
+	})
 }
 
-type BybitSpotOrderbook struct {
-	Topic string `json:"topic"`
-	Type  string `json:"type"`
-	Data  struct {
-		Symbol   string     `json:"s"`
-		Bids     [][]string `json:"b"`
-		Asks     [][]string `json:"a"`
-		UpdateID int64      `json:"u"`
-		SeqNum   int64      `json:"seq"`
-	} `json:"data"`
+// ConnectBybitSpot connects to Bybit spot trading WebSocket API.
+func ConnectBybitSpot(source string, symbols []Symbol, f Feeds) {
+	runStream(f, streamConfig{
+		Source:    source,
+		URL:       "wss://stream.bybit.com/v5/public/spot",
+		Subscribe: bybitSubscribe(symbols),
+		Ping:      bybitPing,
+		PingEvery: bybitPingEvery,
+		Handle: func(raw []byte, recvAt time.Time) {
+			handleBybitFrame(source, symbols, f, raw, recvAt)
+		},
+	})
 }
 
-// ConnectBybitSpot connects to Bybit spot trading WebSocket API
-func ConnectBybitSpot(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
-	wsURL := "wss://stream.bybit.com/v5/public/spot"
+func handleBybitFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+	// Try to parse as orderbook first
+	var orderbookMsg BybitOrderbook
+	if decode(raw, &orderbookMsg) &&
+		len(orderbookMsg.Data.Asks) > 0 && len(orderbookMsg.Data.Bids) > 0 {
 
-	for {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			log.Printf("Bybit spot connection error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
+		bidPrice, err1 := strconv.ParseFloat(orderbookMsg.Data.Bids[0][0], 64)
+		askPrice, err2 := strconv.ParseFloat(orderbookMsg.Data.Asks[0][0], 64)
+		if err1 != nil || err2 != nil {
+			return
 		}
 
-		log.Printf("Connected to Bybit spot WebSocket")
-
-		subscribeMsg := map[string]interface{}{
-			"op":   "subscribe",
-			"args": make([]string, len(symbols)*2),
+		// Each level is [price, size]; only index 0 was read before step 1.2, so
+		// the size was decoded and dropped. A malformed level must not discard
+		// the price, so a missing or unparseable size is left at 0 - which means
+		// "not known". Unit is base coin, see OrderbookData.
+		var bidQtyCoin, askQtyCoin float64
+		if len(orderbookMsg.Data.Bids[0]) > 1 {
+			bidQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Bids[0][1], 64)
+		}
+		if len(orderbookMsg.Data.Asks[0]) > 1 {
+			askQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Asks[0][1], 64)
 		}
 
-		for i, symbol := range symbols {
-			subscribeMsg["args"].([]string)[i*2] = fmt.Sprintf("orderbook.1.%s", symbol.Venue)
-			subscribeMsg["args"].([]string)[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol.Venue)
+		standardSymbol := StandardOf(symbols, orderbookMsg.Data.Symbol)
+		if standardSymbol == "" {
+			return // a market this connector never subscribed to
 		}
 
-		err = conn.WriteJSON(subscribeMsg)
-		if err != nil {
-			log.Printf("Bybit spot subscription error: %v", err)
-			conn.Close()
-			time.Sleep(5 * time.Second)
-			continue
-		}
+		f.SendOrderbook(OrderbookData{
+			Symbol:         standardSymbol,
+			Source:         source,
+			BestBid:        bidPrice,
+			BestAsk:        askPrice,
+			BestBidQtyCoin: bidQtyCoin,
+			BestAskQtyCoin: askQtyCoin,
+			// This message carries no venue timestamp this connector parses.
+			// Writing the local clock here would report our own time as the
+			// venue's; RecvAt is our clock and is labelled as such.
+			VenueTimeMs: 0,
+			RecvAt:      recvAt,
+		})
+		return
+	}
 
-		for {
-			var message json.RawMessage
-			err := conn.ReadJSON(&message)
+	// Try to parse as trade message
+	var tradeMsg BybitTrade
+	if decode(raw, &tradeMsg) && (tradeMsg.Type == "snapshot" || tradeMsg.Type == "delta") {
+		for _, trade := range tradeMsg.Data {
+			price, err := strconv.ParseFloat(trade.Price, 64)
 			if err != nil {
-				log.Printf("Bybit spot read error: %v", err)
-				conn.Close()
-				break
-			}
-
-			// Try to parse as orderbook first
-			var orderbookMsg BybitSpotOrderbook
-			if err := json.Unmarshal(message, &orderbookMsg); err == nil &&
-				len(orderbookMsg.Data.Asks) > 0 && len(orderbookMsg.Data.Bids) > 0 {
-
-				bidPrice, err1 := strconv.ParseFloat(orderbookMsg.Data.Bids[0][0], 64)
-				askPrice, err2 := strconv.ParseFloat(orderbookMsg.Data.Asks[0][0], 64)
-				if err1 != nil || err2 != nil {
-					continue
-				}
-
-				// Each level is [price, size]; only index 0 was read before, so
-				// the size was decoded and dropped. A malformed level must not
-				// discard the price, so a missing or unparseable size is left at
-				// 0 - which means "not known". Unit is base coin, see
-				// OrderbookData.
-				var bidQtyCoin, askQtyCoin float64
-				if len(orderbookMsg.Data.Bids[0]) > 1 {
-					bidQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Bids[0][1], 64)
-				}
-				if len(orderbookMsg.Data.Asks[0]) > 1 {
-					askQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Asks[0][1], 64)
-				}
-
-				standardSymbol := StandardOf(symbols, orderbookMsg.Data.Symbol)
-				if standardSymbol == "" {
-					continue // a market this connector never subscribed to
-				}
-
-				orderbookData := OrderbookData{
-					Symbol:         standardSymbol,
-					Source:         source,
-					BestBid:        bidPrice,
-					BestAsk:        askPrice,
-					BestBidQtyCoin: bidQtyCoin,
-					BestAskQtyCoin: askQtyCoin,
-					// This connector does not parse a venue timestamp out of this
-					// message. Writing the local clock here instead would report our
-					// own time as the venue's and make a dead feed look current
-					// forever. Leave it 0; the scanner stamps its own receive time.
-					// Capturing the venue's real timestamp is step 1.5's work.
-					// See docs/WS-CONTRACT.md §4.1.
-					VenueTimeMs: 0,
-				}
-
-				orderbookChan <- orderbookData
 				continue
 			}
 
-			// Try to parse as trade message
-			var tradeMsg BybitSpotTrade
-			if err := json.Unmarshal(message, &tradeMsg); err == nil &&
-				(tradeMsg.Type == "snapshot" || tradeMsg.Type == "delta") {
+			// Normalize trade side (Bybit uses "Buy" and "Sell")
+			side := "sell"
+			if trade.Side == "Buy" {
+				side = "buy"
+			}
 
-				for _, trade := range tradeMsg.Data {
-					price, err := strconv.ParseFloat(trade.Price, 64)
-					if err != nil {
-						continue
-					}
+			standardSymbol := StandardOf(symbols, trade.Symbol)
+			if standardSymbol == "" {
+				continue
+			}
 
-					// Normalize trade side (Bybit uses "Buy" and "Sell")
-					var side string
-					if trade.Side == "Buy" {
-						side = "buy"
-					} else {
-						side = "sell"
-					}
-
-					standardSymbol := StandardOf(symbols, trade.Symbol)
-					if standardSymbol == "" {
-						continue
-					}
-
-					tradeData := TradeData{
-						Symbol:      standardSymbol,
-						Source:      source,
-						Price:       price,
-						Quantity:    trade.Size,
-						Side:        side,
-						VenueTimeMs: trade.Timestamp,
-					}
-
-					tradeChan <- tradeData
-				}
+			if !f.SendTrade(TradeData{
+				Symbol:      standardSymbol,
+				Source:      source,
+				Price:       price,
+				Quantity:    trade.Size,
+				Side:        side,
+				VenueTimeMs: trade.Timestamp,
+				RecvAt:      recvAt,
+			}) {
+				return // shutting down; the rest of the batch is not worth parsing
 			}
 		}
-
-		time.Sleep(2 * time.Second)
 	}
 }

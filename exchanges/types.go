@@ -1,5 +1,7 @@
 package exchanges
 
+import "time"
+
 // The types crossing this boundary are public market data only. No credential
 // ever appears here - see docs/CONVENTIONS.md §12.1.
 //
@@ -7,14 +9,23 @@ package exchanges
 // venue does not provide one. It must NEVER be used to decide whether data is
 // fresh: three of the eight venues have no timestamp in the payload the
 // connector reads, and filling it with the local clock would make a dead feed
-// look current forever. The scanner stamps its own receive time in exactly one
-// place and measures staleness from that. See docs/WS-CONTRACT.md §4.1.
+// look current forever. Freshness is measured from RecvAt and nothing else.
+// See docs/WS-CONTRACT.md §4.1.
+//
+// RecvAt is OUR clock, stamped the instant the message came off the socket -
+// once, in runSession, for every WebSocket connector, and in the SSE read loop
+// for Pyth. Step 1.1 stamped it where the scanner dequeued instead, which
+// measured our own 1000-deep ingestion backlog rather than the venue's silence:
+// a scanner falling behind would have reported every venue as stale. It is zero
+// only for data that never crossed a socket, and the scanner then falls back to
+// its own clock. See CLAUDE.md rule 13.
 
 type PriceData struct {
 	Symbol      string
 	Source      string
 	Price       float64
 	VenueTimeMs int64
+	RecvAt      time.Time
 
 	// Top of book behind this price, 0 when the source has no book. An oracle
 	// publishes a price and nothing else, so these stay 0 for it.
@@ -30,6 +41,7 @@ type OrderbookData struct {
 	BestBid     float64
 	BestAsk     float64
 	VenueTimeMs int64
+	RecvAt      time.Time
 
 	// BestBidQtyCoin and BestAskQtyCoin are the size resting at the top of the book,
 	// in BASE COIN - never in contracts. OKX, Gate and Kraken denominate their book
@@ -66,4 +78,5 @@ type TradeData struct {
 	Quantity    string
 	Side        string // "buy" or "sell" (normalized)
 	VenueTimeMs int64
+	RecvAt      time.Time
 }

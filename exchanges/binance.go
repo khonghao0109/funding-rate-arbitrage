@@ -3,15 +3,16 @@ package exchanges
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
-type BinanceFuturesTrade struct {
+// BinanceAggTrade and BinanceBookTicker are the two payload shapes on the
+// combined stream. Spot and futures publish them identically, so the separate
+// BinanceSpot* copies of these structs - byte-for-byte duplicates - went away
+// with the shared handler below.
+type BinanceAggTrade struct {
 	EventType string `json:"e"`
 	EventTime int64  `json:"E"`
 	Symbol    string `json:"s"`
@@ -22,7 +23,7 @@ type BinanceFuturesTrade struct {
 	IsMaker   bool   `json:"m"`
 }
 
-type BinanceFuturesBookTicker struct {
+type BinanceBookTicker struct {
 	EventType    string `json:"e"`
 	EventTime    int64  `json:"E"`
 	Symbol       string `json:"s"`
@@ -32,243 +33,129 @@ type BinanceFuturesBookTicker struct {
 	BestAskQty   string `json:"A"`
 }
 
-func ConnectBinanceFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+// binanceEnvelope wraps every message on a combined stream.
+type binanceEnvelope struct {
+	Stream string          `json:"stream"`
+	Data   json.RawMessage `json:"data"`
+}
+
+// binanceStreamURL builds a combined-stream URL: one socket carrying the book
+// ticker and the aggregate trade feed for every subscribed symbol.
+func binanceStreamURL(host string, symbols []Symbol) string {
 	streamNames := make([]string, len(symbols)*2)
 	for i, symbol := range symbols {
 		streamNames[i*2] = strings.ToLower(symbol.Venue) + "@bookTicker"
 		streamNames[i*2+1] = strings.ToLower(symbol.Venue) + "@aggTrade"
 	}
-	streamParam := strings.Join(streamNames, "/")
+	return fmt.Sprintf("%s/stream?streams=%s", host, strings.Join(streamNames, "/"))
+}
 
-	wsURL := fmt.Sprintf("wss://fstream.binance.com/stream?streams=%s", streamParam)
+// Binance's keepalive rules could not be read from this environment: the
+// WebSocket pages reachable here document the streams but not the connection
+// rules, and the general-information section renders client-side. Rather than
+// write an application-level heartbeat from memory (CLAUDE.md rule 5), this
+// leaves Ping nil so runStream sends a protocol-level ping frame (RFC 6455) -
+// measured 2026-09-03 against wss://fstream.binance.com, the pong comes back.
+// Binance also pings us, and runSession's handler answers it and counts it as
+// activity.
+func ConnectBinanceFutures(source string, symbols []Symbol, f Feeds) {
+	runStream(f, streamConfig{
+		Source: source,
+		URL:    binanceStreamURL("wss://fstream.binance.com", symbols),
+		Handle: func(raw []byte, recvAt time.Time) {
+			handleBinanceFrame(source, symbols, f, raw, recvAt)
+		},
+	})
+}
 
-	for {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			log.Printf("Binance futures connection error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+// ConnectBinanceSpot connects to Binance spot trading WebSocket API.
+func ConnectBinanceSpot(source string, symbols []Symbol, f Feeds) {
+	runStream(f, streamConfig{
+		Source: source,
+		URL:    binanceStreamURL("wss://stream.binance.com:9443", symbols),
+		Handle: func(raw []byte, recvAt time.Time) {
+			handleBinanceFrame(source, symbols, f, raw, recvAt)
+		},
+	})
+}
 
-		log.Printf("Connected to Binance futures WebSocket")
-
-		for {
-			var message struct {
-				Stream string          `json:"stream"`
-				Data   json.RawMessage `json:"data"`
-			}
-
-			err := conn.ReadJSON(&message)
-			if err != nil {
-				log.Printf("Binance futures read error: %v", err)
-				conn.Close()
-				break
-			}
-
-			if strings.Contains(message.Stream, "@bookTicker") {
-				var bookTicker BinanceFuturesBookTicker
-				if err := json.Unmarshal(message.Data, &bookTicker); err != nil {
-					continue
-				}
-
-				bidPrice, err1 := strconv.ParseFloat(bookTicker.BestBidPrice, 64)
-				askPrice, err2 := strconv.ParseFloat(bookTicker.BestAskPrice, 64)
-				if err1 != nil || err2 != nil {
-					continue
-				}
-
-				// A quantity that will not parse must not discard a good price:
-				// the book size is a liquidity filter, the price is the
-				// measurement. Unit is base coin - see OrderbookData.
-				bidQtyCoin, _ := strconv.ParseFloat(bookTicker.BestBidQty, 64)
-				askQtyCoin, _ := strconv.ParseFloat(bookTicker.BestAskQty, 64)
-
-				standardSymbol := StandardOf(symbols, bookTicker.Symbol)
-				if standardSymbol == "" {
-					continue // a market this connector never subscribed to
-				}
-
-				orderbookData := OrderbookData{
-					Symbol:         standardSymbol,
-					Source:         source,
-					BestBid:        bidPrice,
-					BestAsk:        askPrice,
-					VenueTimeMs:    bookTicker.EventTime,
-					BestBidQtyCoin: bidQtyCoin,
-					BestAskQtyCoin: askQtyCoin,
-				}
-
-				orderbookChan <- orderbookData
-
-			} else if strings.Contains(message.Stream, "@aggTrade") {
-				var trade BinanceFuturesTrade
-				if err := json.Unmarshal(message.Data, &trade); err != nil {
-					continue
-				}
-
-				price, err := strconv.ParseFloat(trade.Price, 64)
-				if err != nil {
-					continue
-				}
-
-				// Normalize trade side (isMaker: false = buy aggressor, true = sell aggressor)
-				var side string
-				if !trade.IsMaker {
-					side = "buy"
-				} else {
-					side = "sell"
-				}
-
-				standardSymbol := StandardOf(symbols, trade.Symbol)
-				if standardSymbol == "" {
-					continue
-				}
-
-				tradeData := TradeData{
-					Symbol:      standardSymbol,
-					Source:      source,
-					Price:       price,
-					Quantity:    trade.Quantity,
-					Side:        side,
-					VenueTimeMs: trade.TradeTime,
-				}
-
-				tradeChan <- tradeData
-			}
-		}
-
-		time.Sleep(2 * time.Second)
+// handleBinanceFrame parses one combined-stream message.
+//
+// Spot and futures publish the same two payload shapes on the same envelope, so
+// they share this. The two connectors stay separate because their URLs, their
+// venues and their fee schedules are different things that happen to speak the
+// same dialect today.
+func handleBinanceFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+	var message binanceEnvelope
+	if !decode(raw, &message) {
+		return
 	}
-}
 
-// BinanceSpotTrade represents the structure for Binance spot trade data
-type BinanceSpotTrade struct {
-	EventType string `json:"e"`
-	EventTime int64  `json:"E"`
-	Symbol    string `json:"s"`
-	TradeID   int64  `json:"a"`
-	Price     string `json:"p"`
-	Quantity  string `json:"q"`
-	TradeTime int64  `json:"T"`
-	IsMaker   bool   `json:"m"`
-}
+	switch {
+	case strings.Contains(message.Stream, "@bookTicker"):
+		var bookTicker BinanceBookTicker
+		if !decode(message.Data, &bookTicker) {
+			return
+		}
 
-type BinanceSpotBookTicker struct {
-	EventType    string `json:"e"`
-	EventTime    int64  `json:"E"`
-	Symbol       string `json:"s"`
-	BestBidPrice string `json:"b"`
-	BestBidQty   string `json:"B"`
-	BestAskPrice string `json:"a"`
-	BestAskQty   string `json:"A"`
-}
+		bidPrice, err1 := strconv.ParseFloat(bookTicker.BestBidPrice, 64)
+		askPrice, err2 := strconv.ParseFloat(bookTicker.BestAskPrice, 64)
+		if err1 != nil || err2 != nil {
+			return
+		}
 
-// ConnectBinanceSpot connects to Binance spot trading WebSocket API
-func ConnectBinanceSpot(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
-	streamNames := make([]string, len(symbols)*2)
-	for i, symbol := range symbols {
-		streamNames[i*2] = strings.ToLower(symbol.Venue) + "@bookTicker"
-		streamNames[i*2+1] = strings.ToLower(symbol.Venue) + "@aggTrade"
-	}
-	streamParam := strings.Join(streamNames, "/")
+		// A quantity that will not parse must not discard a good price: the book
+		// size is a liquidity filter, the price is the measurement. Unit is base
+		// coin - see OrderbookData.
+		bidQtyCoin, _ := strconv.ParseFloat(bookTicker.BestBidQty, 64)
+		askQtyCoin, _ := strconv.ParseFloat(bookTicker.BestAskQty, 64)
 
-	wsURL := fmt.Sprintf("wss://stream.binance.com:9443/stream?streams=%s", streamParam)
+		standardSymbol := StandardOf(symbols, bookTicker.Symbol)
+		if standardSymbol == "" {
+			return // a market this connector never subscribed to
+		}
 
-	for {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+		f.SendOrderbook(OrderbookData{
+			Symbol:         standardSymbol,
+			Source:         source,
+			BestBid:        bidPrice,
+			BestAsk:        askPrice,
+			VenueTimeMs:    bookTicker.EventTime,
+			RecvAt:         recvAt,
+			BestBidQtyCoin: bidQtyCoin,
+			BestAskQtyCoin: askQtyCoin,
+		})
+
+	case strings.Contains(message.Stream, "@aggTrade"):
+		var trade BinanceAggTrade
+		if !decode(message.Data, &trade) {
+			return
+		}
+
+		price, err := strconv.ParseFloat(trade.Price, 64)
 		if err != nil {
-			log.Printf("Binance spot connection error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
+			return
 		}
 
-		log.Printf("Connected to Binance spot WebSocket")
-
-		for {
-			var message struct {
-				Stream string          `json:"stream"`
-				Data   json.RawMessage `json:"data"`
-			}
-
-			err := conn.ReadJSON(&message)
-			if err != nil {
-				log.Printf("Binance spot read error: %v", err)
-				conn.Close()
-				break
-			}
-
-			if strings.Contains(message.Stream, "@bookTicker") {
-				var bookTicker BinanceSpotBookTicker
-				if err := json.Unmarshal(message.Data, &bookTicker); err != nil {
-					continue
-				}
-
-				bidPrice, err1 := strconv.ParseFloat(bookTicker.BestBidPrice, 64)
-				askPrice, err2 := strconv.ParseFloat(bookTicker.BestAskPrice, 64)
-				if err1 != nil || err2 != nil {
-					continue
-				}
-
-				// A quantity that will not parse must not discard a good price:
-				// the book size is a liquidity filter, the price is the
-				// measurement. Unit is base coin - see OrderbookData.
-				bidQtyCoin, _ := strconv.ParseFloat(bookTicker.BestBidQty, 64)
-				askQtyCoin, _ := strconv.ParseFloat(bookTicker.BestAskQty, 64)
-
-				standardSymbol := StandardOf(symbols, bookTicker.Symbol)
-				if standardSymbol == "" {
-					continue // a market this connector never subscribed to
-				}
-
-				orderbookData := OrderbookData{
-					Symbol:         standardSymbol,
-					Source:         source,
-					BestBid:        bidPrice,
-					BestAsk:        askPrice,
-					VenueTimeMs:    bookTicker.EventTime,
-					BestBidQtyCoin: bidQtyCoin,
-					BestAskQtyCoin: askQtyCoin,
-				}
-
-				orderbookChan <- orderbookData
-
-			} else if strings.Contains(message.Stream, "@aggTrade") {
-				var trade BinanceSpotTrade
-				if err := json.Unmarshal(message.Data, &trade); err != nil {
-					continue
-				}
-
-				price, err := strconv.ParseFloat(trade.Price, 64)
-				if err != nil {
-					continue
-				}
-
-				// Normalize trade side (isMaker: false = buy aggressor, true = sell aggressor)
-				var side string
-				if !trade.IsMaker {
-					side = "buy"
-				} else {
-					side = "sell"
-				}
-
-				standardSymbol := StandardOf(symbols, trade.Symbol)
-				if standardSymbol == "" {
-					continue
-				}
-
-				tradeData := TradeData{
-					Symbol:      standardSymbol,
-					Source:      source,
-					Price:       price,
-					Quantity:    trade.Quantity,
-					Side:        side,
-					VenueTimeMs: trade.TradeTime,
-				}
-
-				tradeChan <- tradeData
-			}
+		// Normalize trade side (isMaker: false = buy aggressor, true = sell aggressor)
+		side := "sell"
+		if !trade.IsMaker {
+			side = "buy"
 		}
 
-		time.Sleep(2 * time.Second)
+		standardSymbol := StandardOf(symbols, trade.Symbol)
+		if standardSymbol == "" {
+			return
+		}
+
+		f.SendTrade(TradeData{
+			Symbol:      standardSymbol,
+			Source:      source,
+			Price:       price,
+			Quantity:    trade.Quantity,
+			Side:        side,
+			VenueTimeMs: trade.TradeTime,
+			RecvAt:      recvAt,
+		})
 	}
 }

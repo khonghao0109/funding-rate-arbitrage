@@ -1,8 +1,6 @@
 package exchanges
 
 import (
-	"encoding/json"
-	"log"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -30,130 +28,113 @@ type KrakenOrderBook struct {
 	Asks []KrakenOrderBookEntry
 }
 
-func processKrakenOrderbook(source string, symbols []Symbol, productID string, orderBook *KrakenOrderBook, orderbookChan chan<- OrderbookData) {
+// Kraken Futures requires a client-driven keepalive: "Send a ping request at
+// least every 60 seconds to keep the connection open."
+// https://docs.kraken.com/api/docs/guides/futures-websockets/
+//
+// That page states the interval but not the shape of the message, and the pages
+// that would give it were not reachable from here. Measured against
+// wss://futures.kraken.com/ws/v1 on 2026-09-03:
+//
+//	{"event":"ping"}  -> {"event":"alert","message":"Bad websocket message"}
+//	protocol ping     -> pong, including while subscribed and streaming a book
+//
+// So the obvious guess is the wrong one, and Ping is left nil: runStream sends
+// an RFC 6455 ping frame. Half the documented interval is used - see
+// defaultPingEvery - so one lost ping is not fatal.
+
+func processKrakenOrderbook(source string, symbols []Symbol, productID string, orderBook *KrakenOrderBook, f Feeds, recvAt time.Time) bool {
 	if len(orderBook.Bids) == 0 || len(orderBook.Asks) == 0 {
-		return
+		return true
 	}
 
 	symbol := StandardOf(symbols, productID)
 	if symbol == "" {
-		return // a product this connector never subscribed to
+		return true // a product this connector never subscribed to
 	}
 
-	// Get best bid (highest price in bids)
-	bestBid := orderBook.Bids[0].Price
-
-	// Get best ask (lowest price in asks)
-	bestAsk := orderBook.Asks[0].Price
-
-	// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0. The book
-	// entries do carry a Qty, and measured 2026-09-03 it looks coin
-	// denominated (PF_XBTUSD 0.0929 with BTC near $77.5k, PF_XRPUSD 95000) -
-	// but docs/DATA-REQUIREMENTS.md §3 records Kraken as denominating in
-	// contracts, and a field named ...Coin must not be filled from a
-	// measurement that contradicts the survey. The instrument registry
-	// (internal/instruments, phase 2) settles which is right; until then 0
-	// means "not known".
-	orderbookData := OrderbookData{
+	// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0. The book entries
+	// do carry a Qty, and measured 2026-09-03 it looks coin denominated
+	// (PF_XBTUSD 0.0929 with BTC near $77.5k, PF_XRPUSD 95000) - but
+	// docs/DATA-REQUIREMENTS.md §3 records Kraken as denominating in contracts,
+	// and a field named ...Coin must not be filled from a measurement that
+	// contradicts the survey. The instrument registry (internal/instruments,
+	// phase 2) settles which is right; until then 0 means "not known".
+	return f.SendOrderbook(OrderbookData{
 		Symbol:  symbol,
 		Source:  source,
-		BestBid: bestBid,
-		BestAsk: bestAsk,
-		// KrakenOrderBookData.Timestamp is decoded from the feed, but this
-		// function only receives the assembled book, not the delta that
-		// produced it, so no venue timestamp is available here. Writing the
-		// local clock instead would report our own time as the venue's and make
-		// a dead feed look current forever. Leave it 0; the scanner stamps its
-		// own receive time. Threading the real timestamp through is step 1.5's
-		// work. See docs/WS-CONTRACT.md §4.1.
+		BestBid: orderBook.Bids[0].Price, // bids are held highest first
+		BestAsk: orderBook.Asks[0].Price, // asks lowest first
+		// Left at 0 although Kraken does publish one: measured 2026-09-03 both
+		// book_snapshot and every book delta carry `timestamp` in milliseconds
+		// (1788413683802). This function receives the ASSEMBLED book rather than
+		// the message that changed it, so threading the value here means
+		// changing what the assembler passes on. That is listed as deferred debt
+		// for this phase - "venue time thật cho Bybit/Kraken/Paradex" in
+		// docs/PLAN.md - and doing it here would be scope this step did not
+		// take. Writing the local clock instead would report our time as the
+		// venue's; RecvAt is our clock and says so.
 		VenueTimeMs: 0,
-	}
-
-	orderbookChan <- orderbookData
+		RecvAt:      recvAt,
+	})
 }
 
-func ConnectKrakenFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
-	wsURL := "wss://futures.kraken.com/ws/v1"
-
-	// Maintain orderbooks for each symbol
+func ConnectKrakenFutures(source string, symbols []Symbol, f Feeds) {
+	// One assembled book per product, rebuilt from scratch on every connection.
 	orderbooks := make(map[string]*KrakenOrderBook)
 
-	for {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			log.Printf("Kraken connection error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
+	runStream(f, streamConfig{
+		Source: source,
+		URL:    "wss://futures.kraken.com/ws/v1",
+		Subscribe: func(conn *websocket.Conn) error {
+			// Books assembled over the previous socket describe a session that
+			// no longer exists, and Kraken resends a full book_snapshot on
+			// subscribe. Keeping them across a reconnect would leave levels that
+			// were deleted while we were away. This map was built once outside
+			// the reconnect loop before step 1.5.
+			clear(orderbooks)
 
-		log.Printf("Connected to Kraken futures WebSocket")
-
-		// Subscribe to orderbook for each symbol
-		for _, symbol := range symbols {
-			// config.yaml supplies the venue identifier (symbol_format
-			// "PF_{base}USD", with BTCUSDT overridden to PF_XBTUSD because
-			// Kraken calls bitcoin XBT).
-			krakenSymbol := symbol.Venue
-
-			subscribeMsg := map[string]interface{}{
-				"event":       "subscribe",
-				"feed":        "book",
-				"product_ids": []string{krakenSymbol},
-			}
-
-			err = conn.WriteJSON(subscribeMsg)
-			if err != nil {
-				log.Printf("Kraken subscription error for %s: %v", krakenSymbol, err)
-				continue
-			}
-
-			// Initialize orderbook
-			orderbooks[krakenSymbol] = &KrakenOrderBook{
-				Bids: make([]KrakenOrderBookEntry, 0),
-				Asks: make([]KrakenOrderBookEntry, 0),
-			}
-		}
-
-		for {
-			var rawMessage map[string]interface{}
-			err := conn.ReadJSON(&rawMessage)
-			if err != nil {
-				log.Printf("Kraken read error: %v", err)
-				conn.Close()
-				break
-			}
-
-			// Check if it's a book_snapshot or book update
-			if feed, ok := rawMessage["feed"].(string); ok {
-				var data KrakenOrderBookData
-				messageBytes, _ := json.Marshal(rawMessage)
-				err = json.Unmarshal(messageBytes, &data)
+			for _, symbol := range symbols {
+				// config.yaml supplies the venue identifier (symbol_format
+				// "PF_{base}USD", with BTCUSDT overridden to PF_XBTUSD because
+				// Kraken calls bitcoin XBT).
+				err := conn.WriteJSON(map[string]any{
+					"event":       "subscribe",
+					"feed":        "book",
+					"product_ids": []string{symbol.Venue},
+				})
 				if err != nil {
-					log.Printf("Kraken orderbook unmarshal error: %v", err)
-					continue
+					return err
 				}
-
-				orderbook, exists := orderbooks[data.ProductID]
-				if !exists {
-					continue
-				}
-
-				if feed == "book_snapshot" {
-					// Initial snapshot
-					orderbook.Bids = data.Bids
-					orderbook.Asks = data.Asks
-				} else if feed == "book" {
-					// Incremental update
-					updateKrakenOrderbook(orderbook, data)
-				}
-
-				// Send updated orderbook
-				processKrakenOrderbook(source, symbols, data.ProductID, orderbook, orderbookChan)
+				orderbooks[symbol.Venue] = &KrakenOrderBook{}
 			}
-		}
+			return nil
+		},
+		Handle: func(raw []byte, recvAt time.Time) {
+			var data KrakenOrderBookData
+			if !decode(raw, &data) || data.Feed == "" {
+				return
+			}
 
-		time.Sleep(2 * time.Second)
-	}
+			orderbook, exists := orderbooks[data.ProductID]
+			if !exists {
+				return
+			}
+
+			switch data.Feed {
+			case "book_snapshot":
+				orderbook.Bids = data.Bids
+				orderbook.Asks = data.Asks
+			case "book":
+				updateKrakenOrderbook(orderbook, data)
+			default:
+				// Subscription acknowledgements, the pong, heartbeats.
+				return
+			}
+
+			processKrakenOrderbook(source, symbols, data.ProductID, orderbook, f, recvAt)
+		},
+	})
 }
 
 func updateKrakenOrderbook(orderbook *KrakenOrderBook, data KrakenOrderBookData) {

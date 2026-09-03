@@ -38,14 +38,19 @@ func StandardOf(symbols []Symbol, venueSymbol string) string {
 	return ""
 }
 
-// ConnectFunc is what every venue connector looks like. It runs forever,
-// reconnecting on its own, and writes normalized public market data into the
-// channels it is given.
+// ConnectFunc is what every venue connector looks like. It reconnects on its
+// own and writes normalized public market data into the feeds it is given, and
+// it returns when the feeds' context is cancelled.
+//
 // The source name is a parameter, not a literal inside the connector: which
 // stream this is called is configuration. Hardcoding it meant two config entries
 // naming the same connector both reported under one name, so the second one
 // appeared in the dashboard's status list and never produced a price.
-type ConnectFunc func(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData)
+//
+// Step 1.5 replaced the three channel parameters with Feeds. A connector's whole
+// body is now a call to runStream: dialling, backing off, keeping alive and
+// stopping are shared, and only parsing is per venue.
+type ConnectFunc func(source string, symbols []Symbol, f Feeds)
 
 // Connectors is every connector that exists, by the name config.yaml uses in a
 // source's `connector` field.

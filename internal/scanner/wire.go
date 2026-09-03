@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/fees"
 )
@@ -243,15 +244,61 @@ func priceStatus(point PricePoint, threshold time.Duration, now time.Time) strin
 	return statusLive
 }
 
-// sourceState is connection health, inferred at step 1.1 from silence across
-// every symbol rather than reported by the connector.
+// sourceConn is what one connector reported about its own socket: the last
+// transition it announced, when the current connection was established, and how
+// many times it has had to reconnect since start-up.
+//
+// Filled at step 1.5. Before that the scanner had no channel back from the
+// connectors and could only infer from silence.
+type sourceConn struct {
+	State          exchanges.ConnState
+	ConnectedSince time.Time
+	ReconnectCount int
+
+	// EverConnected separates "has connected before" from "has reported before".
+	// Without it, a source whose FIRST dial fails reports reconnecting and then
+	// connected, and that first working connection counts as a reconnect - which
+	// contradicts docs/WS-CONTRACT.md §4.2 and would put a 1 beside every venue
+	// that was merely slow to come up.
+	EverConnected bool
+}
+
+// resolveSourceState combines what the connector reports about its socket with
+// what silence implies about the feed. Both are needed, and neither is
+// sufficient.
+//
+// The connector is the only thing that knows the socket is down while the last
+// message is still recent - a venue can go unreachable a second after its last
+// tick. Silence is the only thing that catches the opposite: a subscription the
+// venue quietly dropped leaves a connection that is genuinely open, healthy by
+// every measure the connector has, and delivering nothing ever again. So a
+// reported connection is downgraded when nothing arrives through it, and that
+// downgrade is the more important half - it is the failure that hides.
+func resolveSourceState(conn sourceConn, inferred string) string {
+	switch conn.State {
+	case exchanges.ConnConnected:
+		if inferred == stateDisconnected {
+			return stateDisconnected
+		}
+		return stateConnected
+	case exchanges.ConnReconnecting:
+		return stateReconnecting
+	case exchanges.ConnDisconnected:
+		return stateDisconnected
+	default:
+		// No connector has reported yet - at start-up, or for a source whose
+		// connector was never started. Until step 1.5 this inference was all
+		// there was.
+		return inferred
+	}
+}
+
+// sourceState is connection health inferred from silence across every symbol.
 //
 // A venue can be connected while one thin pair goes quiet, which is why this is
-// separate from priceStatus. Step 1.5 replaces the inference with what the
-// connector actually knows, and fills reconnect_count and uptime_sec.
-// startedAt is when the scanner came up, used to judge a source that has never
-// sent anything: "nothing yet" is unknown for the first few seconds and
-// disconnected after that.
+// separate from priceStatus. startedAt is when the scanner came up, used to
+// judge a source that has never sent anything: "nothing yet" is unknown for the
+// first few seconds and disconnected after that.
 func sourceState(lastMsgAt time.Time, threshold time.Duration, startedAt, now time.Time) string {
 	if lastMsgAt.IsZero() {
 		// A registered source that has never delivered. Reporting it as unknown
@@ -477,7 +524,7 @@ func newWireMeta(symbols []string, nowMs int64) wireMeta {
 // A stale price is kept and labelled, not dropped: removing the row would make a
 // dead venue disappear from the dashboard, which reads as "nothing to report"
 // rather than "this feed died".
-func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string]time.Time, startedAt, now time.Time) wirePrices {
+func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string]time.Time, conns map[string]sourceConn, startedAt, now time.Time) wirePrices {
 	out := wirePrices{
 		Type:         "prices",
 		V:            wireVersion,
@@ -493,7 +540,7 @@ func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string
 			// data: shipping it renders as "$0.000000" and drags the chart line
 			// to zero. checkArbitrage drops it for the same reason.
 			if _, seen := out.SourceStatus[source]; !seen {
-				out.SourceStatus[source] = newWireSourceStatus(source, lastMsgAt[source], startedAt, now)
+				out.SourceStatus[source] = newWireSourceStatus(source, lastMsgAt[source], conns[source], startedAt, now)
 			}
 			if !isUsablePrice(point.Price) {
 				continue
@@ -529,25 +576,35 @@ func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string
 	// exactly how a dead Pyth feed vanished from the dashboard without a trace.
 	for _, meta := range sourceRegistry {
 		if _, seen := out.SourceStatus[meta.Source]; !seen {
-			out.SourceStatus[meta.Source] = newWireSourceStatus(meta.Source, lastMsgAt[meta.Source], startedAt, now)
+			out.SourceStatus[meta.Source] = newWireSourceStatus(meta.Source, lastMsgAt[meta.Source], conns[meta.Source], startedAt, now)
 		}
 	}
 
 	return out
 }
 
-func newWireSourceStatus(source string, lastMsgAt, startedAt, now time.Time) wireSourceStatus {
+func newWireSourceStatus(source string, lastMsgAt time.Time, conn sourceConn, startedAt, now time.Time) wireSourceStatus {
 	lastMsgAtMs := int64(0)
 	if !lastMsgAt.IsZero() {
 		lastMsgAtMs = lastMsgAt.UnixMilli()
 	}
+
+	state := resolveSourceState(conn, sourceState(lastMsgAt, disconnectAfter(source), startedAt, now))
+
+	// Uptime is the CURRENT unbroken connection, so it is only meaningful while
+	// the source is actually connected. Reporting the socket's age beside a
+	// state of disconnected - which happens when the socket is open but the feed
+	// has gone silent - would read as a contradiction.
+	uptimeSec := int64(0)
+	if state == stateConnected && !conn.ConnectedSince.IsZero() {
+		uptimeSec = int64(now.Sub(conn.ConnectedSince).Seconds())
+	}
+
 	return wireSourceStatus{
-		State:       sourceState(lastMsgAt, disconnectAfter(source), startedAt, now),
-		LastMsgAtMs: lastMsgAtMs,
-		// Filled by step 1.5, which is where the connector reports what it
-		// actually knows about its own connection.
-		ReconnectCount: 0,
-		UptimeSec:      0,
+		State:          state,
+		LastMsgAtMs:    lastMsgAtMs,
+		ReconnectCount: conn.ReconnectCount,
+		UptimeSec:      uptimeSec,
 	}
 }
 

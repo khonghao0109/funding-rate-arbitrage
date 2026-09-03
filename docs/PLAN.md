@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **5/7 bước** | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **6/7 bước** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -402,7 +402,7 @@ Thứ tự áp dụng: `symbol_map` → `symbol_format` → (có map mà không 
 - Paradex trả `DOGE-USD-PERP` giá **0,182** trong khi 8 sàn khác báo ~0,083. `symbol_format` sinh ra một ký hiệu **hợp lệ về hình thức** nhưng có thể không phải thị trường mình tưởng — và chính ma trận chéo sàn của scanner là thứ phát hiện ra. Thêm cặp mới phải kiểm lại giá từng sàn, không chỉ kiểm nó có dữ liệu.
 - `cmd/scanner` coverage 0% (chỉ có test đối chiếu config↔connector, không chạy `main`). Kiểm thật là chạy scanner, không phải test đơn vị.
 
-#### Bước 1.5 — Kết nối bền bỉ + refactor `Feeds`
+#### Bước 1.5 — Kết nối bền bỉ + refactor `Feeds` ✅
 - **Gộp refactor `Feeds` từ Bước 2.2 lên đây** — cả hai bước đều sửa chữ ký của 10 connector ([cmd/scanner/main.go](../cmd/scanner/main.go)), làm rời nhau là sửa hai lần:
 
 ```go
@@ -411,11 +411,29 @@ type Feeds struct {
     Price     chan<- PriceData
     Orderbook chan<- OrderbookData
     Trade     chan<- TradeData
-    Funding   chan<- FundingData  // khai báo sẵn, chưa dùng tới GĐ 2
+    Conn      chan<- ConnEvent   // connector tự báo trạng thái kết nối
 }
 
-func ConnectBinanceFutures(symbols []string, f Feeds)
+func ConnectBinanceFutures(source string, symbols []Symbol, f Feeds)
 ```
+
+> **Đối chiếu P1 (2026-09-03) — hai chỗ khung trên đã lỗi thời so với code thật:**
+>
+> 1. **Chữ ký.** Bước 1.4 đã đổi connector thành `(source string, symbols []Symbol, ...)`:
+>    tên nguồn là cấu hình, và ánh xạ ký hiệu sàn đã làm sẵn ở `cmd/scanner`. Khung
+>    viết `symbols []string` là từ trước 1.4. Giữ nguyên hai tham số đó, chỉ gộp
+>    `ctx` + 3 channel thành `Feeds`.
+> 2. **Bỏ trường `Funding`.** Khai báo nó bây giờ đòi phải có kiểu `FundingData`,
+>    mà thiết kế struct đó là **Bước 2.2** và Bước **2.1 tồn tại chính để xác minh
+>    field TRƯỚC khi viết struct**. Khai sẵn theo phỏng đoán là đảo ngược thứ tự đó
+>    và vi phạm luật 5 (không bịa field API sàn). Không mất gì: mục đích của `Feeds`
+>    là **thêm một channel về sau là thay đổi cộng thêm, không đụng chữ ký nào** —
+>    Bước 2.2 thêm một dòng vào struct và sửa 0 connector. Đó đúng là thứ việc gộp
+>    này mua được.
+> 3. **Thêm `Conn`.** `source_status.state` ở Bước 1.1 là **suy ra từ im lặng**;
+>    hợp đồng nói Bước 1.5 đổi thành "connector tự báo". Muốn vậy phải có đường
+>    truyền ngược từ connector về scanner — một channel nữa, đúng chỗ `Feeds` vừa
+>    làm cho rẻ.
 
 - **Đóng dấu `RecvAt` ngay lúc đọc socket**, không phải lúc lấy khỏi channel — xem phát hiện ghi ở Bước 1.1. Đây là lúc chạm cả 10 connector nên là chỗ rẻ nhất để làm.
 - Exponential backoff (2s → 4s → … → tối đa 60s) thay `time.Sleep` cố định.
@@ -423,6 +441,121 @@ func ConnectBinanceFutures(symbols []string, f Feeds)
 - Mọi goroutine có điều kiện thoát qua `ctx`.
 - Metric per-sàn: uptime, số lần reconnect, độ trễ message cuối.
 - **Nghiệm thu:** chạy 72h không can thiệp; `ctx` huỷ làm mọi connector dừng sạch trong ≤5s.
+
+**Kết quả (2026-09-03).** `ctx` huỷ → **10/10 connector dừng trong 369µs**, ngân sách
+là 5s. Chạy liên tục 196 giây với 9 sàn: **không sàn nào rớt, không lần reconnect
+nào**, `uptime_sec` và `reconnect_count` chạy thật trên wire.
+
+🔶 **Vế "72h không can thiệp" CHƯA chạy** và không thể chạy trong một phiên làm
+việc. Không hạ chuẩn: nó vẫn là điều kiện thoát của Giai đoạn 1, ghi ở mục §1
+cuối GĐ. Cái đã kiểm được và có ý nghĩa cho một phiên dài:
+
+- Vế thứ hai của tiêu chí (`ctx` huỷ ≤5s) — **đã đạt, đo được, có test tự động**.
+- Ba cơ chế mà một phiên 72h phụ thuộc vào, mỗi cái có test đi kèm và đều được
+  kiểm bằng cách **cố tình phá rồi xem test có đỏ không**: backoff leo đúng và
+  không reset sai, read deadline bắt được socket còn mở mà ngừng đẩy, ping của
+  server được tính là hoạt động.
+- Backoff đã chạy thật trên một endpoint hỏng thật (Pyth 401) và leo đúng dãy
+  2→4→8→16→32→60s tới trần.
+
+Cái 196 giây **không** chứng minh được: rò rỉ bộ nhớ, trôi goroutine, hành vi khi
+sàn bảo trì, hoặc giới hạn thời gian sống của kết nối mà sàn áp (Binance có, và
+tài liệu về nó không đọc được từ đây).
+
+**Thiết kế: một vòng đời dùng chung thay chín bản sao.** Chín connector WebSocket
+trước đây mỗi cái tự dial, tự ngủ, tự thử lại — chín bản sao của cùng một vòng
+lặp, và cả chín mang đúng ba lỗi giống nhau: `time.Sleep` cố định (thử lại sàn
+chết mỗi 2 giây, **43.200 lần quay số một ngày** — đủ để một sự cố biến thành lệnh
+cấm vì rate limit sống lâu hơn chính sự cố đó), không có read deadline (socket
+nửa-mở không bao giờ gửi thêm byte nào **không phân biệt được** với thị trường
+đang yên, connector chờ nó vĩnh viễn), và không có cách nào dừng. Chín bản sao
+cũng là chín cơ hội để một bản vá được áp dụng tám lần.
+
+Nay chỉ còn [`runStream`](../exchanges/stream.go). Connector chỉ khai thứ riêng của
+sàn: URL, cách subscribe, cách giữ nhịp, cách parse một frame. `exchanges/` giảm
+**−1.264 dòng, +1.290** trong khi nhận thêm cả một tầng bền bỉ và bộ test đầu tiên.
+
+**Keepalive: đọc tài liệu, rồi ĐO.** Tra được 6/7 sàn. Đo lại từng cái bằng probe
+thật trước khi tin:
+
+| Sàn | Tài liệu nói | Đo được 2026-09-03 |
+|---|---|---|
+| OKX | ngắt sau 30s im lặng; gửi **chuỗi thô** `ping` | `ping` → `pong` ✅ |
+| Bybit | `{"op":"ping"}` mỗi 20s | → `{"ret_msg":"pong"}` ✅ |
+| Hyperliquid | đóng nếu 60s không gửi gì; `{"method":"ping"}` | → `{"channel":"pong"}` ✅ |
+| Paradex | **server** ping mỗi 55s, client phải pong trong 5s | ping giao thức → pong ✅ |
+| Gate | tài liệu **khuyên dùng ping tầng giao thức** | ping giao thức → pong ✅ |
+| Kraken Futures | "gửi ping ít nhất mỗi 60s" — **không nói dạng message** | `{"event":"ping"}` → ❌ `{"event":"alert","message":"Bad websocket message"}`; ping giao thức → pong ✅ |
+| Binance | không đọc được (trang render client-side) | ping giao thức → pong ✅ |
+
+⚠️ **Kraken là lý do phải đo.** `{"event":"ping"}` là phỏng đoán hiển nhiên, và nó
+**sai**. Nếu ship, Kraken sẽ nhận một message rác mỗi 30 giây suốt 72 giờ. Tài
+liệu cho biết *khoảng cách*, không cho biết *hình dạng*; chỗ tài liệu im lặng thì
+đo, không đoán (luật 5).
+
+**Hai lỗi tinh vi của gorilla/websocket, cả hai đều làm rớt socket khoẻ mạnh:**
+1. Handler pong mặc định **không làm gì** — feed yên tĩnh nhưng còn sống sẽ hết
+   hạn read deadline.
+2. Handler ping mặc định **trả pong nhưng không đụng vào read deadline**, mà
+   control frame bị nuốt bên trong `ReadMessage` chứ không trả về cho caller. Với
+   Paradex — sàn giữ kết nối bằng cách ping *chúng ta* — mặc định sẽ giết một
+   socket hoàn toàn khoẻ mạnh sau mỗi `readTimeout`.
+
+**`state` do connector báo — nhưng KHÔNG thay thế suy luận từ im lặng, mà HỢP với
+nó.** Mỗi bên biết thứ bên kia không biết. Connector biết sàn mất kết nối ngay một
+giây sau tick cuối (im lặng còn gọi nó khoẻ thêm 45 giây). Im lặng biết thứ
+connector không thể biết, và **đây mới là lỗi hay lẩn**: một subscription bị sàn
+âm thầm huỷ để lại socket *thật sự đang mở*, khoẻ theo mọi thước đo connector có,
+và không bao giờ đẩy dữ liệu nữa. Nên `connected` + im lặng quá ngưỡng = vẫn
+`disconnected`.
+
+**Bằng chứng cho lý do Bước 1.0 tồn tại:** metric kết nối cần đúng ba trường
+(`state`, `reconnect_count`, `uptime_sec`), cả ba đã đặt sẵn trên wire từ 1.0 với
+mặc định ghi rõ. Đổ dữ liệu thật vào chúng cần **0 dòng JavaScript**. `state:
+"reconnecting"` cũng vậy — dashboard đã có chấm trạng thái cho nó từ 1.1, chỉ là
+backend chưa bao giờ gửi. (JS duy nhất phải sửa là hiển thị *thêm* uptime và số
+lần nối lại trong tooltip — tính năng mới, không phải sửa vì hợp đồng đổi.)
+
+**Bỏ trường `Funding` mà khung ở trên khai sẵn** — lý do ở khối đối chiếu P1 phía
+trên: nó đòi kiểu `FundingData` mà Bước **2.1 tồn tại chính để xác minh field
+TRƯỚC khi viết struct**. Không mất gì, vì đó đúng là thứ `Feeds` mua được: Bước
+2.2 thêm một dòng vào struct và sửa **0 connector**.
+
+**Review tìm 5 lỗi, sửa cả 5:**
+- `streamDialer` làm rơi `Proxy: http.ProxyFromEnvironment` mà `websocket.DefaultDialer`
+  vốn có → cả 9 connector WS lặng lẽ bỏ `HTTPS_PROXY`, trong khi Pyth (dùng
+  `http.DefaultClient`) vẫn theo. Kiểu hỏng chỉ lộ ra ở máy người khác.
+- `healthySession` (60s) **bằng đúng** `defaultReadTimeout` (60s) → một sàn nhận
+  kết nối rồi im bặt bị read deadline giết ở đúng mốc đủ điều kiện, reset backoff
+  **mỗi lần**, và bị quay số lại mỗi ~60s vĩnh viễn thay vì leo lên trần. Nay
+  `healthySession = 2 × readTimeout` **và** phiên phải thực sự có dữ liệu mới được
+  reset — socket không mang gì thì chưa từng hoạt động, dù mở bao lâu.
+- Đếm reconnect khoá vào "đã báo cáo lần nào chưa" → sàn nào **quay số lần đầu
+  thất bại** sẽ bị tính lần kết nối thành công đầu tiên là một lần reconnect.
+- `shutdown` cấp cho HTTP server trọn `shutdownBudget` **rồi mới** bắt đầu đếm cho
+  connector → tối đa 10s so với 5s đã ghi tài liệu, và số đo in ra (chính là con
+  số nghiệm thu) tính cả phần HTTP. Nay một ngân sách chung, đếm từ lúc huỷ ctx.
+- `invalidateFreshness` xoá `state` nhưng để nguyên `uptime_sec`/`reconnect_count`
+  → tooltip vẫn khoe "kết nối liên tục 2g" sau khi chính socket của dashboard chết.
+
+**Nợ được trả:** `RecvAt` nay đóng dấu **tại lúc đọc socket** (nợ ghi ở Bước 1.1);
+`withRegistry` không còn nguy hiểm vì test dừng được goroutine của nó qua `ctx`
+(nợ ghi ở Bước 1.4); Paradex nuốt lỗi subscribe bằng một thân `if` rỗng — nay lỗi
+kết thúc phiên; Kraken giữ order book **xuyên qua reconnect**, mô tả một phiên
+không còn tồn tại — nay `Subscribe` xoá sạch.
+
+**Phát hiện ngoài phạm vi — ghi nhận, chưa sửa:**
+- 🔴 **Pyth đã chết từ lâu và code cũ giấu điều đó.** `hermes.pyth.network` trả
+  **401 Unauthorized**. Code cũ gọi `http.Get` mà **không kiểm status code**:
+  scanner đọc thân lỗi, vòng lặp kết thúc, ngủ 5 giây, lặp lại — chỉ log "Pyth SSE
+  connection closed". Đây là lý do thật của dòng ghi trong `config.yaml`: "suốt
+  buổi quan sát Pyth không gửi gì". Nay 401 hiện rõ và backoff leo đúng
+  2→4→8→16→32→60s. Sửa cần endpoint hoặc khoá mới → **Bước 2.x**, không phải ở đây.
+- Kraken **có** gửi `timestamp` (ms) trong cả `book_snapshot` lẫn mọi delta — đo
+  được. `processKrakenOrderbook` chỉ nhận sổ đã ráp nên chưa xuyên qua được; đây
+  đúng là khoản nợ "venue time thật cho Bybit/Kraken/Paradex" đã ghi ở cuối GĐ 1.
+- `exchanges/` mới có test **vòng đời kết nối** (17 test, 20,8%), **chưa có test
+  parse** cho cả 10 connector. Đó là Bước 1.6.
 
 #### Bước 1.6 — Bộ test đầu tiên
 - Tạo `exchanges/testdata/` — **phải chạy scanner và dump payload thật** của từng sàn trước, chưa có sẵn.
@@ -862,7 +995,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   5/7 bước   ← ĐANG LÀM
+[  ] GĐ 1  Củng cố lõi                   6/7 bước   ← ĐANG LÀM
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -872,4 +1005,14 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** Bước 1.5 — kết nối bền bỉ + refactor `Feeds`. Gộp `ctx`/`Price`/`Orderbook`/`Trade`/`Funding` thành một struct `Feeds` (chữ ký connector vừa đổi ở 1.4 nên đây là lượt cuối), exponential backoff thay `time.Sleep` cố định, ping/pong + `SetReadDeadline`, mọi goroutine thoát được qua `ctx`, và **đóng dấu `RecvAt` ngay lúc đọc socket** thay vì lúc lấy khỏi channel (nợ ghi ở Bước 1.1). `ctx` cũng là thứ cho test dừng được goroutine của Scanner, xoá luôn nguy cơ đua của `withRegistry` ghi biến toàn cục. **Nghiệm thu:** chạy 72h không can thiệp; huỷ `ctx` làm mọi connector dừng sạch trong ≤5s.
+**Việc tiếp theo cụ thể:** Bước 1.6 — bộ test đầu tiên cho `exchanges/`. Bước 1.5 đã
+thêm test **vòng đời kết nối** (17 test, 20,8%) nhưng **chưa một dòng nào phủ phần
+parse** của 10 connector. Việc phải làm: chạy scanner thật và dump payload của
+từng sàn vào `exchanges/testdata/` (chưa có sẵn), rồi golden test nạp payload →
+khẳng định ra đúng struct. Ưu tiên những chỗ đã biết là bẫy: Bybit snapshot/delta
+(xem §nợ), OKX `books5` bốn phần tử một mức, Kraken ráp sổ từ delta, Hyperliquid
+`levels[0]`/`levels[1]`. **Nghiệm thu:** `go test ./...` xanh, `-race` sạch,
+coverage ≥ 60% ở phần logic tính toán.
+
+**Còn treo của cả GĐ 1:** phiên chạy **72h không can thiệp** (vế còn lại của tiêu
+chí Bước 1.5) — chưa chạy, xem ghi chú ở Bước 1.5.

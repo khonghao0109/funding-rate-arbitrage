@@ -528,6 +528,12 @@ class FuturesArbitrageScanner {
         });
         this.sourceStatus.forEach(status => {
             status.state = 'unknown';
+            // Uptime and the reconnect count were claims about a connection we
+            // can no longer see. Leaving them would keep the tooltip saying
+            // "kết nối liên tục 2g" about a venue we have no news of - the exact
+            // kind of stale confidence this function exists to retract.
+            status.uptime_sec = 0;
+            status.reconnect_count = 0;
         });
         // Absence was a claim about the venue. With our own socket down we no
         // longer know anything about any venue.
@@ -769,13 +775,37 @@ class FuturesArbitrageScanner {
         return 'unknown';
     }
 
+    // Connection history for the tooltip: how long this socket has been up and
+    // how many times it has had to come back. Both are filled by the backend
+    // from step 1.5 (source_status.uptime_sec / reconnect_count); before that
+    // they were always 0 and this said nothing. The reconnect count is what
+    // answers "did anything flap while I was away" after an unattended run.
+    connectionNote(conn) {
+        if (!conn) return '';
+        const parts = [];
+        if (conn.uptime_sec > 0) parts.push(`kết nối liên tục ${this.formatDuration(conn.uptime_sec)}`);
+        if (conn.reconnect_count > 0) parts.push(`đã nối lại ${conn.reconnect_count} lần`);
+        return parts.join(' · ');
+    }
+
+    formatDuration(seconds) {
+        if (seconds < 60) return `${seconds}s`;
+        if (seconds < 3600) return `${Math.floor(seconds / 60)} phút`;
+        const hours = Math.floor(seconds / 3600);
+        const minutes = Math.floor((seconds % 3600) / 60);
+        return minutes > 0 ? `${hours}g ${minutes}p` : `${hours}g`;
+    }
+
     statusTitle(source) {
+        const conn = this.sourceStatus.get(source);
+        const connNote = this.connectionNote(conn);
+
         const data = this.sources.get(source);
         if (!data) {
-            const conn = this.sourceStatus.get(source);
-            return conn && conn.state === 'disconnected'
+            const waiting = conn && conn.state === 'disconnected'
                 ? 'Sàn chưa gửi dữ liệu nào — coi như mất kết nối'
                 : 'Đang chờ dữ liệu đầu tiên';
+            return connNote ? `${waiting} · ${connNote}` : waiting;
         }
 
         const parts = [];
@@ -788,10 +818,12 @@ class FuturesArbitrageScanner {
         }
         if (data.ageMs >= 0) parts.push(`nhận cách đây ${this.formatAge(data.ageMs)}`);
 
-        const conn = this.sourceStatus.get(source);
         if (conn && conn.state === 'disconnected') {
             parts.push('Sàn không gửi gì cho bất kỳ cặp nào');
+        } else if (conn && conn.state === 'reconnecting') {
+            parts.push('Đang kết nối lại');
         }
+        if (connNote) parts.push(connNote);
         return parts.join(' · ');
     }
 

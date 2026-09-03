@@ -48,7 +48,8 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Mid-price chuẩn** | `(best bid + best ask) / 2` thay vì giá khớp lệnh cuối |
 | **Biểu đồ live** | TradingView Lightweight Charts, nhiều sàn trên cùng một khung |
 | **Tự điều chỉnh số thập phân** | Theo từng tài sản và vùng giá |
-| **Tự kết nối lại** | Mỗi sàn tự reconnect khi rớt WebSocket |
+| **Kết nối bền bỉ** | Backoff luỹ thừa 2s→60s (không quay số dồn dập vào sàn đang chết), read deadline phát hiện socket còn mở nhưng ngừng đẩy dữ liệu, keepalive theo đúng tài liệu từng sàn — đã **đo lại** chứ không đoán. Dashboard hiện `uptime` và **số lần nối lại** của từng sàn |
+| **Tắt sạch** | Ctrl-C dừng mọi connector và mọi goroutine nội bộ trước khi thoát — đo được **369µs**, ngân sách 5s |
 | **Nói rõ số đang hiển thị là gì** | Dashboard ghi thẳng chi phí nào đã trừ và chưa trừ. Nguồn bị loại khỏi so sánh đều kèm lý do (oracle, dữ liệu cũ, không có nguồn cùng loại để so) thay vì lặng lẽ biến mất |
 | **Lọc dữ liệu cũ** | Sàn ngừng gửi quá ngưỡng riêng của nó bị loại khỏi so sánh và hiện nhãn **CŨ** / **MẤT KẾT NỐI**. Ngưỡng đo từ dữ liệu thật, 10–20s tuỳ sàn |
 | **Dashboard tự dựng theo máy chủ** | Danh sách nguồn, màu, nhãn và danh sách cặp đến từ message `meta`, không hardcode trong JavaScript |
@@ -70,7 +71,7 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
 | **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | 105 test (87,1% ở `internal/scanner`, 100% ở `internal/fees`, 78,2% ở `internal/config`). Connector chưa có test nào, chưa có `exchanges/testdata/` |
+| **Test tự động** | 138 test (90,5% ở `internal/scanner`, 100% ở `internal/fees`, 78,2% ở `internal/config`, 20,8% ở `exchanges`). Test của `exchanges` phủ **vòng đời kết nối**, chưa phủ phần **parse** của connector nào — chưa có `exchanges/testdata/`. Đó là Bước 1.6 |
 | **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập biểu phí tài khoản của bạn vào `config.yaml` và đặt `verified: true` |
 | **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract; chưa có instrument registry để nhân `ctVal`/`quanto_multiplier`, nên bốn sàn chưa có số thanh khoản. Xếp hạng cơ hội theo độ sâu phải chờ GĐ 2 |
 
@@ -97,7 +98,7 @@ Lộ trình chia **9 giai đoạn / 41 bước**:
 | GĐ | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
-| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (5/7) |
+| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (6/7) |
 | 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |
@@ -203,7 +204,8 @@ Biến môi trường `PORT` (hoặc `.env`) vẫn được ưu tiên hơn `serv
 
 > ⚠️ Ngưỡng này áp lên **spread thô**, chưa trừ phí. Dashboard ghi rõ điều này ngay dưới ma trận. Với phí taker thông thường của cả hai chân, chi phí vòng lặp đã vượt xa 0,05% — nên con số hiển thị hiện tại phản ánh *cấu trúc thị trường*, không phải *cơ hội có thể thực thi*. Mô hình phí nằm ở Bước 1.3 trong lộ trình.
 
-Symbol, danh sách sàn và các ngưỡng khác hiện đang hardcode; chuyển sang file cấu hình ở Bước 1.4.
+Symbol, danh sách sàn và mọi ngưỡng đều nằm trong `config.yaml` từ Bước 1.4 —
+không còn hardcode ở Go hay JavaScript.
 
 ---
 

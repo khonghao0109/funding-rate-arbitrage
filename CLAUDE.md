@@ -27,7 +27,7 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** 5 of 7 steps done. Step 1.0 froze the WebSocket JSON
+**Phase 1 — Hardening.** 6 of 7 steps done. Step 1.0 froze the WebSocket JSON
 contract for the whole phase — it is specified in
 [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
 phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added
@@ -39,13 +39,18 @@ Step 1.3 added `internal/fees/` and the after-fee figure. Step 1.4 moved every
 operational fact into **`config.yaml`** — pairs, venues, thresholds, fees, and
 the per-venue symbol mapping — so adding a pair or a venue is a YAML edit.
 
-The next task is **step 1.5, resilient connections + the `Feeds` refactor**:
-fold ctx and the channels into one `Feeds` struct (1.4 already changed the
-connector signatures, so this is the last pass over them), exponential backoff
-instead of a fixed sleep, ping/keepalive and read deadlines, every goroutine
-cancellable through ctx, and **stamp `RecvAt` at the socket read** rather than at
-the channel dequeue (debt from step 1.1). Acceptance: 72h unattended; cancelling
-ctx stops every connector cleanly within 5s.
+Step 1.5 replaced nine copies of the reconnect loop with one shared lifecycle in
+[exchanges/stream.go](exchanges/stream.go): `Feeds` carries `ctx` and the
+channels, backoff runs 2s→60s, every venue gets the keepalive its own
+documentation specifies, and cancelling `ctx` stops every connector in
+milliseconds. `RecvAt` is now stamped at the socket read (debt from 1.1), and
+`source_status` carries `reconnect_count` and `uptime_sec` the connectors
+actually report.
+
+The next task is **step 1.6, the first connector tests**: capture real payloads
+into `exchanges/testdata/`, golden-test each parser against them, and take
+`exchanges/` past 60% on the parsing logic. Acceptance: `go test ./...` green,
+`-race` clean, coverage ≥ 60% on calculation logic.
 
 ---
 
@@ -150,11 +155,16 @@ frontend builds its source list, symbol selector and cost disclaimer from the
 **13. Freshness is measured from the receive time only.** `VenueTimeMs` is the
 venue's own clock and is 0 for the venues that publish none; a real measurement
 showed Binance's running 80ms *ahead* of ours, so differencing the two measures
-skew, not age. The scanner stamps `RecvAt` in exactly one place
-([internal/scanner/scanner.go](internal/scanner/scanner.go) `updatePrice`) — never
-add a second. Staleness thresholds are per venue and measured; the numbers and how
-they were obtained are on `sourceRegistry` in
-[internal/scanner/wire.go](internal/scanner/wire.go).
+skew, not age. `RecvAt` is stamped **at the socket read** — in exactly two places,
+one per transport: `runSession` in
+[exchanges/stream.go](exchanges/stream.go) for the nine WebSocket connectors, and
+the SSE read loop in [exchanges/pyth.go](exchanges/pyth.go). Never add a third.
+Step 1.5 moved it there from the scanner's dequeue: the ingestion channels hold
+1000 messages, so a stamp taken at the far end measures our own backlog and a
+scanner falling behind would report every venue stale at once. The scanner falls
+back to its own clock only for data that never crossed a socket (`receivedAt` in
+[internal/scanner/scanner.go](internal/scanner/scanner.go)). Staleness thresholds
+are per venue and measured; the numbers and the reasoning are in `config.yaml`.
 
 ---
 
@@ -287,15 +297,22 @@ phase 1.
   scanner currently raises is negative after fees**. The alert threshold still
   fires on the gross spread by design — deciding what is worth acting on is
   phase 3 — but nothing displays a gross figure without labelling it.
-- Reconnect uses a fixed sleep with no backoff, no ping/keepalive, no read
-  deadline.
+- ~~Reconnect uses a fixed sleep with no backoff, no ping/keepalive, no read
+  deadline.~~ Fixed in step 1.5. All nine WebSocket connectors share one
+  lifecycle (`runStream` in [exchanges/stream.go](exchanges/stream.go)):
+  exponential backoff 2s→60s, a read deadline that also counts pongs and server
+  pings as activity, a keepalive per the venue's own documentation, and a stop
+  through `ctx` that closes the socket underneath a blocked read. Pyth is SSE and
+  keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- No `exchanges/testdata/` and no connector tests — golden tests need real
-  payloads captured from a running scanner first. `internal/scanner` has 63 tests
-  covering the wire contract, the staleness filter and the grouping rules (87.1%
-  of statements), plus `internal/fees` (100%) and `internal/config` (78.2%) —
-  105 tests in all. `exchanges/` is still at zero. Step 1.6 closes that.
+- No `exchanges/testdata/` and no connector PARSING tests — golden tests need real
+  payloads captured from a running scanner first. 138 tests in all:
+  `internal/scanner` 83 (90.5% of statements), `internal/config` 31 (78.2%),
+  `exchanges` 17 (20.8%), `internal/fees` 5 (100%), `cmd/scanner` 2. The
+  `exchanges` tests cover the connection lifecycle added at step 1.5 - backoff,
+  cancellation, read deadlines, the receive stamp - and none of the ten parsers.
+  Step 1.6 closes that.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new

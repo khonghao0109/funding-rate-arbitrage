@@ -1,8 +1,6 @@
 package exchanges
 
 import (
-	"encoding/json"
-	"log"
 	"strconv"
 	"time"
 
@@ -10,10 +8,10 @@ import (
 )
 
 type ParadexWSRequest struct {
-	ID      int64                  `json:"id"`
-	JSONRPC string                 `json:"jsonrpc"`
-	Method  string                 `json:"method"`
-	Params  map[string]interface{} `json:"params"`
+	ID      int64          `json:"id"`
+	JSONRPC string         `json:"jsonrpc"`
+	Method  string         `json:"method"`
+	Params  map[string]any `json:"params"`
 }
 
 type ParadexWSResponse struct {
@@ -55,89 +53,76 @@ type ParadexMarketSummaryEvent struct {
 	} `json:"params"`
 }
 
-func ConnectParadexFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
-	wsURL := "wss://ws.api.prod.paradex.trade/v1"
+// Paradex is the only venue here that keeps the connection alive from its own
+// end: "The server sends a ping message every 55 seconds" and "the client must
+// respond with a pong within 5 seconds", after which "the connection is renewed
+// for 60 seconds". https://docs.paradex.trade/ws/general-information/introduction
+//
+// That reply is what runSession's ping handler does - and, critically, why that
+// handler also extends the read deadline: gorilla consumes control frames inside
+// ReadMessage without returning, so a socket kept alive purely by server pings
+// would look silent to a read deadline that only data resets.
+func ConnectParadexFutures(source string, symbols []Symbol, f Feeds) {
+	runStream(f, streamConfig{
+		Source: source,
+		URL:    "wss://ws.api.prod.paradex.trade/v1",
+		Subscribe: func(conn *websocket.Conn) error {
+			// markets_summary carries bid and ask for every market at once, so
+			// one subscription covers whatever symbols are configured.
+			//
+			// The error from this write used to be discarded by an empty if
+			// body, which left a connected socket subscribed to nothing and
+			// looking healthy.
+			return conn.WriteJSON(ParadexWSRequest{
+				ID:      1,
+				JSONRPC: "2.0",
+				Method:  "subscribe",
+				Params:  map[string]any{"channel": "markets_summary"},
+			})
+		},
+		Handle: func(raw []byte, recvAt time.Time) {
+			handleParadexFrame(source, symbols, f, raw, recvAt)
+		},
+	})
+}
 
-	for {
-		conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-		if err != nil {
-			log.Printf("Paradex connection error: %v", err)
-			time.Sleep(5 * time.Second)
-			continue
-		}
-
-		log.Printf("Connected to Paradex futures WebSocket")
-
-		// Subscribe to markets_summary channel (provides bid/ask for all markets)
-
-		subscribeReq := map[string]interface{}{
-			"jsonrpc": "2.0",
-			"method":  "subscribe",
-			"params": map[string]interface{}{
-				"channel": "markets_summary",
-			},
-			"id": 1,
-		}
-
-		if err := conn.WriteJSON(subscribeReq); err != nil {
-		}
-
-		// Read messages
-		for {
-			_, message, err := conn.ReadMessage()
-			if err != nil {
-				log.Printf("Paradex read error: %v", err)
-				break
-			}
-
-			// Try to parse as subscription response first
-			var subResponse ParadexWSResponse
-			if err := json.Unmarshal(message, &subResponse); err == nil && subResponse.Result.Channel == "markets_summary" {
-				continue
-			}
-
-			// Try to parse as market summary event
-			var marketEvent ParadexMarketSummaryEvent
-			if err := json.Unmarshal(message, &marketEvent); err == nil &&
-				marketEvent.Method == "subscription" && marketEvent.Params.Channel == "markets_summary" {
-
-				symbol := StandardOf(symbols, marketEvent.Params.Data.Symbol)
-				if symbol == "" {
-					continue // a market this connector never subscribed to
-				}
-
-				// Parse bid and ask prices
-				bidPrice, err1 := strconv.ParseFloat(marketEvent.Params.Data.Bid, 64)
-				askPrice, err2 := strconv.ParseFloat(marketEvent.Params.Data.Ask, 64)
-
-				if err1 != nil || err2 != nil {
-					continue
-				}
-
-				// Send orderbook data
-				// BestBidQtyCoin/BestAskQtyCoin stay 0: the markets_summary
-				// channel this connector subscribes to publishes a bid and an
-				// ask price and no size at all, so there is nothing to collect
-				// here. A depth channel would be needed, and phase 2 takes book
-				// depth over REST instead - see docs/PLAN.md §7.4.
-				orderbookChan <- OrderbookData{
-					Symbol:  symbol,
-					Source:  source,
-					BestBid: bidPrice,
-					BestAsk: askPrice,
-					// This connector does not parse a venue timestamp out of this
-					// message. Writing the local clock here instead would report our
-					// own time as the venue's and make a dead feed look current
-					// forever. Leave it 0; the scanner stamps its own receive time.
-					// Capturing the venue's real timestamp is step 1.5's work.
-					// See docs/WS-CONTRACT.md §4.1.
-					VenueTimeMs: 0,
-				}
-			}
-		}
-
-		conn.Close()
-		log.Printf("Paradex connection closed, reconnecting in 5 seconds...")
-		time.Sleep(5 * time.Second)
+func handleParadexFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+	// The subscription acknowledgement shares the envelope with the data.
+	var subResponse ParadexWSResponse
+	if decode(raw, &subResponse) && subResponse.Result.Channel == "markets_summary" {
+		return
 	}
+
+	var marketEvent ParadexMarketSummaryEvent
+	if !decode(raw, &marketEvent) ||
+		marketEvent.Method != "subscription" ||
+		marketEvent.Params.Channel != "markets_summary" {
+		return
+	}
+
+	symbol := StandardOf(symbols, marketEvent.Params.Data.Symbol)
+	if symbol == "" {
+		return // a market this connector never subscribed to
+	}
+
+	bidPrice, err1 := strconv.ParseFloat(marketEvent.Params.Data.Bid, 64)
+	askPrice, err2 := strconv.ParseFloat(marketEvent.Params.Data.Ask, 64)
+	if err1 != nil || err2 != nil {
+		return
+	}
+
+	// BestBidQtyCoin/BestAskQtyCoin stay 0: markets_summary publishes a bid and
+	// an ask price and no size at all, so there is nothing to collect here. A
+	// depth channel would be needed, and phase 2 takes book depth over REST
+	// instead - see docs/PLAN.md §7.4.
+	f.SendOrderbook(OrderbookData{
+		Symbol:  symbol,
+		Source:  source,
+		BestBid: bidPrice,
+		BestAsk: askPrice,
+		// No venue timestamp in this message. Writing the local clock here would
+		// report our own time as the venue's; RecvAt is our clock and says so.
+		VenueTimeMs: 0,
+		RecvAt:      recvAt,
+	})
 }

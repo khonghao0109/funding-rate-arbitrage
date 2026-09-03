@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"testing"
@@ -465,7 +466,7 @@ func TestNewWirePrices_CarriesTopOfBookFromThePricePoint(t *testing.T) {
 		},
 	}
 
-	msg := newWirePrices(prices, map[string]time.Time{"binance_futures": now}, now, now)
+	msg := newWirePrices(prices, map[string]time.Time{"binance_futures": now}, nil, now, now)
 	point := msg.Prices["BTCUSDT"]["binance_futures"]
 
 	if point.BestBid != 64999.5 || point.BestAsk != 65000.5 {
@@ -517,14 +518,18 @@ func TestProcessOrderbooks_StoresTopOfBook(t *testing.T) {
 	s.now = func() time.Time { return now }
 
 	// The goroutine must not outlive the test: it reads the package-level source
-	// registry through evaluate, and a later test swaps that registry out.
+	// registry through evaluate, and a later test swaps that registry out. Until
+	// step 1.5 the only way to stop it was to close the channel it ranged over,
+	// which meant the test had to own a channel the scanner also owned. It now
+	// stops the way production does.
+	ctx, cancel := context.WithCancel(context.Background())
 	stopped := make(chan struct{})
 	go func() {
 		defer close(stopped)
-		s.processOrderbooks()
+		s.processOrderbooks(ctx)
 	}()
 	defer func() {
-		close(s.orderbookChan)
+		cancel()
 		<-stopped
 	}()
 

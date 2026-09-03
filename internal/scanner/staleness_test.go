@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -97,7 +98,7 @@ func TestNewWirePrices_FillsAgeAndStatus(t *testing.T) {
 		"bybit_futures":   now.Add(-30 * time.Second),
 	}
 
-	msg := newWirePrices(prices, lastMsgAt, time.Time{}, now)
+	msg := newWirePrices(prices, lastMsgAt, nil, time.Time{}, now)
 
 	fresh := msg.Prices["BTCUSDT"]["binance_futures"]
 	if fresh.Status != statusLive {
@@ -128,7 +129,7 @@ func TestNewWirePrices_KeepsStalePricesSoTheUICanShowThem(t *testing.T) {
 	now := time.Now()
 	msg := newWirePrices(map[string]map[string]PricePoint{
 		"BTCUSDT": {"bybit_futures": {Price: 65100, RecvAt: now.Add(-time.Hour)}},
-	}, map[string]time.Time{"bybit_futures": now.Add(-time.Hour)}, time.Time{}, now)
+	}, map[string]time.Time{"bybit_futures": now.Add(-time.Hour)}, nil, time.Time{}, now)
 
 	point, ok := msg.Prices["BTCUSDT"]["bybit_futures"]
 	if !ok {
@@ -156,7 +157,7 @@ func TestSourceState_DerivedFromSilenceAcrossAllSymbols(t *testing.T) {
 		"binance_futures": now.Add(-time.Second),
 		// OKX has sent nothing at all for a long time.
 		"okx_futures": now.Add(-time.Hour),
-	}, time.Time{}, now)
+	}, nil, time.Time{}, now)
 
 	if got := msg.SourceStatus["binance_futures"].State; got != stateConnected {
 		t.Errorf("binance state = %q, want connected: the venue is still sending, only this pair is quiet", got)
@@ -293,7 +294,7 @@ func TestNewWirePrices_ReportsSourcesThatNeverDelivered(t *testing.T) {
 
 	msg := newWirePrices(map[string]map[string]PricePoint{
 		"BTCUSDT": {"binance_futures": {Price: 65000, RecvAt: now}},
-	}, map[string]time.Time{"binance_futures": now}, startedAt, now)
+	}, map[string]time.Time{"binance_futures": now}, nil, startedAt, now)
 
 	if len(msg.SourceStatus) != len(sourceRegistry) {
 		t.Errorf("source_status has %d entries, want one per registered source (%d)",
@@ -349,7 +350,9 @@ func TestRefreshStaleness_ReexaminesASymbolNothingArrivesFor(t *testing.T) {
 
 	// Everything goes quiet. Nothing will call updatePrice again.
 	scanner.now = func() time.Time { return base.Add(time.Hour) }
-	go scanner.refreshStaleness()
+	refreshCtx, stopRefresh := context.WithCancel(context.Background())
+	defer stopRefresh()
+	go scanner.refreshStaleness(refreshCtx)
 
 	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
 		t.Fatalf("set deadline: %v", err)
@@ -429,7 +432,9 @@ func TestProcessTrades_KeepsAQuietVenueMarkedConnected(t *testing.T) {
 	base := time.Now()
 	scanner.now = func() time.Time { return base }
 
-	go scanner.processTrades()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go scanner.processTrades(ctx)
 
 	// A price arrives, then the book goes quiet for longer than the threshold
 	// while trades keep coming.
