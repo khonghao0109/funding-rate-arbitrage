@@ -702,10 +702,10 @@ Sửa:
 
 > **Nợ kỹ thuật ghi nhận, chưa xử lý ở GĐ này:** tầng broadcast (xem [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast)); lấy venue time thật cho Bybit/Kraken/Paradex; ngưỡng staleness thích ứng.
 >
-> **Từ review độc lập Bước 1.0 (2026-09-03), chưa xử lý — cùng một sửa nhỏ trong `app.js`, gộp vào commit dọn dẹp đầu GĐ 2:**
-> - **F2** — `serverNow()` được định nghĩa kèm `clockOffsetMs` nhưng **0 caller**: code chết mang comment tuyên bố vai trò nó chưa đảm nhiệm.
-> - **F3** — điểm biểu đồ vẫn lấy mốc `Date.now()` ([app.js](../static/app.js), `addPriceToHistory`) — máy lệch giờ thì điểm chart lệch, đi ngược quy tắc #3 của [WS-CONTRACT.md](WS-CONTRACT.md). Đây chính là caller tự nhiên đầu tiên của `serverNow()` — sửa F3 thì F2 tự hết.
-> - **F4** — `lastUpdate: Date.now()` ghi vào state nhưng không ai đọc; là bẫy cho người sau với lấy nó thay vì `age_ms` do backend tính.
+> **Từ review độc lập Bước 1.0 (2026-09-03) — ✅ đã xử lý xong (2026-09-03):**
+> - ~~**F2** — `serverNow()` được định nghĩa kèm `clockOffsetMs` nhưng 0 caller~~ → đã hết cùng F3: `serverNowMs()` giờ là nguồn thời gian cho chart, đếm tuổi alert và `formatTimeAgo` (vào ở `7867fe2`).
+> - ~~**F3** — điểm biểu đồ lấy mốc `Date.now()`~~ → `addPriceToHistory` và `breakChartLine` dùng `serverNowMs()`, có chặn thời gian không tăng khi offset được ước lượng lại (vào ở `7867fe2`).
+> - ~~**F4** — `lastUpdate: Date.now()` ghi vào state nhưng không ai đọc~~ → xoá field ở commit dọn dẹp đầu GĐ 2.
 
 ---
 

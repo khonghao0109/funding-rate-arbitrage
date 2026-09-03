@@ -750,8 +750,7 @@ class FuturesArbitrageScanner {
             ageMs: point.age_ms,
             venueTimeMs: point.venue_time_ms,
             recvAtMs: point.recv_at_ms,
-            serverTimeMs: serverTimeMs,
-            lastUpdate: Date.now()
+            serverTimeMs: serverTimeMs
         });
 
     }
