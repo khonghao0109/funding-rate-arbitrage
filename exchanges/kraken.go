@@ -80,10 +80,21 @@ func processKrakenOrderbook(source string, symbols []Symbol, productID string, o
 }
 
 func ConnectKrakenFutures(source string, symbols []Symbol, f Feeds) {
-	// One assembled book per product, rebuilt from scratch on every connection.
-	orderbooks := make(map[string]*KrakenOrderBook)
+	runStream(f, krakenStream(source, symbols, f))
+}
 
-	runStream(f, streamConfig{
+func krakenStream(source string, symbols []Symbol, f Feeds) streamConfig {
+	// One assembled book per product, rebuilt from scratch on every connection.
+	// Seeded here rather than only in Subscribe so the handler has somewhere to
+	// put a frame from the moment the config exists - a book that is empty is a
+	// different thing from a product this connector does not follow, and only
+	// the second may be dropped.
+	orderbooks := make(map[string]*KrakenOrderBook, len(symbols))
+	for _, symbol := range symbols {
+		orderbooks[symbol.Venue] = &KrakenOrderBook{}
+	}
+
+	return streamConfig{
 		Source: source,
 		URL:    "wss://futures.kraken.com/ws/v1",
 		Subscribe: func(conn *websocket.Conn) error {
@@ -111,30 +122,42 @@ func ConnectKrakenFutures(source string, symbols []Symbol, f Feeds) {
 			return nil
 		},
 		Handle: func(raw []byte, recvAt time.Time) {
-			var data KrakenOrderBookData
-			if !decode(raw, &data) || data.Feed == "" {
-				return
-			}
-
-			orderbook, exists := orderbooks[data.ProductID]
-			if !exists {
-				return
-			}
-
-			switch data.Feed {
-			case "book_snapshot":
-				orderbook.Bids = data.Bids
-				orderbook.Asks = data.Asks
-			case "book":
-				updateKrakenOrderbook(orderbook, data)
-			default:
-				// Subscription acknowledgements, the pong, heartbeats.
-				return
-			}
-
-			processKrakenOrderbook(source, symbols, data.ProductID, orderbook, f, recvAt)
+			handleKrakenFrame(source, symbols, orderbooks, f, raw, recvAt)
 		},
-	})
+	}
+}
+
+// handleKrakenFrame folds one message into the assembled book for its product
+// and publishes the new top of book.
+//
+// Kraken is the only venue here whose top of book is not in the message: a
+// snapshot arrives once and every later frame moves ONE level, so the book has
+// to be maintained locally and the connector's output depends on every frame
+// that came before. orderbooks is that state, keyed by the venue's product id
+// and reset on each reconnect by Subscribe.
+func handleKrakenFrame(source string, symbols []Symbol, orderbooks map[string]*KrakenOrderBook, f Feeds, raw []byte, recvAt time.Time) {
+	var data KrakenOrderBookData
+	if !decode(raw, &data) || data.Feed == "" {
+		return
+	}
+
+	orderbook, exists := orderbooks[data.ProductID]
+	if !exists {
+		return
+	}
+
+	switch data.Feed {
+	case "book_snapshot":
+		orderbook.Bids = data.Bids
+		orderbook.Asks = data.Asks
+	case "book":
+		updateKrakenOrderbook(orderbook, data)
+	default:
+		// Subscription acknowledgements, the pong, heartbeats.
+		return
+	}
+
+	processKrakenOrderbook(source, symbols, data.ProductID, orderbook, f, recvAt)
 }
 
 func updateKrakenOrderbook(orderbook *KrakenOrderBook, data KrakenOrderBookData) {

@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **6/7 bước** | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -554,14 +554,151 @@ không còn tồn tại — nay `Subscribe` xoá sạch.
 - Kraken **có** gửi `timestamp` (ms) trong cả `book_snapshot` lẫn mọi delta — đo
   được. `processKrakenOrderbook` chỉ nhận sổ đã ráp nên chưa xuyên qua được; đây
   đúng là khoản nợ "venue time thật cho Bybit/Kraken/Paradex" đã ghi ở cuối GĐ 1.
-- `exchanges/` mới có test **vòng đời kết nối** (17 test, 20,8%), **chưa có test
-  parse** cho cả 10 connector. Đó là Bước 1.6.
+- ~~`exchanges/` mới có test **vòng đời kết nối** (17 test, 20,8%), **chưa có test
+  parse** cho cả 10 connector.~~ → đã xong ở Bước 1.6: 89 test, 63,8%.
 
-#### Bước 1.6 — Bộ test đầu tiên
+#### Bước 1.6 — Bộ test đầu tiên ✅
 - Tạo `exchanges/testdata/` — **phải chạy scanner và dump payload thật** của từng sàn trước, chưa có sẵn.
 - Golden test: nạp payload mẫu → khẳng định parse ra đúng struct.
 - Unit test: mid-price, tính phí, spread, staleness filter, chuyển đổi đơn vị.
 - **Nghiệm thu:** `go test ./...` xanh, `-race` sạch; coverage ≥ 60% ở phần logic tính toán.
+
+**Kết quả (2026-09-03).** `exchanges` từ **20,8% → 63,8%**; toàn dự án 211 test,
+`-race -count=2` sạch. Phần còn 0% là chín hàm `ConnectX` một dòng (`runStream(f,
+xStream(...))`) và vòng lặp mạng của Pyth — nối dây I/O, không phải logic tính.
+
+| Gói | Test | Coverage |
+|---|---|---|
+| `exchanges` | 89 | 63,8% |
+| `internal/scanner` | 84 | 89,3% |
+| `internal/config` | 31 | 78,2% |
+| `internal/fees` | 5 | 100% |
+| `cmd/scanner` | 2 | — (chỉ đối chiếu config↔connector) |
+
+**Đối chiếu P1: phần lớn danh sách "unit test" ở trên đã có rồi.** Mid-price,
+tính phí, spread và staleness filter đã được phủ từ Bước 1.1 và 1.3
+(`internal/scanner` 84 test, `internal/fees` 100%). Khoảng trống thật sự chỉ nằm ở
+`exchanges/`: **không một dòng nào** chạm vào phần parse của 10 connector. Nên bước
+này dồn toàn bộ vào đó, thay vì viết lại thứ đã có.
+
+**Công cụ capture dùng chính `streamConfig` của production.** Mỗi connector được
+tách thành `ConnectX()` gọi `xStream()`; `TestCaptureTestdata` dựng đúng
+`streamConfig` đó — cùng URL, cùng message subscribe — và chỉ thay `Handle`. Một
+công cụ capture tự viết lại message subscribe sẽ **trôi khỏi connector và ghi lại
+payload không ai thật sự nhận**, đúng cái mà golden test sinh ra để chặn. Chạy lại
+khi sàn đổi payload:
+
+```
+CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata -timeout 5m ./exchanges/
+```
+
+**Bản capture đầu tiên hỏng, và cách nó hỏng đáng ghi.** Giữ 80 frame *đầu tiên*
+nghĩa là kênh ồn ào bỏ đói kênh khác: OKX đẩy 76 frame trade trước frame `books5`
+đầu tiên, nên file vàng của OKX **không có lấy một bản cập nhật sổ lệnh nào**; và
+Paradex — vốn phát summary cho **mọi** thị trường nó niêm yết, kể cả quyền chọn —
+cho ra một lát cắt ngẫu nhiên không chứa `BTC-USD-PERP`. Test chạy trên đó sẽ
+XANH mà không khẳng định được gì. Nay capture giữ theo **dạng frame**
+(`frameKind`): vân tay gồm trường phân loại của sàn cộng với thị trường đã đăng ký
+mà frame nhắc tới, tối đa 8 frame mỗi dạng, chạy đủ 30 giây.
+
+---
+
+🔴 **Lỗi thật do golden test bắt được: mọi trade của Binance đều bị gắn nhãn
+"sell".**
+
+`encoding/json` ưu tiên khớp tag chính xác nhưng **có fallback khớp không phân
+biệt hoa thường**. Payload aggTrade mang cả `"m"` (buyer is maker) lẫn `"M"` (cờ
+bỏ đi, luôn `true`). Struct chỉ khai `m`. Nên: `"m":false` khớp chính xác → đúng;
+rồi `"M":true` không có chỗ khớp chính xác, khớp hoa-thường vào `m` và **ghi đè**.
+`IsMaker` luôn thành `true`, side luôn thành `sell`.
+
+Cách lỗi này ẩn mình là điển hình: build xanh, parse không lỗi, giá đúng, khối
+lượng đúng — chỉ một trường bool sai. Hiện chưa ai dùng `Side` (chỉ `markSourceAlive`
+đọc trade), nên nó vô hại **hôm nay**; GĐ 3 backtest và GĐ 2 phân tích dòng lệnh
+sẽ đọc nó.
+
+Đã **quét toàn bộ 9 file golden** tìm mọi cặp key chỉ khác nhau hoa/thường:
+`b`/`B`, `a`/`A` (Binance, Gate), `e`/`E` (Binance), `s`/`S` (Bybit). **Tất cả đều
+đã khai đủ cả hai vế** nên khớp chính xác thắng — `m`/`M` là chỗ duy nhất hở. Sửa
+bằng cách khai `Ignore bool \`json:"M"\``.
+
+> **Quy tắc rút ra:** khai **cả hai** vế của mọi cặp key khác nhau chỉ ở hoa/thường,
+> kể cả vế không dùng. Bỏ trống một vế không phải là "bỏ qua nó" — mà là "để nó ghi
+> đè lên vế kia".
+
+---
+
+**Phát hiện thứ hai từ dữ liệu thật: `bookTicker` của Binance SPOT không có mốc
+thời gian.** Bản futures mang `"E"`, bản spot không mang gì cả — cùng connector,
+cùng tên stream, khác payload. Nên `venue_time_ms` bằng 0 cho sổ lệnh Binance spot
+là **do sàn**, không phải do connector. Đã ghi vào bảng kỳ vọng của test.
+
+**Test khẳng định cái gì.** Không phải "parse không lỗi", mà đúng những điều phần
+còn lại của hệ thống *dựa vào* và *không tự kiểm được*: symbol phát ra phải là
+symbol đã đăng ký (Paradex phát cả quyền chọn), `Source` là **cấu hình** chứ không
+phải hằng số trong connector (lỗi Bước 1.4), dấu thời gian nhận sống sót, đồng hồ
+sàn **không bao giờ** là đồng hồ của ta, và khối lượng phải bằng coin hoặc bằng 0
+— **không bao giờ** là số contract đội lốt tên `...Coin`.
+
+**Sáu đột biến, sáu lần đỏ** (phá cơ chế rồi xem test có bắt không): OKX điền số
+contract vào trường `...Coin`; Hyperliquid tráo bid/ask; Paradex bỏ lọc symbol;
+Kraken ngừng áp delta; Bybit điền đồng hồ ta vào `venue_time_ms`; Binance bỏ lại
+trường `M`.
+
+⚠️ **Lần đột biến Kraken đầu tiên KHÔNG đỏ — test rỗng, lần thứ ba trong dự án.**
+Test khẳng định "top of book có đổi", nhưng so sánh **giữa hai symbol khác nhau**
+(BTC và ETH), nên "có đổi" luôn đúng kể cả khi delta không được áp. Sửa thành so
+theo từng symbol. Đây chính là lý do mọi test quan trọng đều phải bị phá thử.
+
+**Pyth không có payload thật.** `hermes.pyth.network` trả **401** ở cả SSE lẫn REST
+(phát hiện ở Bước 1.5). Fixture của Pyth vì thế là **TỔNG HỢP** và được ghi rõ như
+vậy trong `pyth_test.go`: nó chứng minh số học (expo, giây→ms) và luồng định
+tuyến, **không** chứng minh định dạng hiện tại của Pyth còn khớp `PythSSEResponse`.
+Phải kiểm lại bằng payload sống trước khi tin oracle này lần nữa.
+
+**Bybit: bản ghi chỉ có `snapshot`, không có `delta` nào** trong suốt cửa sổ quan
+sát ở cả hai stream. Lỗi snapshot/delta (ghi ở CLAUDE.md) vì thế **vẫn mở** và
+chưa có dữ liệu vàng để sửa. `TestBybit_TheRecordingContainsOnlySnapshots` ghim
+đúng điều đó: hôm nào capture lại bắt được delta, test đỏ — và lúc đó đã có sẵn dữ
+liệu để sửa.
+
+**Review tìm 6 lỗi; sửa 4, ghi nợ 2.**
+
+Sửa:
+- `time.After(time.Until(deadline))` **âm** khi `server.Shutdown` đã tiêu hết ngân
+  sách → `select` chọn **ngẫu nhiên** giữa timer đã hết và channel đã đóng, in ra
+  `WARNING: connectors still running` về những connector vừa dừng trong vài chục
+  micro giây — đúng dòng log mà tiêu chí nghiệm thu đọc từ đó.
+- Pyth dùng `http.DefaultClient`, **không có timeout đọc header**, mà watchdog chỉ
+  được lên dây *sau khi* response về. Một server bắt tay TLS xong rồi im sẽ treo
+  goroutine Pyth vĩnh viễn: không lỗi, không sự kiện, không thử lại.
+- Pyth đọc SSE bằng `bufio.Scanner` với hạn mặc định **64KB**, trong khi một dòng
+  `data:` lớn dần theo số feed id trong `config.yaml`. Thêm đủ feed là mọi phiên
+  chết ngay dòng đầu với `ErrTooLong` — vòng lặp reconnect vĩnh viễn sinh ra từ
+  một lần sửa YAML. (Chính `readFrames` trong test đã nâng hạn này và ghi lý do,
+  còn production thì chưa — để nguyên thì không biện minh được.)
+- Lý giải của việc dời `RecvAt` bị **viết ngược** ở 5 chỗ. Đúng phải là: đóng dấu
+  lúc *lấy khỏi hàng đợi* làm **đồng hồ chạy lại từ đầu**, nên scanner đang ùn tắc
+  báo mọi sàn vừa mới cập nhật trong khi phục vụ giá cũ vài giây. Đóng dấu tại
+  socket gộp độ trễ hàng đợi vào tuổi dữ liệu — nên ùn tắc **hiện ra** thành
+  staleness thay vì bị giấu. Vị trí code vẫn đúng; chỉ lời giải thích sai.
+
+**Nợ ghi nhận, chưa xử lý:**
+- 🔴 **Subscription bị sàn âm thầm huỷ thì không có gì buộc nối lại.** Read deadline
+  được gia hạn bởi **mọi** frame, mà Bybit/OKX/Hyperliquid trả lời keepalive bằng
+  frame **dữ liệu**. Nên một socket còn mở nhưng đã mất subscription sẽ không bao
+  giờ bị dựng lại: scanner *phát hiện* được (suy luận từ im lặng hạ trạng thái
+  xuống `disconnected`) nhưng **không hành động được**. Đúng dạng hỏng mà phiên
+  72h sinh ra để loại trừ. Cách sửa cần watchdog dữ liệu trong connector, hoặc
+  giới hạn tuổi phiên rồi nối lại định kỳ.
+- `framesRead` trong `shouldResetBackoff` đếm cả frame keepalive, nên trên ba sàn
+  đó một phiên chỉ toàn pong vẫn đủ điều kiện reset backoff. Muốn phân biệt thì
+  `Handle` phải báo lại nó có sinh ra dữ liệu thị trường hay không.
+- Bản ghi `binance_futures` **không có frame aggTrade nào** trong 30 giây. Probe
+  sau đó không kết luận được: fstream ngừng gửi *mọi thứ* cho host này (giống bị
+  giới hạn số kết nối sau đợt capture), và lần chạy scanner sau đó thì Binance
+  futures hoạt động bình thường. Phần parse trade của nó được phủ qua
+  `binance_spot`, chung handler.
 
 > **Nợ kỹ thuật ghi nhận, chưa xử lý ở GĐ này:** tầng broadcast (xem [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast)); lấy venue time thật cho Bybit/Kraken/Paradex; ngưỡng staleness thích ứng.
 
@@ -995,7 +1132,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   6/7 bước   ← ĐANG LÀM
+[  ] GĐ 1  Củng cố lõi                   7/7 bước, còn phiên 72h   ← ĐANG LÀM
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -1005,14 +1142,12 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** Bước 1.6 — bộ test đầu tiên cho `exchanges/`. Bước 1.5 đã
-thêm test **vòng đời kết nối** (17 test, 20,8%) nhưng **chưa một dòng nào phủ phần
-parse** của 10 connector. Việc phải làm: chạy scanner thật và dump payload của
-từng sàn vào `exchanges/testdata/` (chưa có sẵn), rồi golden test nạp payload →
-khẳng định ra đúng struct. Ưu tiên những chỗ đã biết là bẫy: Bybit snapshot/delta
-(xem §nợ), OKX `books5` bốn phần tử một mức, Kraken ráp sổ từ delta, Hyperliquid
-`levels[0]`/`levels[1]`. **Nghiệm thu:** `go test ./...` xanh, `-race` sạch,
-coverage ≥ 60% ở phần logic tính toán.
+**Việc tiếp theo cụ thể:** cả 7 bước của GĐ 1 đã xong, **còn đúng một việc để
+đóng giai đoạn: phiên chạy 72h không can thiệp** (vế còn lại của tiêu chí Bước
+1.5 — xem ghi chú ở đó). Trước khi chạy nên xử lý khoản nợ 🔴 ghi ở Bước 1.6:
+subscription bị sàn âm thầm huỷ hiện **không có gì buộc nối lại**, và đó đúng là
+dạng hỏng mà 72 giờ sinh ra để phát hiện — chạy mà không sửa thì nhiều khả năng
+chỉ chứng minh lại rằng nó tồn tại.
 
-**Còn treo của cả GĐ 1:** phiên chạy **72h không can thiệp** (vế còn lại của tiêu
-chí Bước 1.5) — chưa chạy, xem ghi chú ở Bước 1.5.
+Sau đó là **GĐ 2 Bước 2.1** — script xác minh field funding rate, làm TRƯỚC khi
+viết struct `FundingData`.

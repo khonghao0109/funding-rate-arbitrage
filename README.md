@@ -71,7 +71,7 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
 | **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | 138 test (90,5% ở `internal/scanner`, 100% ở `internal/fees`, 78,2% ở `internal/config`, 20,8% ở `exchanges`). Test của `exchanges` phủ **vòng đời kết nối**, chưa phủ phần **parse** của connector nào — chưa có `exchanges/testdata/`. Đó là Bước 1.6 |
+| **Test tự động** | 211 test (89,3% ở `internal/scanner`, 100% ở `internal/fees`, 78,2% ở `internal/config`, 63,8% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ |
 | **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập biểu phí tài khoản của bạn vào `config.yaml` và đặt `verified: true` |
 | **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract; chưa có instrument registry để nhân `ctVal`/`quanto_multiplier`, nên bốn sàn chưa có số thanh khoản. Xếp hạng cơ hội theo độ sâu phải chờ GĐ 2 |
 
@@ -98,7 +98,7 @@ Lộ trình chia **9 giai đoạn / 41 bước**:
 | GĐ | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
-| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (6/7) |
+| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (7/7 bước, còn phiên 72h) |
 | 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |

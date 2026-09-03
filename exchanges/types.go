@@ -14,11 +14,18 @@ import "time"
 //
 // RecvAt is OUR clock, stamped the instant the message came off the socket -
 // once, in runSession, for every WebSocket connector, and in the SSE read loop
-// for Pyth. Step 1.1 stamped it where the scanner dequeued instead, which
-// measured our own 1000-deep ingestion backlog rather than the venue's silence:
-// a scanner falling behind would have reported every venue as stale. It is zero
-// only for data that never crossed a socket, and the scanner then falls back to
-// its own clock. See CLAUDE.md rule 13.
+// for Pyth.
+//
+// Step 1.1 stamped it where the scanner DEQUEUED instead, which reset a
+// message's age to zero however long it had been waiting. The ingestion channels
+// hold 1000 messages, so a backed-up scanner reported every venue as freshly
+// updated while serving prices that were seconds old - the staleness filter
+// measured its own dispatch lag instead of the data's age. Stamping at the read
+// folds the queue delay into the age, where it belongs: prices that waited are
+// old, and old prices are dropped from comparison.
+//
+// It is zero only for data that never crossed a socket, and the scanner then
+// falls back to its own clock. See CLAUDE.md rule 13.
 
 type PriceData struct {
 	Symbol      string

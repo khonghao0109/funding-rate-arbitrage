@@ -137,8 +137,15 @@ func (b *backoff) reset() {
 // Both conditions matter. Duration alone is not enough: a socket accepted and
 // then ignored dies at exactly defaultReadTimeout, and if that qualified, a
 // venue that stops speaking would be re-dialled at a fixed interval forever
-// instead of escalating to the ceiling. Delivery alone is not enough either: a
+// instead of escalating to the ceiling. Frames alone are not enough either: a
 // venue that sends one frame and drops the connection is still flapping.
+//
+// framesRead counts every frame off the socket, INCLUDING the keepalive replies
+// that Bybit, OKX and Hyperliquid send as ordinary data messages. So on those
+// three a session carrying nothing but pongs still qualifies once it passes
+// healthySession. Distinguishing market data from a pong needs the per-venue
+// handler to report what it produced, which is recorded as debt in docs/PLAN.md
+// rather than guessed at here.
 func shouldResetBackoff(framesRead int64, lasted time.Duration) bool {
 	return framesRead > 0 && lasted >= healthySession
 }

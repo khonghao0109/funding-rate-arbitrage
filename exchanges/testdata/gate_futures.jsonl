@@ -1,0 +1,17 @@
+{"time":1788416166,"time_ms":1788416166321,"conn_id":"2819229bfcf67c1c","trace_id":"94bcd7e2bc7029544fa836dd3114cd89","channel":"futures.book_ticker","event":"subscribe","payload":["BTC_USDT","ETH_USDT"],"result":{"status":"success"}}
+{"time":1788416166,"time_ms":1788416166669,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166666,"u":107560722946,"s":"ETH_USDT","b":"2401.1","B":2326,"a":"2401.11","A":8043}}
+{"time":1788416166,"time_ms":1788416166679,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166677,"u":107560723033,"s":"ETH_USDT","b":"2401.1","B":2484,"a":"2401.11","A":8043}}
+{"time":1788416166,"time_ms":1788416166689,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166685,"u":107560723048,"s":"ETH_USDT","b":"2401.1","B":2317,"a":"2401.11","A":8043}}
+{"time":1788416166,"time_ms":1788416166699,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166688,"u":107560723053,"s":"ETH_USDT","b":"2401.1","B":2652,"a":"2401.11","A":8043}}
+{"time":1788416166,"time_ms":1788416166709,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166701,"u":107560723055,"s":"ETH_USDT","b":"2401.1","B":2819,"a":"2401.11","A":8043}}
+{"time":1788416166,"time_ms":1788416166719,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166718,"u":107560723063,"s":"ETH_USDT","b":"2401.1","B":2820,"a":"2401.11","A":7185}}
+{"time":1788416166,"time_ms":1788416166739,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166734,"u":107560723080,"s":"ETH_USDT","b":"2401.1","B":2819,"a":"2401.11","A":7185}}
+{"time":1788416166,"time_ms":1788416166759,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166752,"u":107560723084,"s":"ETH_USDT","b":"2401.1","B":3483,"a":"2401.11","A":7185}}
+{"time":1788416166,"time_ms":1788416166759,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166751,"u":123990110169,"s":"BTC_USDT","b":"77683.6","B":17101,"a":"77683.7","A":9439}}
+{"time":1788416166,"time_ms":1788416166899,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166895,"u":123990110230,"s":"BTC_USDT","b":"77683.6","B":17101,"a":"77683.7","A":7916}}
+{"time":1788416166,"time_ms":1788416166929,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166925,"u":123990110253,"s":"BTC_USDT","b":"77683.6","B":17101,"a":"77683.7","A":9233}}
+{"time":1788416166,"time_ms":1788416166999,"channel":"futures.book_ticker","event":"update","result":{"t":1788416166994,"u":123990110299,"s":"BTC_USDT","b":"77683.6","B":17101,"a":"77683.7","A":11253}}
+{"time":1788416167,"time_ms":1788416167189,"channel":"futures.book_ticker","event":"update","result":{"t":1788416167177,"u":123990110377,"s":"BTC_USDT","b":"77683.6","B":17101,"a":"77683.7","A":11268}}
+{"time":1788416167,"time_ms":1788416167269,"channel":"futures.book_ticker","event":"update","result":{"t":1788416167259,"u":123990110434,"s":"BTC_USDT","b":"77683.6","B":17101,"a":"77683.7","A":11253}}
+{"time":1788416167,"time_ms":1788416167379,"channel":"futures.book_ticker","event":"update","result":{"t":1788416167375,"u":123990110509,"s":"BTC_USDT","b":"77683.6","B":17101,"a":"77683.7","A":7916}}
+{"time":1788416167,"time_ms":1788416167419,"channel":"futures.book_ticker","event":"update","result":{"t":1788416167417,"u":123990110581,"s":"BTC_USDT","b":"77683.6","B":17116,"a":"77683.7","A":7916}}

@@ -49,7 +49,11 @@ type HyperliquidL2BookData struct {
 const hyperliquidPingEvery = 20 * time.Second
 
 func ConnectHyperliquidFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
+	runStream(f, hyperliquidStream(source, symbols, f))
+}
+
+func hyperliquidStream(source string, symbols []Symbol, f Feeds) streamConfig {
+	return streamConfig{
 		Source: source,
 		URL:    "wss://api.hyperliquid.xyz/ws",
 		Subscribe: func(conn *websocket.Conn) error {
@@ -78,7 +82,7 @@ func ConnectHyperliquidFutures(source string, symbols []Symbol, f Feeds) {
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleHyperliquidFrame(source, symbols, f, raw, recvAt)
 		},
-	})
+	}
 }
 
 func handleHyperliquidFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {

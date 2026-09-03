@@ -10,9 +10,10 @@ import (
 )
 
 // The receive stamp comes from the connector, which took it at the socket read.
-// Re-taking it here would measure how long the message sat in a 1000-deep
-// channel: under load every venue would look stale at once, and the staleness
-// filter would drop the whole comparison exactly when it matters most.
+// Re-taking it here would restart the clock after the message had already waited
+// in a 1000-deep channel, so a backed-up scanner would report prices seconds old
+// as freshly received - the staleness filter measuring its own dispatch lag
+// instead of the data's age.
 func TestUpdatePrice_KeepsTheStampTheConnectorTookAtTheSocket(t *testing.T) {
 	s := New([]string{"BTCUSDT"})
 	dequeuedAt := time.Now()
@@ -31,7 +32,7 @@ func TestUpdatePrice_KeepsTheStampTheConnectorTookAtTheSocket(t *testing.T) {
 		t.Errorf("RecvAt = %s, want the connector's stamp %s", point.RecvAt, readAt)
 	}
 	if point.RecvAt.Equal(dequeuedAt) {
-		t.Error("the scanner re-stamped at the dequeue, which measures our own backlog")
+		t.Error("the scanner re-stamped at the dequeue, which hides however long the message waited")
 	}
 }
 

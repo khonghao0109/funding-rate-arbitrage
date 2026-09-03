@@ -116,18 +116,42 @@ func shutdown(server *http.Server, connectors *sync.WaitGroup, cancelledAt time.
 		log.Printf("HTTP shutdown: %v", err)
 	}
 
+	// Checked before the timed wait below, and not merged into it: once
+	// server.Shutdown has used up the budget the remaining time is negative, and
+	// a select between an expired timer and an already-closed channel picks at
+	// RANDOM - which would print the warning about connectors that stopped in
+	// microseconds, on the one line the acceptance criterion is read from.
 	select {
 	case <-stopped:
-		// Microseconds, not milliseconds: cancellation closes each socket
-		// underneath its blocked reader, so the whole shutdown lands well under
-		// a millisecond and rounding to ms would print a meaningless "0s"
-		// against a 5s budget.
-		log.Printf("All connectors stopped in %s", time.Since(cancelledAt).Round(time.Microsecond))
-	case <-time.After(time.Until(deadline)):
+		reportStopped(cancelledAt)
+		return
+	default:
+	}
+
+	remaining := time.Until(deadline)
+	if remaining < 0 {
+		remaining = 0
+	}
+	timer := time.NewTimer(remaining)
+	defer timer.Stop()
+
+	select {
+	case <-stopped:
+		reportStopped(cancelledAt)
+	case <-timer.C:
 		// Saying so is the point: this is the step's acceptance criterion, and a
 		// connector that has to be abandoned is a bug, not a slow exit.
 		log.Printf("WARNING: connectors still running %s after cancellation, exiting anyway", shutdownBudget)
 	}
+}
+
+// reportStopped logs the number the step 1.5 acceptance criterion is read from.
+//
+// Microseconds, not milliseconds: cancellation closes each socket underneath its
+// blocked reader, so the whole shutdown lands well under a millisecond and
+// rounding to ms would print a meaningless "0s" against a 5s budget.
+func reportStopped(cancelledAt time.Time) {
+	log.Printf("All connectors stopped in %s", time.Since(cancelledAt).Round(time.Microsecond))
 }
 
 // startConnectors launches one goroutine per configured source and returns a

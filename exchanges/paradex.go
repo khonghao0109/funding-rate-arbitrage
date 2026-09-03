@@ -63,7 +63,11 @@ type ParadexMarketSummaryEvent struct {
 // ReadMessage without returning, so a socket kept alive purely by server pings
 // would look silent to a read deadline that only data resets.
 func ConnectParadexFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
+	runStream(f, paradexStream(source, symbols, f))
+}
+
+func paradexStream(source string, symbols []Symbol, f Feeds) streamConfig {
+	return streamConfig{
 		Source: source,
 		URL:    "wss://ws.api.prod.paradex.trade/v1",
 		Subscribe: func(conn *websocket.Conn) error {
@@ -83,7 +87,7 @@ func ConnectParadexFutures(source string, symbols []Symbol, f Feeds) {
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleParadexFrame(source, symbols, f, raw, recvAt)
 		},
-	})
+	}
 }
 
 func handleParadexFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {

@@ -288,12 +288,43 @@ func NormalizeFundingRate(...)
 |---|---|---|
 | Unit | `x_test.go` | `TestNormalizeFundingRate_KrakenUsesRelative` |
 | Table-driven | như trên | tên case viết thường, mô tả điều kiện |
-| Golden | `testdata/binance_markprice.json` | nạp payload thật của sàn |
+| Golden | `exchanges/testdata/<source>.jsonl` | một frame THẬT mỗi dòng |
 
 - Mẫu tên: `Test<Hàm>_<TìnhHuống>`.
 - **Mọi connector phải có golden test** nạp payload JSON thật đã lưu — đây là lưới an toàn duy nhất khi sàn đổi định dạng.
 - **Mọi hàm tính toán tài chính phải có unit test trước khi dùng vốn thật.** Không thương lượng.
 - Dữ liệu mẫu đặt trong `testdata/` (Go bỏ qua thư mục này khi build).
+
+### 11.1. Golden test (từ Bước 1.6)
+
+- **Payload phải do sàn gửi, không do ai nhớ lại.** `CAPTURE_TESTDATA=1 go test
+  -run TestCaptureTestdata ./exchanges/` ghi lại từ sàn thật. `go test ./...` chạy
+  offline và không chạm mạng.
+- **Công cụ capture phải dùng lại đúng cấu hình của production** (`xStream()`),
+  chỉ thay chỗ nhận frame. Tự viết lại message subscribe trong công cụ test là
+  cách để nó trôi khỏi connector và ghi lại payload không ai thật sự nhận.
+- **Giữ theo dạng frame, không phải theo thứ tự đến.** Một kênh ồn ào sẽ bỏ đói
+  kênh khác: bản ghi đầu tiên của Bước 1.6 không có nổi một cập nhật sổ lệnh nào
+  của OKX vì 76 frame trade đến trước.
+- **Test phải khẳng định điều hệ thống DỰA VÀO**, không phải "parse không lỗi":
+  symbol phát ra đã đăng ký chưa, `Source` có phải cấu hình không, dấu thời gian
+  nhận còn không, đồng hồ sàn có bị thay bằng đồng hồ ta không, đơn vị khối lượng
+  là coin hay contract.
+- **Phá thử mọi khẳng định quan trọng.** Ba lần trong dự án, một test trông hợp lý
+  vẫn xanh khi cơ chế nó canh bị gỡ bỏ.
+- Payload **tổng hợp** phải ghi rõ là tổng hợp, và ghi rõ nó chứng minh được gì —
+  xem `exchanges/pyth_test.go`.
+
+### 11.2. Bẫy JSON: khớp tag không phân biệt hoa thường
+
+`encoding/json` ưu tiên khớp tag chính xác nhưng **có fallback khớp không phân
+biệt hoa thường**. Payload sàn dùng rất nhiều cặp key chỉ khác hoa/thường
+(`b`/`B`, `a`/`A`, `e`/`E`, `s`/`S`, `m`/`M`).
+
+**Khai cả hai vế, kể cả vế không dùng.** Bỏ trống một vế không phải là "bỏ qua
+nó" — mà là "để nó ghi đè lên vế kia". Ở Bước 1.6 đúng một chỗ bị hở
+(`BinanceAggTrade` thiếu `M`) và hậu quả là **mọi trade Binance bị gắn nhãn
+sell**: build xanh, parse không lỗi, giá đúng, chỉ một bool sai.
 
 ---
 

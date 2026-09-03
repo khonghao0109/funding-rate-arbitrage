@@ -21,6 +21,22 @@ type BinanceAggTrade struct {
 	Quantity  string `json:"q"`
 	TradeTime int64  `json:"T"`
 	IsMaker   bool   `json:"m"`
+
+	// Ignore is Binance's deprecated "M" field, and it is declared for one
+	// reason: encoding/json prefers an exact tag match but FALLS BACK to a
+	// case-insensitive one. With only `m` declared, the payload's "M" - which is
+	// always true - found no exact match, matched `m` case-insensitively and
+	// overwrote IsMaker after it had already been read correctly. Every Binance
+	// trade came out with IsMaker true, so every one was labelled a sell.
+	//
+	// Nothing consumes the side yet, which is why nobody noticed; the strategy
+	// and backtest work in phases 2 and 3 would have. Found by step 1.6's golden
+	// test, against a recording holding both m:true and m:false.
+	//
+	// Every other case-colliding pair across all nine venues - b/B, a/A, e/E,
+	// s/S - already declares both members, so an exact match wins there and this
+	// was the only field exposed to the fallback.
+	Ignore bool `json:"M"`
 }
 
 type BinanceBookTicker struct {
@@ -59,24 +75,22 @@ func binanceStreamURL(host string, symbols []Symbol) string {
 // Binance also pings us, and runSession's handler answers it and counts it as
 // activity.
 func ConnectBinanceFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
-		Source: source,
-		URL:    binanceStreamURL("wss://fstream.binance.com", symbols),
-		Handle: func(raw []byte, recvAt time.Time) {
-			handleBinanceFrame(source, symbols, f, raw, recvAt)
-		},
-	})
+	runStream(f, binanceStream(source, symbols, f, "wss://fstream.binance.com"))
 }
 
 // ConnectBinanceSpot connects to Binance spot trading WebSocket API.
 func ConnectBinanceSpot(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
+	runStream(f, binanceStream(source, symbols, f, "wss://stream.binance.com:9443"))
+}
+
+func binanceStream(source string, symbols []Symbol, f Feeds, host string) streamConfig {
+	return streamConfig{
 		Source: source,
-		URL:    binanceStreamURL("wss://stream.binance.com:9443", symbols),
+		URL:    binanceStreamURL(host, symbols),
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleBinanceFrame(source, symbols, f, raw, recvAt)
 		},
-	})
+	}
 }
 
 // handleBinanceFrame parses one combined-stream message.

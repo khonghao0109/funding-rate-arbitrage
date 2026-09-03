@@ -58,30 +58,25 @@ func bybitSubscribe(symbols []Symbol) func(*websocket.Conn) error {
 }
 
 func ConnectBybitFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
-		Source:    source,
-		URL:       "wss://stream.bybit.com/v5/public/linear",
-		Subscribe: bybitSubscribe(symbols),
-		Ping:      bybitPing,
-		PingEvery: bybitPingEvery,
-		Handle: func(raw []byte, recvAt time.Time) {
-			handleBybitFrame(source, symbols, f, raw, recvAt)
-		},
-	})
+	runStream(f, bybitStream(source, symbols, f, "wss://stream.bybit.com/v5/public/linear"))
 }
 
 // ConnectBybitSpot connects to Bybit spot trading WebSocket API.
 func ConnectBybitSpot(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
+	runStream(f, bybitStream(source, symbols, f, "wss://stream.bybit.com/v5/public/spot"))
+}
+
+func bybitStream(source string, symbols []Symbol, f Feeds, url string) streamConfig {
+	return streamConfig{
 		Source:    source,
-		URL:       "wss://stream.bybit.com/v5/public/spot",
+		URL:       url,
 		Subscribe: bybitSubscribe(symbols),
 		Ping:      bybitPing,
 		PingEvery: bybitPingEvery,
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleBybitFrame(source, symbols, f, raw, recvAt)
 		},
-	})
+	}
 }
 
 func handleBybitFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {

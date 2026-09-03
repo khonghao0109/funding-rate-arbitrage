@@ -86,7 +86,11 @@ type GateSubscribeMessage struct {
 // So Ping is left nil - runStream sends a protocol ping frame - and the ping
 // handler there answers the server's own pings and counts them as activity.
 func ConnectGateFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
+	runStream(f, gateStream(source, symbols, f))
+}
+
+func gateStream(source string, symbols []Symbol, f Feeds) streamConfig {
+	return streamConfig{
 		Source: source,
 		URL:    "wss://fx-ws.gateio.ws/v4/ws/usdt",
 		Subscribe: func(conn *websocket.Conn) error {
@@ -102,7 +106,7 @@ func ConnectGateFutures(source string, symbols []Symbol, f Feeds) {
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleGateFrame(source, symbols, f, raw, recvAt)
 		},
-	})
+	}
 }
 
 func handleGateFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {

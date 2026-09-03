@@ -27,7 +27,7 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** 6 of 7 steps done. Step 1.0 froze the WebSocket JSON
+**Phase 1 — Hardening.** 7 of 7 steps done; the 72h unattended run is still owed. Step 1.0 froze the WebSocket JSON
 contract for the whole phase — it is specified in
 [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
 phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added
@@ -47,10 +47,15 @@ milliseconds. `RecvAt` is now stamped at the socket read (debt from 1.1), and
 `source_status` carries `reconnect_count` and `uptime_sec` the connectors
 actually report.
 
-The next task is **step 1.6, the first connector tests**: capture real payloads
-into `exchanges/testdata/`, golden-test each parser against them, and take
-`exchanges/` past 60% on the parsing logic. Acceptance: `go test ./...` green,
-`-race` clean, coverage ≥ 60% on calculation logic.
+Step 1.6 recorded real payloads from every venue into `exchanges/testdata/` and
+golden-tested each parser against them, taking `exchanges/` from 20.8% to 63.8%.
+It found that **every Binance trade was labelled a sell** — see the trap table.
+
+**The remaining phase-1 work is the 72h unattended run.** Before starting it,
+address the open defect recorded at step 1.6: a subscription the venue silently
+drops is detected but never re-established, because the read deadline is refreshed
+by any frame and three venues answer keepalives with data frames. A 72h run
+without that fix mostly re-demonstrates the hole.
 
 ---
 
@@ -160,8 +165,10 @@ one per transport: `runSession` in
 [exchanges/stream.go](exchanges/stream.go) for the nine WebSocket connectors, and
 the SSE read loop in [exchanges/pyth.go](exchanges/pyth.go). Never add a third.
 Step 1.5 moved it there from the scanner's dequeue: the ingestion channels hold
-1000 messages, so a stamp taken at the far end measures our own backlog and a
-scanner falling behind would report every venue stale at once. The scanner falls
+1000 messages, and stamping at the far end restarted each message's clock after
+it had already waited, so a backed-up scanner reported prices seconds old as
+freshly received. Stamping at the read folds the queue delay into the age, which
+means a real backlog now shows up as staleness instead of hiding. The scanner falls
 back to its own clock only for data that never crossed a socket (`receivedAt` in
 [internal/scanner/scanner.go](internal/scanner/scanner.go)). Staleness thresholds
 are per venue and measured; the numbers and the reasoning are in `config.yaml`.
@@ -182,6 +189,7 @@ re-research these; do verify before writing the integration.
 | **Binance** | `fundingInfo` returns ONLY symbols whose config differs from default. Default to 8h and override; do not read it as the source of truth for all symbols. Also filter `rateType: "Special"` in backtests. |
 | **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. |
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
+| **Binance** | The aggTrade payload carries both `m` (buyer is maker) and `M` (deprecated, always true). Go's `encoding/json` prefers an exact tag match but **falls back to a case-insensitive one**, so declaring only `m` let `M` overwrite it and every trade came out a sell. Declare BOTH members of every case-colliding key pair, including the one you do not use — leaving it out is not "ignore it", it is "let it overwrite the other". |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
 | **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`). Binance, Bybit, Hyperliquid use coins. ⚠️ Step 1.2 measured Kraken's *book* quantity looking coin-denominated (PF_XBTUSD 0.0929 with BTC near $77.5k), which contradicts this row. Unresolved — the instrument registry settles it; until then Kraken reports no quantity. |
 
@@ -197,6 +205,7 @@ a four-character base — across every venue.
 ```
 cmd/scanner/         entrypoint — wires connectors into the engine, serves HTTP
 exchanges/           WebSocket connectors — PUBLIC DATA ONLY, no credentials
+  testdata/          one real recording per venue, a frame per line
 internal/
   scanner/           the engine: price state, staleness, the wire contract
   instruments/       trading rules, spot<->perp mapping, delta-neutral sizing
@@ -247,7 +256,12 @@ go run ./cmd/scanner  # reads ./config.yaml, serves http://localhost:8082
 go build ./...
 gofmt -l .            # must print nothing
 go vet ./...
-go test ./...         # no tests exist yet — phase 1 step 1.6 adds the first
+go test ./...         # 211 tests, offline
+go test -race ./...   # required for any goroutine change
+
+# Re-record exchanges/testdata/ from the live venues. Opens real sockets, so it
+# is skipped by default; run it when a venue changes its payloads.
+CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata -timeout 5m ./exchanges/
 go test -race ./...   # required for any goroutine change
 ```
 
@@ -306,13 +320,18 @@ phase 1.
   keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- No `exchanges/testdata/` and no connector PARSING tests — golden tests need real
-  payloads captured from a running scanner first. 138 tests in all:
-  `internal/scanner` 83 (90.5% of statements), `internal/config` 31 (78.2%),
-  `exchanges` 17 (20.8%), `internal/fees` 5 (100%), `cmd/scanner` 2. The
-  `exchanges` tests cover the connection lifecycle added at step 1.5 - backoff,
-  cancellation, read deadlines, the receive stamp - and none of the ten parsers.
-  Step 1.6 closes that.
+- 211 tests: `exchanges` 89 (63.8% of statements), `internal/scanner` 84 (89.3%),
+  `internal/config` 31 (78.2%), `internal/fees` 5 (100%), `cmd/scanner` 2.
+  `exchanges/testdata/` holds a real recording per venue; re-record with
+  `CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata ./exchanges/`. **Pyth has
+  no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic
+  and labelled as such; it proves the arithmetic, not that Pyth's current format
+  still matches what the connector decodes.
+- A subscription the venue silently drops is never re-established. The read
+  deadline is refreshed by ANY frame, and Bybit, OKX and Hyperliquid answer
+  keepalives with ordinary data frames, so a socket that stays open with a dead
+  subscription looks healthy to the connector forever. The scanner notices
+  (silence downgrades the state) but cannot act. Found in review at step 1.6.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new

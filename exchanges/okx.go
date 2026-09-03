@@ -57,7 +57,11 @@ const (
 )
 
 func ConnectOKXFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, streamConfig{
+	runStream(f, okxStream(source, symbols, f))
+}
+
+func okxStream(source string, symbols []Symbol, f Feeds) streamConfig {
+	return streamConfig{
 		Source: source,
 		URL:    "wss://ws.okx.com:8443/ws/v5/public",
 		Subscribe: func(conn *websocket.Conn) error {
@@ -79,7 +83,7 @@ func ConnectOKXFutures(source string, symbols []Symbol, f Feeds) {
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleOKXFrame(source, symbols, f, raw, recvAt)
 		},
-	})
+	}
 }
 
 func handleOKXFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {

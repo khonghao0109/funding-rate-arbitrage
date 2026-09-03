@@ -250,12 +250,20 @@ func (s *Scanner) snapshotConn() map[string]sourceConn {
 
 // receivedAt is when a message came off the socket.
 //
-// The connector stamps it there, before parsing and before queueing, because the
-// ingestion channels hold 1000 messages and a stamp taken at this end would
-// measure our own backlog rather than the venue's silence - a scanner falling
-// behind would report every venue as stale. Zero means the data never crossed a
-// socket (a test injecting straight into a channel), and only then does the
-// scanner fall back to its own clock. See CLAUDE.md rule 13.
+// The connector stamps it there, before parsing and before queueing. Stamping at
+// this end instead - what step 1.1 did - restarted every message's clock at the
+// dequeue, so a scanner backed up behind a 1000-deep channel reported every
+// venue as freshly updated while serving prices seconds old. The age it produced
+// measured our dispatch lag, not the data.
+//
+// The consequence of the move is deliberate and worth knowing: under a real
+// backlog ages now climb past the staleness thresholds and sources drop out of
+// comparison together. That is the honest answer - those prices ARE stale - and
+// it is visible rather than hidden.
+//
+// Zero means the data never crossed a socket (a test injecting straight into a
+// channel), and only then does the scanner fall back to its own clock. See
+// CLAUDE.md rule 13.
 func (s *Scanner) receivedAt(stamped time.Time) time.Time {
 	if stamped.IsZero() {
 		return s.now()

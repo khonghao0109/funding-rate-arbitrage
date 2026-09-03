@@ -164,9 +164,9 @@ func TestFeedsSend_GivesUpWhenTheContextIsCancelled(t *testing.T) {
 }
 
 // The whole point of moving the stamp: the ingestion channels hold 1000
-// messages, so a stamp taken when the scanner dequeues measures our own backlog
-// rather than the venue's silence, and a backed-up scanner would report every
-// venue as stale.
+// messages, and a stamp taken when the scanner dequeues restarts the clock at
+// the far end - so a backed-up scanner reports every venue as freshly updated
+// while serving prices that have been waiting in a queue.
 func TestRunStream_StampsReceiveTimeAtTheSocketReadNotAtTheQueue(t *testing.T) {
 	url := wsTestServer(t, func(conn *websocket.Conn) {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"hello":1}`))
