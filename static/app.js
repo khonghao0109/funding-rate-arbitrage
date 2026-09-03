@@ -308,6 +308,7 @@ class FuturesArbitrageScanner {
         this.setupChart();
         this.connectWebSocket();
         this.setupOpportunitiesTable();
+        this.setupPanelResizer();
     }
 
     setupEventListeners() {
@@ -1080,6 +1081,76 @@ class FuturesArbitrageScanner {
         if (this.isAtRealtime && Date.now() - this.lastUserScrollTime > 3000) {
             this.chart.timeScale().scrollToRealTime();
         }
+    }
+
+    // The sidebar column is a CSS variable so dragging only touches one style;
+    // the width is per-viewer convenience, so localStorage (guarded) fits.
+    setupPanelResizer() {
+        const resizer = document.getElementById('panelResizer');
+        const container = document.querySelector('.container');
+        if (!resizer || !container) return;
+
+        const DEFAULT_PX = 380;
+        const MIN_PX = 280;
+        const KEY = 'panelSidebarWidthPx';
+        const maxPx = () => Math.min(Math.round(window.innerWidth * 0.6), 900);
+        const clamp = (px) => Math.max(MIN_PX, Math.min(maxPx(), px));
+
+        const apply = (px) => {
+            container.style.setProperty('--sidebar-w', `${px}px`);
+            // The chart sizes itself from clientWidth, which just changed.
+            if (this.chart) {
+                this.chart.applyOptions({
+                    width: this.getChartWidth(),
+                    height: this.getChartHeight()
+                });
+            }
+        };
+
+        try {
+            const saved = parseInt(localStorage.getItem(KEY), 10);
+            if (Number.isFinite(saved)) apply(clamp(saved));
+        } catch (e) { /* storage unavailable: keep the default */ }
+
+        let startX = 0;
+        let startW = 0;
+        let raf = 0;
+
+        const onMove = (e) => {
+            const px = clamp(startW + (e.clientX - startX));
+            if (raf) return;
+            raf = requestAnimationFrame(() => {
+                raf = 0;
+                apply(px);
+            });
+        };
+
+        const onUp = (e) => {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            resizer.classList.remove('dragging');
+            document.body.style.cursor = '';
+            document.body.style.userSelect = '';
+            const px = clamp(startW + (e.clientX - startX));
+            apply(px);
+            try { localStorage.setItem(KEY, String(px)); } catch (err) { /* ignore */ }
+        };
+
+        resizer.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            startX = e.clientX;
+            startW = parseInt(getComputedStyle(container).getPropertyValue('--sidebar-w'), 10) || DEFAULT_PX;
+            resizer.classList.add('dragging');
+            document.body.style.cursor = 'col-resize';
+            document.body.style.userSelect = 'none';
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+
+        resizer.addEventListener('dblclick', () => {
+            apply(DEFAULT_PX);
+            try { localStorage.removeItem(KEY); } catch (err) { /* ignore */ }
+        });
     }
 
     setupOpportunitiesTable() {

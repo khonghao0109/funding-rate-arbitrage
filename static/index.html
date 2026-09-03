@@ -23,13 +23,26 @@
         .container {
             display: grid;
             grid-template-areas:
-                "header header"
-                "sidebar main";
-            grid-template-columns: 380px 1fr;
+                "header header header"
+                "sidebar resizer main";
+            /* --sidebar-w is the drag handle's output; JS clamps and persists it. */
+            grid-template-columns: var(--sidebar-w, 380px) 6px 1fr;
             grid-template-rows: 60px 1fr;
             height: 100vh;
             gap: 1px;
             background: #111;
+        }
+
+        .panel-resizer {
+            grid-area: resizer;
+            cursor: col-resize;
+            background: #222;
+            transition: background 0.15s;
+        }
+
+        .panel-resizer:hover,
+        .panel-resizer.dragging {
+            background: #00ff88;
         }
 
         .header {
@@ -810,6 +823,9 @@
             </div>
 
         </div>
+
+        <div class="panel-resizer" id="panelResizer"
+            title="Kéo để đổi độ rộng bảng · nhấp đúp để về mặc định"></div>
 
         <div class="main">
             <div class="chart-container" style="flex: 1.5;">
