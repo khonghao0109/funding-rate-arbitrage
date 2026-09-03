@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **3/7 bước** | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **4/7 bước** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -282,11 +282,69 @@ Dashboard kiểm bằng jsdom nạp `index.html` + `app.js` thật với payload
 - Pyth vẫn **không gửi được gì** (`Pyth SSE connection closed` lặp mỗi 5s), nên `oracle_deviation` rỗng trong lần chạy thật và ngưỡng staleness của nó vẫn chưa đo được. Feed Pyth cần sửa riêng.
 - Hyperliquid báo đỉnh sổ lớn hơn hẳn các sàn khác (41 BTC ≈ $3,2M) vì `l2Book` gộp mức giá thô hơn `bookTicker`. So thanh khoản chéo sàn phải tính đến chuyện này → GĐ 2 khi dùng số này để xếp hạng.
 
-#### Bước 1.3 — Mô hình phí giao dịch
+#### Bước 1.3 — Mô hình phí giao dịch ✅
 - Tạo `internal/fees/` chứa bảng phí maker/taker theo sàn và loại thị trường (bậc mặc định, chưa VIP).
 - ⚠️ **Gọi đúng tên: "đã trừ phí giao dịch", KHÔNG phải "lợi nhuận ròng".** Slippage cần độ sâu sổ lệnh, mà hiện chỉ có `bookTicker` tức đỉnh sổ — phải tới GĐ 2 mới có. Đặt tên sai ở đây là lặp lại đúng lỗi mà README vừa được sửa.
-- Giả định bảo thủ: taker cả hai chân.
+- Giả định bảo thủ: taker **cả bốn lượt khớp** — mở và đóng cả hai chân.
+  > **Sửa so với bản trước của PLAN.** Mục này từng ghi "taker cả hai chân". Hai
+  > là số chân, không phải số lượt khớp: bắt được spread cần mua ở sàn rẻ và bán ở
+  > sàn đắt (2 lượt), nhưng chỉ **thoát vị thế** mới biến nó thành tiền (2 lượt
+  > nữa) — perpetual không chuyển được giữa hai sàn. Tính hai lượt là nói thiếu
+  > đúng một nửa chi phí, tức đúng kiểu nói quá lợi nhuận mà [luật 2](../CLAUDE.md)
+  > cấm. Chữ "bảo thủ" trong chính câu này đòi hỏi con số lớn hơn, không phải nhỏ hơn.
 - **Nghiệm thu:** unit test cho hàm tính phí; UI ghi rõ số đang hiển thị đã trừ gì và chưa trừ gì.
+
+**Đã làm (2026-09-03).** `internal/fees/` giữ bảng phí bậc mặc định (chưa VIP) và hàm `RoundTripTakerPct`. `sourceRegistry` **không** giữ bản sao — nó lấy số từ đây qua `withFees`, nên phí và trích dẫn nằm đúng một chỗ.
+
+**Chỉ xác minh được 5/9 sàn — 4 sàn còn lại KHÔNG điền.** [Luật 5](../CLAUDE.md) cấm viết con số theo trí nhớ, vì phí sai tạo ra lợi nhuận sai mà không nhìn ra là sai.
+
+| Sàn | Maker | Taker | Nguồn |
+|---|---|---|---|
+| binance_futures | 2 bps | 5 bps | Trang hỗ trợ Binance (nằm trong ví dụ tính toán; bảng gốc đòi đăng nhập) |
+| binance_spot | 10 bps | 10 bps | Bảng biểu phí Binance, dòng Regular User |
+| hyperliquid_futures | **1,5 bps** | 4,5 bps | Tài liệu Hyperliquid, bậc 0 |
+| kraken_futures | 2 bps | 5 bps | Biểu phí Kraken, Futures bậc 1 |
+| paradex_futures | **0,3 bps** | 4,5 bps | Tài liệu Paradex, bậc Pro (đầu cao thang taker) |
+| bybit_futures / bybit_spot | — | — | Trang biểu phí không phản hồi |
+| okx_futures | — | — | 404 / chỉ có metadata, bảng thật đòi đăng nhập |
+| gate_futures | — | — | ⚠️ Gate có công bố 0,0200%/0,0500% nhưng **ghi rõ là cho "USDT-M TradFi Perpetuals"** (cổ phiếu, kim loại, chỉ số, forex) — không phải perp crypto. Dùng nó là đúng bảng, sai thị trường |
+
+`fee_verified: false` **không phải miễn phí**. Cặp nào có một sàn chưa xác minh thì `spread_after_fees_pct` là `null`, và dashboard đánh dấu ô đó còn là số thô. Paradex tính 0% cho tài khoản Retail nên `0` là một mức phí có thật — đó chính là lý do phải có cờ riêng thay vì đọc số `0`.
+
+⚠️ **`Bps` phải là số thực.** Hyperliquid maker 0,015% = **1,5 bps**, Paradex maker 0,003% = **0,3 bps**. [CONVENTIONS §1.2](CONVENTIONS.md) trước đây yêu cầu `Bps` số nguyên để tránh sai số float; tiền đề đó sai với biểu phí thật, nên đã sửa mục đó thay vì làm tròn số. Làm tròn 0,3 → 0 là biến một chân thành miễn phí.
+
+**Nghiệm thu đã thực hiện:**
+- Unit test hàm tính phí: 7 test trong `internal/fees` (bốn lượt khớp, sàn chưa xác minh không ra số, mọi mục đã xác minh đều có trích dẫn URL, chặn lệch dấu thập phân, bps thực).
+- UI: dashboard thật qua jsdom với payload bắt từ scanner đang chạy — **26/26** khẳng định đạt, trong đó: ghi rõ đã trừ gì (`đã trừ phí giao dịch`), chưa trừ gì (`trượt giá`, `phí funding`), câu `KHÔNG phải lợi nhuận ròng`, ô còn thô bị đánh dấu `*` và **không bao giờ** được tô "cơ hội", sàn chưa có phí có nhãn riêng, oracle **không** bị dán nhãn đó.
+
+**Con số thật từ scanner đang chạy — mọi cảnh báo đều ÂM sau phí:**
+
+```
+ETHUSDT  perp_usd  kraken → paradex   thô +0,1422%   sau phí -0,0478%
+ETHUSDT  perp_usd  kraken → paradex   thô +0,1044%   sau phí -0,0856%
+ETHUSDT  perp_usd  kraken → paradex   thô +0,0793%   sau phí -0,1107%
+nhóm perp_usd, 6 ô ma trận:  thô -0,04% … +0,04%   sau phí -0,23% … -0,15%
+```
+
+Đây là câu trả lời thật cho câu hỏi "chênh lệch chéo sàn có ăn được không" ở quy mô lẻ: **không**. Một vòng round trip tốn ~0,19% còn spread chéo sàn ở các cặp lớn chỉ vài phần nghìn phần trăm. Nó củng cố đúng điều [CLAUDE.md](../CLAUDE.md) đã nói: biên thật nằm ở funding (5–15% APR), không nằm ở mấy con số này.
+
+**Ngưỡng cảnh báo giữ nguyên trên số THÔ.** Chuyển sang lọc theo số sau phí sẽ tắt gần như toàn bộ cảnh báo. Quyết định "cái gì đáng hành động" là việc của Giai đoạn 3, không phải hệ quả phụ của việc thêm bảng phí. Bù lại, mỗi cảnh báo nay mang theo số sau phí và bảng cảnh báo có thêm cột "Sau phí %".
+
+**Bug được review tìm ra và sửa trong bước:**
+- 🐛 **Nhãn "chưa có phí" bị xoá ngay tick giá đầu tiên.** Nó dùng chung class `.source-badge` mà `updateSourcePrices` tìm bằng `querySelector` rồi `remove()` — nửa nhìn thấy được của cả bước không bao giờ sống tới màn hình. Đổi sang class riêng.
+- 🐛 **Ô thô và ô đã trừ phí hiển thị y hệt nhau, dùng chung một ngưỡng tô màu**, nên cặp *chưa* xác minh phí trông đẹp hơn và còn được tô "cơ hội" ở mức spread thật thấp hơn. Nay ô thô có dấu `*`, in nghiêng mờ, và **không bao giờ** được tô "cơ hội".
+- 🐛 **Bảng cảnh báo chỉ hiện số thô** trong khi payload đã có số sau phí — cùng một cặp đọc là +1,000% ở bảng và −0,048% ở ma trận. Thêm cột "Sau phí %".
+- Pyth bị dán nhãn "chưa xác minh biểu phí" trong khi lý do thật là *oracle không giao dịch được* — đúng cái phân biệt mà bảng phí tồn tại để giữ.
+- `maker_rebate` nằm trong `cost_basis.excluded`, mà FE render mục đó thành "Chưa trừ: …" — hoàn phí là **thu nhập**, ghi ở đó là chỉ sai hướng cho người đọc. Bỏ.
+- `note_vi` liệt kê lại đúng danh sách `excluded` mà FE đã render ngay bên cạnh.
+- Test `TestNewWireSpreads_AfterFeesGoesNegative...` chọc vào mọi nhóm bằng một cặp hardcode; chỉ xanh vì fixture tình cờ ra đúng một nhóm.
+
+**Kiểm chứng đột biến** (phá code, xác nhận test đỏ): coi phí chưa xác minh là 0 → đỏ; chỉ tính phí lúc mở → đỏ; làm tròn 1,5 bps thành 2 → đỏ; rơi về số thô khi thiếu phí → đỏ; nhãn phí về class chung → đỏ; bỏ dấu `*` → đỏ. **Một test ban đầu KHÔNG đỏ** khi bỏ chặn tô "cơ hội" cho ô thô — fixture thật chỉ có spread ~0,01%, dưới xa ngưỡng tô màu, nên khẳng định đó rỗng nghĩa. Đã thay bằng fixture 1% và xác nhận nó đỏ.
+
+**Phát hiện ngoài phạm vi — ghi nhận, chưa xử lý:**
+- Bốn sàn chưa có phí là khoảng trống lớn nhất còn lại của bước này. **Bước 1.4** (`config.yaml`) là chỗ đúng để người vận hành nhập biểu phí tài khoản của chính mình — vốn dĩ mới là nguồn đúng duy nhất, vì phí phụ thuộc bậc VIP và khối lượng 30 ngày.
+- `basis[]` chưa có số sau phí. Chi phí của một vị thế delta-neutral thuộc về tầng chiến lược (GĐ 2–3), không phải bảng hiển thị.
+- Chưa mô hình hoá phí rút/chuyển tiền giữa các sàn. Với arbitrage chéo sàn có luân chuyển tài sản, đây là khoản chi phí thật còn thiếu → GĐ 4.
 
 #### Bước 1.4 — Cấu hình hoá
 - Chuyển symbol, danh sách sàn, ngưỡng cảnh báo, ngưỡng staleness theo sàn từ hardcode sang `config.yaml`.
@@ -753,7 +811,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   3/7 bước   ← ĐANG LÀM
+[  ] GĐ 1  Củng cố lõi                   4/7 bước   ← ĐANG LÀM
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -763,4 +821,4 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** Bước 1.3 — mô hình phí giao dịch. Tạo `internal/fees/`, điền `maker_fee_bps`/`taker_fee_bps` trong `sourceRegistry` (đang là 0), điền `spread_after_fees_pct` (đang là `null`) trong ô ma trận và trong cảnh báo, và đổi `meta.cost_basis.model` từ `"none"` sang `"taker_both_legs"`. ⚠️ Kết quả gọi là **"đã trừ phí giao dịch"**, KHÔNG phải "lợi nhuận ròng": slippage cần độ sâu sổ lệnh, mà bước 1.2 vừa xác nhận 4/9 sàn còn chưa quy đổi được cả khối lượng đỉnh sổ.
+**Việc tiếp theo cụ thể:** Bước 1.4 — cấu hình hoá. Chuyển symbol, danh sách sàn, ngưỡng cảnh báo và ngưỡng staleness theo sàn sang `config.yaml`. Đây cũng là chỗ nhập tay biểu phí cho 4 sàn Bước 1.3 chưa xác minh được (bybit ×2, okx, gate), và là chỗ xoá nợ "`wire_test.go` chép tay danh sách 10 nguồn" đã ghi ở Bước 1.0. **Nghiệm thu:** thêm 1 cặp hoặc 1 sàn mới không cần sửa code Go **lẫn** JavaScript.

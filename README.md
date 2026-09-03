@@ -55,6 +55,7 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Basis spot ↔ perp** | Chênh lệch spot với perpetual **cùng một sàn** — nguyên liệu của chiến lược funding, tính riêng chứ không trộn vào ma trận chéo sàn |
 | **Đối chiếu oracle** | Độ lệch từng sàn so với Pyth, chỉ tham chiếu, không bao giờ sinh cảnh báo. Dòng nào lệch đồng quote đều được gắn nhãn |
 | **Khối lượng đỉnh sổ** | Thu ở 5/9 nguồn báo bằng coin. Bốn sàn báo bằng contract để `0` — nghĩa là **chưa biết**, không phải không có thanh khoản |
+| **Số đã trừ phí giao dịch** | Trừ phí taker cả bốn lượt khớp (mở và đóng cả hai chân). Gọi đúng là **"đã trừ phí giao dịch"**, KHÔNG phải lợi nhuận ròng — chưa trừ trượt giá và funding. Sàn chưa xác minh được biểu phí thì không có số, không phải miễn phí |
 
 ---
 
@@ -64,14 +65,21 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 
 | Chưa có | Hệ quả |
 |---|---|
-| **Mô hình phí** | Số hiển thị là **spread thô**, chưa trừ phí maker/taker, chưa trừ slippage. Chưa dùng để ra quyết định vốn được |
+| **Trượt giá (slippage)** | Số sau phí mới trừ phí giao dịch, **chưa trừ trượt giá** — cần độ sâu sổ lệnh, phải tới GĐ 2. Vẫn chưa dùng để ra quyết định vốn được |
 | **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
 | **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | Mới có cho hợp đồng WebSocket, bộ lọc dữ liệu cũ và luật chia nhóm (63 test, 86,5% câu lệnh trong `internal/scanner`). Connector chưa có test nào, chưa có `exchanges/testdata/` |
+| **Test tự động** | 79 test (86,8% câu lệnh ở `internal/scanner`, 100% ở `internal/fees`). Connector chưa có test nào, chưa có `exchanges/testdata/` |
+| **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập tay ở `config.yaml` tại Bước 1.4 |
 | **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract; chưa có instrument registry để nhân `ctVal`/`quanto_multiplier`, nên bốn sàn chưa có số thanh khoản. Xếp hạng cơ hội theo độ sâu phải chờ GĐ 2 |
 
 Toàn bộ các mục trên đều đã có kế hoạch xử lý theo giai đoạn trong [docs/PLAN.md](docs/PLAN.md).
+
+> **Đo được ở Bước 1.3:** một vòng mở–đóng cả hai chân tốn khoảng **0,19%** phí taker,
+> trong khi chênh lệch chéo sàn ở các cặp lớn chỉ vài phần nghìn phần trăm. Nghĩa là
+> **mọi cảnh báo scanner đang phát đều âm sau phí**. Đây không phải lỗi hiển thị — đó
+> là câu trả lời thật cho "arbitrage chéo sàn có ăn được không" ở quy mô lẻ. Biên thật
+> nằm ở funding rate (5–15% APR), là thứ Giai đoạn 2 đi thu thập.
 
 > Về staleness: ngưỡng hiện đo trên **4 cặp lớn trong giờ hoạt động**. Cặp thanh khoản mỏng hoặc giờ đêm có thể vượt ngưỡng một cách hợp lệ và bị đánh dấu CŨ nhầm — ngưỡng thích ứng nằm ở giai đoạn sau.
 
@@ -88,7 +96,7 @@ Lộ trình chia **9 giai đoạn / 41 bước**:
 | GĐ | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
-| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (3/7) |
+| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (4/7) |
 | 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |

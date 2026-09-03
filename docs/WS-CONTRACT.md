@@ -48,12 +48,12 @@ tại trên wire nhưng đang mang giá trị mặc định.
 | `meta.sources[].market_type` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `meta.sources[].tradable` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `meta.sources[].stale_after_sec` | ⬜ `10` | ✅ | ✅ | ✅ | ✅(yaml) | ✅ |
-| `meta.sources[].taker_fee_bps` | ⬜ `0` | ⬜ | ⬜ | ✅ | ✅(yaml) | ✅ |
+| `meta.sources[].taker_fee_bps` | ⬜ `0` | ⬜ | ⬜ | 🟡 5/9 sàn | ✅(yaml) | ✅ |
 | `spreads.cross_venue_groups[]` | ⬜ 1 nhóm `all`, `tradable:false` | ⬜ | ✅ `perp_usdt`/`perp_usd`/`spot_usdt` | ✅ | ✅ | ✅ |
 | `spreads.basis[]` | ⬜ `[]` | ⬜ | ✅ | ✅ | ✅ | ✅ |
 | `spreads.oracle_deviation[]` | ⬜ `[]` | ⬜ | ✅ | ✅ | ✅ | ✅ |
-| `*.spread_after_fees_pct` | ⬜ `null` | ⬜ | ⬜ | ✅ | ✅ | ✅ |
-| `meta.cost_basis` | ⬜ `model:"none"` | ⬜ | ⬜ | ✅ | ✅ | ✅ |
+| `*.spread_after_fees_pct` | ⬜ `null` | ⬜ | ⬜ | 🟡 chỉ cặp có cả hai sàn đã xác minh phí | ✅ | ✅ |
+| `meta.cost_basis` | ⬜ `model:"none"` | ⬜ | ⬜ | ✅ `taker_round_trip` | ✅ | ✅ |
 | `meta.symbols` | ✅ (Go) | ✅ | ✅ | ✅ | ✅(yaml) | ✅ |
 
 🟡 = điền một phần. `best_*_qty_coin` chỉ có ở 5 nguồn báo bằng coin (binance ×2, bybit ×2, hyperliquid); OKX, Gate, Kraken báo bằng contract và Paradex không có size — bốn nguồn đó giữ `0`, nghĩa là **chưa biết**, không phải **không có thanh khoản**. Xem [PLAN §1.2](PLAN.md).
@@ -89,10 +89,10 @@ Mọi message đều có:
   "default_symbol": "BTCUSDT",
   "alert_min_spread_pct": 0.05,
   "cost_basis": {
-    "model": "none",
-    "applied": [],
-    "excluded": ["taker_fee", "maker_fee", "slippage", "funding"],
-    "note_vi": "Số hiển thị là chênh lệch THÔ, chưa trừ bất kỳ chi phí nào."
+    "model": "taker_round_trip",
+    "applied": ["taker_fee_entry", "taker_fee_exit"],
+    "excluded": ["slippage", "funding", "withdrawal"],
+    "note_vi": "Số đã trừ phí giao dịch: taker cả bốn lượt khớp — mở và đóng cả hai chân. …"
   },
   "sources": [
     {
@@ -107,8 +107,9 @@ Mọi message đều có:
       "line_style": "solid",
       "enabled_by_default": true,
       "stale_after_sec": 10,
-      "maker_fee_bps": 0,
-      "taker_fee_bps": 0
+      "maker_fee_bps": 2,
+      "taker_fee_bps": 5,
+      "fee_verified": true
     }
   ]
 }
@@ -118,7 +119,7 @@ Mọi message đều có:
 |---|---|---|---|
 | `symbols` | []string | 4 cặp hiện tại | Bước 1.4 đọc từ `config.yaml` |
 | `alert_min_spread_pct` | float | `0.05` | Ngưỡng lọc mặc định của bảng cảnh báo |
-| `cost_basis.model` | string | `"none"` | `none` \| `taker_both_legs` (Bước 1.3) |
+| `cost_basis.model` | string | `"none"` | `none` \| `taker_round_trip`. **Bước 1.3 đặt tên là `taker_round_trip` chứ không phải `taker_both_legs` như bản 1.0 dự kiến**: chi phí là **bốn** lượt khớp (mở và đóng cả hai chân), không phải hai. Không thoát được vị thế thì không hiện thực hoá được spread, nên tính một nửa số lượt khớp là nói thiếu đúng một nửa chi phí |
 | `cost_basis.applied` | []string | `[]` | Chi phí ĐÃ trừ khỏi `*_after_fees_pct` |
 | `cost_basis.excluded` | []string | cả 4 | Chi phí CHƯA trừ — FE **bắt buộc** hiển thị |
 | `sources[].source` | string | — | Khoá wire, `venue + "_" + market_type` ([CONVENTIONS §2](CONVENTIONS.md)) |
@@ -127,7 +128,8 @@ Mọi message đều có:
 | `sources[].quote_asset` | string | `"USDT"`/`"USD"` | Kraken là `USD` — không so sánh chéo với USDT (Bước 1.2) |
 | `sources[].tradable` | bool | giá trị thật | Pyth là `false` ngay từ 1.0. Bước 1.2 là lúc grouping bắt đầu dựa vào cờ này |
 | `sources[].stale_after_sec` | int | 10–20 | Ngưỡng staleness **theo từng sàn**, **đo từ dữ liệu thật** (Bước 1.1): mỗi sàn dư ~3× so với khoảng cách cập nhật tệ nhất quan sát được. Xem comment trên `sourceRegistry` ở [wire.go](../wire.go) |
-| `sources[].maker_fee_bps` / `taker_fee_bps` | int | `0` | **Bps, số nguyên** — không dùng float cho phí niêm yết ([CONVENTIONS §1.2](CONVENTIONS.md)) |
+| `sources[].maker_fee_bps` / `taker_fee_bps` | float | `0` | **Bps, có phần thập phân.** Bản 1.0 khai là số nguyên; Bước 1.3 sửa vì biểu phí thật không nguyên (Hyperliquid maker 1,5 bps, Paradex maker 0,3 bps). JSON không phân biệt int/float nên shape không đổi. Xem [CONVENTIONS §1.2](CONVENTIONS.md) |
+| `sources[].fee_verified` | bool | `false` | **Thêm ở Bước 1.3.** `true` = biểu phí đã đọc từ tài liệu của chính sàn và có trích dẫn trong `internal/fees`. `false` = **chưa tra được**, KHÔNG phải miễn phí — hai chuyện này đều để số ở `0`, và 4/9 sàn đang ở trường hợp sau. Cặp nào có một sàn `false` thì `spread_after_fees_pct` là `null` |
 
 ---
 
@@ -321,7 +323,7 @@ một thị trường đã đi mất.
 | Trường | Kiểu | Mặc định 1.0 | Ghi chú |
 |---|---|---|---|
 | `spread_gross_pct` | float | — | `(sell - buy) / buy * 100`. **THÔ** — chưa trừ gì |
-| `spread_after_fees_pct` | float\|null | `null` | `null` = chưa có mô hình phí. Bước 1.3 điền. **Không phải lợi nhuận ròng** — chưa trừ slippage |
+| `spread_after_fees_pct` | float\|null | `null` | Bước 1.3 điền: `spread_gross_pct` trừ phí taker của **bốn** lượt khớp. Vẫn `null` khi **một trong hai sàn chưa xác minh được biểu phí** — coi phí chưa biết là 0 sẽ đăng nguyên spread thô như thể bắt được nó không tốn gì. **Không phải lợi nhuận ròng** — chưa trừ slippage và funding |
 
 > 🚩 Tên trường là `spread_*`, **không phải** `profit_*`, và có `_gross_`/`_after_fees_`
 > tường minh. Đây là thi hành trực tiếp [CLAUDE.md luật 2](../CLAUDE.md).
@@ -386,7 +388,7 @@ hai đều đúng, nhưng cái đang thay đổi mới là cái đáng nói.
 | `kind` | string | `"cross_venue"` | `cross_venue` \| `basis`. **Từ 1.2 chỉ `cross_venue` được gửi:** cảnh báo sinh trong một nhóm `tradable`, nên hai đầu luôn cùng `market_type` và cùng `quote_asset` và oracle không thể xuất hiện. `basis` là dữ liệu tham chiếu ở `spreads.basis[]`, **cố ý không sinh cảnh báo** |
 | `group_id` | string | `"all"` | Nhóm đã sinh ra cơ hội này. Từ 1.2 là `perp_usdt`/`perp_usd`/`spot_usdt`. Cooldown khoá theo `symbol|group|buy|sell`, nên cảnh báo của nhóm này không nuốt cảnh báo của nhóm kia |
 | `spread_gross_pct` | float | — | Thay cho `profit_pct` cũ |
-| `spread_after_fees_pct` | float\|null | `null` | Bước 1.3 |
+| `spread_after_fees_pct` | float\|null | `null` | Bước 1.3, cùng quy tắc với ô ma trận. ⚠️ Cảnh báo vẫn kích hoạt theo `spread_gross_pct` so với `alert_min_spread_pct`, **không** theo số sau phí: một vòng round trip tốn khoảng 0,19% nên gần như mọi cảnh báo hiện âm sau phí. Quyết định "cái gì đáng hành động" là việc của Giai đoạn 3, không phải hệ quả phụ của việc thêm bảng phí |
 | `detected_at_ms` | int64 | — | Thay cho `timestamp` cũ |
 
 ---
@@ -416,6 +418,9 @@ phép **thêm** một trường kèm giá trị mặc định có ghi tài liệ
 |---|---|---|
 | 1.2 | `oracle_deviation[].quote_asset_mismatch` | `false` |
 | 1.2 | `excluded_sources[].reason` nhận thêm giá trị `unregistered` | — (FE hiện `note_vi`, không phụ thuộc danh sách giá trị) |
+| 1.3 | `meta.sources[].fee_verified` | `false` |
+| 1.3 | `meta.sources[].maker_fee_bps`/`taker_fee_bps` đổi từ **int** sang **float** | `0` — JSON chỉ có một kiểu số nên shape trên wire không đổi; xem §3 |
+| 1.3 | `cost_basis.model` nhận giá trị `taker_round_trip` (bản 1.0 dự kiến `taker_both_legs`) | `"none"` |
 
 Từ Giai đoạn 2 (`funding`, đăng ký symbol theo client): thêm message type mới và
 thêm trường mới có mặc định — **không** đổi tên và **không** đổi kiểu trường đang có.

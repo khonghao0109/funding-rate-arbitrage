@@ -191,6 +191,26 @@
             background: #ff4444;
         }
 
+        /* Its own class, not a .source-badge modifier: the status-badge refresh
+           in app.js finds .source-badge by selector and removes what it finds. */
+        .source-fee-badge {
+            font-size: 8px;
+            font-weight: bold;
+            padding: 1px 4px;
+            border-radius: 2px;
+            margin-left: 6px;
+            vertical-align: middle;
+            color: #c9a227;
+            border: 1px dashed #6b5510;
+        }
+
+        /* A cell still showing a gross number. It is a different quantity from
+           an after-fee cell and must not be mistaken for one at a glance. */
+        .spread-cell.gross-only {
+            opacity: 0.75;
+            font-style: italic;
+        }
+
         .source-price {
             font-weight: bold;
             color: #e0e0e0;
@@ -759,6 +779,7 @@
                             <tr>
                                 <th class="sortable" data-sort="symbol">Symbol</th>
                                 <th class="sortable" data-sort="spread_gross_pct">Spread thô %</th>
+                                <th class="sortable" data-sort="spread_after_fees_pct">Sau phí %</th>
                                 <th class="sortable" data-sort="buy_source">Buy</th>
                                 <th class="sortable" data-sort="buy_price">Buy $</th>
                                 <th class="sortable" data-sort="sell_source">Sell</th>

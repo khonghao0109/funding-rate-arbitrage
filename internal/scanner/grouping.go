@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+
+	"futures-arbitrage-scanner/internal/fees"
 )
 
 // This file decides WHAT MAY BE COMPARED WITH WHAT.
@@ -233,11 +235,10 @@ func buildMatrix(sources []string, prices map[string]float64) map[string]map[str
 			if buySource == sellSource {
 				continue
 			}
+			grossPct := spreadGrossPct(prices[buySource], prices[sellSource])
 			row[sellSource] = wireSpreadCell{
-				SpreadGrossPct: spreadGrossPct(prices[buySource], prices[sellSource]),
-				// No fee model exists before step 1.3, and null must never be
-				// filled with the gross number.
-				SpreadAfterFeesPct: nil,
+				SpreadGrossPct:     grossPct,
+				SpreadAfterFeesPct: afterFeesPct(grossPct, buySource, sellSource),
 			}
 		}
 		matrix[buySource] = row
@@ -353,4 +354,21 @@ func buildOracleDeviation(usable map[string]float64) []wireOracleDeviation {
 		}
 	}
 	return deviations
+}
+
+// afterFeesPct is the gross spread with the commission of a complete round trip
+// removed, or nil when either venue's fee schedule was never verified.
+//
+// nil is not a formality. Substituting zero for an unverified fee would publish
+// the full gross spread as though it cost nothing to capture, which is the exact
+// overstatement the contract keeps a separate field to prevent. The figure this
+// returns is "after trading fees" and never "net profit": slippage and funding
+// are still not in it. See internal/fees and CLAUDE.md rule 2.
+func afterFeesPct(grossPct float64, buySource, sellSource string) *float64 {
+	costPct, ok := fees.RoundTripTakerPct(fees.For(buySource), fees.For(sellSource))
+	if !ok {
+		return nil
+	}
+	afterFees := grossPct - costPct
+	return &afterFees
 }

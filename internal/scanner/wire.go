@@ -5,6 +5,8 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"futures-arbitrage-scanner/internal/fees"
 )
 
 // The types in this file are the frozen WebSocket contract between the scanner
@@ -58,6 +60,17 @@ const (
 // checkArbitrage uses to decide an opportunity is worth broadcasting.
 const alertMinSpreadPct = 0.05
 
+// costModelTakerRoundTrip names the cost basis on the wire: a taker fill on all
+// four legs of opening and closing a two-venue position.
+//
+// alertMinSpreadPct above stays measured on the GROSS spread, deliberately.
+// Gating alerts on the after-fee figure would silence almost everything - a
+// round trip costs about 0.19% and cross-venue spreads on majors are a fraction
+// of that - and deciding what is worth acting on is the signal work of phase 3,
+// not a side effect of adding a fee table. Every alert now carries its after-fee
+// figure, so nothing is overstated in the meantime.
+const costModelTakerRoundTrip = "taker_round_trip"
+
 // sourceMeta describes one data source to the dashboard: what it is, how to draw
 // it, and how it should be treated. It exists so the frontend stops hardcoding
 // the source list, which it previously did in five separate places.
@@ -77,8 +90,18 @@ type sourceMeta struct {
 	EnabledByDefault bool   `json:"enabled_by_default"`
 
 	StaleAfterSec int64 `json:"stale_after_sec"`
-	MakerFeeBps   int   `json:"maker_fee_bps"` // 0 until step 1.3
-	TakerFeeBps   int   `json:"taker_fee_bps"` // 0 until step 1.3
+
+	// Commission at the venue's default tier, in FRACTIONAL basis points. Real
+	// schedules are not whole bps - Hyperliquid's maker leg is 1.5 and Paradex's
+	// is 0.3 - so step 1.3 amended docs/CONVENTIONS.md §1.2 rather than round
+	// them away. Filled from internal/fees, the single source of truth.
+	//
+	// FeeVerified separates "the fee is zero" from "the fee was never looked
+	// up": both leave the numbers at 0, and four venues are in the second case.
+	// Nothing may compute a cost from an unverified schedule.
+	MakerFeeBps float64 `json:"maker_fee_bps"`
+	TakerFeeBps float64 `json:"taker_fee_bps"`
+	FeeVerified bool    `json:"fee_verified"`
 }
 
 // sourceRegistry is the single source of truth for what the dashboard renders.
@@ -105,8 +128,12 @@ type sourceMeta struct {
 //
 // MarketType and QuoteAsset are static facts about each venue and are recorded
 // here now; step 1.2 is what starts *using* them to split the comparison into
-// separate blocks. Fee fields stay at zero until step 1.3 builds the fee table.
-var sourceRegistry = []sourceMeta{
+// separate blocks.
+//
+// Fee fields are absent from the literal on purpose: step 1.3 fills them from
+// internal/fees below, so the numbers and their citations live in exactly one
+// place. Editing a fee here would be editing the copy nobody reads.
+var sourceRegistry = withFees([]sourceMeta{
 	{Source: "binance_futures", Venue: "binance", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
 		Label: "Binance Futures", ShortLabel: "BIN-F", Color: "#f0b90b", LineStyle: "solid",
 		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
@@ -143,6 +170,18 @@ var sourceRegistry = []sourceMeta{
 	{Source: "pyth", Venue: "pyth", MarketType: "oracle", QuoteAsset: "USD", Tradable: false,
 		Label: "Pyth Oracle", ShortLabel: "PYTH", Color: "#00ff88", LineStyle: "dotted",
 		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
+})
+
+// withFees stamps each source with its commission from internal/fees. A source
+// the fee table does not name comes back unverified, never free.
+func withFees(registry []sourceMeta) []sourceMeta {
+	for i := range registry {
+		schedule := fees.For(registry[i].Source)
+		registry[i].MakerFeeBps = schedule.MakerFeeBps
+		registry[i].TakerFeeBps = schedule.TakerFeeBps
+		registry[i].FeeVerified = schedule.Verified
+	}
+	return registry
 }
 
 // sourceOrder maps a source to its position in sourceRegistry, for deterministic
@@ -250,7 +289,10 @@ func sourceState(lastMsgAt time.Time, threshold time.Duration, startedAt, now ti
 // and which have not. It is the contract's guard against presenting a gross
 // figure as profit: the dashboard renders `excluded` verbatim.
 type wireCostBasis struct {
-	Model    string   `json:"model"` // none | taker_both_legs (step 1.3)
+	// Model is none | taker_round_trip. taker_round_trip charges a taker fill on
+	// all FOUR legs - open both venues, close both venues - because the spread
+	// is only realised by unwinding. See internal/fees.RoundTripTakerPct.
+	Model    string   `json:"model"`
 	Applied  []string `json:"applied"`
 	Excluded []string `json:"excluded"`
 	NoteVI   string   `json:"note_vi"`
@@ -428,10 +470,20 @@ func newWireMeta(symbols []string, nowMs int64) wireMeta {
 		DefaultSymbol:     defaultSymbol,
 		AlertMinSpreadPct: alertMinSpreadPct,
 		CostBasis: wireCostBasis{
-			Model:    "none",
-			Applied:  []string{},
-			Excluded: []string{"taker_fee", "maker_fee", "slippage", "funding"},
-			NoteVI:   "Số hiển thị là chênh lệch THÔ, chưa trừ bất kỳ chi phí nào.",
+			Model:   costModelTakerRoundTrip,
+			Applied: []string{"taker_fee_entry", "taker_fee_exit"},
+			// Slippage needs order book depth, which does not arrive before
+			// phase 2, and funding is what phase 2 exists to collect. Naming
+			// them here is what stops the number being read as profit.
+			// maker_rebate is deliberately NOT listed: the dashboard renders
+			// this list as "not yet deducted", and a rebate is income, so
+			// naming it there would point the reader the wrong way.
+			Excluded: []string{"slippage", "funding", "withdrawal"},
+			// Says what the model IS. It must not re-list `excluded`, which the
+			// dashboard already renders right after it.
+			NoteVI: "Số đã trừ phí giao dịch: taker cả bốn lượt khớp — mở và đóng cả hai chân. " +
+				"Đây KHÔNG phải lợi nhuận ròng. Sàn chưa xác minh được biểu phí thì không có " +
+				"số sau phí, không phải miễn phí.",
 		},
 		Sources: sourceRegistry,
 	}
@@ -583,6 +635,7 @@ func newWireSpreads(symbol string, sourcePrices map[string]float64, excluded []w
 // from the pair and the instant rather than generated in the browser, so the same
 // event keeps the same identity across reconnects and future persistence.
 func newWireOpportunity(symbol, groupID, buySource, sellSource string, buyPrice, sellPrice float64, detectedAtMs int64) wireOpportunity {
+	grossPct := spreadGrossPct(buyPrice, sellPrice)
 	return wireOpportunity{
 		ID:                 fmt.Sprintf("%s|%s|%s|%s|%d", symbol, groupID, buySource, sellSource, detectedAtMs),
 		Symbol:             symbol,
@@ -592,8 +645,8 @@ func newWireOpportunity(symbol, groupID, buySource, sellSource string, buyPrice,
 		SellSource:         sellSource,
 		BuyPrice:           buyPrice,
 		SellPrice:          sellPrice,
-		SpreadGrossPct:     spreadGrossPct(buyPrice, sellPrice),
-		SpreadAfterFeesPct: nil,
+		SpreadGrossPct:     grossPct,
+		SpreadAfterFeesPct: afterFeesPct(grossPct, buySource, sellSource),
 		DetectedAtMs:       detectedAtMs,
 	}
 }

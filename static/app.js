@@ -267,6 +267,10 @@ class FuturesArbitrageScanner {
         const names = {
             taker_fee: 'phí taker',
             maker_fee: 'phí maker',
+            taker_fee_entry: 'phí taker lúc mở',
+            taker_fee_exit: 'phí taker lúc đóng',
+            maker_rebate: 'hoàn phí maker',
+            withdrawal: 'phí rút/chuyển',
             slippage: 'trượt giá',
             funding: 'phí funding',
         };
@@ -911,6 +915,7 @@ class FuturesArbitrageScanner {
                         <div class="source-status-dot ${this.statusClass(source)}"
                              title="${esc(this.statusTitle(source))}"></div>
                         <div class="source-name">${esc(this.formatSourceName(source))}</div>
+                        ${this.feeBadge(source)}
                     </div>
                     <div>
                         ${this.statusBadge(source)}
@@ -926,6 +931,25 @@ class FuturesArbitrageScanner {
         sourceList.innerHTML = html;
     }
     
+    // A source whose fee schedule was never verified cannot produce an
+    // after-fee figure for any pair it appears in. Marking the row is the only
+    // place the operator can find out why a whole column has no net number -
+    // and 0 bps is a real fee on some venues, so the absence has to be shown
+    // rather than inferred from a zero.
+    feeBadge(source) {
+        const meta = this.sourceMeta.get(source);
+        if (!meta || meta.fee_verified) return '';
+        // An oracle has no fee because nothing trades on it - a different fact
+        // from "the schedule was never looked up", and labelling it the same
+        // way would throw away the distinction the fee table exists to keep.
+        if (!meta.tradable) return '';
+        // Its own class, NOT .source-badge: the status-badge refresh in
+        // updateSourcePrices finds .source-badge by selector and would delete
+        // this one on the first tick after render.
+        return '<span class="source-fee-badge" title="Chưa xác minh được biểu phí của sàn này,'
+            + ' nên mọi cặp có nó đều không có số sau phí. Không có nghĩa là miễn phí.">chưa có phí</span>';
+    }
+
     // Position of a source in the order the server sent it in meta.
     sourceOrderIndex(source) {
         const index = [...this.sourceMeta.keys()].indexOf(source);
@@ -1129,11 +1153,27 @@ class FuturesArbitrageScanner {
             const isRecent = this.serverNowMs() - opp.detected_at_ms < 5000; // Fresh for 5 seconds
             const spreadClass = this.getSpreadMagnitudeClass(opp.spread_gross_pct);
             const timeStr = this.formatTime(opp.detected_at_ms);
-            
+
+            // The alert fires on the GROSS spread, so most rows are negative
+            // once a round trip is paid for. Showing only the gross figure here
+            // while the matrix shows the after-fee one would let the same pair
+            // read as an opportunity in one panel and a loss in the other.
+            const hasNet = typeof opp.spread_after_fees_pct === 'number';
+            const netText = hasNet
+                ? `${opp.spread_after_fees_pct >= 0 ? '+' : ''}${opp.spread_after_fees_pct.toFixed(3)}%`
+                : '—';
+            const netClass = hasNet
+                ? (opp.spread_after_fees_pct >= 0 ? 'up' : 'down')
+                : 'neutral';
+            const netTitle = hasNet
+                ? 'Đã trừ phí taker cả bốn lượt khớp. Chưa trừ trượt giá và funding.'
+                : 'Chưa xác minh được biểu phí của một trong hai sàn, nên không có số sau phí.';
+
             html += `
                 <tr class="${isRecent ? 'fresh' : ''}" data-id="${esc(opp.id)}">
                     <td class="symbol-cell">${esc(opp.symbol)}</td>
                     <td class="spread-cell-value ${spreadClass}">${opp.spread_gross_pct.toFixed(3)}%</td>
+                    <td class="spread-cell-value ${netClass}" title="${esc(netTitle)}">${netText}</td>
                     <td class="source-cell">${esc(this.formatSourceName(opp.buy_source))}</td>
                     <td class="price-cell">$${this.formatPrice(opp.buy_price)}</td>
                     <td class="source-cell">${esc(this.formatSourceName(opp.sell_source))}</td>
@@ -1338,17 +1378,27 @@ class FuturesArbitrageScanner {
 
         // Sign colouring is just reading the number and stays as it always was.
         // The orange "opportunity" highlight is a claim that this is actionable,
-        // so a group that still mixes market types never earns it.
+        // so a group that still mixes market types never earns it - and neither
+        // does a cell still showing a GROSS number, because a spread that has
+        // not had its fees removed cannot be known to survive them. A round trip
+        // costs around 0.19%, well above a typical cross-venue spread.
         let cls = this.getSpreadClass(shown);
-        if (!group.tradable && cls === 'opportunity') {
+        if ((!group.tradable || !hasNet) && cls === 'opportunity') {
             cls = shown >= 0 ? 'positive' : 'negative';
         }
 
-        const basis = hasNet ? 'đã trừ phí giao dịch' : 'THÔ, chưa trừ phí';
+        // A gross cell and an after-fee cell must not look identical: they are
+        // different quantities, and the tooltip alone is not a distinction the
+        // eye can make while scanning a matrix.
+        const marker = hasNet ? '' : '*';
+        const basis = hasNet
+            ? 'đã trừ phí giao dịch (taker cả bốn lượt khớp)'
+            : 'THÔ, chưa trừ phí — chưa xác minh được biểu phí của một trong hai sàn';
         const title = `Mua ${this.formatSourceName(buySource)} → Bán ${this.formatSourceName(sellSource)}: `
             + `${text} (${basis})`;
 
-        return `<div class="spread-cell ${cls}" title="${esc(title)}">${text}</div>`;
+        return `<div class="spread-cell ${cls}${hasNet ? '' : ' gross-only'}" `
+            + `title="${esc(title)}">${text}${marker}</div>`;
     }
 
     getShortSourceName(source) {

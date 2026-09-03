@@ -100,14 +100,16 @@ func TestNewWireMeta_Defaults(t *testing.T) {
 		t.Errorf("default_symbol = %q, want BTCUSDT", meta.DefaultSymbol)
 	}
 
-	// No fee model exists yet: every cost must be listed as NOT deducted.
-	if meta.CostBasis.Model != "none" {
-		t.Errorf("cost_basis.model = %q, want none", meta.CostBasis.Model)
+	// Whatever the model, the costs NOT deducted must always be listed: that
+	// list is what stops the figure being read as profit. Step 1.3's own
+	// assertions about the model live in fees_test.go.
+	if len(meta.CostBasis.Excluded) == 0 {
+		t.Error("cost_basis.excluded is empty; the dashboard must be told what is missing")
 	}
-	if len(meta.CostBasis.Applied) != 0 {
-		t.Errorf("cost_basis.applied = %v, want empty", meta.CostBasis.Applied)
+	if meta.CostBasis.NoteVI == "" {
+		t.Error("cost_basis.note_vi is empty")
 	}
-	for _, want := range []string{"taker_fee", "maker_fee", "slippage", "funding"} {
+	for _, want := range []string{"slippage", "funding"} {
 		found := false
 		for _, e := range meta.CostBasis.Excluded {
 			if e == want {
@@ -127,8 +129,10 @@ func TestNewWireMeta_Defaults(t *testing.T) {
 			t.Errorf("%s: stale_after_sec = %d, below the %d default",
 				s.Source, s.StaleAfterSec, defaultStaleAfterSec)
 		}
-		if s.MakerFeeBps != 0 || s.TakerFeeBps != 0 {
-			t.Errorf("%s: fees must stay 0 until step 1.3, got maker=%d taker=%d",
+		// A source either carries a verified fee or carries none at all. It
+		// must never carry a number nobody checked.
+		if !s.FeeVerified && (s.MakerFeeBps != 0 || s.TakerFeeBps != 0) {
+			t.Errorf("%s: unverified fees must be 0, got maker=%g taker=%g",
 				s.Source, s.MakerFeeBps, s.TakerFeeBps)
 		}
 	}
@@ -260,10 +264,12 @@ func TestNewWireSpreads_MatrixMathAndShape(t *testing.T) {
 	if math.Abs(cell.SpreadGrossPct-1.0) > 1e-9 {
 		t.Errorf("spread_gross_pct = %g, want 1.0", cell.SpreadGrossPct)
 	}
-	// No fee model exists yet: the after-fee number must be null, never a copy
-	// of the gross number.
+	// bybit_futures has no verified fee schedule, so the after-fee number must
+	// be null - never a copy of the gross number, and never the gross number
+	// with a missing fee silently treated as zero.
 	if cell.SpreadAfterFeesPct != nil {
-		t.Errorf("spread_after_fees_pct = %v, want null until step 1.3", *cell.SpreadAfterFeesPct)
+		t.Errorf("spread_after_fees_pct = %v, want null while bybit's fee is unverified",
+			*cell.SpreadAfterFeesPct)
 	}
 
 	if _, self := g.Matrix["binance_futures"]["binance_futures"]; self {
@@ -335,8 +341,11 @@ func TestNewWireOpportunity_NamesGrossAsGross(t *testing.T) {
 	if math.Abs(opp.SpreadGrossPct-1.0) > 1e-9 {
 		t.Errorf("spread_gross_pct = %g, want 1.0", opp.SpreadGrossPct)
 	}
+	// bybit_futures has no verified fee schedule, so this pair carries no
+	// after-fee figure. fees_test.go covers the verified case.
 	if opp.SpreadAfterFeesPct != nil {
-		t.Errorf("spread_after_fees_pct = %v, want null until step 1.3", *opp.SpreadAfterFeesPct)
+		t.Errorf("spread_after_fees_pct = %v, want null while bybit's fee is unverified",
+			*opp.SpreadAfterFeesPct)
 	}
 	if opp.DetectedAtMs != 1756368000000 {
 		t.Errorf("detected_at_ms = %d", opp.DetectedAtMs)

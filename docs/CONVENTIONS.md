@@ -47,7 +47,15 @@ Khảo sát 7 sàn ([DATA-REQUIREMENTS.md §3](DATA-REQUIREMENTS.md#3-khảo-sá
 | `...Pct` | Phần trăm, 0.01 = 0,01% | `profitPct = 0.05` |
 | `...Bps` | Điểm cơ bản, 1 = 0,01% | `takerFeeBps = 4` |
 
-**Không bao giờ** để một biến tên là `rate` trần trụi đi qua nhiều hàm. Trong dự án này, phí niêm yết nên dùng `Bps` (số nguyên, không sai số dấu phẩy động), rate từ sàn dùng `Frac`, chỉ đổi sang `Pct` ở tầng hiển thị.
+**Không bao giờ** để một biến tên là `rate` trần trụi đi qua nhiều hàm. Phí niêm yết dùng `Bps`, rate từ sàn dùng `Frac`, chỉ đổi sang `Pct` ở tầng hiển thị.
+
+> **Sửa ở Bước 1.3 — `Bps` là số thực, không phải số nguyên.** Bản trước của mục này
+> yêu cầu `Bps` số nguyên để tránh sai số dấu phẩy động. Tiền đề đó sai: biểu phí
+> thật không nguyên theo bps. Hyperliquid maker **0,015% = 1,5 bps**, Paradex maker
+> **0,003% = 0,3 bps**, và nhiều sàn có taker 5,5 bps. Làm tròn 1,5 thành 2 là sai
+> một phần ba ở chân đó, làm tròn 0,3 thành 0 là biến nó thành miễn phí — lớn hơn
+> mọi sai số float64 của một hằng số chỉ dùng để nhân với notional. Giữ nguyên tên
+> `...Bps`, đổi kiểu sang `float64`. Xem `internal/fees`.
 
 ### 1.3. Rate có chu kỳ
 

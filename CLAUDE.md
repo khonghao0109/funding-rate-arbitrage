@@ -27,7 +27,7 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** 3 of 7 steps done. Step 1.0 froze the WebSocket JSON
+**Phase 1 — Hardening.** 4 of 7 steps done. Step 1.0 froze the WebSocket JSON
 contract for the whole phase — it is specified in
 [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
 phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added
@@ -35,12 +35,14 @@ the staleness filter; step 1.2 split the comparison into `perp_usdt`, `perp_usd`
 and `spot_usdt` groups, filled `basis[]` and `oracle_deviation[]`, and started
 collecting top-of-book quantities.
 
-The next task is **step 1.3, the trading-fee model**: create `internal/fees/`,
-fill `maker_fee_bps`/`taker_fee_bps` on `sourceRegistry` (0 today), fill
-`spread_after_fees_pct` (`null` today) in both the matrix cell and the alert, and
-move `meta.cost_basis.model` from `"none"` to `"taker_both_legs"`. Call the result
-**"after trading fees", never "net profit"** — slippage needs book depth, and step
-1.2 confirmed four of nine venues cannot even convert their top-of-book size yet.
+Step 1.3 added `internal/fees/` and the after-fee figure.
+
+The next task is **step 1.4, configuration**: move symbols, the venue list, the
+alert threshold and the per-venue staleness thresholds into `config.yaml`. It is
+also where an operator enters the fee schedules for the four venues step 1.3
+could not verify (bybit ×2, okx, gate) — their own account's rates are the only
+fully correct source anyway. Acceptance: adding a pair or a venue needs no Go
+**and** no JavaScript change.
 
 ---
 
@@ -80,6 +82,8 @@ rule 5.
 **4. Name the unit in the identifier.** `IntervalSec`, `RatePer8hFrac`,
 `NotionalUSD`, `TakerFeeBps`, `QtyContracts`. A bare `rate`, `size`, or
 `interval` crossing a function boundary is a defect, not a style preference.
+`Bps` is fractional, not integral: real schedules include 1.5 bps and 0.3 bps
+legs, and rounding them away misstates a leg by a third or makes it free.
 This is the single most important convention in the codebase — see
 [docs/CONVENTIONS.md §1](docs/CONVENTIONS.md).
 
@@ -256,15 +260,27 @@ phase 1.
   alerts table can no longer name an unexecutable pair. Spot vs perp on one venue
   is reported separately as `basis[]`. The rules live in
   [internal/scanner/grouping.go](internal/scanner/grouping.go).
-- No fee model anywhere.
+- ~~No fee model anywhere.~~ Step 1.3 added `internal/fees/`. It is **commission
+  only**: a taker fill on all four legs of opening and closing a two-venue
+  position. Call the output **"after trading fees", never "net profit"** —
+  slippage needs book depth and funding is phase 2. Only **5 of 9** venues have a
+  verified schedule; the rest carry `fee_verified: false`, which means *not
+  looked up*, not *free* (Paradex really does charge retail 0%), and any pair
+  touching one publishes `spread_after_fees_pct: null`.
+- Measured on live data: a round trip costs about **0.19%** while cross-venue
+  spreads on the majors run a few thousandths of a percent, so **every alert the
+  scanner currently raises is negative after fees**. The alert threshold still
+  fires on the gross spread by design — deciding what is worth acting on is
+  phase 3 — but nothing displays a gross figure without labelling it.
 - Reconnect uses a fixed sleep with no backoff, no ping/keepalive, no read
   deadline.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
 - No `exchanges/testdata/` and no connector tests — golden tests need real
   payloads captured from a running scanner first. `internal/scanner` has 63 tests
-  covering the wire contract, the staleness filter and the grouping rules (86.5%
-  of statements); `exchanges/` is still at zero. Step 1.6 closes that.
+  covering the wire contract, the staleness filter and the grouping rules (86.8%
+  of statements), and `internal/fees` has 7 (100%); `exchanges/` is still at
+  zero. Step 1.6 closes that.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new
