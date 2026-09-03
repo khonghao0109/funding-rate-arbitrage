@@ -293,7 +293,8 @@ func NormalizeFundingRate(...)
 
 ```
 crypto-futures-arbitrage-scanner/
-├── main.go                    # entrypoint + wiring
+├── cmd/
+│   └── scanner/               # entrypoint — chỉ wiring, không logic
 ├── config.yaml                # [GĐ 1.4]
 ├── docs/
 │   ├── PLAN.md                # lộ trình 9 giai đoạn
@@ -305,6 +306,7 @@ crypto-futures-arbitrage-scanner/
 │   ├── <venue>.go
 │   └── <venue>_funding.go
 ├── internal/
+│   ├── scanner/               # engine + tầng wire — một package vì cùng thi hành WS-CONTRACT.md
 │   ├── instruments/           # registry + ánh xạ spot↔perp + sizing
 │   ├── fees/                  # bảng phí, lợi nhuận ròng
 │   ├── store/                 # SQLite
@@ -327,16 +329,15 @@ strategy, backtest  ──►  chỉ nhận giá trị ĐÃ CHUẨN HOÁ, không
 
 Luật thứ hai là ranh giới an toàn của cả dự án: dữ liệu công khai và credential nằm hai phía khác nhau. Vi phạm luật này là lỗi chặn merge, không phải góp ý.
 
-### 12.2. Khi nào chuyển sang `cmd/`
+### 12.2. `cmd/` — đã chuyển (2026-09-03)
 
-Hiện `main.go` nằm ở gốc vì chỉ có một binary. **Ngay khi xuất hiện binary thứ hai** — cụ thể là script xác minh field ở Bước 2.1 — chuyển sang:
+Toàn bộ code gốc repo đã dời: entrypoint về `cmd/scanner/main.go` (chỉ wiring — godotenv, nối connector, HTTP server), engine về `internal/scanner/` (state giá, staleness, tầng wire, cùng toàn bộ test).
 
-```
-cmd/scanner/main.go        # server hiện tại
-cmd/fundingcheck/main.go   # script đối chiếu funding 7 sàn
-```
+`wire.go` và phần scanner ở **cùng một package** có chủ đích: chúng phụ thuộc hai chiều (`wire` đọc `PricePoint`; scanner gọi các builder `newWire*`) và cùng thi hành một hợp đồng ([WS-CONTRACT.md](WS-CONTRACT.md)). Tách hai package nghĩa là thiết kế lại API giữa chúng — chỉ làm khi có lý do thật, không làm để "trông sạch".
 
-và cập nhật README (`go run ./cmd/scanner`).
+Tên trong package tránh lặp: `scanner.Scanner`, `scanner.New()` — không phải `scanner.FuturesScanner` (§3).
+
+Binary mới thêm vào `cmd/<tên>/main.go` — Bước 2.1 sẽ thêm `cmd/fundingcheck`. Chạy từ gốc repo để `./static/` resolve đúng: `go run ./cmd/scanner`.
 
 ---
 

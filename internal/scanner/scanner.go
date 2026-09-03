@@ -1,11 +1,10 @@
-package main
+package scanner
 
 import (
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -14,7 +13,6 @@ import (
 	"futures-arbitrage-scanner/exchanges"
 
 	"github.com/gorilla/websocket"
-	"github.com/joho/godotenv"
 )
 
 // wsWriteTimeout bounds a single write to one dashboard client. The write mutex
@@ -41,7 +39,7 @@ type PricePoint struct {
 	RecvAt      time.Time
 }
 
-type FuturesScanner struct {
+type Scanner struct {
 	symbols     []string
 	prices      map[string]map[string]PricePoint
 	pricesMutex sync.RWMutex
@@ -82,8 +80,8 @@ type FuturesScanner struct {
 	startedAt time.Time
 }
 
-func NewFuturesScanner(symbols []string) *FuturesScanner {
-	s := &FuturesScanner{
+func New(symbols []string) *Scanner {
+	s := &Scanner{
 		symbols:         symbols,
 		now:             time.Now,
 		prices:          make(map[string]map[string]PricePoint),
@@ -104,13 +102,13 @@ func NewFuturesScanner(symbols []string) *FuturesScanner {
 	return s
 }
 
-func (s *FuturesScanner) processPrices() {
+func (s *Scanner) processPrices() {
 	for priceData := range s.priceChan {
 		s.updatePrice(priceData)
 	}
 }
 
-func (s *FuturesScanner) processOrderbooks() {
+func (s *Scanner) processOrderbooks() {
 	for orderbookData := range s.orderbookChan {
 		// Calculate mid price from best bid and best ask
 		midPrice := (orderbookData.BestBid + orderbookData.BestAsk) / 2
@@ -126,7 +124,7 @@ func (s *FuturesScanner) processOrderbooks() {
 	}
 }
 
-func (s *FuturesScanner) processTrades() {
+func (s *Scanner) processTrades() {
 	for tradeData := range s.tradeChan {
 		// Trades are not used for pricing, but one arriving proves the socket is
 		// alive. Without this, a venue whose book simply has not moved looks
@@ -139,7 +137,7 @@ func (s *FuturesScanner) processTrades() {
 // staleness decision downstream is measured from it, so it must not be set
 // anywhere else - a second stamping site is how the two-meaning Timestamp field
 // this step replaces came about.
-func (s *FuturesScanner) updatePrice(data exchanges.PriceData) {
+func (s *Scanner) updatePrice(data exchanges.PriceData) {
 	recvAt := s.now()
 
 	s.pricesMutex.Lock()
@@ -160,7 +158,7 @@ func (s *FuturesScanner) updatePrice(data exchanges.PriceData) {
 
 // usableSetChanged reports whether the set of sources usable for this symbol
 // differs from the last time it was published, and records the new set.
-func (s *FuturesScanner) usableSetChanged(symbol string, usable map[string]float64) bool {
+func (s *Scanner) usableSetChanged(symbol string, usable map[string]float64) bool {
 	sources := make([]string, 0, len(usable))
 	for source := range usable {
 		sources = append(sources, source)
@@ -179,13 +177,13 @@ func (s *FuturesScanner) usableSetChanged(symbol string, usable map[string]float
 }
 
 // markSourceAlive records that something arrived from a source, whatever it was.
-func (s *FuturesScanner) markSourceAlive(source string, at time.Time) {
+func (s *Scanner) markSourceAlive(source string, at time.Time) {
 	s.lastMsgMutex.Lock()
 	s.sourceLastMsgAt[source] = at
 	s.lastMsgMutex.Unlock()
 }
 
-func (s *FuturesScanner) snapshotLastMsgAt() map[string]time.Time {
+func (s *Scanner) snapshotLastMsgAt() map[string]time.Time {
 	s.lastMsgMutex.RLock()
 	defer s.lastMsgMutex.RUnlock()
 
@@ -196,7 +194,7 @@ func (s *FuturesScanner) snapshotLastMsgAt() map[string]time.Time {
 	return out
 }
 
-func (s *FuturesScanner) checkArbitrage(symbol string) {
+func (s *Scanner) checkArbitrage(symbol string) {
 	s.evaluate(symbol, true)
 }
 
@@ -205,11 +203,11 @@ func (s *FuturesScanner) checkArbitrage(symbol string) {
 // refreshStaleness fires on a timer with no new quote behind it. An alert from
 // there would be stamped with the current time while describing prices observed
 // seconds earlier.
-func (s *FuturesScanner) republishSpreads(symbol string) {
+func (s *Scanner) republishSpreads(symbol string) {
 	s.evaluate(symbol, false)
 }
 
-func (s *FuturesScanner) evaluate(symbol string, raiseAlerts bool) {
+func (s *Scanner) evaluate(symbol string, raiseAlerts bool) {
 	s.pricesMutex.RLock()
 	sourcePrices, exists := s.prices[symbol]
 	if !exists {
@@ -327,7 +325,7 @@ func (s *FuturesScanner) evaluate(symbol string, raiseAlerts bool) {
 // broadcast writes one contract message to every connected client and drops the
 // clients that fail. All three message types share it so the fan-out and the
 // client cleanup exist in exactly one place.
-func (s *FuturesScanner) broadcast(message any) {
+func (s *Scanner) broadcast(message any) {
 	s.clientsMutex.RLock()
 	clients := make([]*websocket.Conn, 0, len(s.wsClients))
 	for client := range s.wsClients {
@@ -362,7 +360,7 @@ func (s *FuturesScanner) broadcast(message any) {
 // synchronously on the ingestion path, so N stalled clients cost up to
 // N*wsWriteTimeout before the tick completes. Removing that needs a per-client
 // send queue, which belongs with the broadcast rework in PLAN.md §7.3.
-func (s *FuturesScanner) writeToClients(clients []*websocket.Conn, message any) ([]*websocket.Conn, error) {
+func (s *Scanner) writeToClients(clients []*websocket.Conn, message any) ([]*websocket.Conn, error) {
 	// Encode once. WriteJSON per client would also make an encoding failure look
 	// like a transport failure, evicting every connected dashboard over one
 	// unencodable value, and sending each a truncated frame first.
@@ -391,7 +389,7 @@ func (s *FuturesScanner) writeToClients(clients []*websocket.Conn, message any) 
 	return toRemove, nil
 }
 
-func (s *FuturesScanner) broadcastOpportunity(opportunity wireOpportunity) {
+func (s *Scanner) broadcastOpportunity(opportunity wireOpportunity) {
 	s.broadcast(wireArbitrage{
 		Type:         "arbitrage",
 		V:            wireVersion,
@@ -408,7 +406,7 @@ func (s *FuturesScanner) broadcastOpportunity(opportunity wireOpportunity) {
 // producers. Two matrices computed microseconds apart can still be delivered in
 // either order, and the older one wins only if it also carries the later
 // snapshot time - which this prevents.
-func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string]float64, excluded []wireExcludedSource, snapshotAt time.Time) {
+func (s *Scanner) broadcastSpreads(symbol string, sourcePrices map[string]float64, excluded []wireExcludedSource, snapshotAt time.Time) {
 	// Build the O(n^2) matrix only if there is somebody to send it to.
 	if !s.hasClients() {
 		return
@@ -418,13 +416,13 @@ func (s *FuturesScanner) broadcastSpreads(symbol string, sourcePrices map[string
 
 // hasClients reports whether any dashboard is connected, so the broadcast path
 // can skip building a message nobody will receive.
-func (s *FuturesScanner) hasClients() bool {
+func (s *Scanner) hasClients() bool {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 	return len(s.wsClients) > 0
 }
 
-func (s *FuturesScanner) broadcastPrices() {
+func (s *Scanner) broadcastPrices() {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
@@ -458,7 +456,7 @@ func (s *FuturesScanner) broadcastPrices() {
 // all gone quiet would never be re-examined: the dashboard would keep showing
 // the last matrix, and the opportunities in it, for as long as the silence
 // lasted. Nothing arriving is exactly the case staleness has to catch.
-func (s *FuturesScanner) refreshStaleness() {
+func (s *Scanner) refreshStaleness() {
 	ticker := time.NewTicker(stalenessRefreshInterval)
 	defer ticker.Stop()
 
@@ -480,7 +478,7 @@ func (s *FuturesScanner) refreshStaleness() {
 	}
 }
 
-func (s *FuturesScanner) handleWebSocket(w http.ResponseWriter, r *http.Request) {
+func (s *Scanner) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	log.Printf("WebSocket connection attempt from %s", r.RemoteAddr)
 
 	conn, err := s.upgrader.Upgrade(w, r, nil)
@@ -526,48 +524,20 @@ func (s *FuturesScanner) handleWebSocket(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-func main() {
-	err := godotenv.Load()
-	if err != nil {
-		log.Println("No .env file found, using system environment variables")
-	}
-
-	symbols := []string{"BTCUSDT", "ETHUSDT", "XRPUSDT", "SOLUSDT"}
-
-	scanner := NewFuturesScanner(symbols)
-
-	// Start processing goroutines
-	go scanner.processPrices()
-	go scanner.processOrderbooks()
-	go scanner.processTrades()
-
-	// Start exchange connections with orderbook feeds
-	go exchanges.ConnectBinanceFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	go exchanges.ConnectBybitFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	go exchanges.ConnectHyperliquidFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	go exchanges.ConnectKrakenFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	go exchanges.ConnectOKXFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	go exchanges.ConnectGateFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	go exchanges.ConnectParadexFutures(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-
-	// Start spot exchange connections with orderbook feeds
-	go exchanges.ConnectBinanceSpot(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-	go exchanges.ConnectBybitSpot(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-
-	// Start Pyth price feed connection
-	go exchanges.ConnectPythPrices(symbols, scanner.priceChan, scanner.orderbookChan, scanner.tradeChan)
-
-	go scanner.broadcastPrices()
-	go scanner.refreshStaleness()
-
-	http.HandleFunc("/ws", scanner.handleWebSocket)
-	http.Handle("/", http.FileServer(http.Dir("./static/")))
-
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8082"
-	}
-
-	log.Printf("Server starting on http://localhost:%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, nil))
+// Run starts the scanner's internal goroutines: channel consumers, the price
+// broadcaster and the staleness refresher. It does not start venue connectors
+// or the HTTP server - wiring those is the entrypoint's job (cmd/scanner).
+func (s *Scanner) Run() {
+	go s.processPrices()
+	go s.processOrderbooks()
+	go s.processTrades()
+	go s.broadcastPrices()
+	go s.refreshStaleness()
 }
+
+// PriceFeed, OrderbookFeed and TradeFeed expose the ingestion channels the
+// venue connectors write into. Step 1.5 replaces these three with the Feeds
+// struct from PLAN.md; until then the trio mirrors the connector signatures.
+func (s *Scanner) PriceFeed() chan<- exchanges.PriceData         { return s.priceChan }
+func (s *Scanner) OrderbookFeed() chan<- exchanges.OrderbookData { return s.orderbookChan }
+func (s *Scanner) TradeFeed() chan<- exchanges.TradeData         { return s.tradeChan }

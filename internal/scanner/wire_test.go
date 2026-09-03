@@ -1,4 +1,4 @@
-package main
+package scanner
 
 import (
 	"encoding/json"
@@ -381,7 +381,7 @@ func TestNewWireOpportunity_IDIsStableForSamePairAndInstant(t *testing.T) {
 // spread. Folding it makes it the minimum for the symbol, drives every spread
 // against it and silently suppresses every real alert.
 func TestCheckArbitrage_NonPositivePriceDoesNotSuppressAlerts(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 
 	captured := make(chan wireOpportunity, 4)
 	scanner.onOpportunity = func(o wireOpportunity) { captured <- o }
@@ -406,7 +406,7 @@ func TestCheckArbitrage_NonPositivePriceDoesNotSuppressAlerts(t *testing.T) {
 }
 
 func TestCheckArbitrage_SkipsSymbolWithFewerThanTwoUsablePrices(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 
 	captured := make(chan wireOpportunity, 4)
 	scanner.onOpportunity = func(o wireOpportunity) { captured <- o }

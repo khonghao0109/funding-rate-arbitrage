@@ -1,4 +1,4 @@
-package main
+package scanner
 
 import (
 	"encoding/json"
@@ -18,9 +18,9 @@ import (
 // symbol selector and cost disclaimer from meta, and cannot render a price for a
 // source it has never heard of.
 func TestHandleWebSocket_SendsMetaBeforeAnyData(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT", "ETHUSDT"})
+	scanner := New([]string{"BTCUSDT", "ETHUSDT"})
 
-	server := httptest.NewServer(http.HandlerFunc(scanner.handleWebSocket))
+	server := httptest.NewServer(http.HandlerFunc(scanner.HandleWebSocket))
 	defer server.Close()
 
 	// Data must already be flowing BEFORE the client connects. Waiting for the
@@ -86,9 +86,9 @@ func TestHandleWebSocket_SendsMetaBeforeAnyData(t *testing.T) {
 // Every message the scanner emits must carry the contract envelope, or the
 // dashboard cannot tell a version mismatch from a parse failure.
 func TestBroadcastMessages_CarryContractEnvelope(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 
-	server := httptest.NewServer(http.HandlerFunc(scanner.handleWebSocket))
+	server := httptest.NewServer(http.HandlerFunc(scanner.HandleWebSocket))
 	defer server.Close()
 
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
@@ -144,7 +144,7 @@ func TestBroadcastMessages_CarryContractEnvelope(t *testing.T) {
 // waitForClient blocks until the handler has registered the dialled connection.
 // Registration happens after the meta write, so anything broadcast before it
 // reaches no one.
-func waitForClient(t *testing.T, s *FuturesScanner) {
+func waitForClient(t *testing.T, s *Scanner) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
@@ -167,9 +167,9 @@ func mustPriceData(symbol, source string, price float64) exchanges.PriceData {
 // Returning early instead would leave the previous matrix frozen on screen with
 // no field contradicting it.
 func TestCheckArbitrage_RepublishesMatrixWhenItShrinks(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 
-	server := httptest.NewServer(http.HandlerFunc(scanner.handleWebSocket))
+	server := httptest.NewServer(http.HandlerFunc(scanner.HandleWebSocket))
 	defer server.Close()
 
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
@@ -226,9 +226,9 @@ func TestCheckArbitrage_RepublishesMatrixWhenItShrinks(t *testing.T) {
 // it end-to-end is what makes it a guard: a test that recomputed the exclusion
 // itself would stay green if checkArbitrage stopped reporting one.
 func TestCheckArbitrage_PublishesWhyASourceWasDropped(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 
-	server := httptest.NewServer(http.HandlerFunc(scanner.handleWebSocket))
+	server := httptest.NewServer(http.HandlerFunc(scanner.HandleWebSocket))
 	defer server.Close()
 
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)

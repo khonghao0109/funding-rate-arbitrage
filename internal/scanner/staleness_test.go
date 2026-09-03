@@ -1,4 +1,4 @@
-package main
+package scanner
 
 import (
 	"encoding/json"
@@ -175,7 +175,7 @@ func TestSourceState_DerivedFromSilenceAcrossAllSymbols(t *testing.T) {
 // The acceptance criterion of step 1.1, in unit form: a venue that stops sending
 // must not keep contributing to alerts.
 func TestCheckArbitrage_RaisesNoAlertFromAFrozenPrice(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 
 	base := time.Now()
 	scanner.now = func() time.Time { return base }
@@ -201,11 +201,11 @@ func TestCheckArbitrage_RaisesNoAlertFromAFrozenPrice(t *testing.T) {
 }
 
 func TestCheckArbitrage_PublishesStaleAsTheReasonASourceIsMissing(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 	base := time.Now()
 	scanner.now = func() time.Time { return base }
 
-	server := httptest.NewServer(http.HandlerFunc(scanner.handleWebSocket))
+	server := httptest.NewServer(http.HandlerFunc(scanner.HandleWebSocket))
 	defer server.Close()
 
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
@@ -312,11 +312,11 @@ func TestSourceState_UnknownDuringStartupGrace(t *testing.T) {
 // goes quiet, nothing re-examines it and the dashboard keeps showing the last
 // matrix - which is precisely the case staleness exists to catch.
 func TestRefreshStaleness_ReexaminesASymbolNothingArrivesFor(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 	base := time.Now()
 	scanner.now = func() time.Time { return base }
 
-	server := httptest.NewServer(http.HandlerFunc(scanner.handleWebSocket))
+	server := httptest.NewServer(http.HandlerFunc(scanner.HandleWebSocket))
 	defer server.Close()
 
 	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
@@ -404,7 +404,7 @@ func TestStaleAfter_SlowVenuesGetMoreHeadroom(t *testing.T) {
 // moved. Without it, a healthy venue on a change-driven feed in a quiet market
 // is reported disconnected and dropped from every comparison.
 func TestProcessTrades_KeepsAQuietVenueMarkedConnected(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 	base := time.Now()
 	scanner.now = func() time.Time { return base }
 
@@ -488,7 +488,7 @@ func TestStartupGrace_IsNotHarsherThanTheDisconnectThreshold(t *testing.T) {
 // In steady state that is never, and republishing an identical matrix every
 // second only adds contention on the write mutex ingestion also holds.
 func TestRefreshStaleness_DoesNotRepublishAnUnchangedMatrix(t *testing.T) {
-	scanner := NewFuturesScanner([]string{"BTCUSDT"})
+	scanner := New([]string{"BTCUSDT"})
 	base := time.Now()
 	scanner.now = func() time.Time { return base }
 

@@ -478,7 +478,8 @@ Cả hai chỉ nên cân nhắc khi các giai đoạn trước đã sinh lợi �
 
 ```
 crypto-futures-arbitrage-scanner/
-├── main.go                    # entrypoint, wiring
+├── cmd/
+│   └── scanner/               # entrypoint (Bước 2.1 thêm cmd/fundingcheck)
 ├── config.yaml                # [GĐ 1.4] symbol, sàn, ngưỡng
 ├── CLAUDE.md                  # tổng quan cho AI agent
 ├── docs/
@@ -491,6 +492,7 @@ crypto-futures-arbitrage-scanner/
 │   ├── binance.go … pyth.go
 │   └── funding/               # [GĐ 2.2] thu thập funding rate
 ├── internal/
+│   ├── scanner/               # engine + hợp đồng wire (đã tách khỏi gốc 2026-09-03)
 │   ├── fees/                  # [GĐ 1.3] bảng phí theo sàn
 │   ├── instruments/           # [GĐ 2.3] registry + ánh xạ spot↔perp
 │   ├── store/                 # [GĐ 2.3] SQLite, funding history

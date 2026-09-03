@@ -152,7 +152,7 @@ Lập luận đầy đủ: [docs/PLAN.md §7](docs/PLAN.md#7-quyết-định).
 ```bash
 git clone <repo>
 cd crypto-futures-arbitrage-scanner
-go run main.go
+go run ./cmd/scanner
 ```
 
 Mở trình duyệt tại **http://localhost:8082**
@@ -177,13 +177,14 @@ Symbol, danh sách sàn và các ngưỡng khác hiện đang hardcode; chuyển
 
 ```
 .
-├── main.go                    # entrypoint, WebSocket server, logic spread
+├── cmd/scanner/               # entrypoint — wiring connector, HTTP server
 ├── CLAUDE.md                  # tổng quan cho AI agent
 ├── exchanges/                 # connector — CHỈ dữ liệu công khai, không credential
 │   ├── types.go               # kiểu dùng chung
 │   └── <venue>.go             # binance, bybit, okx, gate, kraken, hyperliquid, paradex, pyth
 ├── wire.go                    # hợp đồng JSON với dashboard — xem docs/WS-CONTRACT.md
 ├── internal/                  # các package đang xây dựng theo lộ trình
+│   ├── scanner/               # engine: state giá, staleness, hợp đồng wire (WS-CONTRACT.md)
 │   ├── instruments/           # registry, ánh xạ spot↔perp, sizing delta-neutral
 │   ├── fees/                  # bảng phí, lợi nhuận ròng
 │   ├── store/                 # SQLite

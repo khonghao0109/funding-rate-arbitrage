@@ -171,9 +171,10 @@ for step 2.4.
 ## Layout
 
 ```
-main.go              entrypoint and wiring
+cmd/scanner/         entrypoint — wires connectors into the engine, serves HTTP
 exchanges/           WebSocket connectors — PUBLIC DATA ONLY, no credentials
 internal/
+  scanner/           the engine: price state, staleness, the wire contract
   instruments/       trading rules, spot<->perp mapping, delta-neutral sizing
   fees/              fee table, net profit
   store/             SQLite persistence
@@ -206,7 +207,7 @@ Public market data and credentials live on opposite sides of that line.
 ## Working in this repo
 
 ```bash
-go run main.go        # starts on http://localhost:8082
+go run ./cmd/scanner  # starts on http://localhost:8082 (run from repo root)
 go build ./...
 gofmt -l .            # must print nothing
 go vet ./...
