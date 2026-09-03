@@ -98,7 +98,7 @@
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
-| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **1/7 bước** | Thu thập + lưu funding rate 24/7 |
+| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **2/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
@@ -738,13 +738,46 @@ Sửa:
 > thay thế có lý do — phương pháp thay thế và toàn bộ chi tiết ở
 > [DATA-REQUIREMENTS.md §3 + phụ lục](DATA-REQUIREMENTS.md#3-khảo-sát-funding-rate-7-sàn).
 
-#### Bước 2.2 — Thiết kế `FundingData` + refactor `Feeds`
+#### Bước 2.2 — Thiết kế `FundingData` + refactor `Feeds` ✅
 - Struct đầy đủ tại [DATA-REQUIREMENTS.md §4](DATA-REQUIREMENTS.md#4-thiết-kế-fundingdata). Ba yêu cầu bắt buộc:
   1. `FundingModel` enum (`discrete` / `continuous`) — Paradex không có mốc funding.
   2. Giữ **cả** `RawRate` (debug) **lẫn** rate chuẩn hoá (`RatePerInterval`, `RatePer8h`, `APRAnnualized`).
   3. `IntervalSec` — chuẩn hoá về **giây ngay tại tầng connector**. Tầng signal không bao giờ thấy phút/giờ/giây lẫn lộn.
 - ~~Gom 3 channel thành `Feeds`~~ — đã thực hiện ở **Bước 1.5**. Ở đây **thêm** field `Funding chan<- FundingData` vào `Feeds` (kiểm 2026-09-03: struct hiện chỉ có `Ctx`/`Price`/`Orderbook`/`Trade`/`Conn` — channel Funding **chưa** được khai báo trước) rồi nối vào scanner.
 - **Nghiệm thu:** unit test chuyển đổi đơn vị cho cả 7 sàn từ payload mẫu.
+
+> **Kết quả (2026-09-03).** `exchanges/funding.go` giữ `FundingData` (tên field
+> theo CONVENTIONS §1: `RatePer8hFrac`, `APRFrac`, `NextFundingAtMs`…) và
+> `deriveFundingRates`; mỗi sàn một builder `normalize<Venue>Funding` trong
+> `<venue>_funding.go` (CONVENTIONS §4) nhận trọn envelope
+> `(symbol, source, recvAt, venueTimeMs, …)` để không thể tạo reading thiếu
+> định danh. `Feeds` thêm đúng một field + `SendFunding`; scanner giữ bản ghi
+> mới nhất theo symbol × source (chặn symbol ngoài config, chuẩn hoá `RecvAt`
+> như `updatePrice`). Nghiệm thu: test chuyển đổi đơn vị cả 7 sàn từ giá trị
+> payload thật 2026-09-03, chạy cùng `-race`.
+>
+> **Review adversarial tìm ra lần sửa khảo sát thứ hai:** Kraken WS
+> `next_funding_rate_time` là **epoch ms tuyệt đối**, không phải "ms còn lại"
+> như DATA-REQUIREMENTS từng ghi (badge ✅ cũ dán nhầm — 2.1 chỉ kiểm REST,
+> field này chỉ có trên WS). Hai probe WS độc lập cùng xác nhận; thiết kế theo
+> bản cũ sẽ ra mốc settle năm ~2083 và tầng đếm settle kết luận Kraken không
+> bao giờ settle. Chi tiết: [DATA-REQUIREMENTS §3.3⑥](DATA-REQUIREMENTS.md).
+>
+> **Nợ ghi nhận từ review, chưa xử lý:**
+> - Chu kỳ 1h của Kraken ghim trong `kraken_funding.go` (sàn không công bố
+>   interval ở bất kỳ message funding nào — không có gì để đọc). Rủi ro còn
+>   lại: sàn đổi cadence giữa hai lần backfill thì lệch 2× không bị kiểm 5×
+>   của fundingcheck bắt; Bước 2.6 phải đo lại spacing của
+>   `historicalfundingrates` mỗi lần backfill.
+> - Map funding của scanner không tự loại reading cũ; **Bước 2.7 phải đo độ
+>   tươi từ `RecvAt` khi hiển thị** (subscription chết mà hiển thị rate cũ như
+>   mới là đúng lỗi 1.6 lặp lại ở tầng UI).
+> - `updatePrice` không chặn symbol ngoài config (phơi bày sẵn có, trước 2.2;
+>   `updateFunding` đã chặn) — xử lý khi đụng tầng đó.
+> - Một loạt điểm bền vững của `cmd/fundingcheck` (guard interval Binance/Bybit,
+>   median khi số sàn chẵn, so timestamp bằng parse thay vì thứ tự chuỗi,
+>   `slices.Sort` thay sort tay, verdict Gate bớt ghim hình dạng "chia hết cho
+>   3600") — commit `fix(fundingcheck)` riêng ngay sau bước này.
 
 #### Bước 2.3 — Instrument registry
 - Tải `exchangeInfo` (spot + futures) 1 lần/ngày, cache: `tickSize`, `stepSize`, `minNotional`, `status`, contract size/multiplier, leverage brackets.
@@ -774,6 +807,7 @@ Sửa:
 
 #### Bước 2.7 — Dashboard funding
 - Bảng funding hiện tại theo sàn × cặp, **quy về cùng đơn vị 8h** để so sánh công bằng, tô màu theo mức hấp dẫn.
+- ⚠️ Đo độ tươi mỗi reading từ `RecvAt` trước khi hiển thị — map funding của scanner giữ bản ghi cuối **mãi mãi** (ghi nhận ở Bước 2.2); subscription chết mà bảng vẫn tô rate cũ như mới là lặp lại lỗi 1.6 ở tầng UI.
 - Đếm ngược mốc funding kế tiếp (ẩn với sàn `continuous`).
 - Biểu đồ lịch sử funding + basis spot↔perp cùng sàn (thành quả Bước 1.2).
 - **Lấy độ sâu sổ lệnh qua REST `depth?limit=100`** cho các cặp ứng viên, mỗi 1–4h — cả spot lẫn perp. Xếp hạng cơ hội **phải** kèm thanh khoản, nếu không screener sẽ đẩy cặp APR cao/sổ mỏng lên đầu ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
@@ -1153,7 +1187,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          1/7 bước   ← ĐANG LÀM song song với soak
+[  ] GĐ 2  Funding Rate Monitor          2/7 bước   ← ĐANG LÀM song song với soak
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
@@ -1169,7 +1203,7 @@ subscription bị sàn âm thầm huỷ hiện **không có gì buộc nối l�
 dạng hỏng mà 72 giờ sinh ra để phát hiện — chạy mà không sửa thì nhiều khả năng
 chỉ chứng minh lại rằng nó tồn tại.
 
-GĐ 2 đã bắt đầu song song (không đụng tiến trình soak): Bước 2.1 xong 2026-09-03.
-Tiếp theo là **Bước 2.2** — thiết kế `FundingData` theo kết quả xác minh ở
-[DATA-REQUIREMENTS.md §3–§4](DATA-REQUIREMENTS.md) và thêm channel `Funding`
-vào `Feeds` (chưa tồn tại — xem ghi chú tại Bước 2.2).
+GĐ 2 đã bắt đầu song song (không đụng tiến trình soak): Bước 2.1 và 2.2 xong
+2026-09-03. Tiếp theo là **Bước 2.3** — instrument registry
+(`internal/instruments`): `exchangeInfo` cache 1 lần/ngày, contract size 4 sàn,
+sizing delta-neutral.

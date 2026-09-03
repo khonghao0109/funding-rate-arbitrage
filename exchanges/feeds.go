@@ -8,10 +8,10 @@ import (
 // Feeds is everything a connector needs to deliver data and be told to stop.
 //
 // It replaces the four separate parameters every connector used to take. The
-// point is not brevity: it is that adding a channel later - the funding feed
-// phase 2 needs - becomes one new field and zero changes to the ten connector
-// signatures. Steps 1.5 and 2.2 were both scheduled to rewrite those signatures,
-// which is why the refactor was pulled forward into this one.
+// point is not brevity: it is that adding a channel later becomes one new
+// field and zero changes to the ten connector signatures. Steps 1.5 and 2.2
+// were both scheduled to rewrite those signatures, which is why the refactor
+// was pulled forward into 1.5 — and 2.2 then added Funding exactly that way.
 //
 // Holding a context in a struct is normally wrong. This is the documented
 // exception: Feeds is a short-lived parameter object handed to a function that
@@ -23,14 +23,20 @@ type Feeds struct {
 	Orderbook chan<- OrderbookData
 	Trade     chan<- TradeData
 
+	// Funding carries normalized funding readings (step 2.2). Every value on
+	// it has already been through one of the fundingFrom* builders, so the
+	// interval is in seconds and the rates are fractions — the scanner never
+	// sees venue units.
+	Funding chan<- FundingData
+
 	// Conn carries what the connector knows about its own socket. Until step
 	// 1.5 the scanner could only infer connection state from silence, which
 	// cannot tell a venue that is unreachable from one that is merely quiet.
 	Conn chan<- ConnEvent
 }
 
-// SendPrice, SendOrderbook and SendTrade deliver one message, or give up if the
-// context is cancelled.
+// SendPrice, SendOrderbook, SendTrade and SendFunding deliver one message, or
+// give up if the context is cancelled.
 //
 // The give-up half is what makes shutdown bounded. A plain `ch <- data` blocks
 // when the buffer is full - which is exactly the situation during a shutdown,
@@ -58,6 +64,15 @@ func (f Feeds) SendOrderbook(data OrderbookData) bool {
 func (f Feeds) SendTrade(data TradeData) bool {
 	select {
 	case f.Trade <- data:
+		return true
+	case <-f.Ctx.Done():
+		return false
+	}
+}
+
+func (f Feeds) SendFunding(data FundingData) bool {
+	select {
+	case f.Funding <- data:
 		return true
 	case <-f.Ctx.Done():
 		return false

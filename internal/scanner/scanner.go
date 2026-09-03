@@ -51,7 +51,11 @@ type PricePoint struct {
 }
 
 type Scanner struct {
-	symbols     []string
+	symbols []string
+	// symbolSet answers "is this symbol configured?" without scanning the
+	// slice; updateFunding fences on it so an all-market stream at step 2.5
+	// cannot grow the funding map with symbols nobody asked for.
+	symbolSet   map[string]struct{}
 	prices      map[string]map[string]PricePoint
 	pricesMutex sync.RWMutex
 
@@ -69,16 +73,25 @@ type Scanner struct {
 	// both are needed: this one knows a venue is unreachable while the last
 	// message is still recent, and silence catches a socket that stayed open
 	// and stopped delivering. Step 1.1 could only infer.
-	sourceConn       map[string]sourceConn
-	connMutex        sync.RWMutex
-	wsClients        map[*websocket.Conn]bool
-	clientsMutex     sync.RWMutex
-	wsWriteMutex     sync.Mutex // Protects WebSocket writes
-	upgrader         websocket.Upgrader
-	priceChan        chan exchanges.PriceData
-	orderbookChan    chan exchanges.OrderbookData
-	tradeChan        chan exchanges.TradeData
-	connChan         chan exchanges.ConnEvent
+	sourceConn    map[string]sourceConn
+	connMutex     sync.RWMutex
+	wsClients     map[*websocket.Conn]bool
+	clientsMutex  sync.RWMutex
+	wsWriteMutex  sync.Mutex // Protects WebSocket writes
+	upgrader      websocket.Upgrader
+	priceChan     chan exchanges.PriceData
+	orderbookChan chan exchanges.OrderbookData
+	tradeChan     chan exchanges.TradeData
+	fundingChan   chan exchanges.FundingData
+	connChan      chan exchanges.ConnEvent
+
+	// funding holds the latest normalized reading per symbol per source. It is
+	// the collection point steps 2.5–2.7 build on: connectors fill it through
+	// fundingChan, persistence (2.6) and the funding dashboard (2.7) read it.
+	// Values are already normalized by exchanges' fundingFrom* builders — the
+	// scanner never sees venue units.
+	funding          map[string]map[string]exchanges.FundingData
+	fundingMutex     sync.RWMutex
 	lastOpportunity  map[string]time.Time // Track last alert per symbol
 	opportunityMutex sync.RWMutex
 
@@ -110,6 +123,11 @@ func New(symbols []string) *Scanner {
 		priceChan:       make(chan exchanges.PriceData, 1000),
 		orderbookChan:   make(chan exchanges.OrderbookData, 1000),
 		tradeChan:       make(chan exchanges.TradeData, 1000),
+		// Funding changes once per venue-symbol per seconds at worst, so the
+		// buffer only has to absorb a reconnect burst — connChan-style sizing,
+		// not the 1000 of the price firehose.
+		fundingChan: make(chan exchanges.FundingData, 256),
+		funding:     make(map[string]map[string]exchanges.FundingData),
 		// Connection events are rare and must never block a connector, so the
 		// buffer only has to absorb every source flapping at once.
 		connChan:        make(chan exchanges.ConnEvent, 256),
@@ -121,6 +139,10 @@ func New(symbols []string) *Scanner {
 				return true
 			},
 		},
+	}
+	s.symbolSet = make(map[string]struct{}, len(symbols))
+	for _, symbol := range symbols {
+		s.symbolSet[symbol] = struct{}{}
 	}
 	s.startedAt = s.now()
 	return s
@@ -187,6 +209,63 @@ func (s *Scanner) processTrades(ctx context.Context) {
 			s.markSourceAlive(tradeData.Source, s.receivedAt(tradeData.RecvAt))
 		}
 	}
+}
+
+func (s *Scanner) processFunding(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case fundingData, ok := <-s.fundingChan:
+			if !ok {
+				return
+			}
+			s.updateFunding(fundingData)
+		}
+	}
+}
+
+// updateFunding keeps the latest reading per symbol per source. Funding is a
+// slowly-changing value read at display/persistence cadence, so last-write-
+// wins is the whole story — history is step 2.6's job, in SQLite, not here.
+// Consumers (2.6 persistence, 2.7 dashboard) must judge freshness from the
+// stored RecvAt; nothing here evicts a reading whose source went quiet.
+func (s *Scanner) updateFunding(data exchanges.FundingData) {
+	// A symbol nobody configured is dropped at the door: an all-market
+	// funding stream (a cheap choice at step 2.5) must not grow this map —
+	// and later SQLite and the dashboard — with the venue's whole universe.
+	if _, configured := s.symbolSet[data.Symbol]; !configured {
+		return
+	}
+
+	// Normalize the receive stamp exactly as updatePrice does, so the stored
+	// reading and the liveness record can never disagree about the clock: a
+	// zero RecvAt stored verbatim would read as a ~56-year age downstream.
+	recvAt := s.receivedAt(data.RecvAt)
+	data.RecvAt = recvAt
+
+	s.fundingMutex.Lock()
+	if s.funding[data.Symbol] == nil {
+		s.funding[data.Symbol] = make(map[string]exchanges.FundingData)
+	}
+	s.funding[data.Symbol][data.Source] = data
+	s.fundingMutex.Unlock()
+
+	// A funding message arriving proves the socket is alive, exactly like a
+	// trade does — without this, a source whose only subscribed stream is
+	// funding would look disconnected in a quiet market.
+	s.markSourceAlive(data.Source, recvAt)
+}
+
+// latestFunding returns the most recent funding reading for one symbol on one
+// source, if any has arrived. Unexported on purpose: the production readers
+// (2.6 persistence, 2.7 dashboard) will want a locked snapshot, not a point
+// lookup — this accessor exists for tests until that shape is known.
+func (s *Scanner) latestFunding(symbol, source string) (exchanges.FundingData, bool) {
+	s.fundingMutex.RLock()
+	defer s.fundingMutex.RUnlock()
+	data, ok := s.funding[symbol][source]
+	return data, ok
 }
 
 // processConnEvents records what the connectors say about their own sockets.
@@ -690,6 +769,7 @@ func (s *Scanner) Run(ctx context.Context) {
 	go s.processPrices(ctx)
 	go s.processOrderbooks(ctx)
 	go s.processTrades(ctx)
+	go s.processFunding(ctx)
 	go s.processConnEvents(ctx)
 	go s.broadcastPrices(ctx)
 	go s.refreshStaleness(ctx)
@@ -697,16 +777,16 @@ func (s *Scanner) Run(ctx context.Context) {
 
 // Feeds is what the venue connectors write into, and what tells them to stop.
 //
-// It replaced the three separate channel accessors this had until step 1.5. The
-// gain is not at this end but at the connectors': a fourth feed - the funding
-// data phase 2 collects - becomes one new field here and no change to any of the
-// ten connector signatures.
+// It replaced the three separate channel accessors this had until step 1.5.
+// The gain showed up on schedule at step 2.2: the funding feed was one new
+// field here and no change to any of the ten connector signatures.
 func (s *Scanner) Feeds(ctx context.Context) exchanges.Feeds {
 	return exchanges.Feeds{
 		Ctx:       ctx,
 		Price:     s.priceChan,
 		Orderbook: s.orderbookChan,
 		Trade:     s.tradeChan,
+		Funding:   s.fundingChan,
 		Conn:      s.connChan,
 	}
 }

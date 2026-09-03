@@ -51,11 +51,15 @@ Step 1.6 recorded real payloads from every venue into `exchanges/testdata/` and
 golden-tested each parser against them, taking `exchanges/` from 20.8% to 63.8%.
 It found that **every Binance trade was labelled a sell** — see the trap table.
 
-**The remaining phase-1 work is the 72h unattended run.** Before starting it,
-address the open defect recorded at step 1.6: a subscription the venue silently
-drops is detected but never re-established, because the read deadline is refreshed
-by any frame and three venues answer keepalives with data frames. A 72h run
-without that fix mostly re-demonstrates the hole.
+**The remaining phase-1 work is the 72h unattended run — now in progress**
+(started 2026-09-03 14:03, deadline 2026-09-06; PID in `.soak/scanner.pid`,
+port 8082 — do not touch it, and run anything else on another port). It was
+started with the step-1.6 defect still open: a subscription the venue silently
+drops is detected but never re-established, because the read deadline is
+refreshed by any frame and three venues answer keepalives with data frames.
+The run may therefore mostly re-demonstrate that hole; a separate session
+delivers the soak verdict and updates phase-1 status — no other session marks
+phase 1 done.
 
 Phase 2 (Funding Rate Monitor) has started in parallel without touching the
 soak process: step 2.1 (`cmd/fundingcheck`) verified the funding fields of all
@@ -189,7 +193,7 @@ re-research these; do verify before writing the integration.
 | Venue | Trap |
 |---|---|
 | **OKX** | `fundingTime` is the NEXT settlement; `nextFundingTime` is the one AFTER that. Mapping it like Binance's `T` is off by one period. |
-| **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). |
+| **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). Its WS `next_funding_rate_time` is an **absolute epoch-ms stamp** even though the doc prose says "time until" — probed live twice; see §3.3⑥. |
 | **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite. |
 | **Binance** | `fundingInfo` documents itself as returning ONLY symbols whose config differs from default — as of 2026-09-03 it happens to cover every TRADING perpetual (777 symbols, BTCUSDT included via its adjusted ±0.3% cap), but the docs promise no such coverage. Default to 8h and override; do not read it as the source of truth for all symbols. Intervals seen: 4h (majority), 8h, and 1h. Also filter `rateType: "Special"` in backtests. |
 | **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. |
@@ -265,7 +269,7 @@ go run ./cmd/scanner  # reads ./config.yaml, serves http://localhost:8082
 go build ./...
 gofmt -l .            # must print nothing
 go vet ./...
-go test ./...         # 214 tests, offline
+go test ./...         # offline — no test opens a network socket
 go run ./cmd/fundingcheck  # live re-check of the funding-field survey (network)
 go test -race ./...   # required for any goroutine change
 
@@ -330,10 +334,14 @@ phase 1.
   keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- 214 tests: `exchanges` 89 (63.8% of statements), `internal/scanner` 84 (89.3%),
-  `internal/config` 31 (78.2%), `internal/fees` 5 (100%), `cmd/scanner` 2,
-  `cmd/fundingcheck` 3 (the pure normalization/coherence functions; the
-  fetchers run only against live venues).
+- 150 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+  table-driven so the case count is far higher; earlier docs quoted a "211
+  tests" figure whose counting method did not survive — this one is stated so
+  it can be re-measured): `exchanges` 32 (63.6% of statements),
+  `internal/scanner` 89 (89.7%), `internal/config` 19 (78.2%),
+  `internal/fees` 5 (100%), `cmd/scanner` 2, `cmd/fundingcheck` 3 (the pure
+  normalization/coherence functions; the fetchers run only against live
+  venues).
   `exchanges/testdata/` holds a real recording per venue; re-record with
   `CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata ./exchanges/`. **Pyth has
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic

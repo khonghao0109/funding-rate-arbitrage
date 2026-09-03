@@ -54,6 +54,7 @@ func testFeeds(t *testing.T) (Feeds, context.CancelFunc, chan OrderbookData, cha
 		Price:     make(chan PriceData, 64),
 		Orderbook: orderbooks,
 		Trade:     make(chan TradeData, 64),
+		Funding:   make(chan FundingData, 64),
 		Conn:      events,
 	}, cancel, orderbooks, events
 }
@@ -128,12 +129,14 @@ func TestFeedsSend_GivesUpWhenTheContextIsCancelled(t *testing.T) {
 		Price:     make(chan PriceData),
 		Orderbook: make(chan OrderbookData),
 		Trade:     make(chan TradeData),
+		Funding:   make(chan FundingData),
 	}
 
 	for name, send := range map[string]func() bool{
 		"price":     func() bool { return feeds.SendPrice(PriceData{}) },
 		"orderbook": func() bool { return feeds.SendOrderbook(OrderbookData{}) },
 		"trade":     func() bool { return feeds.SendTrade(TradeData{}) },
+		"funding":   func() bool { return feeds.SendFunding(FundingData{}) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			done := make(chan bool, 1)

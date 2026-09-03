@@ -26,6 +26,10 @@ type recorder struct {
 	priceChan     chan PriceData
 	orderbookChan chan OrderbookData
 	tradeChan     chan TradeData
+	// fundingChan keeps the no-blocked-send invariant once step-2.5
+	// connectors start emitting funding during a replay; no golden test
+	// asserts on it yet.
+	fundingChan chan FundingData
 }
 
 func newRecorder(t *testing.T) *recorder {
@@ -40,8 +44,9 @@ func newRecorder(t *testing.T) *recorder {
 		priceChan:     make(chan PriceData, 8192),
 		orderbookChan: make(chan OrderbookData, 8192),
 		tradeChan:     make(chan TradeData, 8192),
+		fundingChan:   make(chan FundingData, 8192),
 	}
-	r.feeds = Feeds{Ctx: ctx, Price: r.priceChan, Orderbook: r.orderbookChan, Trade: r.tradeChan}
+	r.feeds = Feeds{Ctx: ctx, Price: r.priceChan, Orderbook: r.orderbookChan, Trade: r.tradeChan, Funding: r.fundingChan}
 	return r
 }
 

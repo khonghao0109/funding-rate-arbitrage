@@ -110,7 +110,7 @@ Khảo sát 2026-08-28. **Kết luận: không có 2 sàn nào giống nhau.**
 | **Bybit** | `tickers.<sym>` (100ms) | `fundingRate` | `nextFundingTime` (ms) | `fundingInterval` **PHÚT** (480) | ✅ Đã xác minh |
 | **OKX** | `funding-rate` | `fundingRate` | **`fundingTime`** ⚠️ | 8h | ✅ Đo trực tiếp 2026-09-03 |
 | **Gate** | `futures.tickers` | `funding_rate` + `funding_rate_indicative` | `funding_next_apply` (epoch **GIÂY**) | `funding_interval` **GIÂY** (28800) | ✅ Đo trực tiếp 2026-09-03 |
-| **Kraken** | `ticker` | **`relative_funding_rate`** ⚠️ | `next_funding_rate_time` (ms **còn lại**) | settle **mỗi 1h**, rate là **mỗi-1h** (sửa 2026-09-03 — xem ②) | ✅ Đã xác minh |
+| **Kraken** | `ticker` | **`relative_funding_rate`** ⚠️ | `next_funding_rate_time` (**epoch ms TUYỆT ĐỐI** — sửa 2026-09-03, xem §3.3⑥) | settle **mỗi 1h**, rate là **mỗi-1h** (sửa 2026-09-03 — xem ②) | ✅ Probe WS thật 2026-09-03 |
 | **Hyperliquid** | `activeAssetCtx` | `funding` | — | **1 GIỜ** (field API đã là rate/1h) | ✅ Đã xác minh |
 | **Paradex** | Funding V2 | funding index + `funding_rate_8h` | **KHÔNG CÓ** | **LIÊN TỤC** (điểm mỗi ~5s, rate yết cho cửa sổ 8h) | ✅ Đo trực tiếp 2026-09-03 |
 
@@ -206,6 +206,18 @@ Hệ quả tương tự với Hyperliquid ở mức nhẹ hơn: chu kỳ 1h, n�
    paid every hour at one eighth of the computed rate"* — và giá trị đo
    (1,25e-5 ×8 = 1,0e-4) rơi đúng cụm 8h chéo sàn, tức API công bố phần **đã ÷8**.
    Dùng nguyên với `IntervalSec = 3600`.
+6. **Kraken WS `next_funding_rate_time` là epoch ms TUYỆT ĐỐI — khảo sát cũ ghi
+   ngược lần thứ hai.** (Phát hiện trong review Bước 2.2, xác minh bằng **hai**
+   probe WS độc lập 2026-09-03.) Mô tả field trong docs sàn viết *"time until
+   next funding rate in milliseconds"*, nhưng sample payload của **chính trang
+   đó** và feed thật đều trả mốc tuyệt đối: probe lúc 08:36Z nhận
+   `next_funding_rate_time = 1788426000000` = **09:00:00Z tròn giờ**, cách probe
+   ~24 phút ([docs ticker](https://docs.kraken.com/api/docs/futures-api/websocket/ticker/)).
+   Cộng "now" vào như bản cũ chỉ dẫn sẽ ra mốc settle ở năm ~2083 → tầng đếm
+   settle kết luận Kraken không bao giờ settle. Cùng frame đó:
+   `relative_funding_rate` khớp đúng giá trị giờ 08:00 đã settle của
+   `/v4/historicalfundingrates` (củng cố thêm ②), và ticker WS có field `time`
+   (epoch ms) — nguồn venue-time thật cho Kraken mà nợ GĐ 1 đang cần.
 
 ---
 
@@ -217,10 +229,16 @@ Hệ quả tương tự với Hyperliquid ở mức nhẹ hơn: chu kỳ 1h, n�
 2. Phải giữ **cả rate thô lẫn rate chuẩn hoá**. Rate thô để đối chiếu với web sàn khi debug; rate chuẩn hoá để so sánh và tính APY.
 3. Chuẩn hoá đơn vị **tại tầng connector**, không phải ở tầng tính toán. Tầng signal không bao giờ được nhìn thấy phút/giây/giờ lẫn lộn.
 
-### 4.2. Struct đề xuất
+### 4.2. Struct — như đã xây ở Bước 2.2 (`exchanges/funding.go`)
+
+> Bản nháp trước 2026-09-03 dùng tên không hậu tố (`RatePerInterval`,
+> `NextFundingTime`, `RecvTime int64`). Bản xây thật đổi theo đúng
+> [CONVENTIONS.md §1](CONVENTIONS.md): mọi field mang đơn vị nói ra đơn vị,
+> mốc tuyệt đối trên wire mang `AtMs`, thời điểm nhận nội bộ là `RecvAt
+> time.Time` cùng hợp đồng đồng hồ với `PriceData` (đóng dấu tại socket read).
 
 ```go
-// exchanges/types.go
+// exchanges/funding.go
 
 type FundingModel string
 
@@ -240,62 +258,64 @@ type FundingData struct {
     RawRateField string  // tên field đã dùng: "r", "relative_funding_rate", ...
 
     // --- Rate đã chuẩn hoá (tầng signal CHỈ dùng phần này) ---
-    RatePerInterval float64 // rate cho đúng 1 chu kỳ settle của sàn này
-    IntervalSec     int64   // chu kỳ settle, GIÂY — luôn chuẩn hoá về giây
-    RatePer8h       float64 // quy về 8h để so sánh chéo sàn
-    APRAnnualized   float64 // = RatePerInterval × (31_536_000 / IntervalSec)
+    RatePerIntervalFrac float64 // rate cho đúng 1 chu kỳ settle của sàn này
+    IntervalSec         int64   // chu kỳ settle, GIÂY — luôn chuẩn hoá về giây
+    RatePer8hFrac       float64 // quy về 8h để so sánh chéo sàn
+    APRFrac             float64 // = RatePerIntervalFrac × (31_536_000 / IntervalSec)
 
     // --- Mốc thời gian (chỉ có nghĩa khi Model == FundingDiscrete) ---
-    NextFundingTime int64 // ms tuyệt đối; 0 nếu Model == Continuous
+    NextFundingAtMs int64 // ms tuyệt đối; 0 = continuous hoặc endpoint không công bố
     IsEstimated     bool  // true = rate dự kiến đang chạy; false = đã chốt
 
-    // --- Rate kỳ sau nữa (chỉ OKX cung cấp) ---
-    FollowingRate     float64
-    FollowingTime     int64
+    // --- Rate kỳ sau nữa (chỉ OKX từng cung cấp; hiện trả rỗng — §3.3①) ---
+    FollowingRateFrac float64
+    FollowingAtMs     int64
     HasFollowingRate  bool
 
-    // --- Giới hạn ---
-    RateCap   float64
-    RateFloor float64
-    HasCap    bool
+    // --- Giới hạn sàn công bố ---
+    RateCapFrac   float64
+    RateFloorFrac float64
+    HasCap        bool
 
     // --- Giá liên quan ---
-    MarkPrice  float64 // dùng để tính phí funding — KHÔNG dùng entry price
+    MarkPrice  float64 // funding tính trên mark price — KHÔNG dùng entry price
     IndexPrice float64
 
     // --- Metadata ---
-    RateType  string // Binance: "Regular" | "Special" (dividend) — lọc khi backtest
-    Timestamp int64  // thời điểm sàn phát
-    RecvTime  int64  // thời điểm bot nhận — dùng cho staleness filter
+    RateType    string    // Binance: "Regular" | "Special" (dividend) — lọc khi backtest
+    VenueTimeMs int64     // đồng hồ sàn, 0 nếu sàn không công bố — không đo staleness
+    RecvAt      time.Time // đóng dấu tại socket read — cơ sở duy nhất của staleness
 }
 ```
+
+Bảy hàm `fundingFrom*` (một mỗi sàn, cùng file) là **nơi duy nhất** giữ quy tắc
+đơn vị của §4.3: connector Bước 2.5 chỉ parse JSON rồi đưa số thô theo đơn vị
+của sàn vào builder; hạ nguồn chỉ thấy giây và phân số. Interval không dương →
+builder từ chối (không cho một message hỏng sinh ra APR Inf/NaN).
 
 ### 4.3. Quy tắc điền theo từng sàn
 
-| Sàn | `RawRate` từ | `IntervalSec` | `NextFundingTime` | Ghi chú |
+Mỗi hàng dưới đây là một builder `normalize<Venue>Funding` trong
+`exchanges/<venue>_funding.go` — connector Bước 2.5 chỉ parse JSON rồi gọi nó.
+
+| Sàn | `RawRate` từ | `IntervalSec` | `NextFundingAtMs` | Ghi chú |
 |---|---|---|---|---|
-| Binance | `r` | `fundingIntervalHours × 3600`, **mặc định 28800** | `T` | Ghi đè interval nếu symbol có trong `fundingInfo`; 1h/4h/8h đều tồn tại (§3.3) |
+| Binance | `r` | `fundingIntervalHours × 3600`, **mặc định 28800** | `T` | Ghi đè interval nếu symbol có trong `fundingInfo`; 1h/4h/8h đều tồn tại (§3.3②) |
 | Bybit | `fundingRate` | `fundingInterval × 60` | `nextFundingTime` | ⚠️ Ticker là snapshot+delta — **merge vào cache**, không ghi đè |
-| OKX | `fundingRate` | 28800 | **`fundingTime`** | `nextFundingRate`/`nextFundingTime` → `FollowingRate`/`FollowingTime`, nhưng `nextFundingRate` hiện trả **rỗng** (§3.3) → `HasFollowingRate = false` |
+| OKX | `fundingRate` | **suy từ `nextFundingTime − fundingTime`** (sàn không công bố interval — không truyền hằng số) | **`fundingTime`** | `nextFundingRate`/`nextFundingTime` → `FollowingRateFrac`/`FollowingAtMs`, nhưng `nextFundingRate` hiện trả **rỗng** (§3.3①) → `HasFollowingRate = false` |
 | Gate | `funding_rate` | `funding_interval` (đã là giây) | `funding_next_apply × 1000` | `funding_rate_indicative` → dùng khi cần rate dự kiến |
-| Kraken | **`relative_funding_rate`** | 3600 | `now + next_funding_rate_time` | ⚠️ Field là **ms còn lại**, không phải mốc tuyệt đối. Rate là **mỗi-1h, dùng nguyên** — `RatePer8hFrac = ×8` (sửa 2026-09-03, xem §3.2②) |
-| Hyperliquid | `funding` | **3600** | mốc giờ tròn kế tiếp | Chu kỳ 1h; field API đã là rate/1h (đã ÷8 — §3.3) |
-| Paradex | `funding_rate` (+ funding index đối chiếu) | 28800 (`funding_period_hours × 3600`) | **0** | `Model = FundingContinuous`; rate yết cho cửa sổ 8h có sẵn — không cần suy từ index (§3.3) |
+| Kraken | **`relative_funding_rate`** | 3600 (ngữ nghĩa sàn, ghim trong builder — xem chú thích tại `kraken_funding.go`) | `next_funding_rate_time` **dùng thẳng — đã là mốc tuyệt đối** (sửa 2026-09-03, §3.3⑥) | Rate là **mỗi-1h, dùng nguyên** — `RatePer8hFrac = ×8` (sửa 2026-09-03, §3.2②) |
+| Hyperliquid | `funding` | `fundingIntervalHours × 3600` từ `predictedFundings` (sàn tự khai, =1h) | `nextFundingTime` từ `predictedFundings` | Field API đã là rate/1h (đã ÷8 — §3.3⑤) |
+| Paradex | `funding_rate` (+ funding index đối chiếu) | `funding_period_hours × 3600` (=28800) — là **cửa sổ yết**, không phải chu kỳ settle | **0** | `Model = FundingContinuous`; rate yết cho cửa sổ 8h có sẵn — không cần suy từ index (§3.3④) |
 
-### 4.4. Refactor kèm theo
+### 4.4. Refactor kèm theo — ✅ xong
 
-Signature connector hiện nhận 3 channel và được gọi ở 10 chỗ ([main.go:357-372](../main.go#L357-L372)). Thêm channel thứ 4 làm signature phình to. Gom lại:
-
-```go
-type Feeds struct {
-    Price     chan<- PriceData
-    Orderbook chan<- OrderbookData
-    Trade     chan<- TradeData
-    Funding   chan<- FundingData
-}
-
-func ConnectBinanceFutures(symbols []string, f Feeds)
-```
+Dự kiến ban đầu: gom 3 channel thành `Feeds` để channel thứ 4 không phình
+signature. Bước 1.5 đã gom (kèm `Ctx` và `Conn`); Bước 2.2 thêm đúng một field
+`Funding chan<- FundingData` + `SendFunding` (cùng ngữ nghĩa bỏ-cuộc-khi-huỷ
+với `SendPrice`) và **không đổi chữ ký connector nào**. Scanner nhận qua
+`fundingChan`, giữ bản ghi mới nhất theo symbol × source làm điểm thu cho
+2.6 (persistence) và 2.7 (dashboard).
 
 ---
 
@@ -420,6 +440,7 @@ Tên endpoint và cấu trúc field **có thay đổi**. Cấu trúc dữ liệu
 | Binance `fundingRate`, `fundingInfo`, `markPrice` fields | ✅ Docs chính thức + đo 2026-09-03 (spacing settle khớp `fundingInfo`) |
 | Bybit `fundingInterval` (phút), snapshot+delta, lotSizeFilter | ✅ Docs chính thức + đo 2026-09-03 (480 phút = `fundingIntervalHour` 8h) |
 | Kraken settle mỗi 1h, `relative_funding_rate` là rate mỗi-1h | ✅ Spec hợp đồng + đo 2026-09-03 — **bản cũ ghi "realize 8h, chia 8" là SAI**, xem §3.2② |
+| Kraken WS `next_funding_rate_time` là epoch ms tuyệt đối | ✅ Hai probe WS độc lập 2026-09-03 — **bản cũ ghi "ms còn lại" là SAI** (chép theo mô tả field của docs sàn, mâu thuẫn với chính sample của nó), xem §3.3⑥ |
 | Hyperliquid funding 1h, field API đã ÷8 | ✅ Sàn tự khai interval qua `predictedFundings` (`fundingIntervalHours: 1`, đo 2026-09-03) + docs; vế "đã ÷8" canh gác bởi kiểm biên độ ≥5× |
 | OKX `fundingTime` vs `nextFundingTime` | ✅ Đo 2026-09-03: `ts < fundingTime < nextFundingTime`, cách nhau đúng 8h |
 | Gate `funding_interval` = 28800 giây | ✅ Đo 2026-09-03: 28800, `funding_next_apply` epoch giây tròn giờ |
