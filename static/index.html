@@ -258,9 +258,10 @@
 
         .opportunities-table-container {
             flex: 1;
-            overflow: hidden;
-            display: flex;
-            flex-direction: column;
+            /* One scroll surface for BOTH axes. Header and body share a single
+               table, so a horizontal scroll moves them together - the split
+               tables this replaces could not keep their columns aligned. */
+            overflow: auto;
         }
 
         .opportunities-table {
@@ -280,6 +281,7 @@
 
         .opportunities-table th {
             padding: 8px 6px;
+            white-space: nowrap;
             text-align: left;
             font-weight: bold;
             color: #888;
@@ -349,6 +351,7 @@
             padding: 6px;
             border-right: 1px solid #222;
             font-family: 'JetBrains Mono', monospace;
+            white-space: nowrap; /* full rows scroll horizontally instead of clipping */
         }
 
         .opportunities-table td:last-child {
@@ -364,6 +367,22 @@
             color: #ff6b6b;
             font-weight: bold;
             text-align: right;
+        }
+
+        /* Sign-colored: the after-fee column. Positive is the only number on
+           this panel a trade could actually keep, so it is the only green one;
+           the gross bands above it stay in the warm palette. */
+        .spread-cell-value.up {
+            color: #00ff88;
+        }
+
+        .spread-cell-value.down {
+            color: #ff4444;
+        }
+
+        .spread-cell-value.neutral {
+            color: #667788;
+            font-weight: normal;
         }
 
         .spread-cell-value.high {
@@ -393,12 +412,6 @@
             color: #666;
             font-size: 10px;
             text-align: center;
-        }
-
-        .opportunities-table-body {
-            flex: 1;
-            overflow-y: auto;
-            overflow-x: hidden;
         }
 
         .opportunities-empty {
@@ -773,7 +786,7 @@
                     <div class="opportunities-stats" id="opportunitiesStats">0 alerts</div>
                     <button class="clear-opportunities" id="clearOpportunities">Clear</button>
                 </div>
-                <div class="opportunities-table-container">
+                <div class="opportunities-table-container scrollbar">
                     <table class="opportunities-table">
                         <thead>
                             <tr>
@@ -787,16 +800,12 @@
                                 <th class="sortable" data-sort="detected_at_ms">Time</th>
                             </tr>
                         </thead>
+                        <tbody id="opportunitiesTableBody">
+                            <tr>
+                                <td colspan="8" class="opportunities-empty">No alerts yet...</td>
+                            </tr>
+                        </tbody>
                     </table>
-                    <div class="opportunities-table-body scrollbar">
-                        <table class="opportunities-table">
-                            <tbody id="opportunitiesTableBody">
-                                <tr>
-                                    <td colspan="8" class="opportunities-empty">No alerts yet...</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
                 </div>
             </div>
 
