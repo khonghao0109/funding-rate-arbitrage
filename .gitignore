@@ -12,3 +12,4 @@ crypto-futures-arbitrage-scanner
 
 # CodeGraph index (local, machine-specific)
 .codegraph/
+.soak/
