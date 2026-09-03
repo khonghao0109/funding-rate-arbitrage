@@ -27,14 +27,20 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** 2 of 7 steps done. Step 1.0 froze the WebSocket JSON
+**Phase 1 — Hardening.** 3 of 7 steps done. Step 1.0 froze the WebSocket JSON
 contract for the whole phase — it is specified in
 [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
-phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added the staleness filter. The next task is
-step 1.2, separating spot from perpetual from oracle; the contract already has
-`cross_venue_groups[]`, `basis[]`, `oracle_deviation[]` and the
-`market_type`/`quote_asset`/`tradable` flags, and the dashboard already renders
-all three blocks, so 1.2 only changes how the backend groups sources.
+phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added
+the staleness filter; step 1.2 split the comparison into `perp_usdt`, `perp_usd`
+and `spot_usdt` groups, filled `basis[]` and `oracle_deviation[]`, and started
+collecting top-of-book quantities.
+
+The next task is **step 1.3, the trading-fee model**: create `internal/fees/`,
+fill `maker_fee_bps`/`taker_fee_bps` on `sourceRegistry` (0 today), fill
+`spread_after_fees_pct` (`null` today) in both the matrix cell and the alert, and
+move `meta.cost_basis.model` from `"none"` to `"taker_both_legs"`. Call the result
+**"after trading fees", never "net profit"** — slippage needs book depth, and step
+1.2 confirmed four of nine venues cannot even convert their top-of-book size yet.
 
 ---
 
@@ -138,9 +144,10 @@ frontend builds its source list, symbol selector and cost disclaimer from the
 venue's own clock and is 0 for the venues that publish none; a real measurement
 showed Binance's running 80ms *ahead* of ours, so differencing the two measures
 skew, not age. The scanner stamps `RecvAt` in exactly one place
-([main.go](main.go) `updatePrice`) — never add a second. Staleness thresholds are
-per venue and measured; the numbers and how they were obtained are on
-`sourceRegistry` in [wire.go](wire.go).
+([internal/scanner/scanner.go](internal/scanner/scanner.go) `updatePrice`) — never
+add a second. Staleness thresholds are per venue and measured; the numbers and how
+they were obtained are on `sourceRegistry` in
+[internal/scanner/wire.go](internal/scanner/wire.go).
 
 ---
 
@@ -159,7 +166,7 @@ re-research these; do verify before writing the integration.
 | **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. |
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
-| **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`). Binance, Bybit, Hyperliquid use coins. |
+| **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`). Binance, Bybit, Hyperliquid use coins. ⚠️ Step 1.2 measured Kraken's *book* quantity looking coin-denominated (PF_XBTUSD 0.0929 with BTC near $77.5k), which contradicts this row. Unresolved — the instrument registry settles it; until then Kraken reports no quantity. |
 
 **Known bug:** [exchanges/hyperliquid.go:58](exchanges/hyperliquid.go#L58) uses
 `coin := symbol[:3]`. It works only because all four current symbols have
@@ -233,26 +240,35 @@ phase 1.
   venue.~~ Fixed in step 1.1: the field is `VenueTimeMs`, no venue fills it with
   the local clock, and `RecvAt` is stamped by the scanner in exactly one place
   (`updatePrice`). Staleness is measured only from `RecvAt`.
-- Top-of-book size is parsed and thrown away. `OrderbookData` carries only
-  prices, while the connectors already decode quantities (Binance `B`/`A`,
-  Bybit `v`, OKX `sz`). That is a free first-order liquidity filter going
-  unused.
-- Pyth is treated as a tradeable venue. `checkArbitrage` walks every entry in
-  the price map, so the scanner can report "buy on Pyth, sell on Binance",
-  which is meaningless — Pyth is an oracle.
-- `checkArbitrage` takes min/max across *all* sources, mixing spot and perp into
-  one comparison. That produces "opportunities" that cannot be executed — what
-  it is actually measuring, spot vs perp, is basis. The spread matrix now
-  declares itself `tradable: false` for this reason, but the **alerts table is
-  still built from the mixed comparison**; step 1.2 fixes the calculation.
+- ~~Top-of-book size is parsed and thrown away.~~ Collected in step 1.2 for the
+  five sources that publish it in **coin**: Binance futures/spot (`B`/`A`), Bybit
+  futures/spot (level index 1), Hyperliquid (`sz`). OKX, Gate and Kraken publish
+  **contract counts** and Paradex publishes no size at all, so those four stay 0.
+  **`0` means "not known", never "no liquidity"** — converting needs
+  `ctVal`×`ctMult` / `quanto_multiplier` from an instrument registry that arrives
+  in phase 2. The units were settled by measurement, not documentation; the
+  numbers are on `exchanges.OrderbookData`.
+- ~~Pyth is treated as a tradeable venue.~~ Fixed in step 1.2: an oracle never
+  enters a comparison group and can no longer appear at either end of an alert.
+- ~~`checkArbitrage` takes min/max across *all* sources, mixing spot and perp.~~
+  Fixed in step 1.2: two sources are compared only when they share a market type
+  **and** a quote asset. Alerts are raised inside one tradable group, so the
+  alerts table can no longer name an unexecutable pair. Spot vs perp on one venue
+  is reported separately as `basis[]`. The rules live in
+  [internal/scanner/grouping.go](internal/scanner/grouping.go).
 - No fee model anywhere.
 - Reconnect uses a fixed sleep with no backoff, no ping/keepalive, no read
   deadline.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
 - No `exchanges/testdata/` and no connector tests — golden tests need real
-  payloads captured from a running scanner first. `main` has 39 tests covering
-  the wire contract and the staleness filter (52.5% of statements); `exchanges/` is still at zero.
+  payloads captured from a running scanner first. `internal/scanner` has 63 tests
+  covering the wire contract, the staleness filter and the grouping rules (86.5%
+  of statements); `exchanges/` is still at zero. Step 1.6 closes that.
+- Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
+  distinguish them, so a delta deleting the top level (size `"0"`) is taken at
+  face value. This predates step 1.2 and affects the price as well as the new
+  quantity. Fixing it means merging deltas into cached state — trap 3 below.
 
 ---
 

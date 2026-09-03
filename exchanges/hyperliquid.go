@@ -167,12 +167,21 @@ func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, ord
 					// Convert coin back to symbol format (BTC -> BTCUSDT)
 					symbol := l2BookData.Coin + "USDT"
 
+					// sz was decoded into HyperliquidLevel and dropped. A size
+					// that will not parse leaves 0 ("not known") rather than
+					// discarding a good price. Unit is base coin, see
+					// OrderbookData.
+					bidQtyCoin, _ := strconv.ParseFloat(l2BookData.Levels[0][0].Size, 64)
+					askQtyCoin, _ := strconv.ParseFloat(l2BookData.Levels[1][0].Size, 64)
+
 					orderbookData := OrderbookData{
-						Symbol:      symbol,
-						Source:      "hyperliquid_futures",
-						BestBid:     bestBid,
-						BestAsk:     bestAsk,
-						VenueTimeMs: l2BookData.Time,
+						Symbol:         symbol,
+						Source:         "hyperliquid_futures",
+						BestBid:        bestBid,
+						BestAsk:        bestAsk,
+						VenueTimeMs:    l2BookData.Time,
+						BestBidQtyCoin: bidQtyCoin,
+						BestAskQtyCoin: askQtyCoin,
 					}
 
 					orderbookChan <- orderbookData

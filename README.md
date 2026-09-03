@@ -43,15 +43,18 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | Tính năng | Mô tả |
 |---|---|
 | **10 luồng dữ liệu real-time** | 7 sàn futures + 2 sàn spot + 1 oracle, mỗi luồng một goroutine riêng |
-| **Ma trận spread** | Chênh lệch từng cặp sàn, tô màu khi vượt ngưỡng |
-| **Cảnh báo cơ hội** | Phát hiện khoảng cách giá bất thường, có throttle chống spam |
+| **Ma trận spread tách nhóm** | Ba khối riêng — perpetual quote USDT, perpetual quote USD, spot quote USDT. Hai sàn chỉ được so với nhau khi **cùng loại thị trường và cùng đồng quote** |
+| **Cảnh báo cơ hội** | Phát hiện khoảng cách giá bất thường, có throttle chống spam. Chỉ sinh **trong một nhóm**, nên không bao giờ nêu một cặp không thực thi được |
 | **Mid-price chuẩn** | `(best bid + best ask) / 2` thay vì giá khớp lệnh cuối |
 | **Biểu đồ live** | TradingView Lightweight Charts, nhiều sàn trên cùng một khung |
 | **Tự điều chỉnh số thập phân** | Theo từng tài sản và vùng giá |
 | **Tự kết nối lại** | Mỗi sàn tự reconnect khi rớt WebSocket |
-| **Nói rõ số đang hiển thị là gì** | Dashboard ghi thẳng chi phí nào đã trừ và chưa trừ; khối ma trận tự đánh dấu **"tham chiếu"** vì còn trộn spot, perp và oracle |
+| **Nói rõ số đang hiển thị là gì** | Dashboard ghi thẳng chi phí nào đã trừ và chưa trừ. Nguồn bị loại khỏi so sánh đều kèm lý do (oracle, dữ liệu cũ, không có nguồn cùng loại để so) thay vì lặng lẽ biến mất |
 | **Lọc dữ liệu cũ** | Sàn ngừng gửi quá ngưỡng riêng của nó bị loại khỏi so sánh và hiện nhãn **CŨ** / **MẤT KẾT NỐI**. Ngưỡng đo từ dữ liệu thật, 10–20s tuỳ sàn |
 | **Dashboard tự dựng theo máy chủ** | Danh sách nguồn, màu, nhãn và danh sách cặp đến từ message `meta`, không hardcode trong JavaScript |
+| **Basis spot ↔ perp** | Chênh lệch spot với perpetual **cùng một sàn** — nguyên liệu của chiến lược funding, tính riêng chứ không trộn vào ma trận chéo sàn |
+| **Đối chiếu oracle** | Độ lệch từng sàn so với Pyth, chỉ tham chiếu, không bao giờ sinh cảnh báo. Dòng nào lệch đồng quote đều được gắn nhãn |
+| **Khối lượng đỉnh sổ** | Thu ở 5/9 nguồn báo bằng coin. Bốn sàn báo bằng contract để `0` — nghĩa là **chưa biết**, không phải không có thanh khoản |
 
 ---
 
@@ -64,10 +67,9 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | **Mô hình phí** | Số hiển thị là **spread thô**, chưa trừ phí maker/taker, chưa trừ slippage. Chưa dùng để ra quyết định vốn được |
 | **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
 | **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
-| **Tách spot / perp** | Logic hiện so sánh min/max trên *toàn bộ* nguồn, trộn lẫn spot với perp |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | Mới có cho hợp đồng WebSocket và bộ lọc dữ liệu cũ (39 test). Connector chưa có test nào, chưa có `exchanges/testdata/` |
-| **Tách oracle khỏi cảnh báo** | Ma trận đã đánh dấu là tham chiếu, nhưng **bảng cảnh báo vẫn có thể nêu Pyth** — Pyth là oracle, không mua bán được. Sửa ở Bước 1.2 |
+| **Test tự động** | Mới có cho hợp đồng WebSocket, bộ lọc dữ liệu cũ và luật chia nhóm (63 test, 86,5% câu lệnh trong `internal/scanner`). Connector chưa có test nào, chưa có `exchanges/testdata/` |
+| **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract; chưa có instrument registry để nhân `ctVal`/`quanto_multiplier`, nên bốn sàn chưa có số thanh khoản. Xếp hạng cơ hội theo độ sâu phải chờ GĐ 2 |
 
 Toàn bộ các mục trên đều đã có kế hoạch xử lý theo giai đoạn trong [docs/PLAN.md](docs/PLAN.md).
 
@@ -86,7 +88,7 @@ Lộ trình chia **9 giai đoạn / 41 bước**:
 | GĐ | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
-| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (2/7) |
+| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (3/7) |
 | 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |

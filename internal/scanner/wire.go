@@ -155,24 +155,6 @@ var sourceOrder = func() map[string]int {
 	return order
 }()
 
-// sortSources orders sources by their position in the registry. Anything not in
-// the registry sorts last, alphabetically, so an unregistered source is visible
-// rather than silently dropped.
-func sortSources(sources []string) {
-	sort.Slice(sources, func(i, j int) bool {
-		oi, iKnown := sourceOrder[sources[i]]
-		oj, jKnown := sourceOrder[sources[j]]
-		switch {
-		case iKnown && jKnown:
-			return oi < oj
-		case iKnown != jKnown:
-			return iKnown
-		default:
-			return sources[i] < sources[j]
-		}
-	})
-}
-
 // sortExcluded keeps the exclusion list in registry order so it does not
 // reshuffle between messages.
 func sortExcluded(excluded []wireExcludedSource) {
@@ -296,16 +278,16 @@ type wirePricePoint struct {
 	AgeMs       int64   `json:"age_ms"`        // -1 when not measurable
 	Status      string  `json:"status"`
 
-	// Top of book. Reserved by step 1.0 and filled by step 1.2, which stops
-	// discarding the quantities Binance, Bybit and OKX already parse.
+	// Top of book. Reserved by step 1.0 and filled by step 1.2.
 	//
 	// This is a first-order liquidity filter only: it says what is available at
 	// the best price, not what a $60k order would actually fill at. Full depth
 	// arrives over REST at step 2.7. See PLAN.md §7.4.
 	//
-	// 0 means "not known", which at step 1.0 is every source. Quantities are in
-	// coin, not contracts - OKX, Gate and Kraken denominate in contracts and the
-	// connector must convert before filling these.
+	// 0 means "not known", NOT "no liquidity". Quantities are in coin, never in
+	// contracts: OKX, Gate, Kraken and Paradex leave them 0 because converting
+	// their contract counts needs an instrument registry that does not exist
+	// yet. See exchanges.OrderbookData for the measurements behind that.
 	BestBid        float64 `json:"best_bid"`
 	BestAsk        float64 `json:"best_ask"`
 	BestBidQtyCoin float64 `json:"best_bid_qty_coin"`
@@ -369,6 +351,12 @@ type wireOracleDeviation struct {
 	OracleSource string  `json:"oracle_source"`
 	Source       string  `json:"source"`
 	DeviationPct float64 `json:"deviation_pct"`
+
+	// QuoteAssetMismatch says the venue and the oracle do not quote in the same
+	// asset, so the deviation carries a currency spread on top of the venue's
+	// own drift. Added by step 1.2 with a documented default of false; the
+	// contract permits adding a field, never reshaping one. See WS-CONTRACT §5.3.
+	QuoteAssetMismatch bool `json:"quote_asset_mismatch"`
 }
 
 // wireExcludedSource explains why a source with a price is absent from every
@@ -398,10 +386,11 @@ type wireOpportunity struct {
 	Symbol string `json:"symbol"`
 	// Kind is cross_venue | basis.
 	//
-	// NOT YET ENFORCED: checkArbitrage still scans every source, so an oracle
-	// can appear as buy_source or sell_source today. Step 1.2 is what restricts
-	// this to tradable sources; until then the alerts table can show a pair that
-	// cannot be executed.
+	// Only cross_venue is ever emitted: an alert is raised inside one tradable
+	// group, so both sources share a market type and a quote asset and an oracle
+	// can never appear at either end. A basis is reported in wireSpreads.Basis
+	// and deliberately raises no alert - it is the funding trade's input, not an
+	// arbitrage.
 	Kind       string `json:"kind"`
 	GroupID    string `json:"group_id"`
 	BuySource  string `json:"buy_source"`
@@ -485,16 +474,15 @@ func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string
 			}
 
 			points[source] = wirePricePoint{
-				Price:       point.Price,
-				VenueTimeMs: point.VenueTimeMs,
-				RecvAtMs:    recvAtMs,
-				AgeMs:       ageMs,
-				Status:      priceStatus(point, staleAfter(source), now),
-				// Top of book is not collected yet; step 1.2 fills these.
-				BestBid:        0,
-				BestAsk:        0,
-				BestBidQtyCoin: 0,
-				BestAskQtyCoin: 0,
+				Price:          point.Price,
+				VenueTimeMs:    point.VenueTimeMs,
+				RecvAtMs:       recvAtMs,
+				AgeMs:          ageMs,
+				Status:         priceStatus(point, staleAfter(source), now),
+				BestBid:        point.BestBid,
+				BestAsk:        point.BestAsk,
+				BestBidQtyCoin: point.BestBidQtyCoin,
+				BestAskQtyCoin: point.BestAskQtyCoin,
 			}
 		}
 		out.Prices[symbol] = points
@@ -550,74 +538,56 @@ func spreadGrossPct(buyPrice, sellPrice float64) float64 {
 
 // newWireSpreads builds the spread message for one symbol.
 //
-// Step 1.0 emits a single group holding every source, which reproduces today's
-// matrix exactly. That group is marked tradable=false because it still mixes
-// spot, perpetual and an oracle into one comparison — the mix step 1.2 exists to
-// separate. The frontend already iterates the group array, so step 1.2 splits
-// the groups without touching app.js again.
+// The three blocks are deliberately separate calculations, not three views of
+// one number: a cross-venue spread is executable, a basis is the funding trade's
+// input, and an oracle deviation is a reference. Step 1.0 shipped a single group
+// holding every source because the grouping rules did not exist yet; step 1.2
+// replaced it with one group per (market type, quote asset). The frontend
+// already iterated the array, so it needed no change.
 func newWireSpreads(symbol string, sourcePrices map[string]float64, excluded []wireExcludedSource, nowMs int64) wireSpreads {
-	if excluded == nil {
-		excluded = []wireExcludedSource{}
-	}
-	sortExcluded(excluded)
+	groups, groupingExcluded := partitionSources(sourcePrices)
 
-	// The builder does not trust its caller to have filtered: an unusable price
-	// reaching here would list the source with a column of meaningless zeros.
-	sources := make([]string, 0, len(sourcePrices))
-	for source, price := range sourcePrices {
-		if !isUsablePrice(price) {
-			continue
-		}
-		sources = append(sources, source)
-	}
-	sortSources(sources)
+	// Copy before appending: the caller's slice must not grow under it.
+	allExcluded := make([]wireExcludedSource, 0, len(excluded)+len(groupingExcluded))
+	allExcluded = append(allExcluded, excluded...)
+	allExcluded = append(allExcluded, groupingExcluded...)
+	sortExcluded(allExcluded)
 
-	matrix := make(map[string]map[string]wireSpreadCell, len(sources))
-	for _, buySource := range sources {
-		row := make(map[string]wireSpreadCell, len(sources)-1)
-		for _, sellSource := range sources {
-			if buySource == sellSource {
-				continue
-			}
-			row[sellSource] = wireSpreadCell{
-				SpreadGrossPct:     spreadGrossPct(sourcePrices[buySource], sourcePrices[sellSource]),
-				SpreadAfterFeesPct: nil,
-			}
-		}
-		matrix[buySource] = row
+	crossVenue := make([]wireCrossVenueGroup, 0, len(groups))
+	for _, group := range groups {
+		crossVenue = append(crossVenue, wireCrossVenueGroup{
+			GroupID:    group.GroupID,
+			LabelVI:    group.LabelVI,
+			MarketType: group.MarketType,
+			QuoteAsset: group.QuoteAsset,
+			Tradable:   group.Tradable,
+			NoteVI:     group.NoteVI,
+			Sources:    group.Sources,
+			Matrix:     buildMatrix(group.Sources, sourcePrices),
+		})
 	}
 
 	return wireSpreads{
-		Type:         "spreads",
-		V:            wireVersion,
-		ServerTimeMs: nowMs,
-		Symbol:       symbol,
-		CrossVenueGroups: []wireCrossVenueGroup{{
-			GroupID:    "all",
-			LabelVI:    "Tất cả nguồn",
-			MarketType: "unknown",
-			QuoteAsset: "",
-			Tradable:   false,
-			NoteVI: "Khối này còn trộn spot, perpetual và oracle vào cùng một so sánh, " +
-				"nên chưa phải cơ hội thực thi được. Bước 1.2 tách thành các khối riêng.",
-			Sources: sources,
-			Matrix:  matrix,
-		}},
-		Basis:           []wireBasis{},
-		OracleDeviation: []wireOracleDeviation{},
-		ExcludedSources: excluded,
+		Type:             "spreads",
+		V:                wireVersion,
+		ServerTimeMs:     nowMs,
+		Symbol:           symbol,
+		CrossVenueGroups: crossVenue,
+		Basis:            buildBasis(sourcePrices),
+		OracleDeviation:  buildOracleDeviation(sourcePrices),
+		ExcludedSources:  allExcluded,
 	}
 }
 
 // newWireOpportunity builds one detected opportunity. The identifier is derived
 // from the pair and the instant rather than generated in the browser, so the same
 // event keeps the same identity across reconnects and future persistence.
-func newWireOpportunity(symbol, buySource, sellSource string, buyPrice, sellPrice float64, detectedAtMs int64) wireOpportunity {
+func newWireOpportunity(symbol, groupID, buySource, sellSource string, buyPrice, sellPrice float64, detectedAtMs int64) wireOpportunity {
 	return wireOpportunity{
-		ID:                 fmt.Sprintf("%s|all|%s|%s|%d", symbol, buySource, sellSource, detectedAtMs),
+		ID:                 fmt.Sprintf("%s|%s|%s|%s|%d", symbol, groupID, buySource, sellSource, detectedAtMs),
 		Symbol:             symbol,
 		Kind:               "cross_venue",
-		GroupID:            "all",
+		GroupID:            groupID,
 		BuySource:          buySource,
 		SellSource:         sellSource,
 		BuyPrice:           buyPrice,

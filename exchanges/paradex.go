@@ -116,6 +116,11 @@ func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbo
 				}
 
 				// Send orderbook data
+				// BestBidQtyCoin/BestAskQtyCoin stay 0: the markets_summary
+				// channel this connector subscribes to publishes a bid and an
+				// ask price and no size at all, so there is nothing to collect
+				// here. A depth channel would be needed, and phase 2 takes book
+				// depth over REST instead - see docs/PLAN.md §7.4.
 				orderbookChan <- OrderbookData{
 					Symbol:  symbol,
 					Source:  "paradex_futures",

@@ -86,11 +86,26 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 					continue
 				}
 
+				// Each level is [price, size]; only index 0 was read before, so
+				// the size was decoded and dropped. A malformed level must not
+				// discard the price, so a missing or unparseable size is left at
+				// 0 - which means "not known". Unit is base coin, see
+				// OrderbookData.
+				var bidQtyCoin, askQtyCoin float64
+				if len(orderbookMsg.Data.Bids[0]) > 1 {
+					bidQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Bids[0][1], 64)
+				}
+				if len(orderbookMsg.Data.Asks[0]) > 1 {
+					askQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Asks[0][1], 64)
+				}
+
 				orderbookData := OrderbookData{
-					Symbol:  orderbookMsg.Data.Symbol,
-					Source:  "bybit_futures",
-					BestBid: bidPrice,
-					BestAsk: askPrice,
+					Symbol:         orderbookMsg.Data.Symbol,
+					Source:         "bybit_futures",
+					BestBid:        bidPrice,
+					BestAsk:        askPrice,
+					BestBidQtyCoin: bidQtyCoin,
+					BestAskQtyCoin: askQtyCoin,
 					// This connector does not parse a venue timestamp out of this
 					// message. Writing the local clock here instead would report our
 					// own time as the venue's and make a dead feed look current
@@ -219,11 +234,26 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 					continue
 				}
 
+				// Each level is [price, size]; only index 0 was read before, so
+				// the size was decoded and dropped. A malformed level must not
+				// discard the price, so a missing or unparseable size is left at
+				// 0 - which means "not known". Unit is base coin, see
+				// OrderbookData.
+				var bidQtyCoin, askQtyCoin float64
+				if len(orderbookMsg.Data.Bids[0]) > 1 {
+					bidQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Bids[0][1], 64)
+				}
+				if len(orderbookMsg.Data.Asks[0]) > 1 {
+					askQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Asks[0][1], 64)
+				}
+
 				orderbookData := OrderbookData{
-					Symbol:  orderbookMsg.Data.Symbol,
-					Source:  "bybit_spot",
-					BestBid: bidPrice,
-					BestAsk: askPrice,
+					Symbol:         orderbookMsg.Data.Symbol,
+					Source:         "bybit_spot",
+					BestBid:        bidPrice,
+					BestAsk:        askPrice,
+					BestBidQtyCoin: bidQtyCoin,
+					BestAskQtyCoin: askQtyCoin,
 					// This connector does not parse a venue timestamp out of this
 					// message. Writing the local clock here instead would report our
 					// own time as the venue's and make a dead feed look current

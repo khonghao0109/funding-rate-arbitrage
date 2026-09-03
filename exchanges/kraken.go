@@ -44,6 +44,14 @@ func processKrakenOrderbook(productID string, orderBook *KrakenOrderBook, orderb
 	// Get best ask (lowest price in asks)
 	bestAsk := orderBook.Asks[0].Price
 
+	// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0. The book
+	// entries do carry a Qty, and measured 2026-09-03 it looks coin
+	// denominated (PF_XBTUSD 0.0929 with BTC near $77.5k, PF_XRPUSD 95000) -
+	// but docs/DATA-REQUIREMENTS.md §3 records Kraken as denominating in
+	// contracts, and a field named ...Coin must not be filled from a
+	// measurement that contradicts the survey. The instrument registry
+	// (internal/instruments, phase 2) settles which is right; until then 0
+	// means "not known".
 	orderbookData := OrderbookData{
 		Symbol:  symbol,
 		Source:  "kraken_futures",

@@ -41,7 +41,7 @@ tại trên wire nhưng đang mang giá trị mặc định.
 | `prices[sym][src].status` | ⬜ `unknown` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `prices[sym][src].age_ms` | ⬜ `-1` | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `prices[sym][src].best_bid` / `best_ask` | ⬜ `0` | ⬜ | ✅ | ✅ | ✅ | ✅ |
-| `prices[sym][src].best_bid_qty_coin` / `best_ask_qty_coin` | ⬜ `0` | ⬜ | ✅ | ✅ | ✅ | ✅ |
+| `prices[sym][src].best_bid_qty_coin` / `best_ask_qty_coin` | ⬜ `0` | ⬜ | 🟡 5/9 nguồn | 🟡 | 🟡 | 🟡 |
 | `source_status[src].state` | ⬜ `unknown` | 🟡 suy ra từ im lặng | 🟡 | 🟡 | 🟡 | ✅ connector tự báo |
 | `source_status[src].reconnect_count` | ⬜ `0` | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
 | `source_status[src].uptime_sec` | ⬜ `0` | ⬜ | ⬜ | ⬜ | ⬜ | ✅ |
@@ -49,14 +49,14 @@ tại trên wire nhưng đang mang giá trị mặc định.
 | `meta.sources[].tradable` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `meta.sources[].stale_after_sec` | ⬜ `10` | ✅ | ✅ | ✅ | ✅(yaml) | ✅ |
 | `meta.sources[].taker_fee_bps` | ⬜ `0` | ⬜ | ⬜ | ✅ | ✅(yaml) | ✅ |
-| `spreads.cross_venue_groups[]` | ⬜ 1 nhóm `all`, `tradable:false` | ⬜ | ✅ tách nhóm | ✅ | ✅ | ✅ |
+| `spreads.cross_venue_groups[]` | ⬜ 1 nhóm `all`, `tradable:false` | ⬜ | ✅ `perp_usdt`/`perp_usd`/`spot_usdt` | ✅ | ✅ | ✅ |
 | `spreads.basis[]` | ⬜ `[]` | ⬜ | ✅ | ✅ | ✅ | ✅ |
 | `spreads.oracle_deviation[]` | ⬜ `[]` | ⬜ | ✅ | ✅ | ✅ | ✅ |
 | `*.spread_after_fees_pct` | ⬜ `null` | ⬜ | ⬜ | ✅ | ✅ | ✅ |
 | `meta.cost_basis` | ⬜ `model:"none"` | ⬜ | ⬜ | ✅ | ✅ | ✅ |
 | `meta.symbols` | ✅ (Go) | ✅ | ✅ | ✅ | ✅(yaml) | ✅ |
 
-🟡 = điền một phần.
+🟡 = điền một phần. `best_*_qty_coin` chỉ có ở 5 nguồn báo bằng coin (binance ×2, bybit ×2, hyperliquid); OKX, Gate, Kraken báo bằng contract và Paradex không có size — bốn nguồn đó giữ `0`, nghĩa là **chưa biết**, không phải **không có thanh khoản**. Xem [PLAN §1.2](PLAN.md).
 
 ---
 
@@ -220,12 +220,12 @@ coi oracle là nơi giao dịch được.
   "symbol": "BTCUSDT",
   "cross_venue_groups": [
     {
-      "group_id": "all",
-      "label_vi": "Tất cả nguồn",
-      "market_type": "unknown",
-      "quote_asset": "",
-      "tradable": false,
-      "note_vi": "Khối này còn trộn spot, perpetual và oracle …",
+      "group_id": "perp_usdt",
+      "label_vi": "Perpetual · quote USDT",
+      "market_type": "perp",
+      "quote_asset": "USDT",
+      "tradable": true,
+      "note_vi": "",
       "sources": ["binance_futures", "bybit_futures"],
       "matrix": {
         "binance_futures": {
@@ -236,7 +236,9 @@ coi oracle là nơi giao dịch được.
   ],
   "basis": [],
   "oracle_deviation": [],
-  "excluded_sources": []
+  "excluded_sources": [
+    { "source": "pyth", "reason": "oracle", "note_vi": "Oracle, không giao dịch được …" }
+  ]
 }
 ```
 
@@ -247,20 +249,23 @@ Một nhóm = một tập nguồn **so sánh được với nhau**: cùng `marke
 
 | Trường | Kiểu | Mặc định 1.0 | Ghi chú |
 |---|---|---|---|
-| `group_id` | string | `"all"` | 1.2: `perp_usdt`, `perp_usd`, `spot_usdt` |
+| `group_id` | string | `"all"` | Từ 1.2: `perp_usdt`, `perp_usd`, `spot_usdt` — `<market_type>_<quote viết thường>` |
 | `label_vi` | string | — | Tiêu đề hiển thị (tiếng Việt) |
 | `market_type` | string | `"unknown"` | Loại thị trường chung của nhóm |
 | `quote_asset` | string | `""` | Đồng quote chung |
-| `tradable` | bool | `false` ở 1.0 | `false` → nhóm là **tham chiếu**: FE vẫn tô màu theo dấu của số, nhưng **không** gắn nhãn "cơ hội" cho ô nào. Nhóm `all` của 1.0 là `false` vì nó còn trộn spot/perp/oracle |
-| `note_vi` | string | `""` | Cảnh báo riêng của nhóm. VD nhóm `perp_usd`: *"Chênh lệch này bao gồm cả chênh USD/USDT, không phải cơ hội thuần"* |
+| `tradable` | bool | `false` ở 1.0 | `false` → nhóm là **tham chiếu**: FE vẫn tô màu theo dấu của số, nhưng **không** gắn nhãn "cơ hội" cho ô nào, và backend **không sinh cảnh báo** từ nhóm đó. Từ 1.2 là `AND` cờ `tradable` của mọi thành viên: một nguồn không giao dịch được làm cả nhóm thành tham chiếu |
+| `note_vi` | string | `""` | Cảnh báo riêng của nhóm. Nhóm quote khác USDT luôn có: *"Nhóm này quote bằng USD chứ không phải USDT — không so trực tiếp với nhóm USDT…"*. Trong một nhóm mọi nguồn đã cùng quote, nên ghi chú nói về việc **so giữa hai nhóm**, không phải trong nhóm |
 | `sources` | []string | mọi nguồn | Thứ tự hiển thị, do backend quyết |
 | `matrix[buy][sell]` | object | — | Xem 5.4 |
 
 > **1.0 gửi đúng một nhóm `all` chứa toàn bộ nguồn**, đánh dấu `tradable: false`.
-> Ma trận và cách tô màu giữ nguyên như trước; điểm khác duy nhất nhìn thấy được là
-> ô vượt ngưỡng **không còn nhấp nháy cam như một cơ hội** — vì so sánh spot với
-> perp không phải cơ hội. Bước 1.2 tách thành nhiều nhóm, FE **không cần sửa** vì
-> đã lặp qua mảng.
+> **Từ 1.2 nhóm `all` không còn tồn tại**: mỗi nhóm là một cặp (`market_type`,
+> `quote_asset`) và ma trận **chỉ** được dựng trong nhóm.
+>
+> Một nhóm cần **ít nhất hai nguồn**. Nguồn lẻ loi bị loại với lý do `no_peer` và
+> **không có nhóm nào** được gửi cho nó — nên `cross_venue_groups: []` là trạng
+> thái **bình thường**, không phải lỗi. FE không được coi mảng rỗng là "chưa có dữ
+> liệu": `basis`, `oracle_deviation` và `excluded_sources` vẫn phải hiển thị.
 
 ### 5.2. `basis[]` — spot ↔ perp CÙNG MỘT SÀN
 
@@ -283,11 +288,29 @@ không phải USD — hai thứ này khác nhau khi quote là USD của Kraken.
 
 ### 5.3. `oracle_deviation[]` — Pyth ↔ sàn, CHỈ THAM CHIẾU
 
-`[]` ở Bước 1.0. Không bao giờ sinh cảnh báo từ khối này.
+`[]` ở Bước 1.0, điền từ 1.2. Không bao giờ sinh cảnh báo từ khối này.
 
 ```json
-{ "oracle_source": "pyth", "source": "binance_futures", "deviation_pct": 0.004 }
+{
+  "oracle_source": "pyth",
+  "source": "binance_futures",
+  "deviation_pct": 0.004,
+  "quote_asset_mismatch": true
+}
 ```
+
+`deviation_pct` = `(giá sàn - giá oracle) / giá oracle * 100`.
+
+`quote_asset_mismatch` **thêm ở Bước 1.2**, mặc định `false`. Pyth quote bằng USD
+còn 6/9 sàn quote bằng USDT, nên phần lớn dòng ở đây mang **cả chênh USD/USDT** chứ
+không chỉ độ lệch của sàn. Khác `basis[]` — nơi cặp lệch quote bị **loại hẳn** vì
+con số đó sẽ bị đọc nhầm là basis funding — khối này **giữ** dòng lệch quote, vì
+đối chiếu sàn với oracle chính là mục đích của nó; nhưng phải gắn cờ, và dashboard
+hiện nhãn "lệch quote". Trừ được chân USDT ra cần một giá tham chiếu USDT/USD, việc
+của Giai đoạn 2.
+
+Oracle cũ (stale) **không sinh dòng nào**: độ lệch đo với một giá đóng băng mô tả
+một thị trường đã đi mất.
 
 ### 5.4. Ô ma trận
 
@@ -312,13 +335,25 @@ một sàn biến mất khỏi ma trận thay vì im lặng bỏ đi. `[]` ở B
 { "source": "pyth", "reason": "oracle", "note_vi": "Oracle, không giao dịch được" }
 ```
 
-`reason`: `no_price` | `oracle` | `quote_mismatch` | `stale` | `disconnected` | `no_peer`.
+`reason`: `no_price` | `oracle` | `quote_mismatch` | `stale` | `disconnected` | `no_peer` | `unregistered`.
 
 `no_price` được dùng từ Bước 1.0: nguồn gửi giá không dùng được (≤ 0, NaN, vô cực) bị loại khỏi ma trận và phải nói ra lý do, không được im lặng biến mất.
 
 `stale` được dùng từ Bước 1.1: nguồn ngừng gửi quá ngưỡng của nó. Giá cuối **vẫn
 nằm trong `prices`** kèm `status: "stale"` để dashboard hiển thị được sàn đó đang
 chết — nó chỉ bị loại khỏi phép so sánh, không bị xoá khỏi màn hình.
+
+Bước 1.2 thêm ba lý do:
+
+| `reason` | Nghĩa |
+|---|---|
+| `oracle` | Nguồn là oracle. Không mua bán được ở đó nên nó **không bao giờ** vào một nhóm, dù dữ liệu mới đến đâu. Chỉ xuất hiện trong `oracle_deviation[]` |
+| `no_peer` | Không có nguồn nào khác cùng `market_type` và cùng `quote_asset` để so. Một nguồn đứng một mình không phải ma trận một cột |
+| `unregistered` | Nguồn không có trong registry: không biết loại thị trường lẫn đồng quote, nên không biết nó so được với cái gì. **Thêm ở 1.2** — trước đó dùng `quote_mismatch`, một khẳng định sai vì ta không biết quote của nó |
+
+Thứ tự ưu tiên khi một nguồn dính nhiều lý do: `no_price` → `stale` → `oracle` /
+`unregistered` → `no_peer`. Một oracle đã cũ báo `stale`, không báo `oracle`: cả
+hai đều đúng, nhưng cái đang thay đổi mới là cái đáng nói.
 
 ---
 
@@ -330,10 +365,10 @@ chết — nó chỉ bị loại khỏi phép so sánh, không bị xoá khỏi 
   "v": 1,
   "server_time_ms": 1756368000000,
   "opportunity": {
-    "id": "BTCUSDT|all|binance_futures|bybit_futures|1756368000000",
+    "id": "BTCUSDT|perp_usdt|binance_futures|bybit_futures|1756368000000",
     "symbol": "BTCUSDT",
     "kind": "cross_venue",
-    "group_id": "all",
+    "group_id": "perp_usdt",
     "buy_source": "binance_futures",
     "sell_source": "bybit_futures",
     "buy_price": 65000.10,
@@ -348,8 +383,8 @@ chết — nó chỉ bị loại khỏi phép so sánh, không bị xoá khỏi 
 | Trường | Kiểu | Mặc định 1.0 | Ghi chú |
 |---|---|---|---|
 | `id` | string | — | **Backend sinh.** FE hiện tự chế `Date.now() + Math.random()` — bỏ |
-| `kind` | string | `"cross_venue"` | `cross_venue` \| `basis`. ⚠️ **Chưa thi hành ở 1.0:** `checkArbitrage` vẫn duyệt mọi nguồn nên oracle vẫn có thể xuất hiện trong bảng cảnh báo. Bước 1.2 mới chặn |
-| `group_id` | string | `"all"` | Nhóm đã sinh ra cơ hội này |
+| `kind` | string | `"cross_venue"` | `cross_venue` \| `basis`. **Từ 1.2 chỉ `cross_venue` được gửi:** cảnh báo sinh trong một nhóm `tradable`, nên hai đầu luôn cùng `market_type` và cùng `quote_asset` và oracle không thể xuất hiện. `basis` là dữ liệu tham chiếu ở `spreads.basis[]`, **cố ý không sinh cảnh báo** |
+| `group_id` | string | `"all"` | Nhóm đã sinh ra cơ hội này. Từ 1.2 là `perp_usdt`/`perp_usd`/`spot_usdt`. Cooldown khoá theo `symbol|group|buy|sell`, nên cảnh báo của nhóm này không nuốt cảnh báo của nhóm kia |
 | `spread_gross_pct` | float | — | Thay cho `profit_pct` cũ |
 | `spread_after_fees_pct` | float\|null | `null` | Bước 1.3 |
 | `detected_at_ms` | int64 | — | Thay cho `timestamp` cũ |
@@ -371,7 +406,16 @@ chết — nó chỉ bị loại khỏi phép so sánh, không bị xoá khỏi 
 
 ## 8. ĐỔI HỢP ĐỒNG SAU NÀY
 
-Trong Giai đoạn 1: **không đổi**. Đó là toàn bộ lý do bước 1.0 tồn tại.
+Trong Giai đoạn 1: **không đổi shape**. Đó là toàn bộ lý do bước 1.0 tồn tại. Được
+phép **thêm** một trường kèm giá trị mặc định có ghi tài liệu; không bao giờ được
+đổi tên, đổi kiểu hay xoá một trường.
+
+Đã thêm theo đúng luật đó:
+
+| Bước | Thêm gì | Mặc định |
+|---|---|---|
+| 1.2 | `oracle_deviation[].quote_asset_mismatch` | `false` |
+| 1.2 | `excluded_sources[].reason` nhận thêm giá trị `unregistered` | — (FE hiện `note_vi`, không phụ thuộc danh sách giá trị) |
 
 Từ Giai đoạn 2 (`funding`, đăng ký symbol theo client): thêm message type mới và
 thêm trường mới có mặc định — **không** đổi tên và **không** đổi kiểu trường đang có.

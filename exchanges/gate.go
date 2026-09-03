@@ -170,6 +170,13 @@ func ConnectGateFutures(symbols []string, priceChan chan<- PriceData, orderbookC
 					timestamp = 0
 				}
 
+				// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0.
+				// GateBookTickerResult.BestBidSize/BestAskSize are int64, which
+				// cannot express a fractional coin amount at all, and measured
+				// 2026-09-03 BTC_USDT published 10099 with BTC near $77.5k - a
+				// contract count, not coins. Converting needs quanto_multiplier
+				// per contract, which arrives with the instrument registry
+				// (internal/instruments, phase 2).
 				orderbookData := OrderbookData{
 					Symbol:      standardSymbol,
 					Source:      "gate_futures",

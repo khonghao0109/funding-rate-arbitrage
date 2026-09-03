@@ -37,6 +37,16 @@ type PricePoint struct {
 	Price       float64
 	VenueTimeMs int64
 	RecvAt      time.Time
+
+	// Top of book behind Price, 0 when the source publishes none. Prices are in
+	// the source's own quote asset; quantities are in base coin and are 0 for
+	// every venue whose book is denominated in contracts, because converting
+	// needs an instrument registry that does not exist yet. 0 therefore means
+	// "not known", never "no liquidity" - see exchanges.OrderbookData.
+	BestBid        float64
+	BestAsk        float64
+	BestBidQtyCoin float64
+	BestAskQtyCoin float64
 }
 
 type Scanner struct {
@@ -118,6 +128,12 @@ func (s *Scanner) processOrderbooks() {
 			Source:      orderbookData.Source,
 			Price:       midPrice,
 			VenueTimeMs: orderbookData.VenueTimeMs,
+			// The book was parsed and thrown away before step 1.2. It is the
+			// first-order liquidity filter, and it costs no extra bandwidth.
+			BestBid:        orderbookData.BestBid,
+			BestAsk:        orderbookData.BestAsk,
+			BestBidQtyCoin: orderbookData.BestBidQtyCoin,
+			BestAskQtyCoin: orderbookData.BestAskQtyCoin,
 		}
 
 		s.updatePrice(priceData)
@@ -145,9 +161,13 @@ func (s *Scanner) updatePrice(data exchanges.PriceData) {
 		s.prices[data.Symbol] = make(map[string]PricePoint)
 	}
 	s.prices[data.Symbol][data.Source] = PricePoint{
-		Price:       data.Price,
-		VenueTimeMs: data.VenueTimeMs,
-		RecvAt:      recvAt,
+		Price:          data.Price,
+		VenueTimeMs:    data.VenueTimeMs,
+		RecvAt:         recvAt,
+		BestBid:        data.BestBid,
+		BestAsk:        data.BestAsk,
+		BestBidQtyCoin: data.BestBidQtyCoin,
+		BestAskQtyCoin: data.BestAskQtyCoin,
 	}
 	s.pricesMutex.Unlock()
 
@@ -226,7 +246,7 @@ func (s *Scanner) evaluate(symbol string, raiseAlerts bool) {
 		if !isUsablePrice(point.Price) {
 			excluded = append(excluded, wireExcludedSource{
 				Source: source,
-				Reason: "no_price",
+				Reason: reasonNoPrice,
 				NoteVI: "Sàn đang gửi giá không dùng được, đã loại khỏi so sánh",
 			})
 			continue
@@ -237,7 +257,7 @@ func (s *Scanner) evaluate(symbol string, raiseAlerts bool) {
 		if priceStatus(point, staleAfter(source), now) == statusStale {
 			excluded = append(excluded, wireExcludedSource{
 				Source: source,
-				Reason: "stale",
+				Reason: reasonStale,
 				NoteVI: fmt.Sprintf("Không nhận được dữ liệu quá %s, giá đã đóng băng",
 					staleAfter(source)),
 			})
@@ -261,65 +281,62 @@ func (s *Scanner) evaluate(symbol string, raiseAlerts bool) {
 		defer s.broadcastSpreads(symbol, pricesCopy, excluded, now)
 	}
 
-	if len(pricesCopy) < 2 {
+	if !raiseAlerts {
 		return
 	}
 
-	var minPrice, maxPrice float64
-	var minSource, maxSource string
-	first := true
-
-	for source, price := range pricesCopy {
-		if first {
-			minPrice = price
-			maxPrice = price
-			minSource = source
-			maxSource = source
-			first = false
+	// An opportunity only exists INSIDE a group. Taking the minimum and the
+	// maximum across every source - what this did before step 1.2 - compares
+	// spot with perpetual and a venue with an oracle, and reports a number that
+	// cannot be executed by anyone. See grouping.go.
+	groups, _ := partitionSources(pricesCopy)
+	for _, group := range groups {
+		if !group.Tradable {
 			continue
 		}
 
-		if price < minPrice {
-			minPrice = price
-			minSource = source
+		buySource, sellSource, ok := bestPair(group.Sources, pricesCopy)
+		if !ok {
+			continue
 		}
-		if price > maxPrice {
-			maxPrice = price
-			maxSource = source
+		buyPrice, sellPrice := pricesCopy[buySource], pricesCopy[sellSource]
+
+		// This is a GROSS spread: no fee, funding or slippage has been deducted.
+		// Step 1.3 adds the fee model; slippage needs order book depth and does
+		// not arrive before phase 2.
+		grossPct := spreadGrossPct(buyPrice, sellPrice)
+		if grossPct <= alertMinSpreadPct {
+			continue
 		}
-	}
 
-	// This is a GROSS spread: no fee, funding or slippage has been deducted.
-	// Step 1.3 adds the fee model; slippage needs order book depth and does not
-	// arrive before phase 2.
-	grossPct := spreadGrossPct(minPrice, maxPrice)
-
-	// Only alert if the gross spread is significant and we haven't alerted recently
-	if raiseAlerts && grossPct > alertMinSpreadPct {
-		opportunityKey := fmt.Sprintf("%s_%s_%s", symbol, minSource, maxSource)
+		// Keyed by group as well as by pair: a spot alert must not be swallowed
+		// by a perpetual alert's cooldown, and the same two venues can appear in
+		// two groups.
+		opportunityKey := fmt.Sprintf("%s|%s|%s|%s", symbol, group.GroupID, buySource, sellSource)
 
 		// Claiming the window must be atomic: two ingestion goroutines reaching
 		// here together would otherwise both pass the check and emit the same
 		// alert twice, with the same derived id.
 		s.opportunityMutex.Lock()
-		lastAlert, exists := s.lastOpportunity[opportunityKey]
-		claimed := !exists || now.Sub(lastAlert) > opportunityCooldown
+		lastAlert, seen := s.lastOpportunity[opportunityKey]
+		claimed := !seen || now.Sub(lastAlert) > opportunityCooldown
 		if claimed {
 			s.lastOpportunity[opportunityKey] = now
 		}
 		s.opportunityMutex.Unlock()
 
-		if claimed {
-			opportunity := newWireOpportunity(
-				symbol, minSource, maxSource, minPrice, maxPrice, now.UnixMilli(),
-			)
-			if s.onOpportunity != nil {
-				s.onOpportunity(opportunity)
-			}
-			s.broadcastOpportunity(opportunity)
+		if !claimed {
+			continue
 		}
-	}
 
+		opportunity := newWireOpportunity(
+			symbol, group.GroupID, buySource, sellSource, buyPrice, sellPrice, now.UnixMilli(),
+		)
+		if s.onOpportunity != nil {
+			s.onOpportunity(opportunity)
+		}
+		s.broadcastOpportunity(opportunity)
+	}
 }
 
 // broadcast writes one contract message to every connected client and drops the

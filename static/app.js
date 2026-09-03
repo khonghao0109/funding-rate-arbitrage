@@ -1198,7 +1198,7 @@ class FuturesArbitrageScanner {
         const container = document.getElementById('spreadsMatrix');
         const data = this.currentSpreads.get(this.currentSymbol);
 
-        if (!data || !data.groups || data.groups.length === 0) {
+        if (!data) {
             container.innerHTML = '<div class="loading">Waiting for price data...</div>';
             return;
         }
@@ -1206,16 +1206,28 @@ class FuturesArbitrageScanner {
         // One block per comparison group. A matrix is only ever built inside a
         // group, never across two, because sources in different groups are not
         // comparable - different market type or different quote asset.
-        const blocks = data.groups
+        const blocks = (data.groups || [])
             .map(group => this.renderSpreadGroup(group))
             .filter(html => html !== '');
 
+        // No group is a NORMAL state since step 1.2: a group needs two sources
+        // that share a market type and a quote asset, so a venue left alone is
+        // dropped as no_peer and no matrix remains. Returning here - which is
+        // what this did - would hide the basis, the oracle deviation and above
+        // all the excluded_sources list that says WHY the matrix is empty,
+        // leaving the panel reading "waiting for data" while data is arriving.
         if (blocks.length === 0) {
-            blocks.push('<div class="loading">No enabled sources with data</div>');
+            // Two different causes, and naming the wrong one sends the operator
+            // looking in the wrong place: the backend sent no group at all, or
+            // it sent groups whose every source the user has switched off.
+            const message = (data.groups || []).length > 0
+                ? 'Mọi nguồn trong các nhóm đang bị tắt ở bộ lọc nguồn phía trên.'
+                : 'Không có nhóm nào so sánh được: mỗi nhóm cần ít nhất hai nguồn '
+                  + 'cùng loại thị trường và cùng đồng quote. Lý do từng nguồn ở dưới.';
+            blocks.push('<div class="spread-group"><div class="spread-group-note">'
+                + message + '</div></div>');
         }
 
-        // These render nothing while the arrays are empty. They exist now so
-        // step 1.2 only has to start filling them - the whole point of 1.0.
         if (data.basis.length > 0) {
             blocks.push(this.renderBasisBlock(data.basis));
         }
@@ -1249,8 +1261,15 @@ class FuturesArbitrageScanner {
     renderOracleBlock(deviations) {
         const rows = deviations.map(d => {
             const pct = d.deviation_pct >= 0 ? `+${d.deviation_pct.toFixed(3)}%` : `${d.deviation_pct.toFixed(3)}%`;
+            // The oracle quotes in USD and most venues quote in USDT, so most of
+            // these numbers carry the USD/USDT spread on top of the venue's own
+            // drift. Rendering them all alike would present a mixed figure as a
+            // clean one.
+            const mismatch = d.quote_asset_mismatch
+                ? ' <span class="spread-group-tag">lệch quote</span>'
+                : '';
             return `<div class="spread-basis-row">
-                <span>${esc(this.formatSourceName(d.source))}</span>
+                <span>${esc(this.formatSourceName(d.source))}${mismatch}</span>
                 <span class="${d.deviation_pct >= 0 ? 'up' : 'down'}">${pct}</span>
             </div>`;
         }).join('');

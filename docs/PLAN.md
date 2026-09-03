@@ -67,15 +67,15 @@
 | 4 | **Mô hình phí** — không có dòng code nào tính phí (README đã sửa lại cho đúng, nay ghi rõ số hiển thị là spread thô) | Tín hiệu lợi nhuận là lợi nhuận thô, không phải ròng | GĐ 1 |
 | 5 | **Khái niệm vị thế / margin / PnL** | Không quản trị được rủi ro | GĐ 5 |
 | 6 | ~~**Lọc dữ liệu cũ (staleness)**~~ — ✅ xong ở GĐ 1.1: `RecvAt` do scanner đặt, ngưỡng theo từng sàn, giá cũ bị loại khỏi so sánh và hiển thị STALE | — | ✅ GĐ 1.1 |
-| 7 | **Tách bạch spot ↔ perp trong logic** — `main.go:107-135` lấy min/max trên toàn bộ source | Sinh "cơ hội" không thực thi được | GĐ 1 |
+| 7 | ~~**Tách bạch spot ↔ perp trong logic** — lấy min/max trên toàn bộ source~~ | ~~Sinh "cơ hội" không thực thi được~~ | ✅ **Bước 1.2** |
 | 8 | **Test tự động** — 🔄 25 test cho hợp đồng wire ở Bước 1.0; `exchanges/` và `testdata/` vẫn trống | Connector đổi định dạng không ai biết | GĐ 1.6 |
 | 9 | **Cấu hình** — symbol, ngưỡng, sàn đều hardcode | Không vận hành linh hoạt được | GĐ 1 |
 | 10 | **Alert ra ngoài** (Telegram/Discord) | Phải ngồi nhìn màn hình | GĐ 3 |
 | 11 | **Instrument metadata** (`stepSize`, `tickSize`, `minNotional`, contract size) | Không tính được size delta-neutral đúng — hai chân lệch nhau ngay lệnh đầu | GĐ 2 |
 | 12 | **Bảng ánh xạ spot↔perp có xác thực** | Nguy cơ mở vị thế lệch coin | GĐ 2 |
 | 13 | ~~**`Timestamp` mang hai nghĩa tuỳ sàn**~~ — ✅ xong ở GĐ 1.1: đổi thành `VenueTimeMs`, không sàn nào còn điền đồng hồ nội bộ (5 sàn đã sửa: Bybit, Kraken, Paradex, OKX, Gate) | — | ✅ GĐ 1.1 |
-| 14 | **Pyth bị tính như sàn giao dịch** trong `checkArbitrage` | Sinh "cơ hội" mua/bán trên oracle | GĐ 1.2 |
-| 15 | **Khối lượng đỉnh sổ bị vứt** — connector đã parse nhưng `OrderbookData` không có field | Không lọc được thanh khoản dù dữ liệu đã có sẵn miễn phí | GĐ 1.2 |
+| 14 | ~~**Pyth bị tính như sàn giao dịch** trong `checkArbitrage`~~ | ~~Sinh "cơ hội" mua/bán trên oracle~~ | ✅ **Bước 1.2** |
+| 15 | **Khối lượng đỉnh sổ** — đã thu ở 5/9 nguồn báo bằng coin | 4 sàn còn lại báo bằng contract, cần `ctVal`/`quanto_multiplier` | 🔄 **Bước 1.2** xong phần coin; phần contract → GĐ 2 (instruments) |
 
 ---
 
@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **2/7 bước** | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **3/7 bước** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -212,7 +212,7 @@ cảnh báo sinh từ giá đóng băng:     0
 - Ngưỡng mới chỉ đo trên 4 cặp lớn. Thêm cặp thanh khoản mỏng ở GĐ 2 sẽ cần đo lại hoặc chuyển sang ngưỡng thích ứng.
 - Lấy venue time thật cho Bybit/Kraken/Paradex vẫn chưa làm (nằm ngoài bước này theo PLAN); ba sàn đó hiện gửi `venue_time_ms: 0`.
 
-#### Bước 1.2 — Tách bạch Spot ↔ Perpetual ↔ Oracle
+#### Bước 1.2 — Tách bạch Spot ↔ Perpetual ↔ Oracle ✅
 - Thêm trường `MarketType` (`spot` / `perp` / `future` / `oracle`) thay vì suy ra từ hậu tố chuỗi.
 - 💰 **Thu khối lượng đỉnh sổ — đang miễn phí mà bị vứt.** `OrderbookData` chỉ có giá, trong khi Binance ([binance.go:30,32](../exchanges/binance.go#L30-L32)), Bybit ([bybit.go:19](../exchanges/bybit.go#L19)) và OKX ([okx.go:23](../exchanges/okx.go#L23)) đã parse sẵn khối lượng rồi bỏ đi. Thêm `BestBidQtyCoin` / `BestAskQtyCoin` → bộ lọc thanh khoản bậc một, không tốn thêm băng thông.
 - 🐛 **Loại Pyth khỏi so sánh giao dịch được.** `checkArbitrage` hiện duyệt toàn bộ `s.prices[symbol]`, nên scanner có thể báo *"mua ở Pyth, bán ở Binance"* — vô nghĩa vì Pyth là oracle không giao dịch được. `MarketType = oracle` chỉ dùng làm tham chiếu.
@@ -221,8 +221,66 @@ cảnh báo sinh từ giá đóng băng:     0
   - **Cross-venue spread**: perp↔perp hoặc spot↔spot, cùng quote (thực thi được)
   - **Basis**: spot↔perp *cùng sàn* (nền tảng cho GĐ 2)
   - **Oracle deviation**: Pyth ↔ sàn (chỉ tham chiếu)
-- Sửa `checkArbitrage` ([main.go:107-135](../main.go#L107-L135)).
+- Sửa `checkArbitrage` ([internal/scanner/scanner.go](../internal/scanner/scanner.go)).
 - **Nghiệm thu:** UI hiện 3 khối riêng; không còn cặp trộn spot/perp; Pyth không xuất hiện trong khối giao dịch được.
+
+**Đã làm (2026-09-03).** Quy tắc duy nhất: **hai nguồn chỉ được so với nhau khi cùng `market_type` VÀ cùng `quote_asset`**. Cài trong [internal/scanner/grouping.go](../internal/scanner/grouping.go), file mới, tách khỏi `wire.go` vì đây là logic quyết định *cái gì so được với cái gì*, không phải hình dạng message. Backend chia nhóm; **`app.js` không phải sửa vì đã lặp qua mảng nhóm từ 1.0** — trừ một lỗi frontend do chính bước này lộ ra (xem dưới).
+
+| Nhóm | Nguồn | `tradable` |
+|---|---|---|
+| `perp_usdt` | binance, bybit, okx, gate | ✅ |
+| `perp_usd` | hyperliquid, kraken, paradex | ✅ kèm ghi chú quote |
+| `spot_usdt` | binance_spot, bybit_spot | ✅ |
+| — | pyth | ❌ loại, lý do `oracle` |
+
+- **Cảnh báo sinh TRONG từng nhóm**, không còn min/max trên toàn bộ nguồn. Cooldown khoá theo `symbol|group|buy|sell` để cảnh báo spot không bị cảnh báo perp nuốt mất.
+- `basis[]`: spot ↔ perp **cùng sàn và cùng quote** (binance, bybit). `oracle_deviation[]`: từng sàn so với Pyth.
+- Nguồn lẻ loi trong nhóm của mình bị loại với lý do `no_peer` — nó không phải ma trận một cột, nó là nguồn không có gì để so.
+- `sourceMeta.Tradable` nay **thực sự được đọc**: một nguồn đánh dấu không giao dịch được làm cả nhóm thành tham chiếu, và luồng cảnh báo bỏ qua nhóm tham chiếu.
+
+**Đơn vị khối lượng được ĐO, không đoán.** Tài liệu của cả ba sàn đều render bằng JS nên không đọc được từ môi trường này — theo [CLAUDE.md luật 5](../CLAUDE.md) thì phải nói ra chứ không được đoán. Đo trực tiếp trên payload thật (BTC ≈ $77,5k, XRP ≈ $1,36):
+
+| Sàn | BTC | XRP | Kết luận |
+|---|---|---|---|
+| binance futures / spot | 7,943 / 16,408 | 92 867 / 20 375 | **coin** → điền |
+| bybit linear / spot | 4,944 / 0,458 | 8 884 / 58,8 | **coin** → điền |
+| hyperliquid | 1,655 | 45 968 | **coin** → điền |
+| okx swap | 1 182,68 | 334,52 | **contract** → để 0 |
+| gate futures | 10 099 (int) | 36 | **contract** → để 0 |
+| kraken | 0,0929 | 95 000 | mâu thuẫn khảo sát → để 0 |
+
+Khối lượng tỉ lệ nghịch với giá là số coin. OKX 1 182 BTC sẽ là đỉnh sổ $91M và XRP 334 coin sẽ là $456 — lệch vài bậc độ lớn, nên **để 0 thay vì quy đổi bằng phỏng đoán**. Quy đổi cần `ctVal`×`ctMult` (OKX) và `quanto_multiplier` (Gate) từ instrument registry, chưa có. **`0` nghĩa là "chưa biết", KHÔNG phải "không có thanh khoản"** — ghi rõ trong `exchanges.OrderbookData` và trên hợp đồng. Paradex không có gì để thu: kênh `markets_summary` chỉ có giá bid/ask, không có size.
+
+⚠️ **Kraken mâu thuẫn với khảo sát.** [DATA-REQUIREMENTS §3](DATA-REQUIREMENTS.md) ghi Kraken tính bằng contract, nhưng số đo (PF_XBTUSD 0,0929 với BTC ≈ $77,5k) trông như số coin. Không điền vào field tên `...Coin` dựa trên một phép đo mâu thuẫn với khảo sát — để 0, để instrument registry (GĐ 2) phân xử.
+
+**Nghiệm thu đã thực hiện** — chạy scanner thật 40 giây, bắt wire, kiểm bằng script:
+
+```
+3 khối riêng trên cả 4 symbol:  perp_usdt · perp_usd · spot_usdt
+ô ma trận trộn market_type/quote:  0
+cảnh báo (31 cái):  gọi tên pyth 0 · trộn market_type hoặc quote 0
+                    perp_usd 20 · perp_usdt 10 · spot_usdt 1
+bid < ask và mid == (bid+ask)/2:  đúng ở mọi nguồn có sổ
+đỉnh sổ: binance/bybit/hyperliquid có số; okx/gate/kraken/paradex = 0 như thiết kế
+```
+
+Dashboard kiểm bằng jsdom nạp `index.html` + `app.js` thật với payload vừa bắt: **11/11** khẳng định đạt, khối hiển thị đúng thứ tự `Perpetual · quote USDT`, `Perpetual · quote USD`, `Spot · quote USDT`, `Basis (spot ↔ perp cùng sàn)`.
+
+**Kiểm chứng đột biến** (phá code, xác nhận test chuyển đỏ): coi oracle như nguồn thường → đỏ; dồn mọi nguồn vào một nhóm → đỏ; vứt lại khối lượng đỉnh sổ → đỏ; tính cảnh báo trên toàn bộ nguồn như trước 1.2 → đỏ; khôi phục early-return của `app.js` → 5/11 khẳng định dashboard đỏ.
+
+**Bug được review tìm ra và sửa trong bước:**
+- 🐛 **`performSpreadsMatrixUpdate` return sớm khi không có nhóm nào** — và "không có nhóm" nay là **trạng thái bình thường** (nhóm cần 2 nguồn, nguồn lẻ bị loại `no_peer`). Hậu quả: dashboard hiện "Waiting for price data..." trong khi backend đang gửi cả `basis`, `oracle_deviation` lẫn danh sách `excluded_sources` — tức **giấu đi đúng lời giải thích vì sao ma trận rỗng**. Đây là chỗ duy nhất `app.js` phải sửa ở bước này, ngược với dự đoán của PLAN.
+- `sourceMeta.Tradable` chưa bao giờ được đọc; chỉ `market_type == oracle` được kiểm. Một nguồn không giao dịch được mà không phải oracle vẫn lọt vào nhóm tradable và bị gọi tên trong cảnh báo.
+- `oracle_deviation` không chặn lệch quote: Pyth quote USD, 6 sàn quote USDT, nên phần lớn số đo mang cả chênh USD/USDT. Thêm `quote_asset_mismatch` (mặc định `false`, hợp đồng cho phép **thêm** trường) và dashboard gắn nhãn "lệch quote". Giữ lại các dòng đó thay vì bỏ, vì đối chiếu sàn với oracle chính là mục đích của khối này.
+- Nguồn không có trong registry bị loại với lý do `quote_mismatch` — một khẳng định sai, vì ta không biết gì về nó kể cả quote. Thêm lý do `unregistered`.
+- Test `TestProcessOrderbooks_StoresTopOfBook` để rò goroutine, đua với `withRegistry` của test sau khi ghi vào `sourceRegistry` toàn cục. `-race` đỏ khoảng 1/3 lần chạy.
+- Thông báo trạng thái rỗng của `app.js` nói sai nguyên nhân khi người dùng tắt hết nguồn ở bộ lọc.
+
+**Phát hiện ngoài phạm vi — ghi nhận, chưa xử lý:**
+- ⚠️ **Bybit `orderbook.1` đẩy cả snapshot lẫn delta, connector không phân biệt.** Delta xoá mức đỉnh sổ mang size `"0"`, nay lên wire thành `best_bid_qty_coin: 0` tức "chưa biết". Đây là đúng bẫy số 3 trong [CLAUDE.md](../CLAUDE.md) và phải sửa bằng cách gộp delta vào state cache — thuộc về sửa connector Bybit, không thuộc bước này. Giá cũng chịu ảnh hưởng tương tự và đã sai từ trước bước này.
+- `partitionSources` chạy **hai lần mỗi tick** (một cho cảnh báo trong `evaluate`, một trong `newWireSpreads`), cộng `buildBasis` và `buildOracleDeviation`, tất cả trên đúng đường broadcast mà [luật 11](../CLAUDE.md) đã chỉ là nút thắt phía server. Chưa phải bug ở 9 nguồn × 4 cặp, nhưng nó chồng lên đúng điểm nóng → [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
+- Pyth vẫn **không gửi được gì** (`Pyth SSE connection closed` lặp mỗi 5s), nên `oracle_deviation` rỗng trong lần chạy thật và ngưỡng staleness của nó vẫn chưa đo được. Feed Pyth cần sửa riêng.
+- Hyperliquid báo đỉnh sổ lớn hơn hẳn các sàn khác (41 BTC ≈ $3,2M) vì `l2Book` gộp mức giá thô hơn `bookTicker`. So thanh khoản chéo sàn phải tính đến chuyện này → GĐ 2 khi dùng số này để xếp hạng.
 
 #### Bước 1.3 — Mô hình phí giao dịch
 - Tạo `internal/fees/` chứa bảng phí maker/taker theo sàn và loại thị trường (bậc mặc định, chưa VIP).
@@ -236,7 +294,7 @@ cảnh báo sinh từ giá đóng băng:     0
 - **Nghiệm thu:** thêm 1 cặp hoặc 1 sàn mới không cần sửa code Go **lẫn** JavaScript.
 
 #### Bước 1.5 — Kết nối bền bỉ + refactor `Feeds`
-- **Gộp refactor `Feeds` từ Bước 2.2 lên đây** — cả hai bước đều sửa chữ ký của 10 connector ([main.go:357-372](../main.go#L357-L372)), làm rời nhau là sửa hai lần:
+- **Gộp refactor `Feeds` từ Bước 2.2 lên đây** — cả hai bước đều sửa chữ ký của 10 connector ([cmd/scanner/main.go](../cmd/scanner/main.go)), làm rời nhau là sửa hai lần:
 
 ```go
 type Feeds struct {
@@ -665,7 +723,7 @@ Khối lượng đỉnh sổ không thay được độ sâu đầy đủ, nhưn
 
 | Cần gì | Bước |
 |---|---|
-| Khối lượng đỉnh sổ (miễn phí) | **1.0** (chỗ trong hợp đồng) + **1.2** (field) |
+| Khối lượng đỉnh sổ (miễn phí) | **1.0** (chỗ trong hợp đồng) + **1.2** (điền 5/9 nguồn báo bằng coin; 4 sàn báo bằng contract chờ instrument registry ở GĐ 2) |
 | Độ sâu REST định kỳ để xếp hạng | **2.7** |
 | Mô hình slippage từ độ sâu → APR ròng thật | **3.1** |
 | WS depth khi đang đặt lệnh | **4.4** |
@@ -695,7 +753,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   2/7 bước   ← ĐANG LÀM
+[  ] GĐ 1  Củng cố lõi                   3/7 bước   ← ĐANG LÀM
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -705,4 +763,4 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** Bước 1.2 — tách Spot ↔ Perpetual ↔ Oracle. Hợp đồng đã có sẵn `cross_venue_groups[]`, `basis[]`, `oracle_deviation[]` và cờ `tradable`/`market_type`/`quote_asset`; frontend đã render cả ba khối. Bước 1.2 chỉ đổi **cách backend chia nhóm**, không đổi shape và không sửa `app.js`.
+**Việc tiếp theo cụ thể:** Bước 1.3 — mô hình phí giao dịch. Tạo `internal/fees/`, điền `maker_fee_bps`/`taker_fee_bps` trong `sourceRegistry` (đang là 0), điền `spread_after_fees_pct` (đang là `null`) trong ô ma trận và trong cảnh báo, và đổi `meta.cost_basis.model` từ `"none"` sang `"taker_both_legs"`. ⚠️ Kết quả gọi là **"đã trừ phí giao dịch"**, KHÔNG phải "lợi nhuận ròng": slippage cần độ sâu sổ lệnh, mà bước 1.2 vừa xác nhận 4/9 sàn còn chưa quy đổi được cả khối lượng đỉnh sổ.

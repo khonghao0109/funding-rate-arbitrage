@@ -209,12 +209,14 @@ func TestCheckArbitrage_RepublishesMatrixWhenItShrinks(t *testing.T) {
 		if msg.Type != "spreads" {
 			continue
 		}
-		if len(msg.CrossVenueGroups) != 1 {
-			t.Fatalf("got %d groups, want 1", len(msg.CrossVenueGroups))
-		}
-		for _, source := range msg.CrossVenueGroups[0].Sources {
-			if source == "okx_futures" {
-				t.Error("the zero-priced source appeared in the matrix")
+		// One usable perp has nobody to compare against, so step 1.2 emits no
+		// group at all. What matters is that the message was still published:
+		// silence would leave the previous matrix frozen on screen.
+		for _, group := range msg.CrossVenueGroups {
+			for _, source := range group.Sources {
+				if source == "okx_futures" {
+					t.Errorf("the zero-priced source appeared in group %v", group.Sources)
+				}
 			}
 		}
 		return

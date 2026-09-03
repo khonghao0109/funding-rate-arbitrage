@@ -245,12 +245,27 @@ func TestCheckArbitrage_PublishesStaleAsTheReasonASourceIsMissing(t *testing.T) 
 		if err := json.Unmarshal(raw, &msg); err != nil {
 			t.Fatalf("unmarshal: %v", err)
 		}
-		if msg.Type != "spreads" || len(msg.ExcludedSources) == 0 {
+		// Before bybit arrives, binance is briefly the only source and is
+		// excluded as no_peer. That is a setup transient, not the case under
+		// test: wait for a message that reports something stale. If nothing ever
+		// does, the loop falls through to the Fatal below.
+		if msg.Type != "spreads" {
 			continue
 		}
-		for _, s := range msg.CrossVenueGroups[0].Sources {
-			if s == "binance_futures" {
-				t.Error("a stale source is still in the comparison matrix")
+		var sawStale bool
+		for _, e := range msg.ExcludedSources {
+			if e.Reason == "stale" {
+				sawStale = true
+			}
+		}
+		if !sawStale {
+			continue
+		}
+		for _, group := range msg.CrossVenueGroups {
+			for _, s := range group.Sources {
+				if s == "binance_futures" {
+					t.Error("a stale source is still in the comparison matrix")
+				}
 			}
 		}
 		for _, e := range msg.ExcludedSources {
@@ -357,8 +372,14 @@ func TestRefreshStaleness_ReexaminesASymbolNothingArrivesFor(t *testing.T) {
 		if json.Unmarshal(raw, &msg) != nil || msg.Type != "spreads" {
 			continue
 		}
-		if len(msg.CrossVenueGroups) > 0 && len(msg.CrossVenueGroups[0].Sources) > 0 {
-			continue // still the pre-silence matrix
+		var sawStale bool
+		for _, e := range msg.ExcludedSources {
+			if e.Reason == "stale" {
+				sawStale = true
+			}
+		}
+		if len(msg.CrossVenueGroups) > 0 || !sawStale {
+			continue // still the pre-silence matrix, or the lone-source transient
 		}
 		if len(msg.ExcludedSources) != 2 {
 			t.Errorf("excluded %d sources, want both", len(msg.ExcludedSources))

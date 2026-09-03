@@ -77,12 +77,20 @@ func ConnectBinanceFutures(symbols []string, priceChan chan<- PriceData, orderbo
 					continue
 				}
 
+				// A quantity that will not parse must not discard a good price:
+				// the book size is a liquidity filter, the price is the
+				// measurement. Unit is base coin - see OrderbookData.
+				bidQtyCoin, _ := strconv.ParseFloat(bookTicker.BestBidQty, 64)
+				askQtyCoin, _ := strconv.ParseFloat(bookTicker.BestAskQty, 64)
+
 				orderbookData := OrderbookData{
-					Symbol:      bookTicker.Symbol,
-					Source:      "binance_futures",
-					BestBid:     bidPrice,
-					BestAsk:     askPrice,
-					VenueTimeMs: bookTicker.EventTime,
+					Symbol:         bookTicker.Symbol,
+					Source:         "binance_futures",
+					BestBid:        bidPrice,
+					BestAsk:        askPrice,
+					VenueTimeMs:    bookTicker.EventTime,
+					BestBidQtyCoin: bidQtyCoin,
+					BestAskQtyCoin: askQtyCoin,
 				}
 
 				orderbookChan <- orderbookData
@@ -191,12 +199,20 @@ func ConnectBinanceSpot(symbols []string, priceChan chan<- PriceData, orderbookC
 					continue
 				}
 
+				// A quantity that will not parse must not discard a good price:
+				// the book size is a liquidity filter, the price is the
+				// measurement. Unit is base coin - see OrderbookData.
+				bidQtyCoin, _ := strconv.ParseFloat(bookTicker.BestBidQty, 64)
+				askQtyCoin, _ := strconv.ParseFloat(bookTicker.BestAskQty, 64)
+
 				orderbookData := OrderbookData{
-					Symbol:      bookTicker.Symbol,
-					Source:      "binance_spot",
-					BestBid:     bidPrice,
-					BestAsk:     askPrice,
-					VenueTimeMs: bookTicker.EventTime,
+					Symbol:         bookTicker.Symbol,
+					Source:         "binance_spot",
+					BestBid:        bidPrice,
+					BestAsk:        askPrice,
+					VenueTimeMs:    bookTicker.EventTime,
+					BestBidQtyCoin: bidQtyCoin,
+					BestAskQtyCoin: askQtyCoin,
 				}
 
 				orderbookChan <- orderbookData

@@ -171,6 +171,16 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 					// Convert OKX symbol back to standard format
 					standardSymbol := convertFromOKXSymbol(book.InstID)
 
+					// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0.
+					// A books5 level is [price, sz, liqOrders, numOrders] and sz
+					// is a CONTRACT count, not coins: measured 2026-09-03,
+					// BTC-USDT-SWAP published 1182.68 with BTC near $77.5k, which
+					// as coins would be a $91M top of book, and XRP-USDT-SWAP
+					// published 334.52, which as coins would be $456. Converting
+					// needs ctVal x ctMult per instrument, which arrives with the
+					// instrument registry (internal/instruments, phase 2).
+					// Publishing the raw number in a ...Coin field would be wrong
+					// without looking wrong.
 					orderbookData := OrderbookData{
 						Symbol:      standardSymbol,
 						Source:      "okx_futures",

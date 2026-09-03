@@ -201,7 +201,11 @@ func TestSpreadGrossPct_ZeroBuyPriceDoesNotProduceInf(t *testing.T) {
 	}
 }
 
-func TestNewWireSpreads_SingleUntradableGroupUntilStep12(t *testing.T) {
+// Step 1.0 shipped one mixed group called "all"; step 1.2 replaced it with one
+// group per (market type, quote asset). What must not change either way is the
+// envelope and the presence of every array: the dashboard reads them
+// unconditionally, and an absent array is a different thing from an empty one.
+func TestNewWireSpreads_EnvelopeAndArraysAlwaysPresent(t *testing.T) {
 	prices := map[string]float64{
 		"binance_futures": 100,
 		"bybit_futures":   101,
@@ -215,32 +219,30 @@ func TestNewWireSpreads_SingleUntradableGroupUntilStep12(t *testing.T) {
 	if msg.Symbol != "BTCUSDT" {
 		t.Errorf("symbol = %q", msg.Symbol)
 	}
-	if len(msg.CrossVenueGroups) != 1 {
-		t.Fatalf("got %d groups, step 1.0 must emit exactly one", len(msg.CrossVenueGroups))
+	if msg.ServerTimeMs != 1756368000000 {
+		t.Errorf("server_time_ms = %d", msg.ServerTimeMs)
 	}
 
-	g := msg.CrossVenueGroups[0]
-	if g.GroupID != "all" {
-		t.Errorf("group_id = %q, want all", g.GroupID)
+	if msg.CrossVenueGroups == nil {
+		t.Error("cross_venue_groups = null, want an array")
 	}
-	// The single group still mixes spot, perp and an oracle. Advertising it as
-	// tradable would be the exact false claim step 1.2 exists to remove.
-	if g.Tradable {
-		t.Error("group 'all' must be tradable=false while it still mixes spot/perp/oracle")
+	if msg.Basis == nil {
+		t.Error("basis = null, want an array")
 	}
-	if g.NoteVI == "" {
-		t.Error("group 'all' must carry a note explaining what it mixes")
+	if msg.OracleDeviation == nil {
+		t.Error("oracle_deviation = null, want an array")
+	}
+	if msg.ExcludedSources == nil {
+		t.Error("excluded_sources = null, want an array")
 	}
 
-	// Steps 1.1-1.3 fill these; they must already exist and be empty, not absent.
-	if msg.Basis == nil || len(msg.Basis) != 0 {
-		t.Errorf("basis = %v, want empty non-nil slice", msg.Basis)
+	// The mixed group is gone: the two perps form perp_usdt and the oracle is
+	// excluded rather than compared.
+	if ids := groupIDs(msg); len(ids) != 1 || ids[0] != "perp_usdt" {
+		t.Errorf("groups = %v, want only perp_usdt", ids)
 	}
-	if msg.OracleDeviation == nil || len(msg.OracleDeviation) != 0 {
-		t.Errorf("oracle_deviation = %v, want empty non-nil slice", msg.OracleDeviation)
-	}
-	if msg.ExcludedSources == nil || len(msg.ExcludedSources) != 0 {
-		t.Errorf("excluded_sources = %v, want empty non-nil slice", msg.ExcludedSources)
+	if len(msg.OracleDeviation) != 2 {
+		t.Errorf("oracle_deviation = %+v, want one row per venue", msg.OracleDeviation)
 	}
 }
 
@@ -303,28 +305,32 @@ func TestNewWireSpreads_SourceOrderIsDeterministic(t *testing.T) {
 
 func TestNewWireSpreads_EmptyAndSingleSource(t *testing.T) {
 	empty := newWireSpreads("BTCUSDT", map[string]float64{}, nil, 1)
-	if len(empty.CrossVenueGroups) != 1 || len(empty.CrossVenueGroups[0].Sources) != 0 {
-		t.Errorf("empty price map must still produce one group with no sources, got %+v", empty.CrossVenueGroups)
+	if len(empty.CrossVenueGroups) != 0 {
+		t.Errorf("empty price map must produce no group, got %+v", empty.CrossVenueGroups)
+	}
+	if empty.CrossVenueGroups == nil {
+		t.Error("no group is an empty array, not null")
 	}
 
+	// An oracle alone is not a degenerate one-column matrix, it is a source that
+	// was never comparable in the first place.
 	single := newWireSpreads("BTCUSDT", map[string]float64{"pyth": 100}, nil, 1)
-	g := single.CrossVenueGroups[0]
-	if len(g.Sources) != 1 {
-		t.Errorf("sources = %v, want 1", g.Sources)
+	if len(single.CrossVenueGroups) != 0 {
+		t.Errorf("groups = %v, want none for an oracle alone", groupIDs(single))
 	}
-	if len(g.Matrix["pyth"]) != 0 {
-		t.Errorf("single source must have no pairs, got %v", g.Matrix["pyth"])
+	if got := excludedReason(single, "pyth"); got != reasonOracle {
+		t.Errorf("pyth exclusion reason = %q, want %q", got, reasonOracle)
 	}
 }
 
 func TestNewWireOpportunity_NamesGrossAsGross(t *testing.T) {
-	opp := newWireOpportunity("BTCUSDT", "binance_futures", "bybit_futures", 100, 101, 1756368000000)
+	opp := newWireOpportunity("BTCUSDT", "perp_usdt", "binance_futures", "bybit_futures", 100, 101, 1756368000000)
 
 	if opp.Kind != "cross_venue" {
 		t.Errorf("kind = %q, want cross_venue", opp.Kind)
 	}
-	if opp.GroupID != "all" {
-		t.Errorf("group_id = %q, want all", opp.GroupID)
+	if opp.GroupID != "perp_usdt" {
+		t.Errorf("group_id = %q, want perp_usdt", opp.GroupID)
 	}
 	if math.Abs(opp.SpreadGrossPct-1.0) > 1e-9 {
 		t.Errorf("spread_gross_pct = %g, want 1.0", opp.SpreadGrossPct)
@@ -366,12 +372,12 @@ func TestNewWireOpportunity_NamesGrossAsGross(t *testing.T) {
 }
 
 func TestNewWireOpportunity_IDIsStableForSamePairAndInstant(t *testing.T) {
-	a := newWireOpportunity("BTCUSDT", "binance_futures", "bybit_futures", 100, 101, 42)
-	b := newWireOpportunity("BTCUSDT", "binance_futures", "bybit_futures", 100, 101, 42)
+	a := newWireOpportunity("BTCUSDT", "perp_usdt", "binance_futures", "bybit_futures", 100, 101, 42)
+	b := newWireOpportunity("BTCUSDT", "perp_usdt", "binance_futures", "bybit_futures", 100, 101, 42)
 	if a.ID != b.ID {
 		t.Errorf("id must be derived, not random: %q vs %q", a.ID, b.ID)
 	}
-	c := newWireOpportunity("ETHUSDT", "binance_futures", "bybit_futures", 100, 101, 42)
+	c := newWireOpportunity("ETHUSDT", "perp_usdt", "binance_futures", "bybit_futures", 100, 101, 42)
 	if a.ID == c.ID {
 		t.Error("different symbols must not share an id")
 	}
@@ -486,9 +492,11 @@ func TestNewWireSpreads_NaNNeverReachesTheEncoder(t *testing.T) {
 	if _, err := json.Marshal(msg); err != nil {
 		t.Fatalf("spreads message is not encodable: %v", err)
 	}
-	for _, source := range msg.CrossVenueGroups[0].Sources {
-		if source == "okx_futures" {
-			t.Error("a NaN-priced source reached the matrix")
+	for _, group := range msg.CrossVenueGroups {
+		for _, source := range group.Sources {
+			if source == "okx_futures" {
+				t.Errorf("a NaN-priced source reached group %s", group.GroupID)
+			}
 		}
 	}
 }
@@ -500,22 +508,38 @@ func TestNewWireSpreads_ReportsWhyASourceIsMissing(t *testing.T) {
 	}
 	msg := newWireSpreads("BTCUSDT", map[string]float64{"bybit_futures": 1}, excluded, 1)
 
-	if len(msg.ExcludedSources) != 2 {
-		t.Fatalf("excluded_sources = %v, want the two dropped sources", msg.ExcludedSources)
+	// The caller's exclusions survive, and grouping adds its own: the one source
+	// left has nobody to compare against.
+	reasons := map[string]string{}
+	for _, e := range msg.ExcludedSources {
+		reasons[e.Source] = e.Reason
 	}
+	for _, source := range []string{"binance_futures", "okx_futures"} {
+		if reasons[source] != reasonNoPrice {
+			t.Errorf("%s reason = %q, want %q", source, reasons[source], reasonNoPrice)
+		}
+	}
+	if reasons["bybit_futures"] != reasonNoPeer {
+		t.Errorf("bybit_futures reason = %q, want %q", reasons["bybit_futures"], reasonNoPeer)
+	}
+
 	// Registry order, so the list does not reshuffle between messages.
-	if msg.ExcludedSources[0].Source != "binance_futures" {
-		t.Errorf("excluded_sources not in registry order: %v", msg.ExcludedSources)
+	want := []string{"binance_futures", "bybit_futures", "okx_futures"}
+	if len(msg.ExcludedSources) != len(want) {
+		t.Fatalf("excluded_sources = %v, want %v", msg.ExcludedSources, want)
 	}
-	if msg.ExcludedSources[0].Reason != "no_price" {
-		t.Errorf("reason = %q, want no_price", msg.ExcludedSources[0].Reason)
+	for i, source := range want {
+		if msg.ExcludedSources[i].Source != source {
+			t.Fatalf("excluded_sources not in registry order: %v", msg.ExcludedSources)
+		}
 	}
 }
 
-// Step 1.0 must reserve the top-of-book slot so step 1.2 fills a field instead
-// of reshaping the contract, and so phase 2 does not force a second app.js
-// rewrite. See PLAN.md §7.4.
-func TestNewWirePrices_ReservesTopOfBookSlot(t *testing.T) {
+// A source with no book of its own - an oracle, or a venue whose quantities are
+// contract denominated and cannot be converted yet - reports 0, and 0 must reach
+// the wire as a present field. An absent field would be indistinguishable from a
+// contract-version mismatch on the dashboard. See PLAN.md §7.4.
+func TestNewWirePrices_TopOfBookIsZeroWhenNotKnown(t *testing.T) {
 	now := time.Now()
 	raw, err := json.Marshal(newWirePrices(map[string]map[string]PricePoint{
 		"BTCUSDT": {"binance_futures": {Price: 65000, RecvAt: now}},
@@ -539,7 +563,7 @@ func TestNewWirePrices_ReservesTopOfBookSlot(t *testing.T) {
 			continue
 		}
 		if value != float64(0) {
-			t.Errorf("%s = %v, want 0 until step 1.2 collects it", key, value)
+			t.Errorf("%s = %v, want 0 when the source publishes no book", key, value)
 		}
 	}
 
