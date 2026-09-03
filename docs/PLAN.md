@@ -98,7 +98,7 @@
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
-| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **2/7 bước** | Thu thập + lưu funding rate 24/7 |
+| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **3/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
@@ -779,11 +779,54 @@ Sửa:
 >   `slices.Sort` thay sort tay, verdict Gate bớt ghim hình dạng "chia hết cho
 >   3600") — commit `fix(fundingcheck)` riêng ngay sau bước này.
 
-#### Bước 2.3 — Instrument registry
+#### Bước 2.3 — Instrument registry ✅
 - Tải `exchangeInfo` (spot + futures) 1 lần/ngày, cache: `tickSize`, `stepSize`, `minNotional`, `status`, contract size/multiplier, leverage brackets.
 - Contract size khác nhau: OKX `ctVal × ctMult`, Gate `quanto_multiplier`, Kraken theo spec — các sàn này đặt lệnh theo **số contract**, không theo coin.
 - Hàm tính size delta-neutral: làm tròn **xuống** theo `stepSize` **lớn hơn** của hai chân, kiểm `minNotional` của **cả hai** rồi mới đặt.
 - **Nghiệm thu:** cho notional bất kỳ → ra size 2 chân hợp lệ ở mọi sàn, hoặc từ chối có lý do rõ ràng.
+
+> **Kết quả (2026-09-03).** 9 fetcher `Fetch<Venue>Instruments` trong
+> `exchanges/<venue>_instruments.go` (mọi khối lượng quy về COIN, sàn contract
+> giữ `IsContract` + `ContractSizeCoin`), golden test trên response thật
+> (`testdata/instruments_*.json`, ghi lại bằng `CAPTURE_TESTDATA=1`);
+> `internal/instruments.Registry` refresh 24h — nguồn hỏng giữ số hôm qua và
+> bị nêu tên, refresh thành công thay trọn map nguồn (market bị gỡ không sống
+> mãi); `SizeDeltaNeutral` đúng thuật toán đề ra, thêm kiểm size nằm trên lưới
+> **cả hai** chân và `MaxQtyCoin`. Nghiệm thu chạy hai lớp: test sizing đủ
+> 7 perp × 2 spot trên số liệu thật + quét notional liên tục; chạy sống cổng
+> 8085: **"instrument registry: 36 instruments across 9 sources"** — đủ 4 cặp
+> × 9 nguồn, không lỗi fetch. **Giải xong mâu thuẫn Kraken của 1.2** (xem
+> [DATA-REQUIREMENTS §5](DATA-REQUIREMENTS.md#5-instrument-registry--✅-xây-ở-bước-23-2026-09-03)):
+> PF_ đặt theo contract nhưng 1 contract = 1 đơn vị base — khảo sát lẫn phép đo
+> đều đúng. Phát hiện đáng giá: **PF_XRPUSD và Hyperliquid XRP giao dịch XRP
+> NGUYÊN từng con** (precision/szDecimals = 0) — bước lưới thô nhất hệ nằm ở
+> XRP, không phải BTC. Leverage bracket Binance cần chữ ký → GĐ 4
+> (`MaxLeverageX = 0`, các sàn khác đọc công khai được).
+>
+> **Review 10-angle; các lỗi thật đã sửa trong bước:** fetch trả 0 instrument
+> từng xoá cache và đóng dấu như thành công; Gate 404 một contract từng giết cả
+> nguồn; Binance spot `?symbols=[...]` chết cả request vì 1 symbol lạ (đổi sang
+> fetch toàn bộ + lọc local); Bybit/OKX gói lỗi trong HTTP 200 không được đọc;
+> chân spot dạng contract từng bị phát ra coin im lặng; MinQty bịa "một bước"
+> cho Kraken/Paradex (giờ 0 = không công bố, sizing tự giữ sàn một-bước);
+> refresh tuần tự 9 nguồn × timeout 30s; `TickSize` thiếu hậu tố đơn vị
+> (→ `TickSizeQuote`); tham số sizing 3 float trần dễ hoán vị (→
+> `SizingRequest`); comment mồ côi `fundingFrom*` sau đổi tên 2.2.
+>
+> **Nợ ghi nhận từ review, chưa xử lý:**
+> - Bảy builder funding (commit 2.2) nhận 7 tham số vị trí — hai `int64` kề
+>   nhau hoán vị được mà vẫn biên dịch (CONVENTIONS §6.2: >4 → struct). Gom
+>   thành struct khi 2.5 chạm đúng các call site đó.
+> - Cadence 1h Kraken: ghi thêm bản ghi đuôi `historicalfundingrates` vào
+>   testdata + golden khoảng cách == 3600 để việc re-record tự kiểm hằng số
+>   (làm cùng backfill 2.6).
+> - `cmd/fundingcheck`: verdict OKX dùng `<` chặt — chạy đúng mốc settle có
+>   thể false-FAIL; verdict Gate tin đồng hồ máy (lệch >60s false-FAIL). Sửa
+>   khi có dịp đụng công cụ.
+> - Fetcher theo-symbol (Bybit/OKX/Gate/Paradex) gọi tuần tự trong nguồn —
+>   đủ cho 4 cặp; vượt ~10 cặp thì chuyển sang endpoint danh sách của sàn.
+> - `TickSizeQuote = 0` (Hyperliquid, quy tắc 5 chữ số có nghĩa) là sentinel;
+>   GĐ 4 đặt lệnh cần mã hoá quy tắc thành dữ liệu (`PxDecimals`/`SigFigs`).
 
 #### Bước 2.4 — Bảng ánh xạ spot ↔ perp
 - Dựng **tự động** từ `exchangeInfo`, thay `switch` hardcode hiện tại trong từng connector.
@@ -1187,7 +1230,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          2/7 bước   ← ĐANG LÀM song song với soak
+[  ] GĐ 2  Funding Rate Monitor          3/7 bước   ← ĐANG LÀM song song với soak
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước

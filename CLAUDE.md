@@ -200,7 +200,7 @@ re-research these; do verify before writing the integration.
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
 | **Binance** | The aggTrade payload carries both `m` (buyer is maker) and `M` (deprecated, always true). Go's `encoding/json` prefers an exact tag match but **falls back to a case-insensitive one**, so declaring only `m` let `M` overwrite it and every trade came out a sell. Declare BOTH members of every case-colliding key pair, including the one you do not use — leaving it out is not "ignore it", it is "let it overwrite the other". |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
-| **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`). Binance, Bybit, Hyperliquid use coins. ⚠️ Step 1.2 measured Kraken's *book* quantity looking coin-denominated (PF_XBTUSD 0.0929 with BTC near $77.5k), which contradicts this row. Unresolved — the instrument registry settles it; until then Kraken reports no quantity. |
+| **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`, `contractSize`). Binance, Bybit, Hyperliquid use coins. ✅ The step-1.2 Kraken contradiction was settled at 2.3: PF_ contracts ARE contract-denominated but `contractSize` is **1 base unit** (with `contractValueTradePrecision` decimals), so contract counts are numerically coin — the survey and the 1.2 measurement were both right. Measured sizes live in the registry; note PF_XRPUSD and Hyperliquid XRP trade in WHOLE XRP (precision/szDecimals 0). |
 
 ~~**Known bug:** `coin := symbol[:3]` in the Hyperliquid connector.~~ Fixed in
 step 1.4: the venue identifier comes from `config.yaml`
@@ -301,10 +301,10 @@ phase 1.
   five sources that publish it in **coin**: Binance futures/spot (`B`/`A`), Bybit
   futures/spot (level index 1), Hyperliquid (`sz`). OKX, Gate and Kraken publish
   **contract counts** and Paradex publishes no size at all, so those four stay 0.
-  **`0` means "not known", never "no liquidity"** — converting needs
-  `ctVal`×`ctMult` / `quanto_multiplier` from an instrument registry that arrives
-  in phase 2. The units were settled by measurement, not documentation; the
-  numbers are on `exchanges.OrderbookData`.
+  **`0` means "not known", never "no liquidity"**. The instrument registry
+  (step 2.3) now carries every venue's measured `ContractSizeCoin`, so the
+  conversion is a multiplication away — wiring it into the book pipeline is
+  scheduled where the number is first consumed, step 2.7's liquidity ranking.
 - ~~Pyth is treated as a tradeable venue.~~ Fixed in step 1.2: an oracle never
   enters a comparison group and can no longer appear at either end of an alert.
 - ~~`checkArbitrage` takes min/max across *all* sources, mixing spot and perp.~~
@@ -334,14 +334,14 @@ phase 1.
   keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- 150 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 169 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `exchanges` 32 (63.6% of statements),
-  `internal/scanner` 89 (89.7%), `internal/config` 19 (78.2%),
-  `internal/fees` 5 (100%), `cmd/scanner` 2, `cmd/fundingcheck` 3 (the pure
-  normalization/coherence functions; the fetchers run only against live
-  venues).
+  it can be re-measured): `exchanges` 42 (58.6% of statements — the new
+  instrument fetchers' HTTP wrappers run only against live venues, their
+  parsers are golden-tested), `internal/scanner` 89 (89.9%),
+  `internal/instruments` 9 (96.5%), `internal/config` 19 (78.2%),
+  `internal/fees` 5 (100%), `cmd/scanner` 2, `cmd/fundingcheck` 3.
   `exchanges/testdata/` holds a real recording per venue; re-record with
   `CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata ./exchanges/`. **Pyth has
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic

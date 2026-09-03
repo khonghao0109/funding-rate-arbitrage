@@ -288,7 +288,7 @@ type FundingData struct {
 }
 ```
 
-Bảy hàm `fundingFrom*` (một mỗi sàn, cùng file) là **nơi duy nhất** giữ quy tắc
+Bảy hàm `normalize<Venue>Funding` (một mỗi sàn, mỗi hàm một file `<venue>_funding.go`) là **nơi duy nhất** giữ quy tắc
 đơn vị của §4.3: connector Bước 2.5 chỉ parse JSON rồi đưa số thô theo đơn vị
 của sàn vào builder; hạ nguồn chỉ thấy giây và phân số. Interval không dương →
 builder từ chối (không cho một message hỏng sinh ra APR Inf/NaN).
@@ -319,44 +319,81 @@ với `SendPrice`) và **không đổi chữ ký connector nào**. Scanner nhậ
 
 ---
 
-## 5. INSTRUMENT REGISTRY
+## 5. INSTRUMENT REGISTRY — ✅ xây ở Bước 2.3 (2026-09-03)
 
 Nhóm dữ liệu bị đánh giá thấp nhất, nhưng là **nguyên nhân số 1 khiến vị thế "delta-neutral" thực ra không neutral**.
 
+Như đã xây (`exchanges/instruments.go` + `<venue>_instruments.go`,
+`internal/instruments`): **mọi khối lượng quy về COIN ngay ở tầng exchanges**
+(hậu tố nói rõ — CONVENTIONS §1), sàn contract giữ thêm `IsContract` +
+`ContractSizeCoin` để GĐ 4 đổi ngược ra số contract khi đặt lệnh.
+
 ```go
 type Instrument struct {
-    Symbol       string
+    Symbol       string  // đã chuẩn hoá: BTCUSDT
+    NativeSymbol string  // BTC-USDT-SWAP, PF_XBTUSD, ...
     Source       string
-    MarketType   string  // spot | perp | future
+    MarketType   string  // spot | perp
 
-    TickSize     float64 // bước giá
-    StepSize     float64 // bước khối lượng  ⚠️ SPOT VÀ PERP KHÁC NHAU
-    MinQty       float64
-    MinNotional  float64
+    Status       string  // "trading" đã chuẩn hoá (TRADING/Trading/live/tradeable);
+                         // từ khác giữ nguyên chữ của sàn để lời từ chối nêu ra
 
-    ContractSize float64 // 1.0 nếu tính theo coin
-    IsContract   bool    // true = đặt lệnh theo SỐ CONTRACT, không theo coin
+    TickSizeQuote float64 // bước giá (quote); 0 = sàn định bằng QUY TẮC (Hyperliquid: ≤5 chữ số có nghĩa)
 
-    Status       string  // TRADING | BREAK | ...
-    MaxLeverage  float64
+    StepSizeCoin     float64 // bước khối lượng, COIN  ⚠️ SPOT VÀ PERP KHÁC NHAU
+    MinQtyCoin       float64
+    MaxQtyCoin       float64 // 0 = sàn không công bố
+    MinNotionalQuote float64 // 0 = sàn không công bố — không phải "không có sàn nào ép"
+
+    IsContract       bool    // true = đơn vị đặt lệnh gốc là SỐ CONTRACT
+    ContractSizeCoin float64 // coin mỗi contract; 1.0 khi đặt theo coin
+
+    MaxLeverageX float64 // 0 = không công bố công khai (Binance: leverageBracket cần ký — GĐ 4)
 }
 ```
 
-**Nguồn contract size theo sàn:**
+Registry (`internal/instruments.Registry`): `Run(ctx)` fetch 9 nguồn **song
+song** 1 lần/ngày (`RefreshInterval`), lỗi thì thử lại sau 5 phút (khởi động
+cache rỗng — một blip không được để nguồn trắng luật 24h); nguồn hỏng HOẶC trả
+0 instrument giữ số liệu hôm qua + bị nêu tên trong lỗi (Bybit/OKX gói lỗi
+trong HTTP 200 + `retCode`/`code` — parser đọc và báo, không để lỗi sàn giả
+dạng "không niêm yết"); refresh thành công thay TRỌN map của nguồn đó (market
+bị gỡ biến mất thay vì sống mãi); 404 của endpoint theo-symbol = "sàn không
+niêm yết", không phải sự cố nguồn. Kiểm ngày cũng chính là watch delist
+(§7.10). MinQty sàn không công bố để 0 = "không nêu" — tầng sizing tự giữ sàn
+tối-thiểu-một-bước, không bịa số liệu sàn. Golden test trên response thật ghi
+ở `exchanges/testdata/instruments_*.json` (`CAPTURE_TESTDATA=1` để ghi lại).
+Chạy thật 2026-09-03: 36 instruments × 9 nguồn, đủ 4 cặp.
 
-| Sàn | Đơn vị đặt lệnh | Field |
-|---|---|---|
-| Binance | Coin | — (`IsContract = false`) |
-| Bybit linear | Coin | — (`IsContract = false`) |
-| OKX | **Contract** | `ctVal` × `ctMult` |
-| Gate | **Contract** | `quanto_multiplier` (số coin mỗi contract) |
-| Kraken | Contract | theo spec từng hợp đồng |
-| Hyperliquid | Coin | `szDecimals` |
-| Paradex | Coin | — |
+**Nguồn contract size theo sàn — SỐ ĐO THẬT 2026-09-03:**
+
+| Sàn | Đơn vị đặt lệnh | Field | Giá trị đo (BTC) |
+|---|---|---|---|
+| Binance | Coin | — (`IsContract = false`) | step 0.001 BTC (fut) / 0.00001 (spot) |
+| Bybit linear | Coin | — (`IsContract = false`) | qtyStep 0.001 BTC |
+| OKX | **Contract** (lẻ được, lotSz 0.01 ct) | `ctVal` × `ctMult`, `ctValCcy` = base khi `ctType=linear` | 0.01 × 1 = **0.01 BTC/ct** → bước 0.0001 BTC |
+| Gate | **Contract** (NGUYÊN — order_size là số nguyên) | `quanto_multiplier` (số coin mỗi contract) | **0.0001 BTC/ct** → bước 0.0001 BTC |
+| Kraken | **Contract** — nhưng 1 contract = **1 đơn vị base** | `contractSize` + bước `10^-contractValueTradePrecision` | ctSize 1 BTC, precision 4 → bước 0.0001 BTC; ⚠️ **PF_XRPUSD precision 0 → XRP NGUYÊN từng con** |
+| Hyperliquid | Coin | `szDecimals` (bước `10^-szDecimals`) | BTC 5 → 0.00001; ⚠️ **XRP szDecimals 0 → XRP nguyên** |
+| Paradex | Coin | `order_size_increment` | 0.00001 BTC |
+
+> **✅ Mâu thuẫn Kraken từ Bước 1.2 đã giải (2026-09-03).** Khảo sát ghi
+> "Kraken đặt theo contract" và phép đo 1.2 thấy khối lượng sổ *trông như
+> coin* (PF_XBTUSD 0.0929 khi BTC ≈ $77,5k) — **cả hai cùng đúng**: PF_ đặt
+> theo contract nhưng `contractSize = 1` đơn vị base, nên số contract trùng
+> số coin về mặt con số. Endpoint `/derivatives/api/v3/instruments` là trọng
+> tài. Hệ quả cho khối lượng đỉnh sổ (nợ 1.2): quy đổi contract→coin giờ chỉ
+> là `× ContractSizeCoin` từ registry — nối vào pipeline sổ lệnh khi 2.7 dùng
+> số này xếp hạng thanh khoản.
 
 **Bẫy delta:** `stepSize` của spot và perp khác nhau. Làm tròn khối lượng 2 chân theo 2 bộ quy tắc mà không xử lý → delta ≠ 0 ngay từ lệnh đầu tiên, và sai số đó tồn tại suốt vòng đời vị thế.
 
-Cách xử lý: tính size mục tiêu → làm tròn **xuống** theo `stepSize` **lớn hơn** của hai phía → kiểm tra vẫn thoả `minNotional` của **cả hai** → mới đặt lệnh.
+Cách xử lý (đã thành `instruments.SizeDeltaNeutral`, test đủ 9 nguồn trên số
+liệu thật): tính size mục tiêu neo theo giá spot → làm tròn **xuống** theo
+`StepSizeCoin` **lớn hơn** của hai phía → kiểm size nằm trên lưới của **cả
+hai** chân (step không chia hết nhau → từ chối) → kiểm `MinQtyCoin`,
+`MaxQtyCoin` và `MinNotionalQuote` của **cả hai** → mới trả size; mọi từ chối
+nêu rõ chân nào, luật nào, số nào.
 
 ---
 

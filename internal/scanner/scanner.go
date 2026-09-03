@@ -88,7 +88,7 @@ type Scanner struct {
 	// funding holds the latest normalized reading per symbol per source. It is
 	// the collection point steps 2.5–2.7 build on: connectors fill it through
 	// fundingChan, persistence (2.6) and the funding dashboard (2.7) read it.
-	// Values are already normalized by exchanges' fundingFrom* builders — the
+	// Values are already normalized by exchanges' normalize<Venue>Funding builders — the
 	// scanner never sees venue units.
 	funding          map[string]map[string]exchanges.FundingData
 	fundingMutex     sync.RWMutex

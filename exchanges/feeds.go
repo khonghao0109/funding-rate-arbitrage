@@ -24,9 +24,9 @@ type Feeds struct {
 	Trade     chan<- TradeData
 
 	// Funding carries normalized funding readings (step 2.2). Every value on
-	// it has already been through one of the fundingFrom* builders, so the
-	// interval is in seconds and the rates are fractions — the scanner never
-	// sees venue units.
+	// it has already been through one of the normalize<Venue>Funding
+	// builders, so the interval is in seconds and the rates are fractions —
+	// the scanner never sees venue units.
 	Funding chan<- FundingData
 
 	// Conn carries what the connector knows about its own socket. Until step
@@ -71,6 +71,12 @@ func (f Feeds) SendTrade(data TradeData) bool {
 }
 
 func (f Feeds) SendFunding(data FundingData) bool {
+	// A select on a nil channel blocks until cancellation — a harness that
+	// builds Feeds without a Funding channel would hang its whole read loop
+	// on the first funding frame. Report the drop instead.
+	if f.Funding == nil {
+		return false
+	}
 	select {
 	case f.Funding <- data:
 		return true

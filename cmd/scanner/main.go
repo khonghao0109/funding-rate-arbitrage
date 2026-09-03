@@ -25,6 +25,7 @@ import (
 
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/config"
+	"futures-arbitrage-scanner/internal/instruments"
 	"futures-arbitrage-scanner/internal/scanner"
 
 	"github.com/joho/godotenv"
@@ -62,6 +63,11 @@ func main() {
 	s.Run(ctx)
 
 	connectors := startConnectors(ctx, cfg, s)
+	// The registry's readers arrive with steps 2.4 (spot↔perp mapping), 2.6
+	// (daily snapshots) and 2.7 (liquidity ranking); until then its Run loop
+	// and log line are deliberately the only consumers — do NOT build a
+	// second registry elsewhere, thread this one through.
+	_ = startInstrumentRegistry(ctx, cfg)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.HandleWebSocket)
@@ -211,4 +217,35 @@ func venueSymbols(cfg config.Config, source config.Source) []exchanges.Symbol {
 		})
 	}
 	return symbols
+}
+
+// startInstrumentRegistry assembles the instrument registry from the same
+// config the connectors use and keeps it fresh once a day (step 2.3). A
+// failed refresh is logged and retried at the next cycle with yesterday's
+// rules still served — the scanner's own data path does not depend on it, so
+// it must never take the process down.
+func startInstrumentRegistry(ctx context.Context, cfg config.Config) *instruments.Registry {
+	fetchers := exchanges.InstrumentFetchers()
+	var sources []instruments.Source
+	for _, source := range cfg.Sources {
+		fetch, ok := fetchers[source.Connector]
+		if !ok {
+			// An oracle has no instruments; anything else without a fetcher
+			// is a gap worth seeing in the log once at startup.
+			if source.MarketType != "oracle" {
+				log.Printf("source %s (%s) has no instrument fetcher — its trading rules stay unknown",
+					source.Source, source.Connector)
+			}
+			continue
+		}
+		sources = append(sources, instruments.Source{
+			Name:    source.Source,
+			Symbols: venueSymbols(cfg, source),
+			Fetch:   fetch,
+		})
+	}
+
+	registry := instruments.New(sources)
+	go registry.Run(ctx)
+	return registry
 }
