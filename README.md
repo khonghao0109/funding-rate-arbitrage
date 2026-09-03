@@ -81,12 +81,12 @@ Phát triển scanner này thành **bot Funding Rate Arbitrage**: giữ đồng 
 
 **Kỳ vọng lợi nhuận: 5–15%/năm.** Đây là chiến lược thu phí ổn định, không phải chiến lược lợi suất cao.
 
-Lộ trình chia **9 giai đoạn / 40 bước**:
+Lộ trình chia **9 giai đoạn / 41 bước**:
 
 | GĐ | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
-| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | ⬜ Tiếp theo |
+| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (2/7) |
 | 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |
