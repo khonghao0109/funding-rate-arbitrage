@@ -39,7 +39,7 @@ type HyperliquidL2BookData struct {
 	Time   int64                `json:"time"`
 }
 
-func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectHyperliquidFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	wsURL := "wss://api.hyperliquid.xyz/ws"
 
 	for {
@@ -54,8 +54,11 @@ func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, ord
 
 		// Subscribe to trades and l2Book for each symbol
 		for _, symbol := range symbols {
-			// Convert BTCUSDT to BTC for Hyperliquid
-			coin := symbol[:3] // Extract first 3 characters (BTC from BTCUSDT)
+			// The venue identifier is the coin name, built by config.yaml's
+			// symbol_format. It used to be symbol[:3], which worked only because
+			// every configured base happened to be three characters long and
+			// would have subscribed to "DOG" for DOGEUSDT.
+			coin := symbol.Venue
 
 			// Subscribe to trades
 			tradeSubscribeMsg := map[string]interface{}{
@@ -121,8 +124,10 @@ func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, ord
 						continue
 					}
 
-					// Convert coin back to symbol format (BTC -> BTCUSDT)
-					symbol := trade.Coin + "USDT"
+					symbol := StandardOf(symbols, trade.Coin)
+					if symbol == "" {
+						continue // a coin this connector never subscribed to
+					}
 
 					// Normalize trade side (Hyperliquid uses "A" for ask/sell, "B" for bid/buy)
 					var side string
@@ -134,7 +139,7 @@ func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, ord
 
 					tradeData := TradeData{
 						Symbol:      symbol,
-						Source:      "hyperliquid_futures",
+						Source:      source,
 						Price:       price,
 						Quantity:    trade.Size,
 						Side:        side,
@@ -164,8 +169,10 @@ func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, ord
 						continue
 					}
 
-					// Convert coin back to symbol format (BTC -> BTCUSDT)
-					symbol := l2BookData.Coin + "USDT"
+					symbol := StandardOf(symbols, l2BookData.Coin)
+					if symbol == "" {
+						continue // a coin this connector never subscribed to
+					}
 
 					// sz was decoded into HyperliquidLevel and dropped. A size
 					// that will not parse leaves 0 ("not known") rather than
@@ -176,7 +183,7 @@ func ConnectHyperliquidFutures(symbols []string, priceChan chan<- PriceData, ord
 
 					orderbookData := OrderbookData{
 						Symbol:         symbol,
-						Source:         "hyperliquid_futures",
+						Source:         source,
 						BestBid:        bestBid,
 						BestAsk:        bestAsk,
 						VenueTimeMs:    l2BookData.Time,

@@ -189,8 +189,6 @@ class FuturesArbitrageScanner {
             this.currentSymbol = meta.default_symbol || this.symbols[0] || null;
             const select = document.getElementById('symbolSelect');
             if (select && this.currentSymbol) select.value = this.currentSymbol;
-            const status = document.getElementById('symbolStatus');
-            if (status && this.currentSymbol) status.textContent = this.currentSymbol;
             this.updateChartTitle();
         }
     }
@@ -1143,7 +1141,7 @@ class FuturesArbitrageScanner {
         stats.textContent = `${filteredOpportunities.length} alerts`;
 
         if (sortedOpportunities.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="7" class="opportunities-empty">No alerts match current filters</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="8" class="opportunities-empty">No alerts match current filters</td></tr>';
             return;
         }
 
@@ -1450,10 +1448,7 @@ class FuturesArbitrageScanner {
         this.updateOpportunitiesTable();
         this.currentSpreads.clear();
         this.updateSpreadsMatrix();
-        
-        const symbolStatus = document.getElementById('symbolStatus');
-        if (symbolStatus) symbolStatus.textContent = newSymbol;
-        
+
         console.log(`Switched to symbol: ${newSymbol}`);
     }
 

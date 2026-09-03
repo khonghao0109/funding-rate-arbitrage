@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **4/7 bước** | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **5/7 bước** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -159,8 +159,8 @@
 - `checkArbitrage` vẫn duyệt mọi nguồn nên **Pyth vẫn có thể xuất hiện trong bảng cảnh báo**. Ma trận đã được đánh dấu `tradable:false` nên không tô cơ hội, nhưng bảng cảnh báo thì chưa. → **Bước 1.2**.
 - Hợp đồng mới làm payload `spreads` **to gấp 2,8 lần** (6.861 B so với 2.475 B ở 10 nguồn) và vẫn gửi metadata tĩnh của nhóm mỗi tick. → [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
 - `broadcast` chạy **đồng bộ trên luồng ingest**; deadline ghi 2s mới thêm chỉ chặn được vô hạn, chưa chặn được N×2s. Cần hàng đợi gửi riêng cho từng client. → [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
-- `wire_test.go` chép tay danh sách 10 nguồn của `main()`; thêm connector mà quên đăng ký thì test không bắt được. → **Bước 1.4**, khi `config.yaml` thành nguồn sự thật duy nhất cho cả wiring lẫn `meta`.
-- `#symbolStatus` vẫn không tồn tại trong `index.html`; lời gọi nay đã được guard nhưng phần hiển thị đó là code chết. → **Bước 1.4**.
+- ~~`wire_test.go` chép tay danh sách 10 nguồn của `main()`~~ → ✅ **Bước 1.4**: `config.yaml` là danh sách duy nhất, và `cmd/scanner` có test đối chiếu hai chiều với registry connector.
+- ~~`#symbolStatus` vẫn không tồn tại trong `index.html`~~ → ✅ **Bước 1.4**: hai chỗ gọi code chết đã xoá.
 
 > Lý do tồn tại bước này: `app.js` có 925 dòng và hardcode danh sách nguồn ở 5 chỗ ([42-53](../static/app.js#L42-L53), [241-250](../static/app.js#L241-L250), [538-547](../static/app.js#L538-L547), [614](../static/app.js#L614)). Sửa nó ba lần liên tiếp mà không có test nào bảo vệ là ba lần có nguy cơ vỡ dashboard.
 
@@ -346,10 +346,61 @@ nhóm perp_usd, 6 ô ma trận:  thô -0,04% … +0,04%   sau phí -0,23% … -0
 - `basis[]` chưa có số sau phí. Chi phí của một vị thế delta-neutral thuộc về tầng chiến lược (GĐ 2–3), không phải bảng hiển thị.
 - Chưa mô hình hoá phí rút/chuyển tiền giữa các sàn. Với arbitrage chéo sàn có luân chuyển tài sản, đây là khoản chi phí thật còn thiếu → GĐ 4.
 
-#### Bước 1.4 — Cấu hình hoá
+#### Bước 1.4 — Cấu hình hoá ✅
 - Chuyển symbol, danh sách sàn, ngưỡng cảnh báo, ngưỡng staleness theo sàn từ hardcode sang `config.yaml`.
 - Backend gửi kèm **metadata nguồn**, FE tự dựng danh sách thay vì hardcode ở 4 chỗ.
 - **Nghiệm thu:** thêm 1 cặp hoặc 1 sàn mới không cần sửa code Go **lẫn** JavaScript.
+
+**Đã làm (2026-09-03).** `config.yaml` ở gốc repo là **nguồn sự thật duy nhất** cho cặp giao dịch, danh sách nguồn, ngưỡng cảnh báo, ngưỡng staleness từng sàn, biểu phí, và cổng HTTP. `internal/config` nạp và **kiểm tra** nó; `scanner.Configure(cfg)` dựng registry từ đó; `cmd/scanner` lặp trên `cfg.Sources` thay cho 10 lời gọi `go exchanges.Connect*` cứng.
+
+⚠️ **P1 phát hiện tiêu chí nghiệm thu không đạt được nếu chỉ chuyển `symbols` sang YAML.** Thêm một cặp hôm nay phải sửa Go ở **năm** connector, không phải một: Pyth chỉ có feed ID cho BTCUSDT, Kraken/Paradex/Gate/OKX mỗi sàn một bảng ánh xạ cứng, Hyperliquid dùng `symbol[:3]`. Nên **ánh xạ ký hiệu cũng vào config**:
+
+```yaml
+symbols:
+  - { symbol: BTCUSDT, base: BTC, quote: USDT }   # base/quote KHAI, không cắt chuỗi
+
+sources:
+  - source: okx_futures
+    symbol_format: "{base}-{quote}-SWAP"          # → BTC-USDT-SWAP
+  - source: kraken_futures
+    symbol_format: "PF_{base}USD"
+    symbol_map: { BTCUSDT: PF_XBTUSD }            # Kraken gọi bitcoin là XBT
+  - source: pyth
+    symbol_map: { BTCUSDT: e62df6c8… }            # feed ID, không khuôn nào suy ra được
+```
+
+Thứ tự áp dụng: `symbol_map` → `symbol_format` → (có map mà không có cặp → **bỏ qua cặp đó ở sàn đó**) → nguyên ký hiệu chuẩn. Một cơ chế thay cho **sáu** bảng cứng; `exchanges/` **−254 dòng, +113 dòng**.
+
+**Nghiệm thu đã thực hiện — sửa ĐÚNG `config.yaml`, không đụng Go lẫn JS:**
+
+| Thêm gì | Sửa gì | Kết quả chạy thật |
+|---|---|---|
+| Cặp `DOGEUSDT` | 1 dòng trong `symbols:` | 8/9 sàn trả giá ngay, kể cả Hyperliquid `0,0828` |
+| Sàn `bybit_spot_mirror` (dùng lại connector `bybit_spot`) | 1 khối trong `sources:` | Có nhãn, màu, giá riêng và xuất hiện trong `meta` |
+
+`DOGEUSDT` được chọn cố ý vì base dài **4** ký tự — đúng trường hợp `symbol[:3]` cũ sẽ lặng lẽ đăng ký nhầm sang `DOG`. Bug đó (PLAN xếp cho Bước 2.4) biến mất như hệ quả của thiết kế này.
+
+**Bug lộ ra ngay trong lúc nghiệm thu:** `bybit_spot_mirror` có mặt trong `source_status` nhưng **không bao giờ có giá** — connector hardcode `Source: "bybit_spot"` trong 16 chỗ, nên hai mục config dùng chung connector cùng báo về một tên. Tên nguồn là **cấu hình**, không phải giao thức, nên nay truyền vào connector. Nếu không đo bằng cách chạy thật thì lỗi này lọt: test và build đều xanh.
+
+**Nợ được trả:**
+- `wire_test.go` chép tay danh sách 10 nguồn (ghi ở Bước 1.0) → xoá; nay `cmd/scanner` đối chiếu **hai chiều**: mọi source phải trỏ tới connector có thật, và mọi connector phải được ít nhất một source dùng.
+- `#symbolStatus` — phần tử chưa bao giờ tồn tại trong `index.html` → xoá 2 chỗ gọi code chết.
+- Biểu phí 4 sàn chưa xác minh nay có chỗ nhập tay, kèm hướng dẫn ngay trong `config.yaml`.
+
+**Kiểm tra mà cấu hình phải qua** (mỗi cái chặn một lỗi *im lặng*, không phải lỗi ồn ào): cặp trùng, nguồn trùng, `market_type` lạ, thiếu `quote_asset` (không xếp nhóm được), `stale_after_sec: 0` (đánh dấu stale ngay khi vừa tới), phí `verified: true` mà thiếu `doc_url`, phí `verified: false` mà vẫn có số (trông như đã kiểm), nguồn không phục vụ cặp nào (kết nối rồi ngồi im mà vẫn "khoẻ"), **hai cặp ánh xạ về cùng một ký hiệu sàn** (tra ngược lấy cái đầu, cặp kia im lặng mất dữ liệu), cổng rỗng (`ListenAndServe` bind cổng ngẫu nhiên). `KnownFields(true)` biến một key gõ sai thành lỗi thay vì âm thầm dùng mặc định.
+
+**Test chạy trên `config.yaml` THẬT, không dùng fixture** — `TestMain` của package `scanner` nạp chính file được ship. Một fixture sẽ để config trôi dạt trong khi test vẫn xanh, mà nay nó là nơi duy nhất danh sách nguồn tồn tại. Test *logic* chia nhóm thì ngược lại: dùng registry giả, để thêm một sàn không làm vỡ test của luật.
+
+**Bug được review tìm ra và sửa trong bước:**
+- Hai cặp ánh xạ về cùng ký hiệu sàn không bị chặn — `{base}` sẽ gộp `BTCUSDT` và `BTCUSDC` thành `"BTC"`, tra ngược lấy cái đầu, cặp kia **im lặng không bao giờ có dữ liệu**.
+- `server.port` rỗng → `ListenAndServe(":")` bind cổng ngẫu nhiên trong khi log in ra `http://localhost:`.
+- `group_id` viết thường `quote_asset` còn ba khối khác so khớp nguyên văn → `Usdt` vừa vào nhóm USDT vừa bị coi là lệch quote. Nay chuẩn hoá hoa/thường lúc nạp.
+- `colspan="7"` ở hai hàng trống của bảng cảnh báo trong khi Bước 1.3 đã thêm cột thứ 8.
+
+**Phát hiện ngoài phạm vi — ghi nhận:**
+- ⚠️ `withRegistry` trong test ghi vào biến toàn cục trong khi goroutine của test trước còn chạy. Hiện an toàn **chỉ vì may**: `refreshStaleness` thoát sớm ở `hasClients()` và `processTrades` chỉ ghi timestamp, nên không chạm registry. Thêm một lượt đọc registry trước hai chốt đó là thành lỗi `-race` thật. Cách sửa đúng là cho Scanner cách dừng goroutine của nó → **Bước 1.5** (`ctx`). `-race -count=10` hiện sạch.
+- Paradex trả `DOGE-USD-PERP` giá **0,182** trong khi 8 sàn khác báo ~0,083. `symbol_format` sinh ra một ký hiệu **hợp lệ về hình thức** nhưng có thể không phải thị trường mình tưởng — và chính ma trận chéo sàn của scanner là thứ phát hiện ra. Thêm cặp mới phải kiểm lại giá từng sàn, không chỉ kiểm nó có dữ liệu.
+- `cmd/scanner` coverage 0% (chỉ có test đối chiếu config↔connector, không chạy `main`). Kiểm thật là chạy scanner, không phải test đơn vị.
 
 #### Bước 1.5 — Kết nối bền bỉ + refactor `Feeds`
 - **Gộp refactor `Feeds` từ Bước 2.2 lên đây** — cả hai bước đều sửa chữ ký của 10 connector ([cmd/scanner/main.go](../cmd/scanner/main.go)), làm rời nhau là sửa hai lần:
@@ -415,7 +466,7 @@ func ConnectBinanceFutures(symbols []string, f Feeds)
 - Dựng **tự động** từ `exchangeInfo`, thay `switch` hardcode hiện tại trong từng connector.
 - Xác thực hai chiều; cặp không ghép được → **từ chối, không đoán**.
 - Chú ý Kraken `PF_XBTUSD` quote là **USD** không phải USDT → không hedge thẳng bằng spot USDT.
-- 🐛 Sửa luôn bug tiềm ẩn `coin := symbol[:3]` tại [hyperliquid.go:58](../exchanges/hyperliquid.go#L58) — hiện đúng chỉ vì cả 4 symbol có base 3 ký tự; thêm `DOGEUSDT` sẽ subscribe sai coin mà không báo lỗi.
+- ~~🐛 Sửa bug `coin := symbol[:3]` ở Hyperliquid~~ → ✅ **đã xong ở Bước 1.4** như hệ quả của việc đưa ánh xạ ký hiệu vào `config.yaml`: Hyperliquid dùng `symbol_format: "{base}"`, và nghiệm thu đã chạy thật với `DOGEUSDT` (base 4 ký tự).
 - **Nghiệm thu:** thêm 1 cặp mới → bảng tự dựng đúng trên mọi sàn hỗ trợ, tự loại sàn không hỗ trợ.
 
 #### Bước 2.5 — Thu thập funding rate
@@ -811,7 +862,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   4/7 bước   ← ĐANG LÀM
+[  ] GĐ 1  Củng cố lõi                   5/7 bước   ← ĐANG LÀM
 [  ] GĐ 2  Funding Rate Monitor          0/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -821,4 +872,4 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** Bước 1.4 — cấu hình hoá. Chuyển symbol, danh sách sàn, ngưỡng cảnh báo và ngưỡng staleness theo sàn sang `config.yaml`. Đây cũng là chỗ nhập tay biểu phí cho 4 sàn Bước 1.3 chưa xác minh được (bybit ×2, okx, gate), và là chỗ xoá nợ "`wire_test.go` chép tay danh sách 10 nguồn" đã ghi ở Bước 1.0. **Nghiệm thu:** thêm 1 cặp hoặc 1 sàn mới không cần sửa code Go **lẫn** JavaScript.
+**Việc tiếp theo cụ thể:** Bước 1.5 — kết nối bền bỉ + refactor `Feeds`. Gộp `ctx`/`Price`/`Orderbook`/`Trade`/`Funding` thành một struct `Feeds` (chữ ký connector vừa đổi ở 1.4 nên đây là lượt cuối), exponential backoff thay `time.Sleep` cố định, ping/pong + `SetReadDeadline`, mọi goroutine thoát được qua `ctx`, và **đóng dấu `RecvAt` ngay lúc đọc socket** thay vì lúc lấy khỏi channel (nợ ghi ở Bước 1.1). `ctx` cũng là thứ cho test dừng được goroutine của Scanner, xoá luôn nguy cơ đua của `withRegistry` ghi biến toàn cục. **Nghiệm thu:** chạy 72h không can thiệp; huỷ `ctx` làm mọi connector dừng sạch trong ≤5s.

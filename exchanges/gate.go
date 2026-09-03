@@ -2,10 +2,8 @@ package exchanges
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -80,7 +78,7 @@ type GateSubscribeMessage struct {
 	Payload []string `json:"payload"`
 }
 
-func ConnectGateFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectGateFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	wsURL := "wss://fx-ws.gateio.ws/v4/ws/usdt"
 
 	for {
@@ -93,11 +91,9 @@ func ConnectGateFutures(symbols []string, priceChan chan<- PriceData, orderbookC
 
 		log.Printf("Connected to Gate.io futures WebSocket")
 
-		// Convert symbols to Gate.io format
-		gateSymbols := make([]string, len(symbols))
-		for i, symbol := range symbols {
-			gateSymbols[i] = convertToGateSymbol(symbol)
-		}
+		// config.yaml supplies the venue identifiers (symbol_format
+		// "{base}_{quote}"), so this connector no longer keeps its own table.
+		gateSymbols := VenueSymbols(symbols)
 
 		// Subscribe to book ticker for all symbols - this provides best bid/ask
 		bookTickerSubscribeMsg := GateSubscribeMessage{
@@ -156,8 +152,10 @@ func ConnectGateFutures(symbols []string, priceChan chan<- PriceData, orderbookC
 					continue
 				}
 
-				// Convert Gate.io symbol back to standard format
-				standardSymbol := convertFromGateSymbol(bookTickerMsg.Result.Symbol)
+				standardSymbol := StandardOf(symbols, bookTickerMsg.Result.Symbol)
+				if standardSymbol == "" {
+					continue // a contract this connector never subscribed to
+				}
 
 				// Use timestamp from message
 				var timestamp int64
@@ -179,7 +177,7 @@ func ConnectGateFutures(symbols []string, priceChan chan<- PriceData, orderbookC
 				// (internal/instruments, phase 2).
 				orderbookData := OrderbookData{
 					Symbol:      standardSymbol,
-					Source:      "gate_futures",
+					Source:      source,
 					BestBid:     bestBid,
 					BestAsk:     bestAsk,
 					VenueTimeMs: timestamp,
@@ -194,66 +192,4 @@ func ConnectGateFutures(symbols []string, priceChan chan<- PriceData, orderbookC
 
 		time.Sleep(2 * time.Second)
 	}
-}
-
-// convertToGateSymbol converts standard symbol format to Gate.io format
-// BTCUSDT -> BTC_USDT (for USDT perpetual futures)
-func convertToGateSymbol(symbol string) string {
-	// Handle common symbols for USDT perpetual futures
-	switch symbol {
-	case "BTCUSDT":
-		return "BTC_USDT"
-	case "ETHUSDT":
-		return "ETH_USDT"
-	case "ADAUSDT":
-		return "ADA_USDT"
-	case "SOLUSDT":
-		return "SOL_USDT"
-	case "DOTUSDT":
-		return "DOT_USDT"
-	case "LINKUSDT":
-		return "LINK_USDT"
-	case "AVAXUSDT":
-		return "AVAX_USDT"
-	case "MATICUSDT":
-		return "MATIC_USDT"
-	case "UNIUSDT":
-		return "UNI_USDT"
-	case "LTCUSDT":
-		return "LTC_USDT"
-	case "BCHUSDT":
-		return "BCH_USDT"
-	case "XRPUSDT":
-		return "XRP_USDT"
-	default:
-		// Generic conversion for USDT perpetual futures
-		if strings.HasSuffix(symbol, "USDT") {
-			base := strings.TrimSuffix(symbol, "USDT")
-			return fmt.Sprintf("%s_USDT", base)
-		}
-		// For other quote currencies, insert underscore before the last part
-		if len(symbol) >= 6 {
-			// Assume last 3-4 characters are quote currency
-			if strings.HasSuffix(symbol, "USDC") {
-				base := strings.TrimSuffix(symbol, "USDC")
-				return fmt.Sprintf("%s_USDC", base)
-			}
-			if strings.HasSuffix(symbol, "USD") {
-				base := strings.TrimSuffix(symbol, "USD")
-				return fmt.Sprintf("%s_USD", base)
-			}
-		}
-		return symbol
-	}
-}
-
-// convertFromGateSymbol converts Gate.io symbol format back to standard format
-// BTC_USDT -> BTCUSDT
-func convertFromGateSymbol(gateSymbol string) string {
-	// Remove underscore and convert to standard format
-	parts := strings.Split(gateSymbol, "_")
-	if len(parts) == 2 {
-		return parts[0] + parts[1]
-	}
-	return gateSymbol
 }

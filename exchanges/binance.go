@@ -32,11 +32,11 @@ type BinanceFuturesBookTicker struct {
 	BestAskQty   string `json:"A"`
 }
 
-func ConnectBinanceFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectBinanceFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	streamNames := make([]string, len(symbols)*2)
 	for i, symbol := range symbols {
-		streamNames[i*2] = strings.ToLower(symbol) + "@bookTicker"
-		streamNames[i*2+1] = strings.ToLower(symbol) + "@aggTrade"
+		streamNames[i*2] = strings.ToLower(symbol.Venue) + "@bookTicker"
+		streamNames[i*2+1] = strings.ToLower(symbol.Venue) + "@aggTrade"
 	}
 	streamParam := strings.Join(streamNames, "/")
 
@@ -83,9 +83,14 @@ func ConnectBinanceFutures(symbols []string, priceChan chan<- PriceData, orderbo
 				bidQtyCoin, _ := strconv.ParseFloat(bookTicker.BestBidQty, 64)
 				askQtyCoin, _ := strconv.ParseFloat(bookTicker.BestAskQty, 64)
 
+				standardSymbol := StandardOf(symbols, bookTicker.Symbol)
+				if standardSymbol == "" {
+					continue // a market this connector never subscribed to
+				}
+
 				orderbookData := OrderbookData{
-					Symbol:         bookTicker.Symbol,
-					Source:         "binance_futures",
+					Symbol:         standardSymbol,
+					Source:         source,
 					BestBid:        bidPrice,
 					BestAsk:        askPrice,
 					VenueTimeMs:    bookTicker.EventTime,
@@ -114,9 +119,14 @@ func ConnectBinanceFutures(symbols []string, priceChan chan<- PriceData, orderbo
 					side = "sell"
 				}
 
+				standardSymbol := StandardOf(symbols, trade.Symbol)
+				if standardSymbol == "" {
+					continue
+				}
+
 				tradeData := TradeData{
-					Symbol:      trade.Symbol,
-					Source:      "binance_futures",
+					Symbol:      standardSymbol,
+					Source:      source,
 					Price:       price,
 					Quantity:    trade.Quantity,
 					Side:        side,
@@ -154,11 +164,11 @@ type BinanceSpotBookTicker struct {
 }
 
 // ConnectBinanceSpot connects to Binance spot trading WebSocket API
-func ConnectBinanceSpot(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectBinanceSpot(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	streamNames := make([]string, len(symbols)*2)
 	for i, symbol := range symbols {
-		streamNames[i*2] = strings.ToLower(symbol) + "@bookTicker"
-		streamNames[i*2+1] = strings.ToLower(symbol) + "@aggTrade"
+		streamNames[i*2] = strings.ToLower(symbol.Venue) + "@bookTicker"
+		streamNames[i*2+1] = strings.ToLower(symbol.Venue) + "@aggTrade"
 	}
 	streamParam := strings.Join(streamNames, "/")
 
@@ -205,9 +215,14 @@ func ConnectBinanceSpot(symbols []string, priceChan chan<- PriceData, orderbookC
 				bidQtyCoin, _ := strconv.ParseFloat(bookTicker.BestBidQty, 64)
 				askQtyCoin, _ := strconv.ParseFloat(bookTicker.BestAskQty, 64)
 
+				standardSymbol := StandardOf(symbols, bookTicker.Symbol)
+				if standardSymbol == "" {
+					continue // a market this connector never subscribed to
+				}
+
 				orderbookData := OrderbookData{
-					Symbol:         bookTicker.Symbol,
-					Source:         "binance_spot",
+					Symbol:         standardSymbol,
+					Source:         source,
 					BestBid:        bidPrice,
 					BestAsk:        askPrice,
 					VenueTimeMs:    bookTicker.EventTime,
@@ -236,9 +251,14 @@ func ConnectBinanceSpot(symbols []string, priceChan chan<- PriceData, orderbookC
 					side = "sell"
 				}
 
+				standardSymbol := StandardOf(symbols, trade.Symbol)
+				if standardSymbol == "" {
+					continue
+				}
+
 				tradeData := TradeData{
-					Symbol:      trade.Symbol,
-					Source:      "binance_spot",
+					Symbol:      standardSymbol,
+					Source:      source,
 					Price:       price,
 					Quantity:    trade.Quantity,
 					Side:        side,

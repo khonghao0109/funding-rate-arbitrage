@@ -30,13 +30,15 @@ type KrakenOrderBook struct {
 	Asks []KrakenOrderBookEntry
 }
 
-func processKrakenOrderbook(productID string, orderBook *KrakenOrderBook, orderbookChan chan<- OrderbookData) {
+func processKrakenOrderbook(source string, symbols []Symbol, productID string, orderBook *KrakenOrderBook, orderbookChan chan<- OrderbookData) {
 	if len(orderBook.Bids) == 0 || len(orderBook.Asks) == 0 {
 		return
 	}
 
-	// Convert symbol back to standard format (PF_XBTUSD -> BTCUSDT)
-	symbol := convertFromKrakenSymbol(productID)
+	symbol := StandardOf(symbols, productID)
+	if symbol == "" {
+		return // a product this connector never subscribed to
+	}
 
 	// Get best bid (highest price in bids)
 	bestBid := orderBook.Bids[0].Price
@@ -54,7 +56,7 @@ func processKrakenOrderbook(productID string, orderBook *KrakenOrderBook, orderb
 	// means "not known".
 	orderbookData := OrderbookData{
 		Symbol:  symbol,
-		Source:  "kraken_futures",
+		Source:  source,
 		BestBid: bestBid,
 		BestAsk: bestAsk,
 		// KrakenOrderBookData.Timestamp is decoded from the feed, but this
@@ -70,7 +72,7 @@ func processKrakenOrderbook(productID string, orderBook *KrakenOrderBook, orderb
 	orderbookChan <- orderbookData
 }
 
-func ConnectKrakenFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectKrakenFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	wsURL := "wss://futures.kraken.com/ws/v1"
 
 	// Maintain orderbooks for each symbol
@@ -88,8 +90,10 @@ func ConnectKrakenFutures(symbols []string, priceChan chan<- PriceData, orderboo
 
 		// Subscribe to orderbook for each symbol
 		for _, symbol := range symbols {
-			// Convert BTCUSDT to PF_XBTUSD for Kraken
-			krakenSymbol := convertToKrakenSymbol(symbol)
+			// config.yaml supplies the venue identifier (symbol_format
+			// "PF_{base}USD", with BTCUSDT overridden to PF_XBTUSD because
+			// Kraken calls bitcoin XBT).
+			krakenSymbol := symbol.Venue
 
 			subscribeMsg := map[string]interface{}{
 				"event":       "subscribe",
@@ -144,7 +148,7 @@ func ConnectKrakenFutures(symbols []string, priceChan chan<- PriceData, orderboo
 				}
 
 				// Send updated orderbook
-				processKrakenOrderbook(data.ProductID, orderbook, orderbookChan)
+				processKrakenOrderbook(source, symbols, data.ProductID, orderbook, orderbookChan)
 			}
 		}
 
@@ -217,37 +221,5 @@ func upsertPriceLevel(orderbook *KrakenOrderBook, side string, price, qty float6
 		}
 		// Append to end if not inserted
 		orderbook.Asks = append(orderbook.Asks, newEntry)
-	}
-}
-
-func convertToKrakenSymbol(symbol string) string {
-	// Convert BTCUSDT to PF_XBTUSD (Kraken's format for perpetual futures)
-	switch symbol {
-	case "BTCUSDT":
-		return "PF_XBTUSD"
-	case "ETHUSDT":
-		return "PF_ETHUSD"
-	case "XRPUSDT":
-		return "PF_XRPUSD"
-	case "SOLUSDT":
-		return "PF_SOLUSD"
-	default:
-		return symbol
-	}
-}
-
-func convertFromKrakenSymbol(symbol string) string {
-	// Convert PF_XBTUSD to BTCUSDT (standard format)
-	switch symbol {
-	case "PF_XBTUSD":
-		return "BTCUSDT"
-	case "PF_ETHUSD":
-		return "ETHUSDT"
-	case "PF_XRPUSD":
-		return "XRPUSDT"
-	case "PF_SOLUSD":
-		return "SOLUSDT"
-	default:
-		return symbol
 	}
 }

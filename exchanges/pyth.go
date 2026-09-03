@@ -32,11 +32,6 @@ type PythSSEResponse struct {
 	Parsed []PythParsedFeed `json:"parsed"`
 }
 
-// Pyth price feed IDs for different symbols
-var pythPriceFeedIDs = map[string]string{
-	"BTCUSDT": "e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43", // BTC/USD price feed ID
-}
-
 // ParsePythPrice converts Pyth price string and exponent to float64
 func ParsePythPrice(priceStr string, expo int) (float64, error) {
 	priceInt, err := strconv.ParseInt(priceStr, 10, 64)
@@ -48,17 +43,11 @@ func ParsePythPrice(priceStr string, expo int) (float64, error) {
 }
 
 // ConnectPythPrices connects to Pyth Network SSE endpoint for price feeds
-func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
-	// Filter symbols to only those we have price feed IDs for
-	var validSymbols []string
-	var priceFeedIDs []string
-
-	for _, symbol := range symbols {
-		if feedID, exists := pythPriceFeedIDs[symbol]; exists {
-			validSymbols = append(validSymbols, symbol)
-			priceFeedIDs = append(priceFeedIDs, feedID)
-		}
-	}
+func ConnectPythPrices(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+	// A Pyth market is identified by a price feed id, which no template can
+	// derive, so config.yaml lists them under symbol_map. A symbol with no id
+	// there is simply not served - which is why only BTC has an oracle row.
+	priceFeedIDs := VenueSymbols(symbols)
 
 	if len(priceFeedIDs) == 0 {
 		log.Printf("No valid Pyth price feed IDs found for symbols: %v", symbols)
@@ -105,15 +94,10 @@ func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookCh
 
 				// Process each parsed price feed
 				for _, feed := range response.Parsed {
-					// Find the symbol for this price feed ID
-					var symbol string
-					for sym, feedID := range pythPriceFeedIDs {
-						if feedID == feed.ID {
-							symbol = sym
-							break
-						}
-					}
-
+					// The price feed id IS the venue identifier, listed under
+					// symbol_map in config.yaml. A feed we did not subscribe to
+					// resolves to nothing and is dropped.
+					symbol := StandardOf(symbols, feed.ID)
 					if symbol == "" {
 						continue
 					}
@@ -128,7 +112,7 @@ func ConnectPythPrices(symbols []string, priceChan chan<- PriceData, orderbookCh
 					// Create price data
 					priceData := PriceData{
 						Symbol:      symbol,
-						Source:      "pyth",
+						Source:      source,
 						Price:       price,
 						VenueTimeMs: feed.Price.PublishTime * 1000, // Convert to milliseconds
 					}

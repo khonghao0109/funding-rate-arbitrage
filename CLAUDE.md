@@ -27,7 +27,7 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** 4 of 7 steps done. Step 1.0 froze the WebSocket JSON
+**Phase 1 — Hardening.** 5 of 7 steps done. Step 1.0 froze the WebSocket JSON
 contract for the whole phase — it is specified in
 [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
 phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added
@@ -35,14 +35,17 @@ the staleness filter; step 1.2 split the comparison into `perp_usdt`, `perp_usd`
 and `spot_usdt` groups, filled `basis[]` and `oracle_deviation[]`, and started
 collecting top-of-book quantities.
 
-Step 1.3 added `internal/fees/` and the after-fee figure.
+Step 1.3 added `internal/fees/` and the after-fee figure. Step 1.4 moved every
+operational fact into **`config.yaml`** — pairs, venues, thresholds, fees, and
+the per-venue symbol mapping — so adding a pair or a venue is a YAML edit.
 
-The next task is **step 1.4, configuration**: move symbols, the venue list, the
-alert threshold and the per-venue staleness thresholds into `config.yaml`. It is
-also where an operator enters the fee schedules for the four venues step 1.3
-could not verify (bybit ×2, okx, gate) — their own account's rates are the only
-fully correct source anyway. Acceptance: adding a pair or a venue needs no Go
-**and** no JavaScript change.
+The next task is **step 1.5, resilient connections + the `Feeds` refactor**:
+fold ctx and the channels into one `Feeds` struct (1.4 already changed the
+connector signatures, so this is the last pass over them), exponential backoff
+instead of a fixed sleep, ping/keepalive and read deadlines, every goroutine
+cancellable through ctx, and **stamp `RecvAt` at the socket read** rather than at
+the channel dequeue (debt from step 1.1). Acceptance: 72h unattended; cancelling
+ctx stops every connector cleanly within 5s.
 
 ---
 
@@ -172,10 +175,10 @@ re-research these; do verify before writing the integration.
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
 | **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`). Binance, Bybit, Hyperliquid use coins. ⚠️ Step 1.2 measured Kraken's *book* quantity looking coin-denominated (PF_XBTUSD 0.0929 with BTC near $77.5k), which contradicts this row. Unresolved — the instrument registry settles it; until then Kraken reports no quantity. |
 
-**Known bug:** [exchanges/hyperliquid.go:58](exchanges/hyperliquid.go#L58) uses
-`coin := symbol[:3]`. It works only because all four current symbols have
-3-character bases. `DOGEUSDT` would silently subscribe to `DOG`. Fix scheduled
-for step 2.4.
+~~**Known bug:** `coin := symbol[:3]` in the Hyperliquid connector.~~ Fixed in
+step 1.4: the venue identifier comes from `config.yaml`
+(`symbol_format: "{base}"`), and the acceptance run added a real `DOGEUSDT` —
+a four-character base — across every venue.
 
 ---
 
@@ -197,7 +200,18 @@ internal/
   risk/              margin, kill switch, capital limits
 static/              vanilla JS dashboard
 docs/                PLAN.md, DATA-REQUIREMENTS.md, CONVENTIONS.md
+config.yaml          pairs, venues, thresholds, fees, symbol mapping
 ```
+
+**`config.yaml` is the single source of truth** for anything operational. Adding
+a pair or a venue is a change to that file and nothing else — the dashboard
+builds its whole source list from the `meta` message, which is built from the
+config. The one thing it cannot supply is a connector for a venue nobody has
+written one for; `connector:` picks from `exchanges.Connectors()`, and
+`cmd/scanner` has a test that the two lists agree in both directions.
+
+Per-venue symbol naming lives there too (`symbol_format`, `symbol_map`), which is
+what removed six hardcoded translation tables from `exchanges/`.
 
 Packages under `internal/` currently contain only `doc.go` stating their
 responsibility and boundaries. Read the relevant `doc.go` before adding code to
@@ -218,7 +232,8 @@ Public market data and credentials live on opposite sides of that line.
 ## Working in this repo
 
 ```bash
-go run ./cmd/scanner  # starts on http://localhost:8082 (run from repo root)
+go run ./cmd/scanner  # reads ./config.yaml, serves http://localhost:8082
+                      # (run from repo root; -config picks another file)
 go build ./...
 gofmt -l .            # must print nothing
 go vet ./...
@@ -278,9 +293,9 @@ phase 1.
   every single price tick.
 - No `exchanges/testdata/` and no connector tests — golden tests need real
   payloads captured from a running scanner first. `internal/scanner` has 63 tests
-  covering the wire contract, the staleness filter and the grouping rules (86.8%
-  of statements), and `internal/fees` has 7 (100%); `exchanges/` is still at
-  zero. Step 1.6 closes that.
+  covering the wire contract, the staleness filter and the grouping rules (87.1%
+  of statements), plus `internal/fees` (100%) and `internal/config` (78.2%) —
+  105 tests in all. `exchanges/` is still at zero. Step 1.6 closes that.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new

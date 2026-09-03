@@ -2,10 +2,8 @@ package exchanges
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -47,7 +45,7 @@ type OKXSubscribeMessage struct {
 	} `json:"args"`
 }
 
-func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectOKXFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	wsURL := "wss://ws.okx.com:8443/ws/v5/public"
 
 	for {
@@ -67,8 +65,9 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 		}
 
 		for _, symbol := range symbols {
-			// Convert symbol format (BTCUSDT -> BTC-USDT-SWAP for perpetual futures)
-			okxSymbol := convertToOKXSymbol(symbol)
+			// config.yaml supplies the venue identifier (symbol_format
+			// "{base}-{quote}-SWAP").
+			okxSymbol := symbol.Venue
 
 			// Subscribe to trades
 			subscribeArgs = append(subscribeArgs, struct {
@@ -128,12 +127,14 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 						timestamp = 0
 					}
 
-					// Convert OKX symbol back to standard format
-					standardSymbol := convertFromOKXSymbol(trade.InstID)
+					standardSymbol := StandardOf(symbols, trade.InstID)
+					if standardSymbol == "" {
+						continue // an instrument this connector never subscribed to
+					}
 
 					tradeData := TradeData{
 						Symbol:      standardSymbol,
-						Source:      "okx_futures",
+						Source:      source,
 						Price:       price,
 						Quantity:    trade.Size,
 						Side:        trade.Side, // OKX already provides "buy" or "sell"
@@ -168,8 +169,10 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 						timestamp = 0
 					}
 
-					// Convert OKX symbol back to standard format
-					standardSymbol := convertFromOKXSymbol(book.InstID)
+					standardSymbol := StandardOf(symbols, book.InstID)
+					if standardSymbol == "" {
+						continue // an instrument this connector never subscribed to
+					}
 
 					// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0.
 					// A books5 level is [price, sz, liqOrders, numOrders] and sz
@@ -183,7 +186,7 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 					// without looking wrong.
 					orderbookData := OrderbookData{
 						Symbol:      standardSymbol,
-						Source:      "okx_futures",
+						Source:      source,
 						BestBid:     bestBid,
 						BestAsk:     bestAsk,
 						VenueTimeMs: timestamp,
@@ -197,57 +200,4 @@ func ConnectOKXFutures(symbols []string, priceChan chan<- PriceData, orderbookCh
 
 		time.Sleep(2 * time.Second)
 	}
-}
-
-// convertToOKXSymbol converts standard symbol format to OKX format
-// BTCUSDT -> BTC-USDT-SWAP (for perpetual futures)
-func convertToOKXSymbol(symbol string) string {
-	// Handle common symbols
-	switch symbol {
-	case "BTCUSDT":
-		return "BTC-USDT-SWAP"
-	case "ETHUSDT":
-		return "ETH-USDT-SWAP"
-	case "ADAUSDT":
-		return "ADA-USDT-SWAP"
-	case "SOLUSDT":
-		return "SOL-USDT-SWAP"
-	case "DOTUSDT":
-		return "DOT-USDT-SWAP"
-	case "LINKUSDT":
-		return "LINK-USDT-SWAP"
-	case "AVAXUSDT":
-		return "AVAX-USDT-SWAP"
-	case "MATICUSDT":
-		return "MATIC-USDT-SWAP"
-	case "UNIUSDT":
-		return "UNI-USDT-SWAP"
-	case "LTCUSDT":
-		return "LTC-USDT-SWAP"
-	case "BCHUSDT":
-		return "BCH-USDT-SWAP"
-	case "XRPUSDT":
-		return "XRP-USDT-SWAP"
-	default:
-		// Generic conversion for other symbols
-		if strings.HasSuffix(symbol, "USDT") {
-			base := strings.TrimSuffix(symbol, "USDT")
-			return fmt.Sprintf("%s-USDT-SWAP", base)
-		}
-		return symbol + "-SWAP"
-	}
-}
-
-// convertFromOKXSymbol converts OKX symbol format back to standard format
-// BTC-USDT-SWAP -> BTCUSDT
-func convertFromOKXSymbol(okxSymbol string) string {
-	// Remove -SWAP suffix and convert to standard format
-	if strings.HasSuffix(okxSymbol, "-SWAP") {
-		withoutSwap := strings.TrimSuffix(okxSymbol, "-SWAP")
-		parts := strings.Split(withoutSwap, "-")
-		if len(parts) == 2 {
-			return parts[0] + parts[1]
-		}
-	}
-	return okxSymbol
 }

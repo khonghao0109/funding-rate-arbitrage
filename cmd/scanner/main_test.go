@@ -1,0 +1,47 @@
+package main
+
+import (
+	"path/filepath"
+	"testing"
+
+	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/internal/config"
+)
+
+// The debt this closes, recorded at step 1.0: wire_test.go held a hand-copied
+// list of the ten sources main() connected, so adding a connector and forgetting
+// to register it was invisible. config.yaml is now the only list, and this
+// checks the two halves of it agree - every configured source names a connector
+// that exists, and every connector that exists is reachable from config.
+func TestShippedConfig_NamesOnlyConnectorsThatExist(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config.yaml: %v", err)
+	}
+
+	available := exchanges.Connectors()
+	for _, source := range cfg.Sources {
+		if _, ok := available[source.Connector]; !ok {
+			t.Errorf("source %q names connector %q, which does not exist", source.Source, source.Connector)
+		}
+	}
+}
+
+// A connector nobody can reach from configuration is dead weight, and more
+// likely a source somebody forgot to add to config.yaml.
+func TestEveryConnector_IsReachableFromTheShippedConfig(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config.yaml: %v", err)
+	}
+
+	used := map[string]bool{}
+	for _, source := range cfg.Sources {
+		used[source.Connector] = true
+	}
+	for name := range exchanges.Connectors() {
+		if !used[name] {
+			t.Errorf("connector %q exists but no configured source uses it", name)
+		}
+	}
+}

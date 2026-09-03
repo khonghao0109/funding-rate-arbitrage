@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -56,7 +55,7 @@ type ParadexMarketSummaryEvent struct {
 	} `json:"params"`
 }
 
-func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectParadexFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	wsURL := "wss://ws.api.prod.paradex.trade/v1"
 
 	for {
@@ -102,9 +101,9 @@ func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbo
 			if err := json.Unmarshal(message, &marketEvent); err == nil &&
 				marketEvent.Method == "subscription" && marketEvent.Params.Channel == "markets_summary" {
 
-				symbol := convertFromParadexSymbol(marketEvent.Params.Data.Symbol)
+				symbol := StandardOf(symbols, marketEvent.Params.Data.Symbol)
 				if symbol == "" {
-					continue // Skip unsupported symbols
+					continue // a market this connector never subscribed to
 				}
 
 				// Parse bid and ask prices
@@ -123,7 +122,7 @@ func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbo
 				// depth over REST instead - see docs/PLAN.md §7.4.
 				orderbookChan <- OrderbookData{
 					Symbol:  symbol,
-					Source:  "paradex_futures",
+					Source:  source,
 					BestBid: bidPrice,
 					BestAsk: askPrice,
 					// This connector does not parse a venue timestamp out of this
@@ -141,43 +140,4 @@ func ConnectParadexFutures(symbols []string, priceChan chan<- PriceData, orderbo
 		log.Printf("Paradex connection closed, reconnecting in 5 seconds...")
 		time.Sleep(5 * time.Second)
 	}
-}
-
-// Convert standard symbol format to Paradex format
-// BTCUSDT -> BTC-USD-PERP
-// ETHUSDT -> ETH-USD-PERP
-func convertToParadexSymbol(symbol string) string {
-	symbol = strings.ToUpper(symbol)
-
-	// Map of supported symbols
-	symbolMap := map[string]string{
-		"BTCUSDT": "BTC-USD-PERP",
-		"ETHUSDT": "ETH-USD-PERP",
-		"XRPUSDT": "XRP-USD-PERP",
-		"SOLUSDT": "SOL-USD-PERP",
-	}
-
-	if paradexSymbol, exists := symbolMap[symbol]; exists {
-		return paradexSymbol
-	}
-
-	return ""
-}
-
-// Convert Paradex symbol format back to standard format
-// BTC-USD-PERP -> BTCUSDT
-func convertFromParadexSymbol(paradexSymbol string) string {
-	// Map from Paradex format back to standard
-	symbolMap := map[string]string{
-		"BTC-USD-PERP": "BTCUSDT",
-		"ETH-USD-PERP": "ETHUSDT",
-		"XRP-USD-PERP": "XRPUSDT",
-		"SOL-USD-PERP": "SOLUSDT",
-	}
-
-	if symbol, exists := symbolMap[paradexSymbol]; exists {
-		return symbol
-	}
-
-	return ""
 }

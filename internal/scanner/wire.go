@@ -6,6 +6,7 @@ import (
 	"sort"
 	"time"
 
+	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/fees"
 )
 
@@ -22,10 +23,11 @@ import (
 // warns when it receives anything else.
 const wireVersion = 1
 
-// defaultStaleAfterSec is the fallback staleness threshold. It is per source
-// because a thinly traded pair going quiet for a minute is normal, and a single
-// global threshold would mark a healthy venue dead. Step 1.4 moves the value to
-// config.yaml; step 1.1 starts enforcing it.
+// defaultStaleAfterSec is the fallback staleness threshold for a source whose
+// own value is missing. config.yaml normally supplies one per source - a thinly
+// traded pair going quiet for a minute is normal, and a single global threshold
+// would mark a healthy venue dead - so this only ever applies to a source the
+// registry does not know at all.
 const defaultStaleAfterSec = 10
 
 // startupGrace is how long a source may take to deliver its first message before
@@ -57,8 +59,9 @@ const (
 )
 
 // alertMinSpreadPct is the dashboard's default alert filter, and the threshold
-// checkArbitrage uses to decide an opportunity is worth broadcasting.
-const alertMinSpreadPct = 0.05
+// checkArbitrage uses to decide an opportunity is worth broadcasting. Configure
+// sets it from config.yaml.
+var alertMinSpreadPct = 0.05
 
 // costModelTakerRoundTrip names the cost basis on the wire: a taker fill on all
 // four legs of opening and closing a two-venue position.
@@ -104,95 +107,75 @@ type sourceMeta struct {
 	FeeVerified bool    `json:"fee_verified"`
 }
 
-// sourceRegistry is the single source of truth for what the dashboard renders.
-// Order matters: it fixes the column order of the spread matrix, which used to
-// reshuffle on every message because it came from Go map iteration.
+// sourceRegistry is what the dashboard renders, built from config.yaml by
+// Configure. Order matters: it fixes the column order of the spread matrix and
+// the row order of the source list, which used to reshuffle on every message
+// because it came from Go map iteration.
 //
-// StaleAfterSec is measured, not guessed. Over a 5 minute observation of all
-// four symbols during active trading, the worst gap between two consecutive
-// updates was:
-//
-//	hyperliquid 6.05s · bybit_spot 4.02s · binance_spot 3.85s · gate 3.37s
-//	kraken 2.95s · bybit 2.25s · paradex 1.86s · okx 1.00s · binance 0.85s
-//
-// Each threshold leaves roughly 3x headroom over its own worst observed gap.
-// These feeds are change-driven, so a genuinely quiet market produces long gaps
-// with nothing wrong; a single global threshold would mark the slower venues
-// dead. The numbers hold for four majors in active hours - thin pairs and quiet
-// hours will need revisiting, which is the adaptive-threshold work PLAN.md
-// records as phase 1 debt.
-//
-// Pyth is the exception: it delivered nothing at all during the observation, so
-// it has no measurement and keeps the default. Its real cadence has to be
-// measured once its feed works.
-//
-// MarketType and QuoteAsset are static facts about each venue and are recorded
-// here now; step 1.2 is what starts *using* them to split the comparison into
-// separate blocks.
-//
-// Fee fields are absent from the literal on purpose: step 1.3 fills them from
-// internal/fees below, so the numbers and their citations live in exactly one
-// place. Editing a fee here would be editing the copy nobody reads.
-var sourceRegistry = withFees([]sourceMeta{
-	{Source: "binance_futures", Venue: "binance", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
-		Label: "Binance Futures", ShortLabel: "BIN-F", Color: "#f0b90b", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
-	{Source: "bybit_futures", Venue: "bybit", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
-		Label: "Bybit Futures", ShortLabel: "BYB-F", Color: "#f7931a", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
-	{Source: "hyperliquid_futures", Venue: "hyperliquid", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
-		Label: "Hyperliquid Futures", ShortLabel: "HYP", Color: "#97FCE4", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: 20}, // worst observed gap 6.05s
-	// Kraken quotes in USD, not USDT: PF_XBTUSD against BTCUSDT carries the
-	// USD/USDT spread as well. Step 1.2 puts it in its own group for that reason.
-	// See docs/DATA-REQUIREMENTS.md §3.
-	{Source: "kraken_futures", Venue: "kraken", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
-		Label: "Kraken Futures", ShortLabel: "KRK-F", Color: "#5a5aff", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
-	{Source: "okx_futures", Venue: "okx", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
-		Label: "OKX Futures", ShortLabel: "OKX-F", Color: "#1890ff", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
-	{Source: "gate_futures", Venue: "gate", MarketType: "perp", QuoteAsset: "USDT", Tradable: true,
-		Label: "Gate.io Futures", ShortLabel: "GAT-F", Color: "#6c5ce7", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: 15}, // worst observed gap 3.37s, and its book_ticker is change-driven
-	{Source: "paradex_futures", Venue: "paradex", MarketType: "perp", QuoteAsset: "USD", Tradable: true,
-		Label: "Paradex Futures", ShortLabel: "PDX", Color: "#ff6b6b", LineStyle: "solid",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
-	{Source: "binance_spot", Venue: "binance", MarketType: "spot", QuoteAsset: "USDT", Tradable: true,
-		Label: "Binance Spot", ShortLabel: "BIN-S", Color: "#ffb347", LineStyle: "dashed",
-		EnabledByDefault: true, StaleAfterSec: 15}, // worst observed gap 3.85s
-	{Source: "bybit_spot", Venue: "bybit", MarketType: "spot", QuoteAsset: "USDT", Tradable: true,
-		Label: "Bybit Spot", ShortLabel: "BYB-S", Color: "#f7931a", LineStyle: "dashed",
-		EnabledByDefault: true, StaleAfterSec: 15}, // worst observed gap 4.02s
-	// Pyth is a price oracle, not a venue. Nothing can be bought or sold on it,
-	// so it must never appear in a tradable comparison. Step 1.2 enforces this
-	// in the grouping logic; the flag is recorded here.
-	{Source: "pyth", Venue: "pyth", MarketType: "oracle", QuoteAsset: "USD", Tradable: false,
-		Label: "Pyth Oracle", ShortLabel: "PYTH", Color: "#00ff88", LineStyle: "dotted",
-		EnabledByDefault: true, StaleAfterSec: defaultStaleAfterSec},
-})
+// It is package-level and written exactly once, before any goroutine starts.
+// Everything downstream reads it.
+var sourceRegistry []sourceMeta
 
-// withFees stamps each source with its commission from internal/fees. A source
-// the fee table does not name comes back unverified, never free.
-func withFees(registry []sourceMeta) []sourceMeta {
-	for i := range registry {
-		schedule := fees.For(registry[i].Source)
-		registry[i].MakerFeeBps = schedule.MakerFeeBps
-		registry[i].TakerFeeBps = schedule.TakerFeeBps
-		registry[i].FeeVerified = schedule.Verified
+// Configure installs the configuration the scanner runs on. It must be called
+// before New, and before anything reads the registry.
+//
+// The registry used to be a literal here, with the venue facts, the measured
+// staleness thresholds and the fee citations as Go comments beside them. Step
+// 1.4 moved all of it to config.yaml, where the operator who has to change it
+// can read the reasoning next to the value - and where adding a pair or a venue
+// is no longer a Go edit.
+func Configure(cfg config.Config) {
+	registry := make([]sourceMeta, 0, len(cfg.Sources))
+	for _, source := range cfg.Sources {
+		registry = append(registry, sourceMeta{
+			Source:           source.Source,
+			Venue:            source.Venue,
+			MarketType:       source.MarketType,
+			QuoteAsset:       source.QuoteAsset,
+			Tradable:         source.Tradable,
+			Label:            source.Label,
+			ShortLabel:       source.ShortLabel,
+			Color:            source.Color,
+			LineStyle:        source.LineStyle,
+			EnabledByDefault: source.EnabledByDefault,
+			StaleAfterSec:    source.StaleAfterSec,
+			MakerFeeBps:      source.Fee.MakerBps,
+			TakerFeeBps:      source.Fee.TakerBps,
+			FeeVerified:      source.Fee.Verified,
+		})
 	}
-	return registry
+
+	sourceRegistry = registry
+	sourceOrder = indexRegistry(registry)
+	alertMinSpreadPct = cfg.Scanner.AlertMinSpreadPct
+}
+
+// scheduleFor is the fee schedule of one source, for the cost calculation.
+func scheduleFor(source string) fees.Schedule {
+	meta, ok := sourceMetaFor(source)
+	if !ok {
+		return fees.Schedule{Source: source}
+	}
+	return fees.Schedule{
+		Source:      meta.Source,
+		MakerFeeBps: meta.MakerFeeBps,
+		TakerFeeBps: meta.TakerFeeBps,
+		Verified:    meta.FeeVerified,
+	}
 }
 
 // sourceOrder maps a source to its position in sourceRegistry, for deterministic
-// ordering of anything derived from a map.
-var sourceOrder = func() map[string]int {
-	order := make(map[string]int, len(sourceRegistry))
-	for i, s := range sourceRegistry {
-		order[s.Source] = i
+// ordering of anything derived from a map. Configure rebuilds it with the
+// registry; the two must never be set apart.
+var sourceOrder = map[string]int{}
+
+func indexRegistry(registry []sourceMeta) map[string]int {
+	order := make(map[string]int, len(registry))
+	for i, meta := range registry {
+		order[meta.Source] = i
 	}
 	return order
-}()
+}
 
 // sortExcluded keeps the exclusion list in registry order so it does not
 // reshuffle between messages.

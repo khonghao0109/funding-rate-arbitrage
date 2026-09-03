@@ -1,0 +1,274 @@
+# Cấu hình scanner — nguồn sự thật DUY NHẤT cho cặp giao dịch, danh sách nguồn,
+# ngưỡng và biểu phí.
+#
+# Mục tiêu của Bước 1.4: thêm một cặp hoặc một sàn chỉ cần sửa file này, không
+# đụng vào Go lẫn JavaScript. Dashboard dựng toàn bộ danh sách nguồn, màu, nhãn
+# và bộ chọn cặp từ message `meta`, mà `meta` sinh ra từ đây.
+#
+# Ngoại lệ DUY NHẤT còn lại: một sàn hoàn toàn mới cần một connector mới viết
+# bằng Go. Trường `connector` bên dưới chọn trong số connector đã có; thêm một
+# sàn dùng connector sẵn có thì không cần code.
+
+server:
+  # Cổng HTTP. Biến môi trường PORT vẫn được ưu tiên nếu có.
+  port: "8082"
+
+scanner:
+  # Ngưỡng chênh lệch THÔ để phát cảnh báo, tính bằng phần trăm.
+  #
+  # Cố ý đo trên số THÔ chứ không phải số sau phí: một vòng mở–đóng cả hai chân
+  # tốn khoảng 0,19% nên lọc theo số sau phí sẽ tắt gần hết cảnh báo. Quyết định
+  # "cái gì đáng hành động" là việc của Giai đoạn 3. Mỗi cảnh báo vẫn mang theo
+  # số sau phí của chính nó.
+  alert_min_spread_pct: 0.05
+
+  # Ngưỡng mặc định cho nguồn không khai `stale_after_sec` riêng.
+  default_stale_after_sec: 10
+
+# Các cặp scanner theo dõi.
+#
+# `base` và `quote` được khai tường minh, không suy ra từ hậu tố chuỗi: suy ra
+# kiểu đó là cách "DOGEUSDT" trở thành base "DOG". Chúng dùng để dựng ký hiệu
+# riêng của từng sàn qua `symbol_format` bên dưới.
+symbols:
+  - { symbol: BTCUSDT, base: BTC, quote: USDT }
+  - { symbol: ETHUSDT, base: ETH, quote: USDT }
+  - { symbol: XRPUSDT, base: XRP, quote: USDT }
+  - { symbol: SOLUSDT, base: SOL, quote: USDT }
+
+# Nguồn dữ liệu. Thứ tự ở đây quyết định thứ tự cột của ma trận spread và thứ tự
+# hàng của danh sách nguồn trên dashboard.
+#
+# Cách một cặp được đổi sang ký hiệu của sàn, xét theo thứ tự:
+#   1. có trong `symbol_map` → dùng giá trị đó
+#   2. có `symbol_format`    → thay {base}/{quote}/{symbol} vào khuôn
+#   3. `symbol_map` không rỗng mà cặp không có trong đó → BỎ QUA cặp này ở sàn này
+#   4. không có cả hai        → dùng nguyên ký hiệu chuẩn
+#
+# `stale_after_sec` là ngưỡng "báo giá quá cũ để so sánh", ĐO chứ không đoán:
+# quan sát 5 phút trên cả 4 cặp lúc thị trường hoạt động, lấy khoảng cách cập
+# nhật tệ nhất của từng sàn rồi để dư khoảng 3 lần. Con số chỉ đúng cho 4 cặp
+# lớn trong giờ hoạt động; cặp thanh khoản mỏng hoặc giờ đêm cần đo lại.
+#
+# `fee` là biểu phí bậc mặc định (chưa VIP). `verified: true` nghĩa là con số đã
+# đọc từ tài liệu của chính sàn và `doc_url` chỉ tới đó. `verified: false` nghĩa
+# là CHƯA TRA ĐƯỢC, KHÔNG phải miễn phí — Paradex tính 0% thật cho tài khoản
+# Retail, nên số 0 là một mức phí có thật và phải phân biệt bằng cờ này. Cặp nào
+# có một sàn `verified: false` thì không có số sau phí.
+#
+# Nếu bạn có tài khoản trên các sàn này, hãy thay bằng biểu phí bậc của CHÍNH
+# BẠN và đặt `verified: true` — đó mới là con số đúng, vì phí phụ thuộc bậc VIP
+# và khối lượng 30 ngày.
+sources:
+  - source: binance_futures
+    connector: binance_futures
+    venue: binance
+    market_type: perp
+    quote_asset: USDT
+    tradable: true
+    label: Binance Futures
+    short_label: BIN-F
+    color: "#f0b90b"
+    line_style: solid
+    enabled_by_default: true
+    stale_after_sec: 10          # gap tệ nhất quan sát được 0,85s
+    fee:
+      maker_bps: 2.0
+      taker_bps: 5.0
+      verified: true
+      doc_url: https://www.binance.com/en/support/faq/detail/360033544231
+      note_vi: >-
+        USDⓈ-M futures, Regular User. Con số nằm trong ví dụ tính toán trên trang
+        hỗ trợ chính thức của Binance; bảng biểu phí gốc (/en/fee/futureFee) đòi
+        đăng nhập.
+
+  - source: bybit_futures
+    connector: bybit_futures
+    venue: bybit
+    market_type: perp
+    quote_asset: USDT
+    tradable: true
+    label: Bybit Futures
+    short_label: BYB-F
+    color: "#f7931a"
+    line_style: solid
+    enabled_by_default: true
+    stale_after_sec: 10          # gap tệ nhất quan sát được 2,25s
+    fee:
+      verified: false
+      note_vi: >-
+        Chưa xác minh: trang biểu phí của Bybit không phản hồi từ môi trường này.
+        Không điền theo trí nhớ (CLAUDE.md luật 5). Thay bằng biểu phí tài khoản
+        của bạn rồi đặt verified: true.
+
+  - source: hyperliquid_futures
+    connector: hyperliquid_futures
+    venue: hyperliquid
+    market_type: perp
+    quote_asset: USD
+    tradable: true
+    label: Hyperliquid Futures
+    short_label: HYP
+    color: "#97FCE4"
+    line_style: solid
+    enabled_by_default: true
+    stale_after_sec: 20          # gap tệ nhất quan sát được 6,05s
+    # Hyperliquid gọi thị trường bằng tên coin. Trước Bước 1.4 chỗ này là
+    # symbol[:3], chỉ đúng vì cả 4 cặp hiện có base dài đúng 3 ký tự —
+    # "DOGEUSDT" sẽ lặng lẽ đăng ký nhầm sang "DOG".
+    symbol_format: "{base}"
+    fee:
+      maker_bps: 1.5
+      taker_bps: 4.5
+      verified: true
+      doc_url: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
+      note_vi: "Perps bậc 0 (không yêu cầu khối lượng): maker 0,015% · taker 0,045%."
+
+  - source: kraken_futures
+    connector: kraken_futures
+    venue: kraken
+    market_type: perp
+    # Kraken quote bằng USD, không phải USDT. Đây là lý do nó nằm nhóm riêng:
+    # so PF_XBTUSD với BTCUSDT là đo cả chênh USD/USDT.
+    quote_asset: USD
+    tradable: true
+    label: Kraken Futures
+    short_label: KRK-F
+    color: "#5a5aff"
+    line_style: solid
+    enabled_by_default: true
+    stale_after_sec: 10          # gap tệ nhất quan sát được 2,95s
+    symbol_format: "PF_{base}USD"
+    symbol_map:
+      # Kraken gọi bitcoin là XBT, nên khuôn ở trên không áp dụng được.
+      BTCUSDT: PF_XBTUSD
+    fee:
+      maker_bps: 2.0
+      taker_bps: 5.0
+      verified: true
+      doc_url: https://www.kraken.com/features/fee-schedule
+      note_vi: "Kraken Futures bậc 1 (khối lượng futures 30 ngày < 5 triệu USD)."
+
+  - source: okx_futures
+    connector: okx_futures
+    venue: okx
+    market_type: perp
+    quote_asset: USDT
+    tradable: true
+    label: OKX Futures
+    short_label: OKX-F
+    color: "#1890ff"
+    line_style: solid
+    enabled_by_default: true
+    stale_after_sec: 10          # gap tệ nhất quan sát được 1,00s
+    symbol_format: "{base}-{quote}-SWAP"
+    fee:
+      verified: false
+      note_vi: >-
+        Chưa xác minh: trang biểu phí của OKX trả về 404 hoặc chỉ có metadata,
+        bảng phí thật đòi đăng nhập.
+
+  - source: gate_futures
+    connector: gate_futures
+    venue: gate
+    market_type: perp
+    quote_asset: USDT
+    tradable: true
+    label: Gate.io Futures
+    short_label: GAT-F
+    color: "#6c5ce7"
+    line_style: solid
+    enabled_by_default: true
+    stale_after_sec: 15          # gap tệ nhất quan sát được 3,37s, book_ticker đẩy theo thay đổi
+    symbol_format: "{base}_{quote}"
+    fee:
+      verified: false
+      note_vi: >-
+        Chưa xác minh: thông báo công khai của Gate có maker 0,0200% / taker
+        0,0500% nhưng ghi rõ là cho "USDT-M TradFi Perpetuals" (cổ phiếu, kim
+        loại, chỉ số, forex, hàng hoá) — KHÔNG phải perp crypto. Dùng con số đó
+        là đúng bảng, sai thị trường.
+
+  - source: paradex_futures
+    connector: paradex_futures
+    venue: paradex
+    market_type: perp
+    quote_asset: USD
+    tradable: true
+    label: Paradex Futures
+    short_label: PDX
+    color: "#ff6b6b"
+    line_style: solid
+    enabled_by_default: true
+    stale_after_sec: 10          # gap tệ nhất quan sát được 1,86s
+    symbol_format: "{base}-USD-PERP"
+    fee:
+      maker_bps: 0.3
+      taker_bps: 4.5
+      verified: true
+      doc_url: https://docs.paradex.trade/trading/trading-fees.md
+      note_vi: >-
+        Bậc Pro, đầu cao của thang taker (0,035–0,045%): maker 0,003% · taker
+        0,045%. Tài khoản Retail hiện là 0%, nên số sau phí là cận DƯỚI của cái
+        giữ lại được.
+
+  - source: binance_spot
+    connector: binance_spot
+    venue: binance
+    market_type: spot
+    quote_asset: USDT
+    tradable: true
+    label: Binance Spot
+    short_label: BIN-S
+    color: "#ffb347"
+    line_style: dashed
+    enabled_by_default: true
+    stale_after_sec: 15          # gap tệ nhất quan sát được 3,85s
+    fee:
+      maker_bps: 10.0
+      taker_bps: 10.0
+      verified: true
+      doc_url: https://www.binance.com/en/fee/schedule
+      note_vi: "Spot, Regular User (khối lượng 30 ngày < 1.000.000 USD, không giữ BNB)."
+
+  - source: bybit_spot
+    connector: bybit_spot
+    venue: bybit
+    market_type: spot
+    quote_asset: USDT
+    tradable: true
+    label: Bybit Spot
+    short_label: BYB-S
+    color: "#f7931a"
+    line_style: dashed
+    enabled_by_default: true
+    stale_after_sec: 15          # gap tệ nhất quan sát được 4,02s
+    fee:
+      verified: false
+      note_vi: "Chưa xác minh: cùng lý do với bybit_futures."
+
+  # Pyth là ORACLE, không phải sàn. Không mua bán được ở đó nên nó không bao giờ
+  # nằm trong một nhóm so sánh; nó chỉ xuất hiện ở khối `oracle_deviation`.
+  - source: pyth
+    connector: pyth
+    venue: pyth
+    market_type: oracle
+    quote_asset: USD
+    tradable: false
+    label: Pyth Oracle
+    short_label: PYTH
+    color: "#00ff88"
+    line_style: dotted
+    enabled_by_default: true
+    # Chưa đo được: suốt buổi quan sát Pyth không gửi gì. Cần đo lại khi feed chạy.
+    stale_after_sec: 10
+    # Pyth định danh bằng price feed ID, không có khuôn nào suy ra được. Cặp nào
+    # không có ID ở đây thì Pyth bỏ qua — hiện chỉ có BTC, nên ETH/XRP/SOL không
+    # có dòng oracle. Lấy ID tại https://www.pyth.network/developers/price-feed-ids
+    symbol_map:
+      BTCUSDT: e62df6c8b4a85fe1a67db44dc12de5db330f7ac66b72dc658afedf0f4a415b43
+    fee:
+      verified: false
+      note_vi: >-
+        Oracle, không giao dịch được nên không có phí. Đây là lý do khác hẳn
+        "chưa tra được", và nó không bao giờ nằm trong một phép so sánh.

@@ -365,7 +365,7 @@ func buildOracleDeviation(usable map[string]float64) []wireOracleDeviation {
 // returns is "after trading fees" and never "net profit": slippage and funding
 // are still not in it. See internal/fees and CLAUDE.md rule 2.
 func afterFeesPct(grossPct float64, buySource, sellSource string) *float64 {
-	costPct, ok := fees.RoundTripTakerPct(fees.For(buySource), fees.For(sellSource))
+	costPct, ok := fees.RoundTripTakerPct(scheduleFor(buySource), scheduleFor(sellSource))
 	if !ok {
 		return nil
 	}

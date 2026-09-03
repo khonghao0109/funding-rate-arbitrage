@@ -35,7 +35,7 @@ type BybitFuturesOrderbook struct {
 	} `json:"data"`
 }
 
-func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectBybitFutures(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	wsURL := "wss://stream.bybit.com/v5/public/linear"
 
 	for {
@@ -54,8 +54,8 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 		}
 
 		for i, symbol := range symbols {
-			subscribeMsg["args"].([]string)[i*2] = fmt.Sprintf("orderbook.1.%s", symbol)
-			subscribeMsg["args"].([]string)[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol)
+			subscribeMsg["args"].([]string)[i*2] = fmt.Sprintf("orderbook.1.%s", symbol.Venue)
+			subscribeMsg["args"].([]string)[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol.Venue)
 		}
 
 		err = conn.WriteJSON(subscribeMsg)
@@ -99,9 +99,14 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 					askQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Asks[0][1], 64)
 				}
 
+				standardSymbol := StandardOf(symbols, orderbookMsg.Data.Symbol)
+				if standardSymbol == "" {
+					continue // a market this connector never subscribed to
+				}
+
 				orderbookData := OrderbookData{
-					Symbol:         orderbookMsg.Data.Symbol,
-					Source:         "bybit_futures",
+					Symbol:         standardSymbol,
+					Source:         source,
 					BestBid:        bidPrice,
 					BestAsk:        askPrice,
 					BestBidQtyCoin: bidQtyCoin,
@@ -138,9 +143,14 @@ func ConnectBybitFutures(symbols []string, priceChan chan<- PriceData, orderbook
 						side = "sell"
 					}
 
+					standardSymbol := StandardOf(symbols, trade.Symbol)
+					if standardSymbol == "" {
+						continue
+					}
+
 					tradeData := TradeData{
-						Symbol:      trade.Symbol,
-						Source:      "bybit_futures",
+						Symbol:      standardSymbol,
+						Source:      source,
 						Price:       price,
 						Quantity:    trade.Size,
 						Side:        side,
@@ -183,7 +193,7 @@ type BybitSpotOrderbook struct {
 }
 
 // ConnectBybitSpot connects to Bybit spot trading WebSocket API
-func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
+func ConnectBybitSpot(source string, symbols []Symbol, priceChan chan<- PriceData, orderbookChan chan<- OrderbookData, tradeChan chan<- TradeData) {
 	wsURL := "wss://stream.bybit.com/v5/public/spot"
 
 	for {
@@ -202,8 +212,8 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 		}
 
 		for i, symbol := range symbols {
-			subscribeMsg["args"].([]string)[i*2] = fmt.Sprintf("orderbook.1.%s", symbol)
-			subscribeMsg["args"].([]string)[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol)
+			subscribeMsg["args"].([]string)[i*2] = fmt.Sprintf("orderbook.1.%s", symbol.Venue)
+			subscribeMsg["args"].([]string)[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol.Venue)
 		}
 
 		err = conn.WriteJSON(subscribeMsg)
@@ -247,9 +257,14 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 					askQtyCoin, _ = strconv.ParseFloat(orderbookMsg.Data.Asks[0][1], 64)
 				}
 
+				standardSymbol := StandardOf(symbols, orderbookMsg.Data.Symbol)
+				if standardSymbol == "" {
+					continue // a market this connector never subscribed to
+				}
+
 				orderbookData := OrderbookData{
-					Symbol:         orderbookMsg.Data.Symbol,
-					Source:         "bybit_spot",
+					Symbol:         standardSymbol,
+					Source:         source,
 					BestBid:        bidPrice,
 					BestAsk:        askPrice,
 					BestBidQtyCoin: bidQtyCoin,
@@ -286,9 +301,14 @@ func ConnectBybitSpot(symbols []string, priceChan chan<- PriceData, orderbookCha
 						side = "sell"
 					}
 
+					standardSymbol := StandardOf(symbols, trade.Symbol)
+					if standardSymbol == "" {
+						continue
+					}
+
 					tradeData := TradeData{
-						Symbol:      trade.Symbol,
-						Source:      "bybit_spot",
+						Symbol:      standardSymbol,
+						Source:      source,
 						Price:       price,
 						Quantity:    trade.Size,
 						Side:        side,

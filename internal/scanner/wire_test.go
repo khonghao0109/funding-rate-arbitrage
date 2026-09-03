@@ -3,37 +3,58 @@ package scanner
 import (
 	"encoding/json"
 	"math"
-	"sort"
+	"path/filepath"
 	"testing"
 	"time"
+
+	"futures-arbitrage-scanner/internal/config"
 )
 
-// expectedSources is the set of sources main() currently connects. The registry
-// that feeds the meta message must match it exactly, otherwise the dashboard
-// either hides a live source or advertises one that never sends data.
-var expectedSources = []string{
-	"binance_futures", "bybit_futures", "hyperliquid_futures", "kraken_futures",
-	"okx_futures", "gate_futures", "paradex_futures",
-	"binance_spot", "bybit_spot", "pyth",
+// Step 1.0 kept a hand-copied list of the ten sources main() connected, so
+// adding a connector and forgetting to register it was invisible. Step 1.4
+// removed the copy: config.yaml is the only list, and the registry is built from
+// it. What still needs checking is that Configure carried every source across
+// and kept the order, because the order fixes the matrix columns.
+func TestConfigure_RegistryMirrorsTheConfiguredSources(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config.yaml: %v", err)
+	}
+
+	if len(sourceRegistry) != len(cfg.Sources) {
+		t.Fatalf("registry has %d sources, config has %d", len(sourceRegistry), len(cfg.Sources))
+	}
+	for i, source := range cfg.Sources {
+		meta := sourceRegistry[i]
+		if meta.Source != source.Source {
+			t.Fatalf("registry[%d] = %q, config says %q", i, meta.Source, source.Source)
+		}
+		if meta.MarketType != source.MarketType || meta.QuoteAsset != source.QuoteAsset {
+			t.Errorf("%s: registry says %s/%s, config says %s/%s",
+				meta.Source, meta.MarketType, meta.QuoteAsset, source.MarketType, source.QuoteAsset)
+		}
+		if meta.StaleAfterSec != source.StaleAfterSec {
+			t.Errorf("%s: registry threshold %d, config says %d",
+				meta.Source, meta.StaleAfterSec, source.StaleAfterSec)
+		}
+		if sourceOrder[source.Source] != i {
+			t.Errorf("%s: order index %d, want %d", source.Source, sourceOrder[source.Source], i)
+		}
+	}
 }
 
-func TestSourceRegistry_CoversEverySourceMainConnects(t *testing.T) {
-	got := make([]string, 0, len(sourceRegistry))
-	for _, s := range sourceRegistry {
-		got = append(got, s.Source)
+// Configure also carries the alert threshold, which decides what the dashboard
+// filters by AND what checkArbitrage broadcasts.
+func TestConfigure_AlertThresholdComesFromConfig(t *testing.T) {
+	cfg, err := config.Load(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config.yaml: %v", err)
 	}
-	sort.Strings(got)
-
-	want := append([]string(nil), expectedSources...)
-	sort.Strings(want)
-
-	if len(got) != len(want) {
-		t.Fatalf("registry has %d sources, main connects %d: %v vs %v", len(got), len(want), got, want)
+	if alertMinSpreadPct != cfg.Scanner.AlertMinSpreadPct {
+		t.Errorf("alertMinSpreadPct = %g, config says %g", alertMinSpreadPct, cfg.Scanner.AlertMinSpreadPct)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("registry source %d = %q, want %q", i, got[i], want[i])
-		}
+	if newWireMeta([]string{"BTCUSDT"}, 1).AlertMinSpreadPct != cfg.Scanner.AlertMinSpreadPct {
+		t.Error("meta does not advertise the configured threshold")
 	}
 }
 

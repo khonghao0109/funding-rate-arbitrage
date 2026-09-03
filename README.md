@@ -52,6 +52,7 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Nói rõ số đang hiển thị là gì** | Dashboard ghi thẳng chi phí nào đã trừ và chưa trừ. Nguồn bị loại khỏi so sánh đều kèm lý do (oracle, dữ liệu cũ, không có nguồn cùng loại để so) thay vì lặng lẽ biến mất |
 | **Lọc dữ liệu cũ** | Sàn ngừng gửi quá ngưỡng riêng của nó bị loại khỏi so sánh và hiện nhãn **CŨ** / **MẤT KẾT NỐI**. Ngưỡng đo từ dữ liệu thật, 10–20s tuỳ sàn |
 | **Dashboard tự dựng theo máy chủ** | Danh sách nguồn, màu, nhãn và danh sách cặp đến từ message `meta`, không hardcode trong JavaScript |
+| **Cấu hình bằng `config.yaml`** | Cặp giao dịch, danh sách sàn, ngưỡng, biểu phí và ánh xạ ký hiệu từng sàn nằm trong một file YAML. Thêm một cặp hoặc một sàn dùng connector sẵn có **không cần sửa Go lẫn JavaScript** |
 | **Basis spot ↔ perp** | Chênh lệch spot với perpetual **cùng một sàn** — nguyên liệu của chiến lược funding, tính riêng chứ không trộn vào ma trận chéo sàn |
 | **Đối chiếu oracle** | Độ lệch từng sàn so với Pyth, chỉ tham chiếu, không bao giờ sinh cảnh báo. Dòng nào lệch đồng quote đều được gắn nhãn |
 | **Khối lượng đỉnh sổ** | Thu ở 5/9 nguồn báo bằng coin. Bốn sàn báo bằng contract để `0` — nghĩa là **chưa biết**, không phải không có thanh khoản |
@@ -69,8 +70,8 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
 | **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | 79 test (86,8% câu lệnh ở `internal/scanner`, 100% ở `internal/fees`). Connector chưa có test nào, chưa có `exchanges/testdata/` |
-| **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập tay ở `config.yaml` tại Bước 1.4 |
+| **Test tự động** | 105 test (87,1% ở `internal/scanner`, 100% ở `internal/fees`, 78,2% ở `internal/config`). Connector chưa có test nào, chưa có `exchanges/testdata/` |
+| **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập biểu phí tài khoản của bạn vào `config.yaml` và đặt `verified: true` |
 | **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract; chưa có instrument registry để nhân `ctVal`/`quanto_multiplier`, nên bốn sàn chưa có số thanh khoản. Xếp hạng cơ hội theo độ sâu phải chờ GĐ 2 |
 
 Toàn bộ các mục trên đều đã có kế hoạch xử lý theo giai đoạn trong [docs/PLAN.md](docs/PLAN.md).
@@ -96,7 +97,7 @@ Lộ trình chia **9 giai đoạn / 41 bước**:
 | GĐ | Nội dung | Trạng thái |
 |---|---|---|
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
-| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (4/7) |
+| 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (5/7) |
 | 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |
@@ -169,13 +170,36 @@ Mở trình duyệt tại **http://localhost:8082**
 
 ### Cấu hình
 
-Hiện tại rất tối giản — file `.env`:
+Mọi thứ vận hành nằm trong **`config.yaml`** ở gốc repo: cặp giao dịch, danh sách
+sàn, ngưỡng cảnh báo, ngưỡng dữ liệu cũ theo từng sàn, biểu phí, và cách mỗi sàn
+đặt tên cho cùng một thị trường.
 
-```env
-PORT=8082
+**Thêm một cặp** — một dòng, và mỗi sàn tự dựng ký hiệu của nó:
+
+```yaml
+symbols:
+  - { symbol: DOGEUSDT, base: DOGE, quote: USDT }
 ```
 
-Ngưỡng cảnh báo spread đặt trực tiếp trong giao diện (mặc định **0,05%**).
+**Thêm một sàn** dùng connector sẵn có — một khối trong `sources:`. Sàn hoàn toàn
+mới thì cần viết connector Go; `connector:` chọn trong số đã có.
+
+**Nhập biểu phí của chính bạn** — phí phụ thuộc bậc VIP và khối lượng 30 ngày,
+nên biểu phí tài khoản bạn mới là con số đúng:
+
+```yaml
+    fee:
+      maker_bps: 2.0
+      taker_bps: 5.0
+      verified: true
+      doc_url: https://…
+```
+
+`verified: false` nghĩa là **chưa tra được**, không phải miễn phí — cặp nào có
+một sàn như vậy thì không có số sau phí.
+
+Dùng file khác: `go run ./cmd/scanner -config /đường/dẫn/khác.yaml`.
+Biến môi trường `PORT` (hoặc `.env`) vẫn được ưu tiên hơn `server.port`.
 
 > ⚠️ Ngưỡng này áp lên **spread thô**, chưa trừ phí. Dashboard ghi rõ điều này ngay dưới ma trận. Với phí taker thông thường của cả hai chân, chi phí vòng lặp đã vượt xa 0,05% — nên con số hiển thị hiện tại phản ánh *cấu trúc thị trường*, không phải *cơ hội có thể thực thi*. Mô hình phí nằm ở Bước 1.3 trong lộ trình.
 

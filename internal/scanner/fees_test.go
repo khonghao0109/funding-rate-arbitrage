@@ -8,35 +8,35 @@ import (
 	"futures-arbitrage-scanner/internal/fees"
 )
 
-// The registry must not carry its own copy of the fee numbers. Two tables of the
-// same fact drift, and the one nobody looks at is the one that goes stale.
-func TestSourceRegistry_FeesComeFromTheFeeTable(t *testing.T) {
+// The registry carries what config.yaml says, and the cost calculation reads it
+// back through scheduleFor. Two copies of the same fact drift, and the one
+// nobody looks at is the one that goes stale.
+func TestScheduleFor_MatchesTheConfiguredRegistry(t *testing.T) {
 	for _, meta := range sourceRegistry {
-		schedule := fees.For(meta.Source)
-		if meta.MakerFeeBps != schedule.MakerFeeBps || meta.TakerFeeBps != schedule.TakerFeeBps {
-			t.Errorf("%s registry fees %g/%g differ from the fee table's %g/%g",
-				meta.Source, meta.MakerFeeBps, meta.TakerFeeBps,
-				schedule.MakerFeeBps, schedule.TakerFeeBps)
+		schedule := scheduleFor(meta.Source)
+		if schedule.MakerFeeBps != meta.MakerFeeBps || schedule.TakerFeeBps != meta.TakerFeeBps {
+			t.Errorf("%s schedule %g/%g differs from the registry's %g/%g",
+				meta.Source, schedule.MakerFeeBps, schedule.TakerFeeBps,
+				meta.MakerFeeBps, meta.TakerFeeBps)
 		}
-		if meta.FeeVerified != schedule.Verified {
-			t.Errorf("%s fee_verified = %v, fee table says %v",
-				meta.Source, meta.FeeVerified, schedule.Verified)
+		if schedule.Verified != meta.FeeVerified {
+			t.Errorf("%s schedule verified = %v, registry says %v",
+				meta.Source, schedule.Verified, meta.FeeVerified)
 		}
 	}
 }
 
-// Every source the dashboard knows about needs an entry, even if that entry only
-// records that the fee was never verified. A source missing from the table would
-// silently fall through to the unverified default and nobody would notice which.
-func TestSourceRegistry_EverySourceIsNamedInTheFeeTable(t *testing.T) {
-	named := map[string]bool{}
-	for _, schedule := range fees.All() {
-		named[schedule.Source] = true
+// A source nothing knows about must come back unverified, never free.
+func TestScheduleFor_UnknownSourceIsUnverified(t *testing.T) {
+	schedule := scheduleFor("some_venue_nobody_configured")
+	if schedule.Verified {
+		t.Error("an unconfigured source must not report a verified fee")
 	}
-	for _, meta := range sourceRegistry {
-		if !named[meta.Source] {
-			t.Errorf("%s has no entry in the fee table", meta.Source)
-		}
+	if schedule.MakerFeeBps != 0 || schedule.TakerFeeBps != 0 {
+		t.Errorf("an unconfigured source must report 0, got %+v", schedule)
+	}
+	if _, ok := fees.RoundTripTakerPct(schedule, schedule); ok {
+		t.Error("an unconfigured source must not produce a cost")
 	}
 }
 

@@ -38,7 +38,25 @@ func excludedReason(msg wireSpreads, source string) string {
 
 // The whole point of step 1.2: one comparison per (market type, quote asset),
 // never one comparison across all of them.
+//
+// It runs on a FIXTURE registry, not on the shipped config: this is a test of
+// the grouping rule, and asserting exact membership against config.yaml would
+// make it fail every time somebody adds a venue - which is the change step 1.4
+// exists to make easy.
 func TestPartitionSources_SplitsByMarketTypeAndQuote(t *testing.T) {
+	withRegistry(t, []sourceMeta{
+		{Source: "binance_futures", Venue: "binance", MarketType: marketTypePerp, QuoteAsset: "USDT", Tradable: true},
+		{Source: "bybit_futures", Venue: "bybit", MarketType: marketTypePerp, QuoteAsset: "USDT", Tradable: true},
+		{Source: "hyperliquid_futures", Venue: "hyperliquid", MarketType: marketTypePerp, QuoteAsset: "USD", Tradable: true},
+		{Source: "kraken_futures", Venue: "kraken", MarketType: marketTypePerp, QuoteAsset: "USD", Tradable: true},
+		{Source: "okx_futures", Venue: "okx", MarketType: marketTypePerp, QuoteAsset: "USDT", Tradable: true},
+		{Source: "gate_futures", Venue: "gate", MarketType: marketTypePerp, QuoteAsset: "USDT", Tradable: true},
+		{Source: "paradex_futures", Venue: "paradex", MarketType: marketTypePerp, QuoteAsset: "USD", Tradable: true},
+		{Source: "binance_spot", Venue: "binance", MarketType: marketTypeSpot, QuoteAsset: "USDT", Tradable: true},
+		{Source: "bybit_spot", Venue: "bybit", MarketType: marketTypeSpot, QuoteAsset: "USDT", Tradable: true},
+		{Source: "pyth", Venue: "pyth", MarketType: marketTypeOracle, QuoteAsset: "USD", Tradable: false},
+	})
+
 	groups, _ := partitionSources(allSourcesAt(100))
 
 	want := map[string][]string{
@@ -539,8 +557,16 @@ func TestProcessOrderbooks_StoresTopOfBook(t *testing.T) {
 }
 
 // withRegistry swaps the source registry for one test. sourceOrder is derived
-// from it at init, so both have to move together or sourceMetaFor stops finding
+// from it, so both have to move together or sourceMetaFor stops finding
 // anything.
+//
+// ⚠️ It writes package globals while goroutines started by earlier tests may
+// still be running. Today that is safe only because the two that outlive their
+// test - refreshStaleness and processTrades - return before touching the
+// registry: the first checks hasClients() and the second only records a
+// timestamp. Adding a registry read ahead of those guards would turn this into a
+// real -race failure. The proper fix is a way to stop a Scanner's goroutines,
+// which is step 1.5's context work; recorded in PLAN.md.
 func withRegistry(t *testing.T, registry []sourceMeta) {
 	t.Helper()
 	oldRegistry, oldOrder := sourceRegistry, sourceOrder
