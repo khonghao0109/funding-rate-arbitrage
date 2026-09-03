@@ -19,6 +19,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"reflect"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -246,6 +248,36 @@ func startInstrumentRegistry(ctx context.Context, cfg config.Config) *instrument
 	}
 
 	registry := instruments.New(sources)
-	go registry.Run(ctx)
+
+	// The hedge mapping (step 2.4) is a pure function of the registry plus
+	// the config's declarations, so it is rebuilt after every refresh and
+	// logged when it CHANGED — the 5-minute failure-retry cycle must not
+	// repeat an unchanged table.
+	pairs := make([]instruments.PairAssets, 0, len(cfg.Symbols))
+	for _, s := range cfg.Symbols {
+		pairs = append(pairs, instruments.PairAssets{Symbol: s.Symbol, BaseAsset: s.Base})
+	}
+	claims := make([]instruments.SourceClaim, 0, len(cfg.Sources))
+	for _, s := range cfg.Sources {
+		claims = append(claims, instruments.SourceClaim{
+			Source:     s.Source,
+			MarketType: s.MarketType,
+			QuoteAsset: s.QuoteAsset,
+			Tradable:   s.Tradable,
+		})
+	}
+	var lastMapping instruments.HedgeMapping
+	go registry.Run(ctx, func() {
+		mapping := instruments.BuildHedgeMapping(registry.Snapshot(), pairs, claims)
+		// Compared as a STRUCTURE, not as its rendered text: the log lines
+		// carry only symbol and source names, so a venue revising a step or
+		// contract size would render identically and go unlogged.
+		if reflect.DeepEqual(mapping, lastMapping) { // only Run's goroutine touches lastMapping
+			return
+		}
+		lastMapping = mapping
+		log.Printf("hedge mapping: %d pairs, %d refusals\n  %s",
+			len(mapping.Pairs), len(mapping.Rejections), strings.Join(mapping.LogLines(), "\n  "))
+	})
 	return registry
 }

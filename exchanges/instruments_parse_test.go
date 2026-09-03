@@ -28,7 +28,8 @@ func loadInstrumentTestdata(t *testing.T, name string, into any) {
 func assertInstrument(t *testing.T, got, want Instrument) {
 	t.Helper()
 	if got.Symbol != want.Symbol || got.NativeSymbol != want.NativeSymbol ||
-		got.Source != want.Source || got.MarketType != want.MarketType || got.Status != want.Status {
+		got.Source != want.Source || got.MarketType != want.MarketType || got.Status != want.Status ||
+		got.BaseAsset != want.BaseAsset || got.QuoteAsset != want.QuoteAsset {
 		t.Errorf("identity = %+v,\nwant %+v", got, want)
 		return
 	}
@@ -67,13 +68,13 @@ func TestParseBinanceInstruments_Golden(t *testing.T) {
 	}
 	assertInstrument(t, got[0], Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTCUSDT", Source: "binance_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
 		TickSizeQuote: 0.10, StepSizeCoin: 0.001, MinQtyCoin: 0.001, MaxQtyCoin: 1000,
 		MinNotionalQuote: 50, ContractSizeCoin: 1,
 	})
 	assertInstrument(t, got[1], Instrument{
 		Symbol: "XRPUSDT", NativeSymbol: "XRPUSDT", Source: "binance_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "XRP", QuoteAsset: "USDT",
 		TickSizeQuote: 0.0001, StepSizeCoin: 0.1, MinQtyCoin: 0.1, MaxQtyCoin: 10_000_000,
 		MinNotionalQuote: 5, ContractSizeCoin: 1,
 	})
@@ -90,7 +91,7 @@ func TestParseBinanceInstruments_Golden(t *testing.T) {
 	}
 	assertInstrument(t, gotSpot[0], Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTCUSDT", Source: "binance_spot",
-		MarketType: "spot", Status: StatusTrading,
+		MarketType: "spot", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
 		TickSizeQuote: 0.01, StepSizeCoin: 0.00001, MinQtyCoin: 0.00001, MaxQtyCoin: 9000,
 		MinNotionalQuote: 5, ContractSizeCoin: 1,
 	})
@@ -105,7 +106,7 @@ func TestParseBybitInstruments_Golden(t *testing.T) {
 	}
 	assertInstrument(t, got, Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTCUSDT", Source: "bybit_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
 		TickSizeQuote: 0.10, StepSizeCoin: 0.001, MinQtyCoin: 0.001, MaxQtyCoin: 1500,
 		MinNotionalQuote: 5, ContractSizeCoin: 1, MaxLeverageX: 150,
 	})
@@ -118,7 +119,7 @@ func TestParseBybitInstruments_Golden(t *testing.T) {
 	}
 	assertInstrument(t, gotSpot, Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTCUSDT", Source: "bybit_spot",
-		MarketType: "spot", Status: StatusTrading,
+		MarketType: "spot", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
 		TickSizeQuote: 0.1, StepSizeCoin: 0.000001, MinQtyCoin: 0.000001, MaxQtyCoin: 230,
 		MinNotionalQuote: 5, ContractSizeCoin: 1,
 	})
@@ -135,7 +136,7 @@ func TestParseOKXInstrument_Golden(t *testing.T) {
 	// trap: lotSz alone looks like a plausible coin step and is 100× off.
 	assertInstrument(t, got, Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTC-USDT-SWAP", Source: "okx_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
 		TickSizeQuote: 0.1, StepSizeCoin: 0.0001, MinQtyCoin: 0.0001,
 		IsContract: true, ContractSizeCoin: 0.01, MaxLeverageX: 100,
 	})
@@ -150,7 +151,7 @@ func TestParseGateInstrument_Golden(t *testing.T) {
 	}
 	assertInstrument(t, got, Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTC_USDT", Source: "gate_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
 		TickSizeQuote: 0.1, StepSizeCoin: 0.0001, MinQtyCoin: 0.0001, MaxQtyCoin: 1200,
 		IsContract: true, ContractSizeCoin: 0.0001, MaxLeverageX: 200,
 	})
@@ -171,14 +172,14 @@ func TestParseKrakenInstruments_Golden(t *testing.T) {
 	// 100×. MinQtyCoin stays 0: Kraken publishes no minimum order size.
 	assertInstrument(t, got[0], Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "PF_XBTUSD", Source: "kraken_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USD",
 		TickSizeQuote: 1, StepSizeCoin: 0.0001,
 		IsContract: true, ContractSizeCoin: 1, MaxLeverageX: 100,
 	})
 	// precision 0 → WHOLE 1-XRP contracts; initialMargin 2% → 50×.
 	assertInstrument(t, got[1], Instrument{
 		Symbol: "XRPUSDT", NativeSymbol: "PF_XRPUSD", Source: "kraken_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "XRP", QuoteAsset: "USD",
 		TickSizeQuote: 0.0001, StepSizeCoin: 1,
 		IsContract: true, ContractSizeCoin: 1, MaxLeverageX: 50,
 	})
@@ -197,14 +198,14 @@ func TestParseHyperliquidInstruments_Golden(t *testing.T) {
 	}
 	assertInstrument(t, got[0], Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTC", Source: "hyperliquid_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USD",
 		TickSizeQuote: 0, StepSizeCoin: 0.00001, MinQtyCoin: 0.00001,
 		MinNotionalQuote: 10, ContractSizeCoin: 1, MaxLeverageX: 40,
 	})
 	// szDecimals 0 → whole-XRP steps.
 	assertInstrument(t, got[1], Instrument{
 		Symbol: "XRPUSDT", NativeSymbol: "XRP", Source: "hyperliquid_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "XRP", QuoteAsset: "USD",
 		TickSizeQuote: 0, StepSizeCoin: 1, MinQtyCoin: 1,
 		MinNotionalQuote: 10, ContractSizeCoin: 1, MaxLeverageX: 20,
 	})
@@ -220,7 +221,7 @@ func TestParseParadexInstrument_Golden(t *testing.T) {
 	// MinQtyCoin stays 0: Paradex publishes no separate minimum size.
 	assertInstrument(t, got, Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTC-USD-PERP", Source: "paradex_futures",
-		MarketType: "perp", Status: StatusTrading,
+		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USD",
 		TickSizeQuote: 0.1, StepSizeCoin: 0.00001, MaxQtyCoin: 100,
 		MinNotionalQuote: 10, ContractSizeCoin: 1,
 	})
@@ -262,5 +263,35 @@ func TestParseInstruments_UnlistedSymbolIsAbsent(t *testing.T) {
 	var paradex paradexMarketsResponse
 	if _, ok, err := parseParadexInstrument(paradex, "paradex_futures", Symbol{Standard: "DOGEUSDT", Venue: "DOGE-USD-PERP"}); ok || err != nil {
 		t.Fatalf("empty Paradex response: ok=%v err=%v, want absent without error", ok, err)
+	}
+
+	// The wrapped "not listed" shapes, measured live 2026-09-03: OKX answers
+	// HTTP 200 + code 51001, Bybit linear answers HTTP 200 + retCode 10001
+	// "symbol invalid" (its spot category uses the empty list above instead).
+	// Both must read as absent — one unsupported pair must not blank a whole
+	// source — while every OTHER venue error stays loud.
+	okx.Code, okx.Msg = "51001", "Instrument ID doesn't exist."
+	if _, ok, err := parseOKXInstrument(okx, "okx_futures", Symbol{Standard: "XLMUSDT", Venue: "XLM-USDT-SWAP"}); ok || err != nil {
+		t.Fatalf("OKX code 51001: ok=%v err=%v, want absent without error", ok, err)
+	}
+	okx.Code, okx.Msg = "50011", "rate limited"
+	if _, _, err := parseOKXInstrument(okx, "okx_futures", Symbol{Standard: "XLMUSDT", Venue: "XLM-USDT-SWAP"}); err == nil {
+		t.Fatal("OKX code 50011 must stay an error, not read as absent")
+	}
+	// retMsg is prose, not contract: the match must survive Bybit's other
+	// spellings of the same thing (it uses title case elsewhere in v5).
+	for _, msg := range []string{
+		"params error: symbol invalid",
+		"params error: Symbol Is Invalid",
+		"symbol not exist",
+	} {
+		bybit.RetCode, bybit.RetMsg = 10001, msg
+		if _, ok, err := parseBybitInstrument(bybit, "bybit_futures", "perp", Symbol{Standard: "XLMUSDT", Venue: "XLMUSDT"}); ok || err != nil {
+			t.Fatalf("Bybit 10001 %q: ok=%v err=%v, want absent without error", msg, ok, err)
+		}
+	}
+	bybit.RetCode, bybit.RetMsg = 10001, "params error: category invalid"
+	if _, _, err := parseBybitInstrument(bybit, "bybit_futures", "perp", Symbol{Standard: "XLMUSDT", Venue: "XLMUSDT"}); err == nil {
+		t.Fatal("a non-symbol Bybit 10001 must stay an error, not read as absent")
 	}
 }

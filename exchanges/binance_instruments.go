@@ -29,6 +29,8 @@ type binanceExchangeInfo struct {
 		Symbol       string          `json:"symbol"`
 		Status       string          `json:"status"`
 		ContractType string          `json:"contractType"` // futures only; "" on spot
+		BaseAsset    string          `json:"baseAsset"`
+		QuoteAsset   string          `json:"quoteAsset"`
 		Filters      []binanceFilter `json:"filters"`
 	} `json:"symbols"`
 }
@@ -77,11 +79,15 @@ func parseBinanceInstruments(info binanceExchangeInfo, source, marketType string
 			continue
 		}
 		inst := Instrument{
-			Symbol:           standard,
-			NativeSymbol:     entry.Symbol,
-			Source:           source,
-			MarketType:       marketType,
-			Status:           normalizeInstrumentStatus(entry.Status, entry.Status == "TRADING"),
+			Symbol:       standard,
+			NativeSymbol: entry.Symbol,
+			Source:       source,
+			MarketType:   marketType,
+			Status:       normalizeInstrumentStatus(entry.Status, entry.Status == "TRADING"),
+			// baseAsset/quoteAsset are first-class fields on both
+			// exchangeInfo endpoints.
+			BaseAsset:        entry.BaseAsset,
+			QuoteAsset:       entry.QuoteAsset,
 			ContractSizeCoin: 1, // Binance orders are denominated in coin
 		}
 		for _, f := range entry.Filters {

@@ -64,7 +64,15 @@ phase 1 done.
 Phase 2 (Funding Rate Monitor) has started in parallel without touching the
 soak process: step 2.1 (`cmd/fundingcheck`) verified the funding fields of all
 7 venues against live APIs on 2026-09-03 and corrected the survey — see
-[docs/DATA-REQUIREMENTS.md §3](docs/DATA-REQUIREMENTS.md).
+[docs/DATA-REQUIREMENTS.md §3](docs/DATA-REQUIREMENTS.md). Step 2.2 added
+`FundingData` and per-venue funding normalization; step 2.3 built the
+instrument registry (`internal/instruments/`) with delta-neutral sizing;
+step 2.4 added the spot↔perp hedge mapping (`BuildHedgeMapping` in
+[internal/instruments/mapping.go](internal/instruments/mapping.go)):
+`Instrument` now carries VENUE-DECLARED `BaseAsset`/`QuoteAsset`, pairing is
+validated both ways against config's declarations, and anything unpairable is
+a named rejection — never a guess. USD-quoted perps (Kraken, Hyperliquid,
+Paradex) are refused against USDT spots by design.
 
 ---
 
@@ -200,6 +208,8 @@ re-research these; do verify before writing the integration.
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
 | **Binance** | The aggTrade payload carries both `m` (buyer is maker) and `M` (deprecated, always true). Go's `encoding/json` prefers an exact tag match but **falls back to a case-insensitive one**, so declaring only `m` let `M` overwrite it and every trade came out a sell. Declare BOTH members of every case-colliding key pair, including the one you do not use — leaving it out is not "ignore it", it is "let it overwrite the other". |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
+| **"Not listed"** | Per-symbol instrument endpoints answer "market not listed" in THREE shapes (measured 2026-09-03): Paradex → HTTP **404**; OKX → HTTP 200 + `code 51001`; Bybit linear → HTTP 200 + `retCode 10001` "symbol invalid" while Bybit **spot** → `retCode 0` + empty list. All must read as "absent" — treating any as an error lets one unsupported pair blank a venue's whole rule set (found live in step 2.4 when XLMUSDT killed the Paradex source). Every OTHER non-zero code stays a loud error. |
+| **Assets** | Base/quote must come from what the venue DECLARES, never from slicing the symbol string. OKX swaps leave `baseCcy`/`quoteCcy` empty (spot-only fields — use `ctValCcy`/`settleCcy` for linear); Kraken names BTC "XBT" in symbols but declares `base: "BTC"`, so no alias table exists anywhere; Hyperliquid declares no quote (venue-wide documented "USD"). |
 | **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`, `contractSize`). Binance, Bybit, Hyperliquid use coins. ✅ The step-1.2 Kraken contradiction was settled at 2.3: PF_ contracts ARE contract-denominated but `contractSize` is **1 base unit** (with `contractValueTradePrecision` decimals), so contract counts are numerically coin — the survey and the 1.2 measurement were both right. Measured sizes live in the registry; note PF_XRPUSD and Hyperliquid XRP trade in WHOLE XRP (precision/szDecimals 0). |
 
 ~~**Known bug:** `coin := symbol[:3]` in the Hyperliquid connector.~~ Fixed in
@@ -334,13 +344,13 @@ phase 1.
   keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- 169 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 187 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `exchanges` 42 (58.6% of statements — the new
+  it can be re-measured): `exchanges` 42 (58.9% of statements — the new
   instrument fetchers' HTTP wrappers run only against live venues, their
   parsers are golden-tested), `internal/scanner` 89 (89.9%),
-  `internal/instruments` 9 (96.5%), `internal/config` 19 (78.2%),
+  `internal/instruments` 27 (96.9%), `internal/config` 19 (78.2%),
   `internal/fees` 5 (100%), `cmd/scanner` 2, `cmd/fundingcheck` 3.
   `exchanges/testdata/` holds a real recording per venue; re-record with
   `CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata ./exchanges/`. **Pyth has

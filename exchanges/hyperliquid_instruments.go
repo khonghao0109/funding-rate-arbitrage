@@ -22,6 +22,14 @@ import (
 // https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications
 const hyperliquidMinOrderNotionalUSD = 10
 
+// hyperliquidQuoteAsset: the meta endpoint declares only the coin name — no
+// quote field exists. That perpetuals are quoted in USD is venue-wide policy,
+// not a per-asset field ("all Hyperliquid perpetual contracts are quoted in
+// USD" per the contract specifications page), so like the $10 minimum above
+// it is a documented constant, not a guess:
+// https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications
+const hyperliquidQuoteAsset = "USD"
+
 type hyperliquidMetaResponse struct {
 	Universe []struct {
 		Name        string  `json:"name"`
@@ -52,11 +60,15 @@ func parseHyperliquidInstruments(resp hyperliquidMetaResponse, source string, sy
 		}
 		stepCoin := math.Pow(10, -e.SzDecimals)
 		out = append(out, Instrument{
-			Symbol:           standard,
-			NativeSymbol:     e.Name,
-			Source:           source,
-			MarketType:       "perp",
-			Status:           normalizeInstrumentStatus("delisted", !e.IsDelisted),
+			Symbol:       standard,
+			NativeSymbol: e.Name,
+			Source:       source,
+			MarketType:   "perp",
+			Status:       normalizeInstrumentStatus("delisted", !e.IsDelisted),
+			// The market IS the coin name, kept VERBATIM: seven listings are
+			// mixed-case and the prefix carries meaning (kPEPE is 1000 PEPE).
+			BaseAsset:        e.Name,
+			QuoteAsset:       hyperliquidQuoteAsset,
 			TickSizeQuote:    0, // 5-significant-figure rule, no constant tick
 			StepSizeCoin:     stepCoin,
 			MinQtyCoin:       stepCoin,

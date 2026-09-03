@@ -2,6 +2,7 @@ package exchanges
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -19,8 +20,12 @@ import (
 
 type paradexMarketsResponse struct {
 	Results []struct {
-		Symbol             string `json:"symbol"`
-		AssetKind          string `json:"asset_kind"`
+		Symbol    string `json:"symbol"`
+		AssetKind string `json:"asset_kind"`
+		// Declared directly. Note quote_currency is USD while
+		// settlement_currency is USDC — the quote is what pairing compares.
+		BaseCurrency       string `json:"base_currency"`
+		QuoteCurrency      string `json:"quote_currency"`
 		OrderSizeIncrement string `json:"order_size_increment"`
 		PriceTickSize      string `json:"price_tick_size"`
 		MinNotional        string `json:"min_notional"`
@@ -34,6 +39,13 @@ func FetchParadexInstruments(ctx context.Context, source string, symbols []Symbo
 		u := "https://api.prod.paradex.trade/v1/markets?market=" + s.Venue
 		var resp paradexMarketsResponse
 		if err := fetchInstrumentJSON(ctx, u, &resp); err != nil {
+			// An unknown market 404s (measured 2026-09-03 with
+			// XLM-USD-PERP; a LISTED market answers 200 + results). That is
+			// "absent", not a venue outage — without this skip one
+			// unsupported pair blanks every Paradex rule.
+			if errors.Is(err, errInstrumentNotListed) {
+				continue
+			}
 			return nil, err
 		}
 		inst, ok, err := parseParadexInstrument(resp, source, s)
@@ -80,6 +92,8 @@ func parseParadexInstrument(resp paradexMarketsResponse, source string, s Symbol
 		Source:           source,
 		MarketType:       "perp",
 		Status:           StatusTrading, // the endpoint lists only live markets; no status field exists
+		BaseAsset:        e.BaseCurrency,
+		QuoteAsset:       e.QuoteCurrency,
 		TickSizeQuote:    tickSize,
 		StepSizeCoin:     stepCoin,
 		MinQtyCoin:       0, // not published — 0 means "not stated", sizing owns the floor

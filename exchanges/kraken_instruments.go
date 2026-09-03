@@ -28,8 +28,13 @@ import (
 
 type krakenInstrumentsResponse struct {
 	Instruments []struct {
-		Symbol                      string  `json:"symbol"`
-		Type                        string  `json:"type"`
+		Symbol string `json:"symbol"`
+		Type   string `json:"type"`
+		// Kraken declares base/quote directly — and declares base "BTC" for
+		// PF_XBTUSD, resolving its own XBT naming, so no alias table is
+		// needed anywhere downstream. Verified live 2026-09-03.
+		Base                        string  `json:"base"`
+		Quote                       string  `json:"quote"`
 		Tradeable                   bool    `json:"tradeable"`
 		TickSize                    float64 `json:"tickSize"`
 		ContractSize                float64 `json:"contractSize"`
@@ -68,6 +73,8 @@ func parseKrakenInstruments(resp krakenInstrumentsResponse, source string, symbo
 			// Kraken publishes only a tradeable bool, no status word — the
 			// fallback is ours, and must be a STATE, not the product type.
 			Status:        normalizeInstrumentStatus("untradeable", e.Tradeable),
+			BaseAsset:     e.Base,
+			QuoteAsset:    e.Quote,
 			TickSizeQuote: e.TickSize,
 			StepSizeCoin:  stepContracts * e.ContractSize,
 			// Kraken publishes no minimum order size — 0 means "not stated"

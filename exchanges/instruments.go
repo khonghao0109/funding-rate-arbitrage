@@ -39,6 +39,23 @@ type Instrument struct {
 	Source       string // wire id: binance_futures, ...
 	MarketType   string // "spot" | "perp"
 
+	// BaseAsset and QuoteAsset are the assets the VENUE declares for this
+	// market, VERBATIM (step 2.4). Spot↔perp pairing is validated against
+	// them — never against symbol spelling, which is how "DOGEUSDT" once
+	// became base "DOG". Empty means the venue declares none; such an
+	// instrument cannot be validated and the mapping refuses it rather than
+	// guessing. Kraken declares base "BTC" for PF_XBTUSD itself, so no
+	// XBT-alias table exists anywhere in this codebase — keep it that way.
+	//
+	// Do NOT normalize the case here. Hyperliquid lists seven mixed-case
+	// markets whose prefix is meaningful (kPEPE is 1000 PEPE, kSHIB, kBONK,
+	// kLUNC, kFLOKI, kDOGS, kNEIRO — seen in testdata), and upper-casing
+	// them invents an asset name the venue never published. Case-insensitive
+	// COMPARISON is the mapping's job (internal/instruments/mapping.go); the
+	// declaration itself stays as the venue wrote it.
+	BaseAsset  string
+	QuoteAsset string
+
 	// Status is "trading" when the venue reports the market tradable
 	// (normalized across TRADING/Trading/live/true), otherwise the venue's
 	// own word lower-cased — sizing refuses anything but "trading" and the

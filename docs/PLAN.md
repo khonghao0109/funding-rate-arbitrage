@@ -98,7 +98,7 @@
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
-| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **3/7 bước** | Thu thập + lưu funding rate 24/7 |
+| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **4/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
@@ -828,12 +828,59 @@ Sửa:
 > - `TickSizeQuote = 0` (Hyperliquid, quy tắc 5 chữ số có nghĩa) là sentinel;
 >   GĐ 4 đặt lệnh cần mã hoá quy tắc thành dữ liệu (`PxDecimals`/`SigFigs`).
 
-#### Bước 2.4 — Bảng ánh xạ spot ↔ perp
-- Dựng **tự động** từ `exchangeInfo`, thay `switch` hardcode hiện tại trong từng connector.
+#### Bước 2.4 — Bảng ánh xạ spot ↔ perp ✅
+- Dựng **tự động** từ `exchangeInfo`, ~~thay `switch` hardcode hiện tại trong từng connector~~ (tiền đề cũ — hardcode đã chết ở Bước 1.4; cái 2.4 thật sự xây là tầng XÁC THỰC trên registry 2.3).
 - Xác thực hai chiều; cặp không ghép được → **từ chối, không đoán**.
 - Chú ý Kraken `PF_XBTUSD` quote là **USD** không phải USDT → không hedge thẳng bằng spot USDT.
 - ~~🐛 Sửa bug `coin := symbol[:3]` ở Hyperliquid~~ → ✅ **đã xong ở Bước 1.4** như hệ quả của việc đưa ánh xạ ký hiệu vào `config.yaml`: Hyperliquid dùng `symbol_format: "{base}"`, và nghiệm thu đã chạy thật với `DOGEUSDT` (base 4 ký tự).
 - **Nghiệm thu:** thêm 1 cặp mới → bảng tự dựng đúng trên mọi sàn hỗ trợ, tự loại sàn không hỗ trợ.
+
+> **Kết quả (2026-09-03).** `Instrument` mang thêm `BaseAsset`/`QuoteAsset` do
+> **sàn tự khai** (Kraken tự khai base "BTC" cho PF_XBTUSD → không cần bảng
+> alias XBT; OKX swap để RỖNG `baseCcy`/`quoteCcy`, dùng `ctValCcy`/`settleCcy`;
+> Hyperliquid quote là hằng "USD" có tài liệu). `BuildHedgeMapping`
+> ([internal/instruments/mapping.go](../internal/instruments/mapping.go)) là hàm
+> thuần: xác thực config↔sàn hai chiều (base theo symbol, quote + market type
+> theo nguồn, một-chợ-native-một-symbol), ghép spot×perp cùng quote, và xuất
+> `Rejections` hạng nhất — perp USD giữa toàn spot USDT bị từ chối nêu tên,
+> cả hai hướng. `cmd/scanner` dựng lại bảng sau mỗi refresh, log khi đổi.
+> Nghiệm thu chạy sống cổng 8085: thêm `DOGEUSDT` → 8 hedge pairs tự dựng +
+> 3 từ chối quote USD; thêm `XLMUSDT` (Paradex không niêm yết) → Paradex
+> **tự loại bằng vắng mặt** (53 = 6×9−1). Lần chạy đó bắt được lỗi thật:
+> Paradex trả **404** cho market lạ và fetcher chết cả nguồn — sửa cùng bước,
+> kèm hai hình dạng "không niêm yết" khác (OKX `code 51001`; Bybit linear
+> `retCode 10001` "symbol invalid", spot lại trả `retCode 0` + list rỗng).
+> Chi tiết ở [DATA-REQUIREMENTS.md §6](DATA-REQUIREMENTS.md#6-bảng-ánh-xạ-spot--perp--✅-xây-ở-bước-24-2026-09-03).
+>
+> **Review 10 góc tìm và đã SỬA trong bước:** ① `strings.ToUpper` ở từng
+> fetcher là sai hướng — Hyperliquid có 7 thị trường chữ lẫn (`kPEPE` = 1000
+> PEPE) nên viết hoa là bịa tài sản, mà `config.yaml` cũng không thể viết hoa
+> `base:` (nó là định danh sàn khi `symbol_format: "{base}"`); chuyển sang giữ
+> nguyên văn hai phía + `sameAsset`/`EqualFold` sở hữu luật hoa-thường ở chỗ so
+> sánh. ② Bybit khớp `retMsg` phân biệt hoa-thường → đổi cách viết là cả nguồn
+> `bybit_futures` chết vĩnh viễn; nay gấp chữ + khớp hai từ rời. ③ OKX/Bybit
+> chưa tôn trọng sentinel 404 như Gate/Paradex → đã thêm. ④ Vắng mặt im lặng
+> khắp nơi làm lỗi gõ `symbol_map` vô hình → `Refresh` nêu tên symbol không
+> quay về; thông điệp "0 instrument" nêu cả hai cách đọc. ⑤ `nativeClaims` đếm
+> bản ghi nên chẩn đoán sai khi input trùng lặp → đếm số symbol PHÂN BIỆT.
+> ⑥ Nhánh `default:` trong vòng ghép không thể chạm tới → chuyển việc từ chối
+> market type không hedge được lên chuỗi validation (nơi mọi từ chối khác ở).
+> ⑦ Phát hiện-thay-đổi so chuỗi log → so cấu trúc (`reflect.DeepEqual`), vì
+> log chỉ in tên nguồn nên sàn đổi `stepSize` sẽ render y hệt.
+>
+> **Nợ ghi nhận (ngoài phạm vi 2.4):**
+> - `SourceClaim`/`PairAssets` là bản sao cấu trúc của `config.Source`/
+>   `config.Symbol` — cố ý để `internal/instruments` không phụ thuộc
+>   `internal/config`, nhưng thêm field phải sửa ba nơi. Xem lại khi 2.7 cần
+>   thêm trường (Paradex quote USD nhưng settle USDC).
+> - Bốn vòng fetch theo-symbol (Bybit/OKX/Gate/Paradex) lặp cùng một khuôn
+>   lặp-bỏ-qua-vắng-mặt → gom thành một helper chung khi thêm sàn thứ 5, hoặc
+>   khi 2.7 cần đếm/log số vắng mặt.
+> - `afterRefresh` gắn ở vòng lặp `Run`, không phải ở `Refresh` — một caller
+>   gọi thẳng `Refresh` (nút "làm mới ngay" của 2.7) sẽ đổi registry mà không
+>   dựng lại mapping. 2.7 quyết định `Subscribe` hay notify trong `Refresh`.
+> - Từ vựng market type (`spot`/`perp`) hiện khai ở 4 package không có ràng
+>   buộc biên dịch nào nối chúng.
 
 #### Bước 2.5 — Thu thập funding rate
 - **WebSocket** (ưu tiên): Binance `@markPrice@1s`, Bybit `tickers`, OKX `funding-rate`, Gate `futures.tickers`, Kraken `ticker`, Hyperliquid `activeAssetCtx`.
@@ -1059,7 +1106,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | R8 | Dữ liệu cũ sinh tín hiệu sai | Trung bình | GĐ 1.1 | Staleness filter |
 | R9 | Sai chu kỳ funding giữa các sàn (1h vs 8h vs liên tục) | **Cao** | GĐ 2.1, 2.2 | `IntervalSec` chuẩn hoá tại connector; script xác minh trước khi code |
 | R10 | Sai field/đơn vị funding (Kraken tuyệt đối, OKX lệch một kỳ) | **Cao** | GĐ 2.1 | Đối chiếu 7 sàn với web sàn ở Bước 2.1 |
-| R11 | Ghép sai cặp spot↔perp → vị thế lệch coin | **Rất cao** | GĐ 2.4 | Bảng ánh xạ tự dựng + xác thực hai chiều, từ chối khi không ghép được |
+| R11 | Ghép sai cặp spot↔perp → vị thế lệch coin | **Rất cao** | GĐ 2.4 ✅ | Bảng ánh xạ tự dựng từ base/quote SÀN TỰ KHAI + xác thực hai chiều, từ chối nêu tên khi không ghép được — `BuildHedgeMapping`, Bước 2.4 |
 | R12 | Làm tròn 2 chân theo 2 `stepSize` khác nhau → delta ≠ 0 | Cao | GĐ 2.3 | Làm tròn theo `stepSize` lớn hơn, kiểm `minNotional` cả hai |
 
 ---
@@ -1230,7 +1277,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          3/7 bước   ← ĐANG LÀM song song với soak
+[  ] GĐ 2  Funding Rate Monitor          4/7 bước   ← ĐANG LÀM song song với soak
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước

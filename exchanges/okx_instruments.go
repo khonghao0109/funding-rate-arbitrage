@@ -2,6 +2,7 @@ package exchanges
 
 import (
 	"context"
+	"errors"
 	"fmt"
 )
 
@@ -21,16 +22,17 @@ type okxInstrumentsResponse struct {
 	Code string `json:"code"`
 	Msg  string `json:"msg"`
 	Data []struct {
-		InstID   string `json:"instId"`
-		State    string `json:"state"`
-		TickSz   string `json:"tickSz"`
-		LotSz    string `json:"lotSz"`
-		MinSz    string `json:"minSz"`
-		CtVal    string `json:"ctVal"`
-		CtMult   string `json:"ctMult"`
-		CtValCcy string `json:"ctValCcy"`
-		CtType   string `json:"ctType"`
-		Lever    string `json:"lever"`
+		InstID    string `json:"instId"`
+		State     string `json:"state"`
+		TickSz    string `json:"tickSz"`
+		LotSz     string `json:"lotSz"`
+		MinSz     string `json:"minSz"`
+		CtVal     string `json:"ctVal"`
+		CtMult    string `json:"ctMult"`
+		CtValCcy  string `json:"ctValCcy"`
+		SettleCcy string `json:"settleCcy"`
+		CtType    string `json:"ctType"`
+		Lever     string `json:"lever"`
 	} `json:"data"`
 }
 
@@ -40,6 +42,12 @@ func FetchOKXInstruments(ctx context.Context, source string, symbols []Symbol) (
 		u := "https://www.okx.com/api/v5/public/instruments?instType=SWAP&instId=" + s.Venue
 		var resp okxInstrumentsResponse
 		if err := fetchInstrumentJSON(ctx, u, &resp); err != nil {
+			// OKX answers HTTP 200 + code 51001 today, but every per-symbol
+			// fetcher honours the 404 sentinel too: an unlisted market is
+			// absent, never a reason to blank the whole source.
+			if errors.Is(err, errInstrumentNotListed) {
+				continue
+			}
 			return nil, err
 		}
 		inst, ok, err := parseOKXInstrument(resp, source, s)
@@ -56,7 +64,14 @@ func FetchOKXInstruments(ctx context.Context, source string, symbols []Symbol) (
 func parseOKXInstrument(resp okxInstrumentsResponse, source string, s Symbol) (Instrument, bool, error) {
 	// OKX wraps errors in HTTP 200 + code≠"0" + empty data — without this
 	// check a "system busy" response reads as "market not listed" and blanks
-	// the venue's 100×-sensitive contract sizes.
+	// the venue's 100×-sensitive contract sizes. The one code that really
+	// MEANS "not listed" is 51001 ("Instrument ID ... doesn't exist",
+	// https://www.okx.com/docs-v5/en/#error-code, measured 2026-09-03):
+	// that is "absent" per the InstrumentFetchFunc contract, and treating it
+	// as an error would let one unsupported pair blank the whole source.
+	if resp.Code == "51001" {
+		return Instrument{}, false, nil
+	}
 	if resp.Code != "" && resp.Code != "0" {
 		return Instrument{}, false, fmt.Errorf("%s %s: venue error code %s: %s", source, s.Venue, resp.Code, resp.Msg)
 	}
@@ -102,11 +117,20 @@ func parseOKXInstrument(resp okxInstrumentsResponse, source string, s Symbol) (I
 		return Instrument{}, false, err
 	}
 	return Instrument{
-		Symbol:           s.Standard,
-		NativeSymbol:     e.InstID,
-		Source:           source,
-		MarketType:       "perp",
-		Status:           normalizeInstrumentStatus(e.State, e.State == "live"),
+		Symbol:       s.Standard,
+		NativeSymbol: e.InstID,
+		Source:       source,
+		MarketType:   "perp",
+		Status:       normalizeInstrumentStatus(e.State, e.State == "live"),
+		// For SWAP instruments OKX leaves baseCcy/quoteCcy EMPTY (they are
+		// spot fields). The declared equivalents for a linear swap — the only
+		// ctType accepted above — are ctValCcy (the currency the contract
+		// value is denominated in, i.e. the base) and settleCcy (a linear
+		// swap settles in its quote). Verified live 2026-09-03:
+		// BTC-USDT-SWAP → baseCcy "", ctValCcy BTC, settleCcy USDT.
+		// https://www.okx.com/docs-v5/en/#public-data-rest-api-get-instruments
+		BaseAsset:        e.CtValCcy,
+		QuoteAsset:       e.SettleCcy,
 		TickSizeQuote:    tickSize,
 		StepSizeCoin:     lotSzContracts * contractSizeCoin,
 		MinQtyCoin:       minSzContracts * contractSizeCoin,

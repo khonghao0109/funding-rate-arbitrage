@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Gate futures instrument rules — GET /api/v4/futures/usdt/contracts/{name},
@@ -73,12 +74,27 @@ func parseGateInstrument(resp gateContractResponse, source string, s Symbol) (In
 	if resp.InDelisting {
 		status = "delisting"
 	}
+	// Gate declares no base/quote fields; the contract's own name is its
+	// declaration — the docs define futures contract names as
+	// "{base}_{quote}" ("BTC_USDT"), and this fetcher reads the USDT-settled
+	// book (/futures/usdt/), where quote and settle coincide. Splitting on
+	// the venue's separator is reading declared structure, unlike slicing a
+	// fixed prefix length; a name without "_" declares nothing and stays
+	// empty for the mapping to refuse.
+	// https://www.gate.com/docs/developers/apiv4/en/#futures
+	var baseAsset, quoteAsset string
+	if i := strings.LastIndex(resp.Name, "_"); i > 0 {
+		baseAsset = resp.Name[:i]
+		quoteAsset = resp.Name[i+1:]
+	}
 	return Instrument{
 		Symbol:           s.Standard,
 		NativeSymbol:     resp.Name,
 		Source:           source,
 		MarketType:       "perp",
 		Status:           status,
+		BaseAsset:        baseAsset,
+		QuoteAsset:       quoteAsset,
 		TickSizeQuote:    tickSize,
 		StepSizeCoin:     quantoMultiplierCoin, // orders move in whole contracts
 		MinQtyCoin:       resp.OrderSizeMin * quantoMultiplierCoin,

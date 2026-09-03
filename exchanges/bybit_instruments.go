@@ -2,7 +2,9 @@ package exchanges
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 )
 
 // Bybit v5 instrument rules — one GET per symbol, linear and spot sharing the
@@ -26,6 +28,8 @@ type bybitInstrumentsResponse struct {
 		List []struct {
 			Symbol      string `json:"symbol"`
 			Status      string `json:"status"`
+			BaseCoin    string `json:"baseCoin"`
+			QuoteCoin   string `json:"quoteCoin"`
 			PriceFilter struct {
 				TickSize string `json:"tickSize"`
 			} `json:"priceFilter"`
@@ -58,6 +62,12 @@ func fetchBybitInstruments(ctx context.Context, source, category, marketType str
 		u := "https://api.bybit.com/v5/market/instruments-info?category=" + category + "&symbol=" + s.Venue
 		var resp bybitInstrumentsResponse
 		if err := fetchInstrumentJSON(ctx, u, &resp); err != nil {
+			// Bybit answers HTTP 200 today, but every per-symbol fetcher
+			// honours the 404 sentinel: an unlisted market is absent, not a
+			// reason to blank the source (Paradex proved the cost live).
+			if errors.Is(err, errInstrumentNotListed) {
+				continue
+			}
 			return nil, err
 		}
 		inst, ok, err := parseBybitInstrument(resp, source, marketType, s)
@@ -72,6 +82,22 @@ func fetchBybitInstruments(ctx context.Context, source, category, marketType str
 }
 
 func parseBybitInstrument(resp bybitInstrumentsResponse, source, marketType string, s Symbol) (Instrument, bool, error) {
+	// The two categories signal "not listed" DIFFERENTLY (measured
+	// 2026-09-03): spot answers retCode 0 with an empty list, but linear
+	// answers retCode 10001 "params error: symbol invalid". 10001 is Bybit's
+	// generic parameter error, so only the symbol-invalid form counts as
+	// absent — any other 10001 is a real bug that must stay loud.
+	//
+	// retMsg is human-readable prose, not a contract: Bybit spells this
+	// "Symbol Is Invalid" on other v5 endpoints, so the match folds case and
+	// looks for the two words separately. Wording drift still fails toward
+	// the loud branch, which is the safe direction.
+	if resp.RetCode == 10001 {
+		msg := strings.ToLower(resp.RetMsg)
+		if strings.Contains(msg, "symbol") && (strings.Contains(msg, "invalid") || strings.Contains(msg, "not exist")) {
+			return Instrument{}, false, nil
+		}
+	}
 	if resp.RetCode != 0 {
 		return Instrument{}, false, fmt.Errorf("%s %s: venue error retCode %d: %s", source, s.Venue, resp.RetCode, resp.RetMsg)
 	}
@@ -94,11 +120,14 @@ func parseBybitInstrument(resp bybitInstrumentsResponse, source, marketType stri
 	}
 
 	inst := Instrument{
-		Symbol:           s.Standard,
-		NativeSymbol:     e.Symbol,
-		Source:           source,
-		MarketType:       marketType,
-		Status:           normalizeInstrumentStatus(e.Status, e.Status == "Trading"),
+		Symbol:       s.Standard,
+		NativeSymbol: e.Symbol,
+		Source:       source,
+		MarketType:   marketType,
+		Status:       normalizeInstrumentStatus(e.Status, e.Status == "Trading"),
+		// baseCoin/quoteCoin are first-class fields in both categories.
+		BaseAsset:        e.BaseCoin,
+		QuoteAsset:       e.QuoteCoin,
 		ContractSizeCoin: 1, // Bybit linear and spot orders are in coin
 	}
 	var err error

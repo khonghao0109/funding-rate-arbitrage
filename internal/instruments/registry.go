@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,10 +78,22 @@ func (r *Registry) Refresh(ctx context.Context) error {
 			// A "successful" fetch of nothing for a source that asked for
 			// symbols is a wipe, not a refresh: a decode-to-empty response or
 			// a venue-wide incident must keep yesterday's rules and be named,
-			// exactly like a transport failure.
+			// exactly like a transport failure. It can also be legitimate —
+			// a venue that lists none of the configured pairs — so the
+			// message names both readings instead of asserting an outage.
 			if len(fetched) == 0 && len(src.Symbols) > 0 {
-				errs[i] = fmt.Errorf("%s: fetch returned 0 instruments for %d symbols — keeping previous rules", src.Name, len(src.Symbols))
+				errs[i] = fmt.Errorf("%s: fetch returned 0 instruments for %d symbols — keeping previous rules "+
+					"(either the venue answered empty, or it lists none of these pairs and the source does not belong in config)", src.Name, len(src.Symbols))
 				return
+			}
+			// Symbols the venue did not return are absent by the
+			// InstrumentFetchFunc contract — a pair it genuinely does not
+			// list, OR a symbol_map typo. Absence is silent everywhere else
+			// (the hedge mapping self-excludes it), so name it here: this is
+			// the only place that knows what was ASKED for.
+			if missing := missingSymbols(src.Symbols, fetched); len(missing) > 0 {
+				log.Printf("instrument registry: %s does not list %s — absent from the hedge mapping "+
+					"(check symbol_map if the venue does list it)", src.Name, strings.Join(missing, ", "))
 			}
 			bySymbol := make(map[string]exchanges.Instrument, len(fetched))
 			for _, inst := range fetched {
@@ -95,12 +109,33 @@ func (r *Registry) Refresh(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
+// missingSymbols names the configured symbols a fetch did not return, in the
+// configured order.
+func missingSymbols(asked []exchanges.Symbol, fetched []exchanges.Instrument) []string {
+	got := make(map[string]bool, len(fetched))
+	for _, inst := range fetched {
+		got[inst.Symbol] = true
+	}
+	var missing []string
+	for _, s := range asked {
+		if !got[s.Standard] {
+			missing = append(missing, s.Standard)
+		}
+	}
+	return missing
+}
+
 // Run refreshes immediately and then keeps the registry fresh until the
 // context ends: daily on success, every few minutes while any source is
 // failing (at startup the cache is empty — a transient blip must not leave a
 // venue ruleless for 24h). It owns the loop so the policy is testable here,
 // not buried in cmd wiring.
-func (r *Registry) Run(ctx context.Context) {
+//
+// afterRefresh, when non-nil, runs on this goroutine after every refresh
+// attempt — failed ones included, since yesterday's kept rules are still the
+// truth being served. Step 2.4's hedge-mapping log hangs off it; step 2.7's
+// dashboard feed is expected to as well.
+func (r *Registry) Run(ctx context.Context, afterRefresh func()) {
 	for {
 		wait := time.Duration(RefreshInterval)
 		if err := r.Refresh(ctx); err != nil {
@@ -108,6 +143,9 @@ func (r *Registry) Run(ctx context.Context) {
 			wait = refreshRetryInterval
 		}
 		log.Printf("instrument registry: %d instruments across %d sources", r.Count(), len(r.sources))
+		if afterRefresh != nil {
+			afterRefresh()
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -124,6 +162,26 @@ func (r *Registry) Instrument(source, symbol string) (exchanges.Instrument, bool
 	defer r.mu.RUnlock()
 	inst, ok := r.bySource[source][symbol]
 	return inst, ok
+}
+
+// Snapshot returns a copy of every cached instrument, sorted by source then
+// symbol — a stable input for BuildHedgeMapping.
+func (r *Registry) Snapshot() []exchanges.Instrument {
+	r.mu.RLock()
+	out := make([]exchanges.Instrument, 0, 8*len(r.bySource))
+	for _, bySymbol := range r.bySource {
+		for _, inst := range bySymbol {
+			out = append(out, inst)
+		}
+	}
+	r.mu.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Source != out[j].Source {
+			return out[i].Source < out[j].Source
+		}
+		return out[i].Symbol < out[j].Symbol
+	})
+	return out
 }
 
 // Count reports how many instruments are cached, for startup logging.

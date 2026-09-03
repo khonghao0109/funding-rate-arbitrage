@@ -105,26 +105,34 @@ func TestRegistry_EmptyFetchKeepsOldRulesAndIsNamed(t *testing.T) {
 	}
 }
 
-// Run must do its first refresh immediately and stop when the context ends.
+// Run must do its first refresh immediately, invoke afterRefresh once the
+// fresh rules are readable, and stop when the context ends.
 func TestRegistry_RunRefreshesAndStops(t *testing.T) {
-	refreshed := make(chan struct{}, 1)
+	refreshed := make(chan int, 1)
 	r := New([]Source{{
 		Name:    "a",
 		Symbols: []exchanges.Symbol{{Standard: "BTCUSDT", Venue: "BTCUSDT"}},
 		Fetch: func(ctx context.Context, source string, symbols []exchanges.Symbol) ([]exchanges.Instrument, error) {
-			select {
-			case refreshed <- struct{}{}:
-			default:
-			}
 			return []exchanges.Instrument{{Symbol: "BTCUSDT", Source: "a"}}, nil
 		},
 	}})
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() { r.Run(ctx); close(done) }()
+	go func() {
+		r.Run(ctx, func() {
+			select {
+			case refreshed <- r.Count(): // afterRefresh must see the applied rules
+			default:
+			}
+		})
+		close(done)
+	}()
 
 	select {
-	case <-refreshed:
+	case count := <-refreshed:
+		if count != 1 {
+			t.Fatalf("afterRefresh saw %d instruments, want 1 — it must run after the swap", count)
+		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run never performed its initial refresh")
 	}
@@ -133,6 +141,52 @@ func TestRegistry_RunRefreshesAndStops(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not stop on context cancellation")
+	}
+}
+
+// A symbol the venue does not return is absent everywhere downstream (the
+// hedge mapping self-excludes it), so the registry — the only layer that
+// knows what was ASKED for — must name it. This is what makes a symbol_map
+// typo visible now that fetchers report unlisted markets as absent.
+func TestRegistry_NamesSymbolsTheVenueDidNotReturn(t *testing.T) {
+	asked := []exchanges.Symbol{
+		{Standard: "BTCUSDT", Venue: "BTCUSDT"},
+		{Standard: "XLMUSDT", Venue: "XLM-USD-PERP"},
+	}
+	if missing := missingSymbols(asked, []exchanges.Instrument{{Symbol: "BTCUSDT"}}); len(missing) != 1 || missing[0] != "XLMUSDT" {
+		t.Fatalf("missingSymbols = %v, want [XLMUSDT]", missing)
+	}
+	if missing := missingSymbols(asked, []exchanges.Instrument{{Symbol: "BTCUSDT"}, {Symbol: "XLMUSDT"}}); len(missing) != 0 {
+		t.Fatalf("missingSymbols = %v, want none when everything came back", missing)
+	}
+}
+
+// Snapshot must return every cached instrument in a stable order and hand out
+// copies — mutating the result must not reach the cache.
+func TestRegistry_Snapshot(t *testing.T) {
+	r := New([]Source{
+		{Name: "b", Fetch: fixedFetch([]exchanges.Instrument{{Symbol: "BTCUSDT", Source: "b", StepSizeCoin: 0.1}}, nil)},
+		{Name: "a", Fetch: fixedFetch([]exchanges.Instrument{
+			{Symbol: "ETHUSDT", Source: "a"},
+			{Symbol: "BTCUSDT", Source: "a"},
+		}, nil)},
+	})
+	if err := r.Refresh(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	snap := r.Snapshot()
+	if len(snap) != 3 {
+		t.Fatalf("Snapshot returned %d instruments, want 3", len(snap))
+	}
+	wantOrder := []string{"a/BTCUSDT", "a/ETHUSDT", "b/BTCUSDT"}
+	for i, inst := range snap {
+		if got := inst.Source + "/" + inst.Symbol; got != wantOrder[i] {
+			t.Fatalf("Snapshot[%d] = %s, want %s", i, got, wantOrder[i])
+		}
+	}
+	snap[2].StepSizeCoin = 999
+	if inst, _ := r.Instrument("b", "BTCUSDT"); inst.StepSizeCoin != 0.1 {
+		t.Fatal("mutating a snapshot reached the cache")
 	}
 }
 

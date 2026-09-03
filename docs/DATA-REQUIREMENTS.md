@@ -397,11 +397,92 @@ nêu rõ chân nào, luật nào, số nào.
 
 ---
 
-## 6. BẢNG ÁNH XẠ SPOT ↔ PERP
+## 6. BẢNG ÁNH XẠ SPOT ↔ PERP — ✅ xây ở Bước 2.4 (2026-09-03)
 
-Hiện tại repo dùng `switch` hardcode trong từng file connector. Không mở rộng được và có bug tiềm ẩn.
+> Bản đặc tả cũ ở đây viết "repo dùng `switch` hardcode trong từng connector"
+> — tiền đề đó đã chết từ Bước 1.4 (ánh xạ ký hiệu nằm trong `config.yaml`,
+> bug `symbol[:3]` chết cùng lúc). Cái Bước 2.4 thật sự phải xây là tầng
+> XÁC THỰC: chứng minh hai chân cùng base, cùng quote bằng dữ liệu **sàn tự
+> khai**, và từ chối có tên mọi thứ không chứng minh được.
 
-**Quy ước symbol hiện có:**
+**Như đã xây** — [internal/instruments/mapping.go](../internal/instruments/mapping.go),
+hàm thuần `BuildHedgeMapping(instruments, pairs, claims)`; `cmd/scanner` dựng
+lại sau mỗi lần registry refresh và log khi bảng ĐỔI:
+
+- `PairAssets{Symbol, BaseAsset}` — config khai symbol chuẩn nghĩa là base
+  nào. **Cố ý không có quote**: BTCUSDT trên kraken_futures trỏ tới chợ quote
+  USD là chủ đích; quote phải khớp là quote của NGUỒN (`SourceClaim`), không
+  phải hậu tố symbol.
+- `SourceClaim{Source, MarketType, QuoteAsset, Tradable}` — config khai gì về
+  nguồn thì sàn phải xác nhận nấy.
+- Xác thực **hai chiều**: (a) config → sàn: base sàn khai phải trùng base
+  config gán cho symbol (R11 — ghép lệch coin), quote sàn khai phải trùng
+  `quote_asset` của nguồn, market type phải trùng; (b) sàn → config: một chợ
+  native chỉ được đúng MỘT symbol chuẩn nhận, và chân nào không tìm được đối
+  tác (perp USD giữa toàn spot USDT) bị nêu tên trong `Rejections` — cả hai
+  hướng perp-tìm-spot lẫn spot-tìm-perp.
+- Sàn không niêm yết cặp → instrument **vắng mặt** trong registry → tự loại,
+  không phải rejection.
+- Chỉ instrument `status = "trading"` được ghép; `Rejections` là output hạng
+  nhất, mỗi cái mang lý do đầy đủ.
+
+**Base/quote lấy từ đâu — SÀN TỰ KHAI, không bao giờ cắt chuỗi symbol:**
+
+| Sàn | Field base/quote | Ghi chú |
+|---|---|---|
+| Binance (fut+spot) | `baseAsset` / `quoteAsset` | tường minh |
+| Bybit (fut+spot) | `baseCoin` / `quoteCoin` | tường minh |
+| OKX | `ctValCcy` / `settleCcy` | ⚠️ với SWAP, `baseCcy`/`quoteCcy` RỖNG (đó là field spot); linear swap: ctValCcy = base, settleCcy = quote. Đo 2026-09-03 |
+| Gate | tách `name` tại `_` | sàn không có field riêng; tên hợp đồng `{base}_{quote}` là cấu trúc sàn khai, khác về bản chất với cắt cứng độ dài |
+| Kraken | `base` / `quote` | **sàn tự khai `base: "BTC"` cho PF_XBTUSD** → toàn codebase không cần bảng alias XBT nào |
+| Hyperliquid | `name` / hằng `"USD"` | meta không có quote; "mọi perp quote bằng USD" là chính sách toàn sàn có tài liệu (trang contract specifications), cùng kiểu hằng $10 min notional |
+| Paradex | `base_currency` / `quote_currency` | lưu ý `settlement_currency` là USDC — GĐ 4 quan tâm, còn ghép cặp so QUOTE |
+
+⚠️ **Giữ NGUYÊN VĂN chữ hoa/thường của sàn, chuẩn hoá ở chỗ SO SÁNH.** Bản
+đầu của bước này `strings.ToUpper` tại từng fetcher; review bắt được là sai:
+recording Hyperliquid có **7 thị trường chữ lẫn** — `kPEPE`, `kSHIB`, `kBONK`,
+`kLUNC`, `kFLOKI`, `kDOGS`, `kNEIRO` — mà tiền tố `k` nghĩa là **1000×**, nên
+viết hoa thành "KPEPE" là bịa ra một tài sản sàn chưa từng công bố. Đồng thời
+`config.yaml` cũng không thể viết hoa `base:` vì với `symbol_format: "{base}"`
+nó CHÍNH LÀ định danh sàn (`internal/config` chuẩn hoá `quote` nhưng không
+chuẩn hoá `base`). Lời giải: cả hai phía giữ nguyên văn, `sameAsset`
+(`strings.EqualFold`) trong `mapping.go` sở hữu luật hoa-thường. Nhờ vậy
+`kPEPE` ghép được với chính nó nhưng **không** ghép với `PEPE` — khác mệnh giá
+1000 lần.
+
+**Ba hình dạng "không niêm yết" trên endpoint theo-symbol (đo 2026-09-03,
+đều đã xử lý thành "vắng mặt" — một cặp không hỗ trợ KHÔNG được giết cả
+nguồn):**
+
+| Sàn | Hình dạng | Xử lý |
+|---|---|---|
+| Paradex | HTTP **404** | `errInstrumentNotListed` → bỏ qua symbol đó (trước đây làm hỏng cả nguồn — nghiệm thu 2.4 bắt được khi thêm XLMUSDT) |
+| OKX | HTTP 200 + `code 51001` | riêng 51001 = vắng mặt; mọi code khác vẫn là lỗi to |
+| Bybit | linear: HTTP 200 + `retCode 10001` "symbol invalid" · spot: `retCode 0` + list rỗng | chỉ 10001 **kèm** dấu hiệu symbol = vắng mặt; 10001 khác (category sai…) vẫn là lỗi |
+
+`retMsg`/`msg` là **văn xuôi cho người đọc, không phải hợp đồng** — Bybit viết
+"Symbol Is Invalid" ở endpoint v5 khác — nên phép khớp gấp chữ hoa-thường và
+tìm hai từ riêng lẻ; sai lệch câu chữ vẫn rơi về nhánh **lỗi to**, hướng an
+toàn. Cả bốn fetcher theo-symbol (Bybit, OKX, Gate, Paradex) đều tôn trọng
+sentinel 404 dù hôm nay chỉ Paradex trả 404: sàn đổi hình dạng thì cái giá là
+một instrument vắng mặt, không phải cả nguồn trắng.
+
+**Vắng mặt phải NHÌN THẤY.** Vì "không niêm yết" giờ im lặng ở mọi tầng dưới,
+`Registry.Refresh` — tầng duy nhất biết đã HỎI gì — nêu tên symbol không quay
+về: `paradex_futures does not list XLMUSDT — absent from the hedge mapping
+(check symbol_map if the venue does list it)`. Đó là thứ làm một lỗi gõ nhầm
+`symbol_map` hiện hình thay vì lặng lẽ mất cặp. Và khi một nguồn trả về 0
+instrument, thông điệp nêu **cả hai** cách đọc (sàn trả rỗng ↔ sàn không niêm
+yết cặp nào trong danh sách, tức nguồn không nên nằm trong config).
+
+**Nghiệm thu đã chạy sống 2026-09-03** (cổng 8085, config thêm cặp mới):
+thêm `DOGEUSDT` → 8 hedge pairs (2 spot × 4 perp USDT) tự dựng, 3 perp USD bị
+từ chối đúng lý do; thêm `XLMUSDT` (Paradex không niêm yết — catalog 62 perp)
+→ 8 pairs, Kraken/Hyperliquid bị từ chối vì quote USD, Paradex **tự loại**
+bằng vắng mặt: 53 instrument = 6 cặp × 9 nguồn − 1.
+
+**Quy ước symbol per-sàn** (nằm ở `config.yaml` `symbol_format`/`symbol_map`
+từ Bước 1.4, giữ đây để tra nhanh):
 
 | Sàn | Định dạng | Ví dụ BTC |
 |---|---|---|
@@ -409,18 +490,9 @@ Hiện tại repo dùng `switch` hardcode trong từng file connector. Không m�
 | Bybit | `BTCUSDT` | `BTCUSDT` |
 | OKX | `BASE-QUOTE-SWAP` | `BTC-USDT-SWAP` |
 | Gate | `BASE_QUOTE` | `BTC_USDT` |
-| Kraken | `PF_<XBT>USD` | `PF_XBTUSD` — **BTC gọi là XBT**, quote là USD không phải USDT |
+| Kraken | `PF_<XBT>USD` | `PF_XBTUSD` — BTC gọi là XBT trong TÊN chợ (nhưng field `base` vẫn khai "BTC"), quote là USD không phải USDT |
 | Hyperliquid | chỉ base coin | `BTC` |
 | Paradex | `BASE-USD-PERP` | `BTC-USD-PERP` |
-
-**🐛 Bug tiềm ẩn đã phát hiện:** [hyperliquid.go:58](../exchanges/hyperliquid.go#L58) dùng `coin := symbol[:3]` — cắt cứng 3 ký tự đầu. Hiện chạy đúng chỉ vì cả 4 symbol (BTC/ETH/XRP/SOL) đều có base 3 ký tự. Thêm `DOGEUSDT` → `"DOG"`, `AVAXUSDT` → `"AVA"` → subscribe sai coin, im lặng không báo lỗi.
-
-**Yêu cầu bảng ánh xạ:**
-
-1. Dựng **tự động** từ `exchangeInfo` của từng sàn, không hardcode.
-2. **Xác thực từng chiều**: perp tồn tại ⟺ spot tương ứng tồn tại.
-3. Chú ý khác quote: Kraken `PF_XBTUSD` là **USD**, không phải USDT — basis khác nhau, không hedge được bằng spot USDT nếu không tính chênh USD/USDT.
-4. Cặp không ghép được → **bot phải từ chối**, không được đoán. Đây là nơi bot mở vị thế lệch coin.
 
 ---
 
