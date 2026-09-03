@@ -57,6 +57,11 @@ drops is detected but never re-established, because the read deadline is refresh
 by any frame and three venues answer keepalives with data frames. A 72h run
 without that fix mostly re-demonstrates the hole.
 
+Phase 2 (Funding Rate Monitor) has started in parallel without touching the
+soak process: step 2.1 (`cmd/fundingcheck`) verified the funding fields of all
+7 venues against live APIs on 2026-09-03 and corrected the survey — see
+[docs/DATA-REQUIREMENTS.md §3](docs/DATA-REQUIREMENTS.md).
+
 ---
 
 ## How work is done here
@@ -88,9 +93,9 @@ exists yet, so every number the UI shows today is gross. Label it as such
 wherever it surfaces.
 
 **3. Never hardcode a funding interval.** Not 8h, not anything. Hyperliquid
-settles hourly, Kraken settles hourly but quotes for an 8h window, Paradex
-accrues continuously with no discrete settlement, Binance runs 8h or 4h. See
-rule 5.
+settles hourly, Kraken settles hourly with a per-1h rate, Paradex accrues
+continuously with no discrete settlement, Binance runs 8h, 4h or even 1h per
+symbol (measured 2026-09-03: 4h is now the majority). See rule 5.
 
 **4. Name the unit in the identifier.** `IntervalSec`, `RatePer8hFrac`,
 `NotionalUSD`, `TakerFeeBps`, `QtyContracts`. A bare `rate`, `size`, or
@@ -184,9 +189,9 @@ re-research these; do verify before writing the integration.
 | Venue | Trap |
 |---|---|
 | **OKX** | `fundingTime` is the NEXT settlement; `nextFundingTime` is the one AFTER that. Mapping it like Binance's `T` is off by one period. |
-| **Kraken** | `funding_rate` is an absolute price amount (`-6.26e-11`), not a rate. Use `relative_funding_rate`. Settles hourly but quotes for an 8h realization window. |
+| **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). |
 | **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite. |
-| **Binance** | `fundingInfo` returns ONLY symbols whose config differs from default. Default to 8h and override; do not read it as the source of truth for all symbols. Also filter `rateType: "Special"` in backtests. |
+| **Binance** | `fundingInfo` documents itself as returning ONLY symbols whose config differs from default — as of 2026-09-03 it happens to cover every TRADING perpetual (777 symbols, BTCUSDT included via its adjusted ±0.3% cap), but the docs promise no such coverage. Default to 8h and override; do not read it as the source of truth for all symbols. Intervals seen: 4h (majority), 8h, and 1h. Also filter `rateType: "Special"` in backtests. |
 | **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. |
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
 | **Binance** | The aggTrade payload carries both `m` (buyer is maker) and `M` (deprecated, always true). Go's `encoding/json` prefers an exact tag match but **falls back to a case-insensitive one**, so declaring only `m` let `M` overwrite it and every trade came out a sell. Declare BOTH members of every case-colliding key pair, including the one you do not use — leaving it out is not "ignore it", it is "let it overwrite the other". |
@@ -204,6 +209,10 @@ a four-character base — across every venue.
 
 ```
 cmd/scanner/         entrypoint — wires connectors into the engine, serves HTTP
+cmd/fundingcheck/    step-2.1 diagnostic: reads BTC funding from all 7 venues
+                     over REST and verdicts the survey's traps against live
+                     data — deliberately shares NO code with the connectors,
+                     so a connector bug cannot confirm itself
 exchanges/           WebSocket connectors — PUBLIC DATA ONLY, no credentials
   testdata/          one real recording per venue, a frame per line
 internal/
@@ -256,7 +265,8 @@ go run ./cmd/scanner  # reads ./config.yaml, serves http://localhost:8082
 go build ./...
 gofmt -l .            # must print nothing
 go vet ./...
-go test ./...         # 211 tests, offline
+go test ./...         # 214 tests, offline
+go run ./cmd/fundingcheck  # live re-check of the funding-field survey (network)
 go test -race ./...   # required for any goroutine change
 
 # Re-record exchanges/testdata/ from the live venues. Opens real sockets, so it
@@ -320,8 +330,10 @@ phase 1.
   keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- 211 tests: `exchanges` 89 (63.8% of statements), `internal/scanner` 84 (89.3%),
-  `internal/config` 31 (78.2%), `internal/fees` 5 (100%), `cmd/scanner` 2.
+- 214 tests: `exchanges` 89 (63.8% of statements), `internal/scanner` 84 (89.3%),
+  `internal/config` 31 (78.2%), `internal/fees` 5 (100%), `cmd/scanner` 2,
+  `cmd/fundingcheck` 3 (the pure normalization/coherence functions; the
+  fetchers run only against live venues).
   `exchanges/testdata/` holds a real recording per venue; re-record with
   `CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata ./exchanges/`. **Pyth has
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic

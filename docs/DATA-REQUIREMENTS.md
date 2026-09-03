@@ -1,6 +1,6 @@
 # YÊU CẦU DỮ LIỆU — Funding Rate Arbitrage Bot
 
-> **Cập nhật:** 2026-08-28
+> **Cập nhật:** 2026-08-28 · khảo sát §3 xác minh trên API thật 2026-09-03 (Bước 2.1, `cmd/fundingcheck`)
 > **Phạm vi:** 7 sàn futures + 2 sàn spot hiện có trong repo
 > **Liên quan:** [PLAN.md](PLAN.md) — tài liệu này chi tiết hoá GĐ 2
 
@@ -106,13 +106,19 @@ Khảo sát 2026-08-28. **Kết luận: không có 2 sàn nào giống nhau.**
 
 | Sàn | Kênh WS | Field rate | Field mốc kế tiếp | Chu kỳ | Độ tin cậy |
 |---|---|---|---|---|---|
-| **Binance** | `<sym>@markPrice@1s` | `r` | `T` (ms tuyệt đối) | 8h / 4h, biến động | ✅ Đã xác minh |
+| **Binance** | `<sym>@markPrice@1s` | `r` | `T` (ms tuyệt đối) | 8h / 4h / **1h** theo symbol (§3.3②) | ✅ Đã xác minh |
 | **Bybit** | `tickers.<sym>` (100ms) | `fundingRate` | `nextFundingTime` (ms) | `fundingInterval` **PHÚT** (480) | ✅ Đã xác minh |
-| **OKX** | `funding-rate` | `fundingRate` | **`fundingTime`** ⚠️ | 8h | 🟡 Nguồn bên thứ ba |
-| **Gate** | `futures.tickers` | `funding_rate` + `funding_rate_indicative` | `funding_next_apply` | `funding_interval` **GIÂY** (28800) | 🟡 Nguồn bên thứ ba |
-| **Kraken** | `ticker` | **`relative_funding_rate`** ⚠️ | `next_funding_rate_time` (ms **còn lại**) | settle **mỗi 1h**, realize 8h | ✅ Đã xác minh |
-| **Hyperliquid** | `activeAssetCtx` | `funding` | — | **1 GIỜ** | ✅ Đã xác minh |
-| **Paradex** | Funding V2 | funding index | **KHÔNG CÓ** | **LIÊN TỤC** (mỗi giây) | 🟡 Nguồn blog, cần verify |
+| **OKX** | `funding-rate` | `fundingRate` | **`fundingTime`** ⚠️ | 8h | ✅ Đo trực tiếp 2026-09-03 |
+| **Gate** | `futures.tickers` | `funding_rate` + `funding_rate_indicative` | `funding_next_apply` (epoch **GIÂY**) | `funding_interval` **GIÂY** (28800) | ✅ Đo trực tiếp 2026-09-03 |
+| **Kraken** | `ticker` | **`relative_funding_rate`** ⚠️ | `next_funding_rate_time` (ms **còn lại**) | settle **mỗi 1h**, rate là **mỗi-1h** (sửa 2026-09-03 — xem ②) | ✅ Đã xác minh |
+| **Hyperliquid** | `activeAssetCtx` | `funding` | — | **1 GIỜ** (field API đã là rate/1h) | ✅ Đã xác minh |
+| **Paradex** | Funding V2 | funding index + `funding_rate_8h` | **KHÔNG CÓ** | **LIÊN TỤC** (điểm mỗi ~5s, rate yết cho cửa sổ 8h) | ✅ Đo trực tiếp 2026-09-03 |
+
+> **Phạm vi của các ✅ 2026-09-03:** `cmd/fundingcheck` xác minh **ngữ nghĩa
+> field trên REST** (Bybit là ví dụ tại sao phải tách bạch: hai endpoint của
+> cùng một sàn yết interval bằng hai đơn vị). Shape payload **WebSocket** của
+> từng kênh trong cột "Kênh WS" xác minh khi viết connector ở Bước 2.5, bằng
+> golden test trên frame thật — đúng quy trình Bước 1.6.
 
 ### 3.2. Bốn phát hiện phá vỡ thiết kế ban đầu
 
@@ -131,7 +137,29 @@ Map `nextFundingTime` của OKX vào `NextFundingTime` là **sai một kỳ**. B
 
 Giá trị mẫu trong tài liệu: `-6.2604214e-11`. Đây là **giá trị tuyệt đối theo đơn vị giá**, không phải phần trăm. Field so sánh được với các sàn khác là **`relative_funding_rate`**. Dùng nhầm field → annualize ra số vô nghĩa nhưng *trông vẫn hợp lệ* (không crash, không lỗi) — loại bug tệ nhất.
 
-Ngoài ra Kraken settle **mỗi giờ**, nhưng rate được yết cho **cửa sổ realize 8h** (hệ số n=8). Cap `±0.5%/giờ` ứng với biên độ 800bp cho 8h. Nhân `× 24 × 365` là sai gấp 8 lần.
+Xác minh 2026-09-03 trên `GET /derivatives/api/v4/historicalfundingrates?symbol=PF_XBTUSD`
+(trả **cả hai** field cho từng mốc giờ): `fundingRate ÷ relativeFundingRate` = 77.802
+≈ index price (lệch 0,09%) — đúng định nghĩa *absolute = relative × spot*.
+
+> **⚠️ SỬA 2026-09-03 — bản khảo sát cũ ghi ngược.** Trước đây mục này viết
+> "rate được yết cho cửa sổ realize 8h (hệ số n=8), chia 8 khi quy về 1h".
+> **Sai.** Spec hợp đồng hiện hành của Kraken viết: *"The absolute rate is the
+> amount of funding an account will receive by maintaining a 1 contract unit
+> short position for **1 hour**"*, và ví dụ trong spec dùng "relative rate set
+> for the 1-hour period"
+> ([Linear Multi-Collateral Contract Specifications](https://support.kraken.com/articles/4844359082772-linear-multi-collateral-derivatives-contract-specifications)).
+> Đo chéo sàn cùng thời điểm xác nhận: `relative_funding_rate` ≈ 1,07e-5/giờ,
+> **×8 = 8,5e-5** rơi đúng giữa cụm rate/8h của 6 sàn kia (4,4e-5…1,0e-4);
+> nếu chia 8 như bản cũ, Kraken sẽ hiển thị rẻ hơn thực tế **8 lần**.
+> Quy tắc đúng: `RatePerIntervalFrac = relative_funding_rate` (nguyên),
+> `IntervalSec = 3600`, `RatePer8hFrac = ×8`.
+>
+> 🟡 **Mới, chưa xác minh được bằng dữ liệu công khai:** spec nói payout nhân với
+> *"the time elapsed within the funding period without position alteration"* và
+> "you will immediately begin receiving funding" — tức Kraken có thể **tích luỹ
+> pro-rata trong giờ** thay vì chốt rời rạc tại mốc. Không ảnh hưởng tầng monitor
+> (rate giống nhau); ảnh hưởng luật "đếm mốc settle" ở GĐ 3–4 → xác minh bằng
+> funding payment thật khi có credential (GĐ 4, `income`).
 
 **③ Ba sàn, ba đơn vị cho cùng một khái niệm**
 
@@ -150,6 +178,34 @@ Funding V2 (từ 2026-06-16) tính lại **mỗi giây**, làm mượt bằng EW
 → `NextFundingTime` **không tồn tại** với Paradex. Một struct bắt buộc có field này sẽ hoặc phải điền giá trị giả, hoặc phải loại Paradex — cả hai đều sai.
 
 Hệ quả tương tự với Hyperliquid ở mức nhẹ hơn: chu kỳ 1h, nếu tính APY bằng `rate × 3 × 365` sẽ **sai 8 lần**.
+
+### 3.3. Phát hiện mới từ Bước 2.1 (đo trực tiếp 2026-09-03, `cmd/fundingcheck`)
+
+1. **OKX không còn công bố rate kỳ sau nữa.** `nextFundingRate` trả về **chuỗi
+   rỗng** khi `method = "current_period"` (kèm `formulaType: "withRate"`).
+   → `FollowingRate` trong thiết kế §4 phải là optional (`HasFollowingRate`);
+   không được parse "" thành 0. Bù lại OKX công bố cap tường minh:
+   `maxFundingRate`/`minFundingRate` = ±0,375%.
+2. **Binance `fundingInfo` hiện phủ toàn bộ perp TRADING** — 777 symbol, không
+   thiếu symbol TRADING nào, BTCUSDT có mặt (cap ±0,3% của nó tính là "adjusted").
+   Docs vẫn chỉ hứa trả symbol lệch mặc định, nên **giữ nguyên pattern mặc-định-8h-
+   rồi-ghi-đè**; độ phủ hôm nay là sự kiện đo được, không phải cam kết hợp đồng.
+   Phân bố interval 2026-09-03: **4h: 443 · 8h: 331 · 1h: 3** (TUSDT, ONGUSDT,
+   SKRUSDT) — 4h chiếm đa số, và **1h đã tồn tại trên Binance**: mọi chỗ nói
+   "Binance 8h hoặc 4h" phải đọc là "8h, 4h hoặc 1h, theo `fundingInfo`".
+3. **Bybit trả interval bằng hai đơn vị ở hai endpoint.** `instruments-info`:
+   `fundingInterval` = 480 (**PHÚT**, docs ghi "Funding interval (minute)");
+   REST `tickers`: `fundingIntervalHour` = "8" (**GIỜ**). Đơn vị thứ tư cho cùng
+   một khái niệm trong hệ — connector chuẩn hoá về giây, không đọc lẫn.
+4. **Paradex tự mô tả cửa sổ yết.** `GET /v1/funding/data` trả `funding_rate_8h`
+   và `funding_period_hours: 8` tường minh, điểm dữ liệu mỗi ~5s, `funding_index`
+   tăng đơn điệu — không cần "suy APR từ biến thiên index" như dự kiến cũ; đọc
+   thẳng `funding_rate`/`funding_rate_8h`, index chỉ dùng đối chiếu.
+5. **Hyperliquid: field `funding` của API là rate mỗi-1h đã chia sẵn.** Docs:
+   *"The funding rate formula applies to 8 hour funding rate. However, funding is
+   paid every hour at one eighth of the computed rate"* — và giá trị đo
+   (1,25e-5 ×8 = 1,0e-4) rơi đúng cụm 8h chéo sàn, tức API công bố phần **đã ÷8**.
+   Dùng nguyên với `IntervalSec = 3600`.
 
 ---
 
@@ -218,13 +274,13 @@ type FundingData struct {
 
 | Sàn | `RawRate` từ | `IntervalSec` | `NextFundingTime` | Ghi chú |
 |---|---|---|---|---|
-| Binance | `r` | `fundingIntervalHours × 3600`, **mặc định 28800** | `T` | Ghi đè interval nếu symbol có trong `fundingInfo` |
+| Binance | `r` | `fundingIntervalHours × 3600`, **mặc định 28800** | `T` | Ghi đè interval nếu symbol có trong `fundingInfo`; 1h/4h/8h đều tồn tại (§3.3) |
 | Bybit | `fundingRate` | `fundingInterval × 60` | `nextFundingTime` | ⚠️ Ticker là snapshot+delta — **merge vào cache**, không ghi đè |
-| OKX | `fundingRate` | 28800 | **`fundingTime`** | `nextFundingRate`/`nextFundingTime` → `FollowingRate`/`FollowingTime` |
+| OKX | `fundingRate` | 28800 | **`fundingTime`** | `nextFundingRate`/`nextFundingTime` → `FollowingRate`/`FollowingTime`, nhưng `nextFundingRate` hiện trả **rỗng** (§3.3) → `HasFollowingRate = false` |
 | Gate | `funding_rate` | `funding_interval` (đã là giây) | `funding_next_apply × 1000` | `funding_rate_indicative` → dùng khi cần rate dự kiến |
-| Kraken | **`relative_funding_rate`** | 3600 | `now + next_funding_rate_time` | ⚠️ Field là **ms còn lại**, không phải mốc tuyệt đối. Rate yết cho cửa sổ 8h → chia 8 khi quy về 1h |
-| Hyperliquid | `funding` | **3600** | mốc giờ tròn kế tiếp | Chu kỳ 1h, không phải 8h |
-| Paradex | funding index | — | **0** | `Model = FundingContinuous`; APR suy từ biến thiên index |
+| Kraken | **`relative_funding_rate`** | 3600 | `now + next_funding_rate_time` | ⚠️ Field là **ms còn lại**, không phải mốc tuyệt đối. Rate là **mỗi-1h, dùng nguyên** — `RatePer8hFrac = ×8` (sửa 2026-09-03, xem §3.2②) |
+| Hyperliquid | `funding` | **3600** | mốc giờ tròn kế tiếp | Chu kỳ 1h; field API đã là rate/1h (đã ÷8 — §3.3) |
+| Paradex | `funding_rate` (+ funding index đối chiếu) | 28800 (`funding_period_hours × 3600`) | **0** | `Model = FundingContinuous`; rate yết cho cửa sổ 8h có sẵn — không cần suy từ index (§3.3) |
 
 ### 4.4. Refactor kèm theo
 
@@ -323,9 +379,9 @@ Xếp theo mức tốn kém:
 
 **4. Funding tính trên `mark price × size` tại thời điểm settle**, không phải giá vào lệnh. Số thực nhận luôn lệch dự tính. **Log cả hai để so** — không log thì không biết lệch do mô hình sai hay do sàn tính khác.
 
-**5. Chu kỳ funding không đồng nhất** — Hyperliquid 1h, Kraken settle 1h/realize 8h, Binance 8h hoặc 4h, Paradex liên tục. Hardcode `× 3 × 365` sai từ 1.5× đến 8×.
+**5. Chu kỳ funding không đồng nhất** — Hyperliquid 1h, Kraken 1h (rate mỗi-1h, §3.2②), Binance 8h/4h/1h theo symbol (§3.3), Paradex liên tục. Hardcode `× 3 × 365` sai từ 1.5× đến 8×.
 
-**6. Dấu và đơn vị của rate khác nhau giữa các sàn.** Kraken `funding_rate` là tuyệt đối. Verify từng sàn bằng cách đối chiếu số hiển thị trên web sàn.
+**6. Dấu và đơn vị của rate khác nhau giữa các sàn.** Kraken `funding_rate` là tuyệt đối. Verify từng sàn bằng `cmd/fundingcheck` (hai endpoint độc lập mỗi sàn + kiểm biên độ chéo sàn — xem phụ lục), đối chiếu thêm web sàn khi nhìn được bằng mắt.
 
 **7. Bybit ticker là snapshot + delta.** Field không xuất hiện trong message = **chưa đổi**, không phải = 0. Phải merge vào state cache. Ghi đè mù → funding rate nhảy về 0 ngẫu nhiên.
 
@@ -361,13 +417,28 @@ Tên endpoint và cấu trúc field **có thay đổi**. Cấu trúc dữ liệu
 
 | Mục | Trạng thái |
 |---|---|
-| Binance `fundingRate`, `fundingInfo`, `markPrice` fields | ✅ Xác minh trên docs chính thức |
-| Bybit `fundingInterval` (phút), snapshot+delta, lotSizeFilter | ✅ Xác minh trên docs chính thức |
-| Kraken settle 1h / realize 8h, `relative_funding_rate` | ✅ Xác minh trên docs chính thức |
-| Hyperliquid funding 1h | ✅ Xác minh |
-| OKX `fundingTime` vs `nextFundingTime` | 🟡 Nguồn bên thứ ba — **verify trước khi code** |
-| Gate `funding_interval` = 28800 giây | 🟡 Nguồn bên thứ ba — **verify** |
-| Paradex Funding V2 liên tục | 🟡 Nguồn blog — **verify trên API thật** |
-| Kraken `funding_rate` tuyệt đối vs `relative_` | 🟡 Suy từ giá trị mẫu `-6.26e-11` — **verify bằng cách đối chiếu số trên web sàn** |
+| Binance `fundingRate`, `fundingInfo`, `markPrice` fields | ✅ Docs chính thức + đo 2026-09-03 (spacing settle khớp `fundingInfo`) |
+| Bybit `fundingInterval` (phút), snapshot+delta, lotSizeFilter | ✅ Docs chính thức + đo 2026-09-03 (480 phút = `fundingIntervalHour` 8h) |
+| Kraken settle mỗi 1h, `relative_funding_rate` là rate mỗi-1h | ✅ Spec hợp đồng + đo 2026-09-03 — **bản cũ ghi "realize 8h, chia 8" là SAI**, xem §3.2② |
+| Hyperliquid funding 1h, field API đã ÷8 | ✅ Sàn tự khai interval qua `predictedFundings` (`fundingIntervalHours: 1`, đo 2026-09-03) + docs; vế "đã ÷8" canh gác bởi kiểm biên độ ≥5× |
+| OKX `fundingTime` vs `nextFundingTime` | ✅ Đo 2026-09-03: `ts < fundingTime < nextFundingTime`, cách nhau đúng 8h |
+| Gate `funding_interval` = 28800 giây | ✅ Đo 2026-09-03: 28800, `funding_next_apply` epoch giây tròn giờ |
+| Paradex Funding V2 liên tục | ✅ Đo 2026-09-03: điểm index mỗi ~5s, `funding_period_hours: 8` tường minh |
+| Kraken `funding_rate` tuyệt đối vs `relative_` | ✅ Đo 2026-09-03: absolute ÷ relative ≈ index price (lệch 0,09%) |
+| Kraken tích luỹ pro-rata trong giờ? (câu chữ spec, §3.2②) | 🟡 **Mới** — chỉ xác minh được bằng funding payment thật → GĐ 4 (`income`) |
+| Binance `fundingInfo` phủ 100% perp TRADING | 🟡 Sự kiện đo được 2026-09-03, docs không cam kết — pattern mặc-định-rồi-ghi-đè vẫn bắt buộc |
 
-**Cách verify rẻ nhất:** viết một script đọc funding rate của BTC từ cả 7 sàn, in ra cạnh nhau cùng với số hiển thị trên web từng sàn. Sai đơn vị hay sai field sẽ lộ ra ngay ở bước này — trước khi nó kịp đi vào logic tính toán.
+**Cách verify rẻ nhất** (đã thành `cmd/fundingcheck`, Bước 2.1): đọc funding rate
+BTC từ cả 7 sàn song song, in raw cạnh chuẩn hoá, chấm verdict tự động. Đối chiếu
+web sàn bằng mắt không tự động hoá được (mọi trang venue là JS app) — thay bằng
+2 endpoint độc lập mỗi sàn + docs nêu field web hiển thị (spec Kraken nói thẳng
+relative rate là số web hiển thị) + kiểm biên độ chéo sàn: |rate/8h| của mỗi sàn
+phải nằm trong **5×** trung vị — bắt được lệch ÷8/×8, 60× (phút↔giây),
+absolute-vs-relative (~10⁵×), chấp nhận funding âm/lẫn dấu, và tự kiềm khi cả
+cụm sát 0 (không phân định được thì nói rõ, không FAIL bừa).
+
+Chạy lại bất cứ lúc nào: `go run ./cmd/fundingcheck` — exit ≠ 0 khi có verdict
+FAIL. Verdict chỉ khẳng định **đơn vị/ngữ nghĩa**, không ghim giá trị cấu hình,
+nên sàn đổi interval hay cap vẫn PASS; một FAIL nghĩa là "sàn đã đổi ngữ nghĩa
+field, hoặc regime thị trường vượt khả năng phân định của kiểm" — đi xem lại,
+đừng mặc định code sai và cũng đừng lờ đi.

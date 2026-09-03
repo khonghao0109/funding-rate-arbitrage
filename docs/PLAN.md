@@ -98,7 +98,7 @@
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
-| **2** | Funding Rate Monitor | 7 | 4–5 tuần | ⬜ Chưa bắt đầu | Thu thập + lưu funding rate 24/7 |
+| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **1/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
@@ -717,18 +717,33 @@ Sửa:
 
 > **Cập nhật sau khảo sát 7 sàn (2026-08-28):** giai đoạn này tăng từ 5 lên 7 bước. Lý do: khảo sát cho thấy funding rate **không đồng nhất giữa các sàn** ở mức phá vỡ thiết kế struct ban đầu (OKX đảo ngược ngữ nghĩa `next`, Kraken trả giá trị tuyệt đối thay vì tỷ lệ, ba sàn dùng ba đơn vị khác nhau cho chu kỳ, Paradex không có mốc funding rời rạc). Đồng thời instrument registry và bảng ánh xạ spot↔perp được kéo từ GĐ 4 lên đây, vì không có chúng thì không tính được size delta-neutral để backtest cho đúng.
 
-#### Bước 2.1 — Script xác minh field (làm TRƯỚC khi viết struct) 🔍
+#### Bước 2.1 — Script xác minh field (làm TRƯỚC khi viết struct) 🔍 ✅
 - Script một lần: đọc funding rate BTC từ cả 7 sàn, in cạnh nhau, đối chiếu với số hiển thị trên web từng sàn.
 - Mục đích: phát hiện sai đơn vị / sai field **trước khi** nó đi vào logic tính toán.
 - Xác minh cụ thể 4 điểm còn nghi vấn: OKX `fundingTime` vs `nextFundingTime`; Gate `funding_interval` đơn vị giây; Paradex mô hình liên tục; Kraken `funding_rate` tuyệt đối vs `relative_funding_rate`.
 - **Nghiệm thu:** 7 con số khớp với web sàn. Sàn nào không khớp → tìm ra nguyên nhân trước khi đi tiếp.
+
+> **Kết quả (2026-09-03).** `cmd/fundingcheck` đọc cả 7 sàn song song, in raw cạnh
+> chuẩn hoá, tự chấm 8 verdict (mỗi sàn một, cộng kiểm biên độ chéo sàn) — tất cả
+> PASS. Verdict khẳng định **đơn vị và ngữ nghĩa**, không ghim cấu hình hôm nay;
+> kiểm chéo sàn so |rate/8h| với **trung vị**, phát hiện mọi lệch hệ số **≥5×**
+> (÷8/×8, 60×, absolute-vs-relative ~10⁵×) và chấp nhận funding âm/lẫn dấu.
+> Cả 4 điểm 🟡 xác minh xong, và **một điểm phải sửa tài liệu**:
+> `relative_funding_rate` của Kraken là rate **mỗi-1h dùng nguyên, KHÔNG chia 8**
+> — khảo sát cũ ghi ngược. Ba phát hiện mới: OKX `nextFundingRate` giờ trả rỗng
+> (`method=current_period`); Binance `fundingInfo` hiện phủ **toàn bộ** perp
+> TRADING (777 symbol, BTCUSDT trong đó vì cap ±0,3% bị chỉnh) với interval
+> 4h/8h/**1h** — 4h chiếm đa số; Bybit REST ticker thêm `fundingIntervalHour`
+> (GIỜ) — đơn vị thứ tư cho cùng khái niệm. Vế "đối chiếu web sàn" bằng mắt được
+> thay thế có lý do — phương pháp thay thế và toàn bộ chi tiết ở
+> [DATA-REQUIREMENTS.md §3 + phụ lục](DATA-REQUIREMENTS.md#3-khảo-sát-funding-rate-7-sàn).
 
 #### Bước 2.2 — Thiết kế `FundingData` + refactor `Feeds`
 - Struct đầy đủ tại [DATA-REQUIREMENTS.md §4](DATA-REQUIREMENTS.md#4-thiết-kế-fundingdata). Ba yêu cầu bắt buộc:
   1. `FundingModel` enum (`discrete` / `continuous`) — Paradex không có mốc funding.
   2. Giữ **cả** `RawRate` (debug) **lẫn** rate chuẩn hoá (`RatePerInterval`, `RatePer8h`, `APRAnnualized`).
   3. `IntervalSec` — chuẩn hoá về **giây ngay tại tầng connector**. Tầng signal không bao giờ thấy phút/giờ/giây lẫn lộn.
-- ~~Gom 3 channel thành `Feeds`~~ — đã thực hiện ở **Bước 1.5**. Ở đây chỉ cần nối channel `Funding` đã khai báo sẵn.
+- ~~Gom 3 channel thành `Feeds`~~ — đã thực hiện ở **Bước 1.5**. Ở đây **thêm** field `Funding chan<- FundingData` vào `Feeds` (kiểm 2026-09-03: struct hiện chỉ có `Ctx`/`Price`/`Orderbook`/`Trade`/`Conn` — channel Funding **chưa** được khai báo trước) rồi nối vào scanner.
 - **Nghiệm thu:** unit test chuyển đổi đơn vị cho cả 7 sàn từ payload mẫu.
 
 #### Bước 2.3 — Instrument registry
@@ -747,8 +762,8 @@ Sửa:
 #### Bước 2.5 — Thu thập funding rate
 - **WebSocket** (ưu tiên): Binance `@markPrice@1s`, Bybit `tickers`, OKX `funding-rate`, Gate `futures.tickers`, Kraken `ticker`, Hyperliquid `activeAssetCtx`.
 - ⚠️ Bybit ticker là **snapshot + delta** — field vắng mặt nghĩa là *chưa đổi*, phải merge vào cache, không ghi đè.
-- ⚠️ Binance `fundingInfo` **chỉ trả symbol lệch mặc định** → mặc định 8h rồi ghi đè, không đọc ngược lại.
-- **Nghiệm thu:** funding rate 4 cặp × 7 sàn realtime, khớp web sàn, đã chuẩn hoá về `RatePer8h` so sánh được chéo sàn.
+- ⚠️ Binance `fundingInfo` **theo docs chỉ trả symbol lệch mặc định** (thực tế 2026-09-03 phủ 100% — vẫn phải mặc định 8h rồi ghi đè, không đọc ngược lại; xem [DATA-REQUIREMENTS §3.3](DATA-REQUIREMENTS.md)).
+- **Nghiệm thu:** funding rate 4 cặp × 7 sàn realtime, khớp số `cmd/fundingcheck` đọc qua REST tại cùng thời điểm (và web sàn khi đối chiếu được bằng mắt), đã chuẩn hoá về `RatePer8hFrac` so sánh được chéo sàn.
 
 #### Bước 2.6 — Persistence (SQLite)
 - `funding_history(exchange, symbol, raw_rate, rate_per_8h, interval_sec, funding_time, rate_type, recorded_at)`.
@@ -1138,7 +1153,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          0/7 bước
+[  ] GĐ 2  Funding Rate Monitor          1/7 bước   ← ĐANG LÀM song song với soak
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
@@ -1154,5 +1169,7 @@ subscription bị sàn âm thầm huỷ hiện **không có gì buộc nối l�
 dạng hỏng mà 72 giờ sinh ra để phát hiện — chạy mà không sửa thì nhiều khả năng
 chỉ chứng minh lại rằng nó tồn tại.
 
-Sau đó là **GĐ 2 Bước 2.1** — script xác minh field funding rate, làm TRƯỚC khi
-viết struct `FundingData`.
+GĐ 2 đã bắt đầu song song (không đụng tiến trình soak): Bước 2.1 xong 2026-09-03.
+Tiếp theo là **Bước 2.2** — thiết kế `FundingData` theo kết quả xác minh ở
+[DATA-REQUIREMENTS.md §3–§4](DATA-REQUIREMENTS.md) và thêm channel `Funding`
+vào `Feeds` (chưa tồn tại — xem ghi chú tại Bước 2.2).
