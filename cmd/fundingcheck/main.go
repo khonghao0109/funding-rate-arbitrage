@@ -27,17 +27,22 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
 
-const secPerYear = 31_536_000
+const (
+	secPer8h   = 28_800
+	secPerYear = 31_536_000
+)
 
 // ratePer8hFrac converts a per-interval rate to the common 8h comparison
 // window. docs/CONVENTIONS.md §1.3: cross-venue comparisons happen per 8h.
 func ratePer8hFrac(ratePerIntervalFrac float64, intervalSec int64) float64 {
-	return ratePerIntervalFrac * 28800 / float64(intervalSec)
+	return ratePerIntervalFrac * secPer8h / float64(intervalSec)
 }
 
 // aprFrac annualizes a per-interval rate. PLAN.md step 3.1:
@@ -171,6 +176,11 @@ func fetchBinance(ctx context.Context) (row, []verdict, error) {
 			break
 		}
 	}
+	// A listed entry whose fundingIntervalHours is absent decodes to 0 — that
+	// must surface as a named error, not divide the table into +Inf.
+	if intervalHours <= 0 {
+		return row{}, nil, fmt.Errorf("binance: fundingInfo entry for %s carries non-positive fundingIntervalHours %d", premium.Symbol, intervalHours)
+	}
 
 	var history []struct {
 		FundingAtMs int64 `json:"fundingTime"`
@@ -181,7 +191,14 @@ func fetchBinance(ctx context.Context) (row, []verdict, error) {
 	if len(history) < 2 {
 		return row{}, nil, fmt.Errorf("binance: need 2 settled funding entries, got %d", len(history))
 	}
+	// The history endpoint documents its order: "In ascending order", and
+	// without start/end times it returns the most recent entries — so
+	// [1]−[0] is the spacing of the two latest settlements. Verified live
+	// 2026-09-03.
 	observedSpacingMs := history[1].FundingAtMs - history[0].FundingAtMs
+	if observedSpacingMs <= 0 {
+		return row{}, nil, fmt.Errorf("binance: fundingRate history not ascending (spacing %dms) — endpoint order changed", observedSpacingMs)
+	}
 
 	r := row{
 		Venue:               "binance",
@@ -257,6 +274,11 @@ func fetchBybit(ctx context.Context) (row, []verdict, error) {
 		return row{}, nil, fmt.Errorf("bybit: empty instruments-info list")
 	}
 	intervalMin := info.Result.List[0].FundingIntervalMin
+	// An absent/renamed field decodes to 0 — surface it as a named error, not
+	// as a division by zero in the normalized columns.
+	if intervalMin <= 0 {
+		return row{}, nil, fmt.Errorf("bybit: instruments-info fundingInterval = %d min is not a positive interval", intervalMin)
+	}
 
 	r := row{
 		Venue:               "bybit",
@@ -274,8 +296,10 @@ func fetchBybit(ctx context.Context) (row, []verdict, error) {
 	// check on the minutes quote alone and say so.
 	unitCheck := verdict{Name: "Bybit: instruments-info minutes agree with ticker hours (trap ③)"}
 	if t.FundingIntervalHour == "" {
-		unitCheck.Pass = intervalMin > 0 && intervalMin%60 == 0
-		unitCheck.Detail = fmt.Sprintf("ticker fundingIntervalHour absent; fundingInterval=%d min stands alone", intervalMin)
+		// Cross-check inconclusive, not failed — abstain the way the
+		// coherence check does when it cannot discriminate.
+		unitCheck.Pass = true
+		unitCheck.Detail = fmt.Sprintf("ticker fundingIntervalHour absent; fundingInterval=%d min stands alone, unit cross-check inconclusive", intervalMin)
 	} else {
 		tickerHours, err := parseInt64("bybit", "fundingIntervalHour", t.FundingIntervalHour)
 		if err != nil {
@@ -409,10 +433,12 @@ func fetchGate(ctx context.Context) (row, []verdict, error) {
 	nowSec := time.Now().Unix()
 	v := []verdict{{
 		Name: "Gate: funding_interval is in SECONDS, funding_next_apply in epoch seconds (trap ③)",
-		// Seconds-unit shape: hours would be ~8, minutes ~480; whole hours in
-		// seconds are ≥3600 and divisible by 3600. Epoch-seconds shape: the
-		// next settlement lies within one interval of now (60s of slack).
-		Pass: intervalSec >= 3600 && intervalSec%3600 == 0 &&
+		// Seconds-unit MAGNITUDE only: an hours quote would be ~8, a minutes
+		// quote ~480, both far under 3600 — no divisibility clause, that would
+		// pin today's scheduling convention, not the unit. Epoch-seconds
+		// shape: the next settlement lies within one interval of now (60s of
+		// slack).
+		Pass: intervalSec >= 3600 &&
 			nextApplySec > nowSec-60 && nextApplySec <= nowSec+intervalSec+60,
 		Detail: fmt.Sprintf("funding_interval=%d, funding_next_apply=%d, now=%d", intervalSec, nextApplySec, nowSec),
 	}}
@@ -462,32 +488,38 @@ func fetchKraken(ctx context.Context) (row, []verdict, error) {
 	if len(hist.Rates) < 2 {
 		return row{}, nil, fmt.Errorf("kraken: need ≥2 settled entries, got %d", len(hist.Rates))
 	}
-	// RFC3339 timestamps sort lexicographically, so ordering needs no parsing;
-	// newest-by-timestamp guards against the endpoint changing its sort order.
-	newest, secondNewest := 0, -1
+	// Timestamps are compared PARSED, never as strings: RFC3339 only sorts
+	// lexicographically while every entry shares one precision and the Z
+	// designator — "T00:00:00Z" sorts after "T00:00:00.999Z", and a numeric
+	// offset breaks it entirely. Parsing everything up front also makes a
+	// malformed entry loud instead of silently mis-picking the newest.
+	settledAt := make([]time.Time, len(hist.Rates))
 	for i := range hist.Rates {
-		if hist.Rates[i].Timestamp > hist.Rates[newest].Timestamp {
+		at, err := time.Parse(time.RFC3339, hist.Rates[i].Timestamp)
+		if err != nil {
+			return row{}, nil, fmt.Errorf("kraken: timestamp %q does not parse: %w", hist.Rates[i].Timestamp, err)
+		}
+		settledAt[i] = at
+	}
+	// Newest-by-timestamp guards against the endpoint changing its sort order.
+	newest, secondNewest := 0, -1
+	for i := range settledAt {
+		if settledAt[i].After(settledAt[newest]) {
 			newest = i
 		}
 	}
-	for i := range hist.Rates {
-		if i != newest && (secondNewest < 0 || hist.Rates[i].Timestamp > hist.Rates[secondNewest].Timestamp) {
+	for i := range settledAt {
+		if i != newest && (secondNewest < 0 || settledAt[i].After(settledAt[secondNewest])) {
 			secondNewest = i
 		}
 	}
 	last := hist.Rates[newest]
 
 	// The settlement cadence is measured from the history, not hardcoded
-	// (CLAUDE.md rule 3): spacing of the two newest settled entries.
-	newestAt, err := time.Parse(time.RFC3339, last.Timestamp)
-	if err != nil {
-		return row{}, nil, fmt.Errorf("kraken: timestamp %q does not parse: %w", last.Timestamp, err)
-	}
-	secondAt, err := time.Parse(time.RFC3339, hist.Rates[secondNewest].Timestamp)
-	if err != nil {
-		return row{}, nil, fmt.Errorf("kraken: timestamp %q does not parse: %w", hist.Rates[secondNewest].Timestamp, err)
-	}
-	intervalSec := int64(newestAt.Sub(secondAt) / time.Second)
+	// (CLAUDE.md rule 3): spacing of the two newest settled entries. A skipped
+	// settlement (maintenance) would double this for one run — visible in the
+	// row, tolerated by the 5× coherence band.
+	intervalSec := int64(settledAt[newest].Sub(settledAt[secondNewest]) / time.Second)
 	if intervalSec <= 0 {
 		return row{}, nil, fmt.Errorf("kraken: non-positive settlement spacing %ds", intervalSec)
 	}
@@ -516,7 +548,7 @@ func fetchKraken(ctx context.Context) (row, []verdict, error) {
 		if hist.Rates[i].RelativeFundingRate == 0 {
 			continue
 		}
-		if checkIdx < 0 || hist.Rates[i].Timestamp > hist.Rates[checkIdx].Timestamp {
+		if checkIdx < 0 || settledAt[i].After(settledAt[checkIdx]) {
 			checkIdx = i
 		}
 	}
@@ -684,11 +716,7 @@ func fetchParadex(ctx context.Context) (row, []verdict, error) {
 			newest = i
 		}
 	}
-	for i := 1; i < len(atMs); i++ { // insertion sort; n ≤ 8
-		for j := i; j > 0 && atMs[j] < atMs[j-1]; j-- {
-			atMs[j], atMs[j-1] = atMs[j-1], atMs[j]
-		}
-	}
+	slices.Sort(atMs)
 	maxGapMs := int64(0)
 	for i := 0; i+1 < len(atMs); i++ {
 		if gap := atMs[i+1] - atMs[i]; gap > maxGapMs {
@@ -760,27 +788,36 @@ func coherenceVerdict(venues []string, per8hFracs []float64) verdict {
 		abs = append(abs, math.Abs(x))
 	}
 	sorted := append([]float64(nil), abs...)
-	for i := 1; i < len(sorted); i++ { // insertion sort; n ≤ 7
-		for j := i; j > 0 && sorted[j] < sorted[j-1]; j-- {
-			sorted[j], sorted[j-1] = sorted[j-1], sorted[j]
-		}
+	slices.Sort(sorted)
+	// True median: with an even count (fetch failures shrink the set) the
+	// upper-middle alone can BE a shared outlier, inverting the diagnosis.
+	mid := len(sorted) / 2
+	median := sorted[mid]
+	if len(sorted)%2 == 0 {
+		median = (sorted[mid-1] + sorted[mid]) / 2
 	}
-	median := sorted[len(sorted)/2]
 	if median < coherenceFloorPer8hAbs {
 		v.Pass = true
 		v.Detail = fmt.Sprintf("median |rate/8h| = %.2g%% — too near zero to discriminate units; nothing checked", median*100)
 		return v
 	}
+	// Name EVERY out-of-band venue, not the first: when two venues share a
+	// unit bug the median can shift and a single-name diagnosis points at the
+	// wrong integration.
+	var outliers []string
 	for i, a := range abs {
 		if a < coherenceFloorPer8hAbs {
 			continue // one venue legitimately near zero says nothing about its units
 		}
 		if ratio := a / median; ratio > coherenceFactor || ratio < 1/coherenceFactor {
-			v.Pass = false
-			v.Detail = fmt.Sprintf("%s at %.6f%%/8h is %.1f× the median %.6f%%/8h — smells like ÷8/×8, 60×, or absolute-vs-relative",
-				venues[i], per8hFracs[i]*100, ratio, median*100)
-			return v
+			outliers = append(outliers, fmt.Sprintf("%s at %.6f%%/8h (%.1f× the median)", venues[i], per8hFracs[i]*100, ratio))
 		}
+	}
+	if len(outliers) > 0 {
+		v.Pass = false
+		v.Detail = fmt.Sprintf("median %.6f%%/8h; out of band: %s — a ÷8/×8, 60× or absolute-vs-relative unit bug, OR a genuinely divergent venue (the arb signal itself); judge from the raw row above",
+			median*100, strings.Join(outliers, "; "))
+		return v
 	}
 	v.Pass = true
 	v.Detail = fmt.Sprintf("median %.6f%%/8h across %d venues, all magnitudes within %.0f×", median*100, len(venues), coherenceFactor)

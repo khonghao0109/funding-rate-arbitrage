@@ -108,6 +108,20 @@ func TestCoherenceVerdict(t *testing.T) {
 			wantPass:   false,
 			wantInWhy:  "b",
 		},
+		{
+			// Even venue count (fetch failures shrink the set): the median is
+			// the mean of the middles, so a single shared outlier cannot
+			// become the reference point.
+			name:       "even count healthy cluster passes",
+			per8hFracs: []float64{6.1e-5, 9.3e-5, 7.8e-5, 8.5e-5, 1.0e-4, 9.1e-5},
+			wantPass:   true,
+		},
+		{
+			name:       "even count with a 60x outlier names it",
+			per8hFracs: []float64{6.1e-5, 9.3e-5 * 60, 7.8e-5, 8.5e-5, 1.0e-4, 9.1e-5},
+			wantPass:   false,
+			wantInWhy:  "b",
+		},
 	}
 	for _, c := range cases {
 		got := coherenceVerdict(venues[:len(c.per8hFracs)], c.per8hFracs)
