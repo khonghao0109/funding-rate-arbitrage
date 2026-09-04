@@ -13,3 +13,9 @@ crypto-futures-arbitrage-scanner
 # CodeGraph index (local, machine-specific)
 .codegraph/
 .soak/
+
+# SQLite store (step 2.6) — data, not source. WAL and shared-memory siblings too.
+data/
+*.db
+*.db-wal
+*.db-shm

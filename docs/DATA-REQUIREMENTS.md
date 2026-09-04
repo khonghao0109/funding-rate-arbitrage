@@ -16,6 +16,7 @@
 6. [Bảng ánh xạ spot ↔ perp](#6-bảng-ánh-xạ-spot--perp)
 7. [Các bẫy dữ liệu](#7-các-bẫy-dữ-liệu)
 8. [Ngân sách rate limit](#8-ngân-sách-rate-limit)
+9. [Lịch sử funding qua REST](#9-lịch-sử-funding-qua-rest)
 
 ---
 
@@ -582,6 +583,116 @@ Xếp theo mức tốn kém:
 | B. Chấm điểm | mỗi 2h | ~20 |
 | D. Reconcile | mỗi 5 phút | ~84 |
 | **Tổng** | | **~106/giờ** — rất nhẹ |
+
+---
+
+## 9. LỊCH SỬ FUNDING QUA REST — ✅ đo ở Bước 2.6 (2026-09-04)
+
+Đây là **kho dữ liệu backtest GĐ 3**, và nó KHÔNG giống reading realtime của
+Bước 2.5: reading là rate của kỳ **đang chạy**, còn ở đây là rate đã **settle
+thật**. Bảy sàn, bảy kiểu phân trang, và ba sàn không trả nổi 12 tháng.
+
+### 9.1 Đo trực tiếp — độ sâu và cách phân trang
+
+Tất cả số dưới đây đo trên BTC ngày 2026-09-04, không lấy từ tài liệu:
+
+| Sàn | Sâu ≥12 tháng? | Trang | Thứ tự | Con trỏ |
+|---|---|---|---|---|
+| **Binance** `/fapi/v1/fundingRate` | ✅ | 1000 dòng | cũ → mới | `startTime` tiến |
+| **Bybit** `/v5/market/funding/history` | ✅ | 200 dòng | mới → cũ | `endTime` lùi |
+| **Kraken** `/v4/historicalfundingrates` | ✅ | **KHÔNG phân trang** | cũ → mới | — |
+| **Hyperliquid** `info{fundingHistory}` | ✅ | 500 dòng | cũ → mới | `startTime` tiến |
+| **OKX** `/v5/public/funding-rate-history` | ❌ **~3 tháng** | 100 dòng | mới → cũ | `after` lùi |
+| **Gate** `/futures/usdt/funding_rate` | ❌ **180 ngày** | 1000 dòng | mới → cũ | `from`/`to` |
+| **Paradex** `/v1/funding/data` | ❌ **không có settlement** | 5000 dòng | mới → cũ | `end_at` lùi |
+
+**① OKX giữ khoảng 3 tháng.** Chia đôi bằng `after` lùi dần: 60 và 90 ngày còn
+dữ liệu; 120, 150, 180, 270 ngày đều trả `{"code":"0","data":[]}` — mảng RỖNG,
+không phải lỗi. Đọc mảng rỗng như "sàn hỏng" là sai; đọc như "hết lịch sử" là
+đúng.
+
+**② Gate chặn cứng 180 ngày.** `from` xa hơn trả thẳng
+`{"label":"INVALID_PARAM_VALUE","message":"from time exceeds 180-day limit"}`.
+Nên fetcher **kẹp** `from` về 179 ngày thay vì gửi rồi ăn lỗi. Ngoài ra không có
+`from`/`to` thì `limit` bị lờ đi và sàn chỉ trả ~30 ngày (đo: `limit=1000` →
+90 dòng), nên cửa sổ là bắt buộc kể cả khi chỉ lấy vài dòng.
+
+**③ Kraken trả nguyên một năm trong MỘT response.** 8.772 dòng, 1.010.412 byte,
+2025-09-03 → 2026-09-04. Đây cũng là chỗ **trả xong nợ Bước 2.3**: cadence 1h
+của Kraken ghim thành hằng số vì không message funding nào mang interval, với
+điều kiện mỗi lần backfill phải đo lại. Histogram khoảng cách của cả năm:
+
+```
+3600s × 8764    7200s × 6    10800s × 1
+```
+
+Tức **hàng giờ, với 7 kỳ settle bị lỡ trong một năm**. Golden test
+`TestKrakenFundingHistoryGolden` chốt modal gap == 3600 trên bản ghi
+`testdata/funding_history_kraken.json`, nên chỉ cần re-record là hằng số tự
+được kiểm lại.
+
+**④ Paradex không có gì để backfill theo nghĩa settlement.** `/v1/funding/data`
+là mẫu funding index mỗi **5 giây** (5.000 dòng/trang = 6,94 giờ). 6 tháng ở độ
+phân giải gốc là ~3,1 triệu dòng/market. Vì index là **luỹ kế** — khoản tích luỹ
+giữa hai thời điểm chính bằng hiệu hai index — lấy mẫu theo GIỜ là đủ và chính
+xác. Fetcher đi theo mốc giờ, mỗi mốc một request `end_at` (xác minh live:
+`end_at=1788400000000` trả `created_at=1788399999353`). Mọi dòng Paradex vào DB
+với `model='continuous'`; **đếm chúng như settlement là cấp 8.760 lần trả tiền
+một năm cho sàn không trả lần nào**.
+
+### 9.2 Field lấy rate — không sàn nào giống sàn nào
+
+| Sàn | Field rate | Field mốc | Ghi chú |
+|---|---|---|---|
+| Binance | `fundingRate` | `fundingTime` (ms) | Kèm `markPrice` và **`rateType`** |
+| Bybit | `fundingRate` | `fundingRateTimestamp` (**chuỗi** ms) | |
+| OKX | **`realizedRate`** | `fundingTime` (chuỗi ms) | `fundingRate` là dự phòng khi realized rỗng |
+| Gate | `r` | `t` (**GIÂY**) | Mốc lệch 1–3 giây sau giờ tròn |
+| Kraken | **`relativeFundingRate`** | `timestamp` (**ISO8601**) | `fundingRate` là số tiền tuyệt đối |
+| Hyperliquid | `fundingRate` | `time` (ms, **jitter vài chục ms**) | |
+| Paradex | `funding_rate` | `created_at` (ms) | **Sàn DUY NHẤT khai interval theo từng dòng** (`funding_period_hours`) |
+
+**⑤ `rateType` chỉ tồn tại ở endpoint này.** Đo được `"Regular"`; PLAN 3.3 yêu
+cầu backtest lọc `"Special"` (rate bất thường do dividend) và đây là nơi duy
+nhất đọc được nó. `premiumIndex` của Bước 2.5 không có field này.
+
+**⑥ Mốc settle giữ NGUYÊN VĂN, không làm tròn về giờ tròn.** Gate lệch 1–3
+giây, Hyperliquid lệch vài chục mili-giây. Làm tròn là bịa ra một timestamp sàn
+chưa từng công bố, và lần fetch sau sẽ không khớp khoá chính nữa → mỗi lần
+backfill lại thêm một bản sao của cùng một kỳ settle.
+
+### 9.3 `interval_sec` phải ĐO, không đọc
+
+Không sàn nào (trừ Paradex) công bố interval kèm từng dòng lịch sử. Gán interval
+**hiện tại** cho cả năm là sai nghiêm trọng: Binance đã chuyển phần lớn symbol
+từ 8h sang 4h, nên nửa cũ của kho sẽ lệch **2×** đúng ở con số APR mà GĐ 3 xếp
+hạng.
+
+Cách làm: `interval_sec` = **modal gap** của chuỗi (cadence), và mỗi dòng giữ
+thêm `gap_prev_sec` = khoảng cách THẬT tới mốc trước. Hai số bằng nhau ở dòng
+bình thường và khác nhau đúng ở chỗ có kỳ lỡ hoặc có đổi cadence.
+
+Phân biệt "lỡ vài kỳ" với "đổi cadence" bằng **trọng số**, vì từ timestamp
+không có cách nào khác: Kraken 6/8.771 = 0,07%; một lần đổi 8h→4h giữa năm để
+lại mode phụ vài chục phần trăm. Ngưỡng 10% (`CadenceLooksMixed`) nằm cách cả
+hai một bậc độ lớn, và `cmd/backfill` in cảnh báo ⚠️ riêng cho trường hợp sau,
+kèm chỉ dẫn đọc `gap_prev_sec`.
+
+### 9.4 Chi phí
+
+| Việc | Số request | Ghi chú |
+|---|---|---|
+| Backfill 12 tháng, 1 cặp, 6 sàn discrete | ~25 | Binance 2, Bybit 6, OKX ~5 (hết lịch sử), Gate 1, Kraken 1, HL ~18 |
+| Backfill Paradex | 1/giờ trong cửa sổ | Trần `maxFundingHistoryPages` = 2000 → với tới ~83 ngày |
+| Top-up scanner (mỗi giờ) | ~30 | Overlap 26h; Paradex 26 request/symbol |
+| Top-up Kraken | 1 request = **1 MB** | Sàn luôn trả cả năm bất kể cửa sổ — chi phí cố định, không tránh được |
+
+Nhịp giữa các trang là 200ms (`fundingHistoryPageDelay`): backfill là việc nền
+không có deadline, còn hạn mức rate limit thì dùng chung với feed đang chạy.
+Mỗi trang được thử lại tối đa 3 lần — một chuỗi dài tới 2.000 request, để một
+502 giữa chừng xoá sạch mọi thứ đã lấy là đánh đổi sai. "Sàn không niêm yết"
+và ctx bị huỷ **không** thử lại: cái đầu không phải lỗi tạm thời, cái sau là
+tiến trình đang tắt.
 
 ---
 

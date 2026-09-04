@@ -25,6 +25,53 @@ scanner:
   # Ngưỡng mặc định cho nguồn không khai `stale_after_sec` riêng.
   default_stale_after_sec: 10
 
+# Lưu trữ SQLite (Bước 2.6).
+#
+# Mọi chu kỳ dưới đây là một HỆ SỐ NHÂN SỐ DÒNG, nên chúng nằm ở config chứ
+# không phải hằng số trong code: 4 cặp × 9 nguồn lấy mẫu mỗi 5s là khoảng
+# 622.000 dòng giá mỗi ngày; để 1s thì gấp năm.
+storage:
+  # false = scanner chạy y như trước Bước 2.6: không mở file, không ghi gì.
+  enabled: true
+  path: "data/scanner.db"
+
+  # Chu kỳ lấy mẫu top-of-book, tính bằng giây.
+  #
+  # ⚠️ ĐO THẬT 2026-09-04 trên đúng schema này: **133,3 byte/dòng**
+  # (`MEASURE_STORE=1 go test -run TestPriceSnapshotRowCost ./internal/store/`).
+  # Với 36 chuỗi và 90 ngày lưu trữ:
+  #     5s  → 56,0 triệu dòng ≈ 7,46 GB
+  #    10s  → 28,0 triệu dòng ≈ 3,73 GB
+  #    30s  →  9,3 triệu dòng ≈ 1,24 GB   ← đang dùng
+  #    60s  →  4,7 triệu dòng ≈ 0,62 GB
+  # PLAN 2.6 đề xuất 1–5s khi chưa có số đo. Vị thế funding giữ hàng NGÀY, nên
+  # 30s vẫn cho 2.880 mẫu/ngày/chuỗi mà tốn 1/6 dung lượng.
+  price_sample_every_sec: 30
+
+  # Bổ sung funding lịch sử từ REST. Mỗi tick hỏi 7 sàn, mà mốc settle nhanh
+  # nhất trong hệ là 1 giờ (Kraken, Hyperliquid) — 60 phút là vừa đủ dày.
+  #
+  # Chi phí đo được mỗi tick: ~30 request, trong đó Kraken luôn trả **cả năm
+  # trong một response 1 MB** bất kể cửa sổ (sàn không có phân trang), tức
+  # ~4 MB/giờ cho 4 cặp. Đây là kho backtest chứ không phải dữ liệu quyết định,
+  # nên nới lên 240 phút hoàn toàn hợp lệ nếu băng thông đáng quan tâm.
+  funding_topup_every_min: 60
+
+  # Ảnh chụp quy tắc giao dịch. Khoá theo NGÀY (UTC), nên chụp nhiều lần trong
+  # ngày chỉ ghi đè ảnh của ngày đó — 6 giờ để một lần fetch hỏng không xoá
+  # trắng ảnh của cả ngày.
+  instrument_snapshot_every_hours: 6
+
+  prune_every_hours: 24
+
+  # Thời gian giữ, tính bằng NGÀY. 0 = giữ vĩnh viễn.
+  #
+  # ⚠️ funding là thứ DUY NHẤT ở đây không lấy lại được: OKX chỉ công bố ~90
+  # ngày, Gate 180 ngày. Cắt xuống dưới ngưỡng đó là mất vĩnh viễn, nên config
+  # từ chối mọi giá trị từ 1 đến 29.
+  retain_funding_days: 365
+  retain_price_days: 90
+
 # Các cặp scanner theo dõi.
 #
 # `base` và `quote` được khai tường minh, không suy ra từ hậu tố chuỗi: suy ra

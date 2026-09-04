@@ -62,7 +62,7 @@
 | # | Thiếu | Ảnh hưởng | Chặn giai đoạn |
 |---|---|---|---|
 | 1 | **Dữ liệu funding rate** — `grep -rin "funding" exchanges/` → 0 kết quả | Không có tín hiệu cốt lõi của chiến lược | GĐ 2 |
-| 2 | **Persistence / database** | Restart mất sạch dữ liệu, không backtest được | GĐ 2 |
+| 2 | ~~**Persistence / database**~~ | ~~Restart mất sạch dữ liệu, không backtest được~~ | ✅ **Bước 2.6** — SQLite, 3 bảng, backfill 7 sàn |
 | 3 | **REST client + HMAC signing** — cả repo chỉ có 1 lời gọi HTTP (`pyth.go:77`) | Không thể đặt lệnh | GĐ 4 |
 | 4 | **Mô hình phí** — không có dòng code nào tính phí (README đã sửa lại cho đúng, nay ghi rõ số hiển thị là spread thô) | Tín hiệu lợi nhuận là lợi nhuận thô, không phải ròng | GĐ 1 |
 | 5 | **Khái niệm vị thế / margin / PnL** | Không quản trị được rủi ro | GĐ 5 |
@@ -98,7 +98,7 @@
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
-| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **5/7 bước** | Thu thập + lưu funding rate 24/7 |
+| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **6/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
@@ -764,11 +764,11 @@ Sửa:
 > bao giờ settle. Chi tiết: [DATA-REQUIREMENTS §3.3⑥](DATA-REQUIREMENTS.md).
 >
 > **Nợ ghi nhận từ review, chưa xử lý:**
-> - Chu kỳ 1h của Kraken ghim trong `kraken_funding.go` (sàn không công bố
->   interval ở bất kỳ message funding nào — không có gì để đọc). Rủi ro còn
->   lại: sàn đổi cadence giữa hai lần backfill thì lệch 2× không bị kiểm 5×
->   của fundingcheck bắt; Bước 2.6 phải đo lại spacing của
->   `historicalfundingrates` mỗi lần backfill.
+> - ~~Chu kỳ 1h của Kraken ghim trong `kraken_funding.go`~~ ✅ **trả ở 2.6.**
+>   Sàn vẫn không công bố interval ở message funding nào, nhưng
+>   `historicalfundingrates` giờ có bản ghi trong `exchanges/testdata/` và
+>   `TestKrakenFundingHistoryGolden` chốt modal gap == 3600 — re-record là tự
+>   kiểm lại hằng số. Đo cả năm 2026-09-04: 3600s×8744, 7200s×6, 10800s×1.
 > - Map funding của scanner không tự loại reading cũ; **Bước 2.7 phải đo độ
 >   tươi từ `RecvAt` khi hiển thị** (subscription chết mà hiển thị rate cũ như
 >   mới là đúng lỗi 1.6 lặp lại ở tầng UI).
@@ -817,9 +817,8 @@ Sửa:
 > - Bảy builder funding (commit 2.2) nhận 7 tham số vị trí — hai `int64` kề
 >   nhau hoán vị được mà vẫn biên dịch (CONVENTIONS §6.2: >4 → struct). Gom
 >   thành struct khi 2.5 chạm đúng các call site đó.
-> - Cadence 1h Kraken: ghi thêm bản ghi đuôi `historicalfundingrates` vào
->   testdata + golden khoảng cách == 3600 để việc re-record tự kiểm hằng số
->   (làm cùng backfill 2.6).
+> - ~~Cadence 1h Kraken: ghi bản ghi `historicalfundingrates` vào testdata +
+>   golden khoảng cách == 3600~~ ✅ **làm ở 2.6** như đã hẹn.
 > - `cmd/fundingcheck`: verdict OKX dùng `<` chặt — chạy đúng mốc settle có
 >   thể false-FAIL; verdict Gate tin đồng hồ máy (lệch >60s false-FAIL). Sửa
 >   khi có dịp đụng công cụ.
@@ -920,12 +919,108 @@ Sửa:
 > này. `fundingLogEvery` 60s là cửa sổ quan sát duy nhất của 2.5; 2.7 thay bằng
 > dashboard và khi đó nên bỏ hoặc hạ tần suất log.
 
-#### Bước 2.6 — Persistence (SQLite)
+#### Bước 2.6 — Persistence (SQLite) ✅
 - `funding_history(exchange, symbol, raw_rate, rate_per_8h, interval_sec, funding_time, rate_type, recorded_at)`.
 - `instruments` (snapshot hằng ngày — để biết `stepSize` đã đổi lúc nào), `price_snapshots` (lấy mẫu 1–5s).
 - Backfill lịch sử 6–12 tháng qua REST; lọc `rateType = Special` khi backtest.
 - Lưu trữ: 12 tháng funding, 3 tháng price snapshot.
 - **Nghiệm thu:** restart không mất dữ liệu; truy vấn được funding 30 ngày; có đủ corpus cho backtest GĐ 3.
+
+> **⚠️ Đối chiếu P1 (2026-09-04) — bốn giả định trên KHÔNG đúng như viết.**
+> Đo trực tiếp 7 endpoint lịch sử funding trước khi code (chi tiết + payload
+> thật: [DATA-REQUIREMENTS §8](DATA-REQUIREMENTS.md)):
+>
+> 1. **"6–12 tháng" không đồng đều — hai sàn không thể.** Binance, Bybit,
+>    Hyperliquid, Kraken trả đủ ≥12 tháng. **OKX chỉ giữ ~3 tháng**
+>    (`after` lùi 90 ngày còn dữ liệu, lùi 120 ngày trả mảng rỗng). **Gate
+>    chặn cứng 180 ngày** (`from time exceeds 180-day limit`). Backfill phải
+>    khai báo độ phủ THẬT theo từng sàn, không được để GĐ 3 tưởng 7 sàn cùng
+>    dài như nhau.
+> 2. **Paradex không có settlement để backfill.** `/v1/funding/data` là mẫu
+>    funding index mỗi **5 giây** (5.000 bản ghi/trang = 6,9 giờ). 6 tháng ở
+>    độ phân giải gốc là ~3,1 triệu dòng/market. Vì index là **luỹ kế**, lấy
+>    mẫu theo giờ là đủ và chính xác — backfill Paradex đi theo cửa sổ
+>    `start_at`/`end_at` từng giờ, và độ phủ mặc định ngắn hơn sáu sàn kia.
+> 3. **Tên cột trong dòng trên vi phạm CONVENTIONS §1.** `raw_rate`,
+>    `rate_per_8h`, `funding_time`, `recorded_at` không mang đơn vị, mà cột
+>    SQLite là định danh vượt ranh giới (GĐ 8 Python đọc thẳng). Schema thật
+>    dùng `rate_per_8h_frac`, `funding_at_ms`, `recorded_at_ms`, …
+> 4. **`price_snapshots` 1–5s không khả thi — ĐO THẬT, không ước lượng.**
+>    Một dòng tốn **133,3 byte** trên đúng schema này
+>    (`MEASURE_STORE=1 go test -run TestPriceSnapshotRowCost ./internal/store/`,
+>    180.000 dòng, 2026-09-04). Với 36 chuỗi và 90 ngày lưu trữ: 5s →
+>    56,0 triệu dòng ≈ **7,46 GB**; 10s ≈ 3,73 GB; **30s ≈ 1,24 GB**; 60s ≈
+>    0,62 GB. Vị thế funding giữ hàng NGÀY nên 30s vẫn cho 2.880 mẫu/ngày/chuỗi.
+>    Số **đang dùng là 30s**, khai trong `config.yaml`, và test config chặn
+>    khoảng 10–60s để lần sửa sau không lặng lẽ quay về 5s.
+>
+> Ngoài ra `interval_sec` của một dòng lịch sử **không đọc được từ payload**:
+> không sàn nào công bố interval kèm từng mốc settle (trừ Paradex).
+> Nó được suy từ **khoảng cách mốc settle đo được**, và mỗi dòng giữ thêm
+> `gap_prev_sec` = khoảng cách thật tới mốc trước, để một kỳ settle bị bỏ lỡ
+> hay một lần đổi cadence hiện ra trong DỮ LIỆU chứ không nằm trong comment.
+
+> **Kết quả (2026-09-04).** Ba package mới và một lệnh mới:
+> `internal/store/` (SQLite qua `modernc.org/sqlite` thuần Go — giữ được build
+> `CGO_ENABLED=0`, không cần toolchain C ở máy chạy), `internal/history/`
+> (REST sàn → store, dùng chung giữa scanner và backfill, và là chỗ DUY NHẤT
+> biết cả hai đầu), `cmd/backfill/`, cùng 7 fetcher
+> `exchanges/<venue>_funding_history.go`. Ba bảng: `funding_history`
+> (khoá `source+symbol+funding_at_ms`), `price_snapshots`,
+> `instrument_snapshots` (khoá theo NGÀY UTC). `FundingHistoryEntry` **không**
+> mang `RecvAt` — luật 13 chỉ cho ba chỗ đóng dấu, một cho mỗi transport, và
+> một rate settle từ tháng Ba không có "thời điểm nhận"; thời điểm GHI là việc
+> của store (`recorded_at_ms`).
+>
+> **Nghiệm thu chạy thật, không khẳng định suông:**
+> 1. *Restart không mất dữ liệu* — `cmd/backfill` nạp 22.518 dòng cho BTCUSDT;
+>    scanner khởi động lại trên đúng file đó, top-up lấy về 28 dòng chồng lấn
+>    của Kraken/Hyperliquid/Paradex và **ghi thêm đúng 1** (mốc settle mới),
+>    bốn sàn 8h không ghi thêm dòng nào. WAL checkpoint sạch (0 byte) khi tắt.
+> 2. *Truy vấn được funding 30 ngày* — `go run ./cmd/backfill -check 30`:
+>    **2.517 mốc settle** đọc qua `store.FundingHistory` (đúng đường truy vấn
+>    GĐ 3 sẽ dùng), đủ 7 sàn, trung bình 0,44–0,82 bps/8h — cùng bậc độ lớn,
+>    không sàn nào lệch đơn vị.
+> 3. *Đủ corpus* — độ sâu THẬT theo từng sàn, đo trên BTCUSDT 12 tháng:
+>    Binance/Bybit/Kraken/Hyperliquid **365 ngày**; Gate **178,7**; OKX
+>    **92,7**; Paradex **83,3** (trần page budget của công cụ, không phải của
+>    sàn). Báo cáo in thẳng ba nhóm khác nhau — *tới không đủ xa*, *nhịp lệch
+>    vài giây do jitter mốc*, và *hai cadence cùng có trọng số* (nhóm cuối mới
+>    là cảnh báo ⚠️: `interval_sec` là modal nên nửa kia của kho bị sai 2× ở
+>    `rate_per_8h_frac`).
+> 4. Scanner chạy sống cổng 8085 (soak 8082 không đụng tới): mở store, chụp
+>    36 instrument sau 2 phút, 216 dòng giá = 6 vòng × 36 chuỗi mỗi 30s, tắt
+>    sạch trong **256µs**, không cảnh báo storage.
+>
+> **Bốn phát hiện đổi thiết kế, chi tiết + số đo ở
+> [DATA-REQUIREMENTS §9](DATA-REQUIREMENTS.md):** ① độ sâu lịch sử không đồng
+> đều (OKX ~3 tháng, Gate 180 ngày); ② Paradex không có settlement, chỉ có mẫu
+> index mỗi 5 giây, nên lấy mẫu theo GIỜ (index luỹ kế nên không mất gì);
+> ③ `interval_sec` phải ĐO chứ không đọc, và một lần đổi cadence sai 2× suốt
+> nhiều tháng nên `gap_prev_sec` phải nằm cạnh nó; ④ giá 1 dòng price sample
+> **133,3 byte** → 5s × 90 ngày = 7,46 GB, nên chu kỳ dùng thật là 30s.
+>
+> **Review tự tìm và đã SỬA trong bước:** query `(? = '' OR symbol = ?)` khiến
+> SQLite bỏ qua index — dựng câu lệnh theo điều kiện; ảnh chụp instrument và
+> prune tick lần đầu sau nguyên một chu kỳ (6h/24h) nên máy restart hằng ngày
+> **không bao giờ** chụp và **không bao giờ** dọn — thêm warm-up 2 phút / 5 phút;
+> chờ recorder lúc tắt không có hạn — thêm ngân sách 5s như phía connector;
+> đường DB chứa `?` bị driver đọc thành tham số DSN → mở nhầm file, giờ từ chối;
+> thị trường sàn không niêm yết trả 404 / OKX `51001` / Bybit `10001` bị coi là
+> lỗi → giờ là "không có", dùng chung đúng một hàm nhận diện với Bước 2.4;
+> `LogResults` in "0 series" mỗi lần tắt; **một request lỗi làm hỏng cả chuỗi** —
+> một chuỗi Paradex là 2.000 request và 9 phút, mất trắng vì request thứ 1.999
+> trả 502 là đánh đổi không ai chọn, nên mỗi trang được thử lại 3 lần (không thử
+> lại "sàn không niêm yết" và không thử lại khi ctx đã huỷ), và `cmd/backfill`
+> exit ≠ 0 khi còn chuỗi hỏng vì top-up hằng giờ CHỈ lấp phần mới, không lấp lại
+> năm cũ.
+>
+> **Nợ ghi nhận:** `fetchInstrumentJSON` giờ phục vụ cả instrument, funding REST
+> và lịch sử funding — tên nói dối, đổi khi có bước chạm đủ rộng vào
+> `exchanges/`. Top-up Kraken tải 1 MB/cặp/giờ vì sàn luôn trả cả năm bất kể
+> cửa sổ (không tránh được, đã ghi vào `config.yaml` kèm gợi ý nới chu kỳ).
+> Trần `maxFundingHistoryPages` giới hạn Paradex ở ~83 ngày; nếu GĐ 3 cần sâu
+> hơn thì chạy backfill nhiều lượt hoặc nâng trần.
 
 #### Bước 2.7 — Dashboard funding
 - Bảng funding hiện tại theo sàn × cặp, **quy về cùng đơn vị 8h** để so sánh công bằng, tô màu theo mức hấp dẫn.
@@ -1092,7 +1187,9 @@ Cả hai chỉ nên cân nhắc khi các giai đoạn trước đã sinh lợi �
 ```
 crypto-futures-arbitrage-scanner/
 ├── cmd/
-│   └── scanner/               # entrypoint (Bước 2.1 thêm cmd/fundingcheck)
+│   ├── scanner/               # entrypoint
+│   ├── fundingcheck/          # [GĐ 2.1] kiểm chéo field funding 7 sàn
+│   └── backfill/              # [GĐ 2.6] nạp lịch sử funding vào SQLite
 ├── config.yaml                # [GĐ 1.4] symbol, sàn, ngưỡng
 ├── CLAUDE.md                  # tổng quan cho AI agent
 ├── docs/
@@ -1103,12 +1200,16 @@ crypto-futures-arbitrage-scanner/
 ├── exchanges/                 # ĐỌC-ONLY, không chứa credential
 │   ├── types.go               # + FundingData, MarketType, Feeds  [GĐ 2.1]
 │   ├── binance.go … pyth.go
-│   └── funding/               # [GĐ 2.2] thu thập funding rate
+│   ├── <venue>_funding.go     # [GĐ 2.2] chuẩn hoá đơn vị funding từng sàn
+│   ├── <venue>_funding_ws.go  # [GĐ 2.5] thu funding realtime
+│   └── <venue>_funding_history.go  # [GĐ 2.6] rate ĐÃ settle, cho backtest
 ├── internal/
 │   ├── scanner/               # engine + hợp đồng wire (đã tách khỏi gốc 2026-09-03)
 │   ├── fees/                  # [GĐ 1.3] bảng phí theo sàn
 │   ├── instruments/           # [GĐ 2.3] registry + ánh xạ spot↔perp
-│   ├── store/                 # [GĐ 2.3] SQLite, funding history
+│   ├── history/               # [GĐ 2.6] REST sàn → store (scanner + backfill)
+│   ├── store/                 # [GĐ 2.6] SQLite: funding_history,
+│   │                          #          price_snapshots, instrument_snapshots
 │   ├── strategy/              # [GĐ 3.2] sinh tín hiệu + APR (tên tránh đụng os/signal)
 │   ├── backtest/              # [GĐ 3.3]
 │   ├── notify/                # [GĐ 3.4] Telegram/Discord
@@ -1309,7 +1410,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          5/7 bước   ← ĐANG LÀM song song với soak
+[  ] GĐ 2  Funding Rate Monitor          6/7 bước   ← ĐANG LÀM song song với soak
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước

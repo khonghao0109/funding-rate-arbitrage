@@ -10,9 +10,11 @@ A Go service that connects to 9 crypto venues over WebSocket, normalizes their
 order book data, and surfaces price dislocations in real time through a browser
 dashboard.
 
-**It is a read-only scanner today.** It holds no credentials, places no orders,
-and persists nothing. Every number it displays is derived from public market
-data held in memory.
+**It is a read-only scanner today.** It holds no credentials and places no
+orders. Every number it displays is derived from public market data. Since step
+2.6 it also WRITES that data to a local SQLite file — funding history, sampled
+prices, daily instrument rules — to build the phase-3 backtest corpus; reading a
+venue and recording what it said is still read-only with respect to the venue.
 
 ## Where it is going
 
@@ -83,6 +85,17 @@ measurement and the two other design-changing findings are in
 the scanner's funding map and are printed once a minute as a GROSS table; the
 dashboard is step 2.7.
 
+Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
+`modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
+(venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),
+and seven `exchanges/<venue>_funding_history.go` fetchers for the SETTLED rates
+the phase-3 backtest replays. Three tables — `funding_history`,
+`price_snapshots`, `instrument_snapshots` — every column carrying its unit,
+because phase 8 reads them from Python. **The corpus is not uniformly deep and
+must never be assumed to be**: OKX publishes ~3 months, Gate refuses a `from`
+older than 180 days, and Paradex has no settlements at all (measurements in
+[docs/DATA-REQUIREMENTS.md §9](docs/DATA-REQUIREMENTS.md)).
+
 ---
 
 ## How work is done here
@@ -109,9 +122,11 @@ add order placement", say what is missing first. Phases 2 and 3 need no API key
 at all — that is deliberate.
 
 **2. Never present gross profit as profit.** Every profit figure must be net of
-maker/taker fees, funding cost, and estimated slippage. No fee calculation
-exists yet, so every number the UI shows today is gross. Label it as such
-wherever it surfaces.
+maker/taker fees, funding cost, and estimated slippage. Step 1.3 added the fee
+model, so a figure can now be "after trading fees" — but nothing yet deducts
+slippage (needs book depth, step 2.7) or funding cost, and the whole stored
+funding corpus is gross. Nothing is called "net" before step 3.1. Label every
+figure with what has actually been taken off it, wherever it surfaces.
 
 **3. Never hardcode a funding interval.** Not 8h, not anything. Hyperliquid
 settles hourly, Kraken settles hourly with a per-1h rate, Paradex accrues
@@ -222,6 +237,9 @@ re-research these; do verify before writing the integration.
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
 | **Binance** | The `@markPrice@1s` stream delivers NOTHING to this environment — measured 2026-09-04, one socket carried 4,782 bookTicker frames and zero markPriceUpdate frames in 45s after the server acknowledged both subscriptions. Funding comes from REST `premiumIndex`, queried per symbol (the unfiltered form is 199 KB for ~780 entries and costs request weight 10 against 1). See DATA-REQUIREMENTS §3.4⑦. |
 | **Binance** | The aggTrade payload carries both `m` (buyer is maker) and `M` (deprecated, always true). Go's `encoding/json` prefers an exact tag match but **falls back to a case-insensitive one**, so declaring only `m` let `M` overwrite it and every trade came out a sell. Declare BOTH members of every case-colliding key pair, including the one you do not use — leaving it out is not "ignore it", it is "let it overwrite the other". |
+| **History depth** | The three venues that cannot answer a 12-month request, measured 2026-09-04: **OKX** keeps ~3 months and answers beyond it with an EMPTY array and `code "0"` (not an error); **Gate** refuses outright — `from time exceeds 180-day limit` — so the fetcher clamps to 179 days rather than sending a request it knows will fail; **Paradex** has no settlements at all, only a 5-second sample of a cumulative funding index. Never assume the corpus is as deep as it was asked for; read the coverage. |
+| **History interval** | No venue publishes an interval beside a historical rate — Paradex is the lone exception. Annotating a 12-month backfill with today's interval is a **2× error over months** on symbols Binance moved from 8h to 4h. `interval_sec` is the series' MEASURED modal spacing and every row also keeps `gap_prev_sec`, the real distance to the previous settlement. Two cadences with real weight is a different thing from a few missed settlements and is reported separately (`CadenceLooksMixed`, 10% threshold — Kraken's year has 6 outages in 8,771 gaps = 0.07%). |
+| **History stamps** | Settlement stamps are stored VERBATIM. Gate's land 1–3 seconds past the hour, Hyperliquid's carry tens of milliseconds of jitter. Rounding them to a boundary invents a timestamp the venue never published, and the next fetch then misses the primary key and inserts the same settlement again. |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
 | **"Not listed"** | Per-symbol instrument endpoints answer "market not listed" in THREE shapes (measured 2026-09-03): Paradex → HTTP **404**; OKX → HTTP 200 + `code 51001`; Bybit linear → HTTP 200 + `retCode 10001` "symbol invalid" while Bybit **spot** → `retCode 0` + empty list. All must read as "absent" — treating any as an error lets one unsupported pair blank a venue's whole rule set (found live in step 2.4 when XLMUSDT killed the Paradex source). Every OTHER non-zero code stays a loud error. |
 | **Assets** | Base/quote must come from what the venue DECLARES, never from slicing the symbol string. OKX swaps leave `baseCcy`/`quoteCcy` empty (spot-only fields — use `ctValCcy`/`settleCcy` for linear); Kraken names BTC "XBT" in symbols but declares `base: "BTC"`, so no alias table exists anywhere; Hyperliquid declares no quote (venue-wide documented "USD"). |
@@ -242,12 +260,16 @@ cmd/fundingcheck/    step-2.1 diagnostic: reads BTC funding from all 7 venues
                      over REST and verdicts the survey's traps against live
                      data — deliberately shares NO code with the connectors,
                      so a connector bug cannot confirm itself
+cmd/backfill/        step-2.6 one-off: fills funding_history from the venues'
+                     history endpoints and reports how deep each series really
+                     reached. Safe to re-run — every row is keyed by settlement
 exchanges/           WebSocket connectors — PUBLIC DATA ONLY, no credentials
   testdata/          one real recording per venue, a frame per line
 internal/
   scanner/           the engine: price state, staleness, the wire contract
   instruments/       trading rules, spot<->perp mapping, delta-neutral sizing
   fees/              fee table, net profit
+  history/           venue REST -> store; the only place that knows both
   store/             SQLite persistence
   strategy/          APR, entry and exit signals
   backtest/          historical replay
@@ -296,6 +318,15 @@ gofmt -l .            # must print nothing
 go vet ./...
 go test ./...         # offline — no test opens a network socket
 go run ./cmd/fundingcheck  # live re-check of the funding-field survey (network)
+
+# Fill the phase-3 funding corpus from the venues' history endpoints (network,
+# minutes). Safe to re-run: a second pass over the same window inserts nothing.
+go run ./cmd/backfill                 # 12 months, every configured pair
+go run ./cmd/backfill -months 6 -symbol BTCUSDT
+
+# Re-measure what a stored price sample costs on disk before changing
+# storage.price_sample_every_sec — the row count is linear in it.
+MEASURE_STORE=1 go test -run TestPriceSnapshotRowCost -v ./internal/store/
 go test -race ./...   # required for any goroutine change
 
 # Re-record exchanges/testdata/ from the live venues. Opens real sockets, so it
@@ -304,8 +335,13 @@ CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata -timeout 5m ./exchanges/
 go test -race ./...   # required for any goroutine change
 ```
 
-Stack: Go 1.23.5, `gorilla/websocket`, `joho/godotenv`. Frontend is vanilla JS
-with TradingView Lightweight Charts — keep it that way, no framework migration.
+Stack: Go 1.23.5, `gorilla/websocket`, `joho/godotenv`, `gopkg.in/yaml.v3`, and
+`modernc.org/sqlite` — the PURE-GO SQLite driver, pinned at v1.38.2 because it
+is the newest release still targeting go1.23. It was chosen over the cgo driver
+so `CGO_ENABLED=0` static builds keep working and the deploy target needs no C
+toolchain; the cost is a larger module graph and slower bulk writes, which at 36
+series is not a constraint. Frontend is vanilla JS with TradingView Lightweight
+Charts — keep it that way, no framework migration.
 
 Identifiers, comments and commit messages are **English**. Documents in `docs/`
 and user-facing UI strings are Vietnamese. Full conventions in
@@ -359,14 +395,19 @@ phase 1.
   keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- 196 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 250 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `exchanges` 51 (61.8% of statements — the REST
-  fetchers' HTTP wrappers run only against live venues, their parsers are
-  golden-tested), `internal/scanner` 89 (86.1%),
-  `internal/instruments` 27 (96.9%), `internal/config` 19 (78.2%),
-  `internal/fees` 5 (100%), `cmd/scanner` 2, `cmd/fundingcheck` 3.
+  it can be re-measured): `exchanges` 72 (58.4% of statements),
+  `internal/scanner` 90 (86.5%), `internal/instruments` 27 (96.9%),
+  `internal/store` 13 (84.2%), `internal/config` 25 (80.6%),
+  `internal/history` 6 (76.5%), `internal/fees` 5 (100%), `cmd/scanner` 5,
+  `cmd/backfill` 4, `cmd/fundingcheck` 3. The `exchanges` percentage FELL from
+  61.8% at step 1.6 while the test count rose: step 2.6 added seven history
+  fetchers whose pagination loops only run against live venues. Their parsers
+  and the cadence arithmetic are golden-tested against recorded payloads; the
+  loops are not, and pretending otherwise with a mock HTTP server would test
+  the mock.
   `exchanges/testdata/` holds a real recording per venue; re-record with
   `CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata ./exchanges/`. **Pyth has
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic
@@ -381,6 +422,17 @@ phase 1.
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new
   quantity. Fixing it means merging deltas into cached state — trap 3 below.
+- `fetchInstrumentJSON` now serves instruments, REST funding and funding history.
+  The name lies about all but the first. Rename it when a step touches enough of
+  `exchanges/` to make the churn free; renaming it on its own would put ten files
+  in a commit that is about something else.
+- The funding corpus is **not uniformly deep and never will be** — see the
+  History depth trap row. Anything that ranks or backtests across venues has to
+  read `store.FundingCoverage` first, or it is comparing a year of one venue
+  against three months of another and calling the difference a signal.
+- Paradex's history reach is capped at ~83 days by `maxFundingHistoryPages`,
+  because one hour of its corpus costs one HTTP request. That is this tool's
+  limit, not the venue's; a deeper corpus means more runs or a higher cap.
 
 ---
 

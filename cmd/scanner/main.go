@@ -29,6 +29,7 @@ import (
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/instruments"
 	"futures-arbitrage-scanner/internal/scanner"
+	"futures-arbitrage-scanner/internal/store"
 
 	"github.com/joho/godotenv"
 )
@@ -65,11 +66,16 @@ func main() {
 	s.Run(ctx)
 
 	connectors := startConnectors(ctx, cfg, s)
-	// The registry's readers arrive with steps 2.4 (spot↔perp mapping), 2.6
-	// (daily snapshots) and 2.7 (liquidity ranking); until then its Run loop
-	// and log line are deliberately the only consumers — do NOT build a
-	// second registry elsewhere, thread this one through.
-	_ = startInstrumentRegistry(ctx, cfg)
+	// One registry, threaded through. Step 2.4 reads it for the hedge mapping,
+	// 2.6 for the daily snapshots, and 2.7 will for liquidity ranking — do NOT
+	// build a second one elsewhere.
+	registry := startInstrumentRegistry(ctx, cfg)
+
+	// Persistence (step 2.6). Its jobs get their own WaitGroup: the store is
+	// closed after they stop, and closing it underneath a job mid-transaction
+	// is how a WAL file ends up needing recovery.
+	var recorders sync.WaitGroup
+	db := startStore(ctx, cfg, s, registry, &recorders)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.HandleWebSocket)
@@ -96,6 +102,40 @@ func main() {
 	cancelledAt := time.Now()
 	log.Printf("Shutting down...")
 	shutdown(server, connectors, cancelledAt)
+
+	// After the budget, not inside it: the 5s acceptance criterion of step 1.5
+	// measures the connectors, and a recording job finishing a transaction must
+	// not be able to spend that budget or to be abandoned by it.
+	closeStore(db, &recorders)
+}
+
+// storeShutdownBudget bounds the wait for the recording jobs.
+//
+// Bounded rather than open-ended for the same reason the connector wait is: a
+// process that will not exit is worse than one that leaves a transaction
+// uncommitted, and an uncommitted SQLite transaction costs the rows of one tick
+// and nothing else. Every job selects on the context, so reaching this is a
+// defect and says so.
+const storeShutdownBudget = 5 * time.Second
+
+func closeStore(db *store.Store, recorders *sync.WaitGroup) {
+	if db == nil {
+		return
+	}
+	stopped := make(chan struct{})
+	go func() {
+		recorders.Wait()
+		close(stopped)
+	}()
+
+	select {
+	case <-stopped:
+	case <-time.After(storeShutdownBudget):
+		log.Printf("WARNING: storage jobs still running %s after cancellation, closing anyway", storeShutdownBudget)
+	}
+	if err := db.Close(); err != nil {
+		log.Printf("storage: close: %v", err)
+	}
 }
 
 // shutdown closes the HTTP server and waits for every connector to return.

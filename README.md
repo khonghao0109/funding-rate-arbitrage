@@ -58,6 +58,9 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Đối chiếu oracle** | Độ lệch từng sàn so với Pyth, chỉ tham chiếu, không bao giờ sinh cảnh báo. Dòng nào lệch đồng quote đều được gắn nhãn |
 | **Khối lượng đỉnh sổ** | Thu ở 5/9 nguồn báo bằng coin. Bốn sàn báo bằng contract để `0` — nghĩa là **chưa biết**, không phải không có thanh khoản |
 | **Số đã trừ phí giao dịch** | Trừ phí taker cả bốn lượt khớp (mở và đóng cả hai chân). Gọi đúng là **"đã trừ phí giao dịch"**, KHÔNG phải lợi nhuận ròng — chưa trừ trượt giá và funding. Sàn chưa xác minh được biểu phí thì không có số, không phải miễn phí |
+| **Funding rate realtime 7 sàn** | 6 sàn qua WebSocket, Binance qua REST `premiumIndex` (luồng mark-price của sàn này không đẩy gì tới môi trường đo). Mọi rate quy về `RatePer8hFrac` để so sánh cùng đơn vị — không sàn nào bị giả định chu kỳ 8h |
+| **Kho lịch sử funding (SQLite)** | `cmd/backfill` nạp rate **đã settle thật** từ 7 sàn; scanner tự bổ sung mỗi giờ. Restart không mất gì — mỗi dòng khoá theo mốc settle nên chạy lại chỉ ghi phần thiếu. Kho **không đều nhau giữa các sàn** và báo cáo nói rõ độ sâu từng sàn |
+| **Lấy mẫu giá và ảnh chụp quy tắc giao dịch** | Cross-section top-of-book mỗi 30s và quy tắc giao dịch từng ngày, để backtest sau này không diễn giải dữ liệu cũ bằng luật mới |
 
 ---
 
@@ -68,10 +71,9 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | Chưa có | Hệ quả |
 |---|---|
 | **Trượt giá (slippage)** | Số sau phí mới trừ phí giao dịch, **chưa trừ trượt giá** — cần độ sâu sổ lệnh, phải tới GĐ 2. Vẫn chưa dùng để ra quyết định vốn được |
-| **Dữ liệu funding rate** | Không có — đây là khoảng trống lớn nhất so với mục tiêu |
-| **Lưu trữ** | Restart là mất sạch. Chưa backtest được |
+| **Dashboard funding** | Funding đã thu thật (Bước 2.5) nhưng mới chỉ in ra log mỗi phút; bảng trên dashboard là Bước 2.7 |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | 211 test (89,3% ở `internal/scanner`, 100% ở `internal/fees`, 78,2% ở `internal/config`, 63,8% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ |
+| **Test tự động** | 250 test (100% ở `internal/fees`, 96,9% ở `internal/instruments`, 86,5% ở `internal/scanner`, 84,2% ở `internal/store`, 80,6% ở `internal/config`, 76,5% ở `internal/history`, 58,4% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ. Vòng phân trang của 7 fetcher lịch sử funding chỉ chạy được với sàn thật nên không nằm trong phần trăm — parser của chúng thì có |
 | **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập biểu phí tài khoản của bạn vào `config.yaml` và đặt `verified: true` |
 | **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract; chưa có instrument registry để nhân `ctVal`/`quanto_multiplier`, nên bốn sàn chưa có số thanh khoản. Xếp hạng cơ hội theo độ sâu phải chờ GĐ 2 |
 
@@ -199,6 +201,29 @@ nên biểu phí tài khoản bạn mới là con số đúng:
 `verified: false` nghĩa là **chưa tra được**, không phải miễn phí — cặp nào có
 một sàn như vậy thì không có số sau phí.
 
+**Lưu trữ (Bước 2.6)** — khối `storage:` bật/tắt toàn bộ phần ghi SQLite.
+`enabled: false` là scanner chạy y như trước, không mở file, không ghi gì.
+
+```yaml
+storage:
+  enabled: true
+  path: "data/scanner.db"
+  price_sample_every_sec: 30      # ĐO: 133,3 byte/dòng → 1,24 GB cho 90 ngày
+  retain_funding_days: 365        # 0 = giữ vĩnh viễn
+  retain_price_days: 90
+```
+
+Nạp kho lịch sử funding cho backtest (chạy một lần, vài phút, mở socket thật):
+
+```bash
+go run ./cmd/backfill                      # 12 tháng, mọi cặp trong config
+go run ./cmd/backfill -months 6 -symbol BTCUSDT
+```
+
+Chạy lại lúc nào cũng an toàn: mỗi dòng khoá theo (sàn, cặp, mốc settle) nên
+lượt thứ hai không ghi thêm gì. Báo cáo cuối in **độ sâu thật của từng chuỗi** —
+đọc nó, đừng giả định 7 sàn sâu như nhau.
+
 Dùng file khác: `go run ./cmd/scanner -config /đường/dẫn/khác.yaml`.
 Biến môi trường `PORT` (hoặc `.env`) vẫn được ưu tiên hơn `server.port`.
 
@@ -214,6 +239,8 @@ không còn hardcode ở Go hay JavaScript.
 ```
 .
 ├── cmd/scanner/               # entrypoint — wiring connector, HTTP server
+├── cmd/fundingcheck/          # kiểm chéo field funding của 7 sàn qua REST
+├── cmd/backfill/              # nạp lịch sử funding vào SQLite (Bước 2.6)
 ├── CLAUDE.md                  # tổng quan cho AI agent
 ├── exchanges/                 # connector — CHỈ dữ liệu công khai, không credential
 │   ├── types.go               # kiểu dùng chung
@@ -223,7 +250,8 @@ không còn hardcode ở Go hay JavaScript.
 │   ├── scanner/               # engine: state giá, staleness, hợp đồng wire (WS-CONTRACT.md)
 │   ├── instruments/           # registry, ánh xạ spot↔perp, sizing delta-neutral
 │   ├── fees/                  # bảng phí, lợi nhuận ròng
-│   ├── store/                 # SQLite
+│   ├── history/               # REST sàn → store (dùng chung scanner & backfill)
+│   ├── store/                 # SQLite: funding_history, price_snapshots, instrument_snapshots
 │   ├── strategy/              # APR, tín hiệu vào/ra
 │   ├── backtest/              # replay lịch sử
 │   ├── notify/                # Telegram, Discord
@@ -234,7 +262,7 @@ không còn hardcode ở Go hay JavaScript.
 └── docs/                      # PLAN, WORKFLOW, DATA-REQUIREMENTS, CONVENTIONS, WS-CONTRACT
 ```
 
-Các package `internal/` hiện chỉ chứa `doc.go` mô tả trách nhiệm và ranh giới. **Đọc `doc.go` trước khi thêm code vào package đó.**
+Các package `internal/` chưa tới lượt xây thì hiện chỉ chứa `doc.go` mô tả trách nhiệm và ranh giới. **Đọc `doc.go` trước khi thêm code vào package đó.**
 
 **Luật phụ thuộc — vi phạm là lỗi chặn merge:**
 

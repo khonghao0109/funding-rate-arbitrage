@@ -356,3 +356,101 @@ sources:
 		t.Errorf("symbol quote = %q, want USDT", cfg.Symbols[0].Quote)
 	}
 }
+
+// Storage (step 2.6). Every check here exists because the failure it prevents
+// is silent: a spin-loop sampler, a corpus pruned below what the venues can
+// refill, or a persistence layer that quietly writes nothing.
+
+func TestStorage_DisabledNeedsNoSettings(t *testing.T) {
+	cfg := repoConfig(t)
+	cfg.Storage = Storage{Enabled: false}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a disabled storage block must not need settings: %v", err)
+	}
+}
+
+func TestStorage_RejectsPeriodsThatWouldNotBound(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		mutate  func(*Storage)
+		mention string
+	}{
+		{"no path", func(s *Storage) { s.Path = "" }, "path"},
+		{"sub-second sampling", func(s *Storage) { s.PriceSampleEverySec = 0 }, "spin loop"},
+		{"top-up every zero minutes", func(s *Storage) { s.FundingTopUpEveryMin = 0 }, "seven venues"},
+		{"negative retention", func(s *Storage) { s.RetainFundingDays = -1 }, "keep everything"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := repoConfig(t)
+			cfg.Storage.Enabled = true
+			tc.mutate(&cfg.Storage)
+			err := cfg.Validate()
+			if err == nil {
+				t.Fatalf("accepted %s", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.mention) {
+				t.Errorf("the error should explain the consequence, got %v", err)
+			}
+		})
+	}
+}
+
+func TestStorage_RejectsAFundingRetentionTheVenuesCannotRefill(t *testing.T) {
+	cfg := repoConfig(t)
+	cfg.Storage.Enabled = true
+	cfg.Storage.RetainFundingDays = 7
+
+	// OKX publishes about 90 days of history and Gate 180. Pruning below that
+	// throws away rows that cannot be fetched again at any price, so a small
+	// number is far more likely to be a mistake than an intention.
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("a 7-day funding retention was accepted")
+	}
+	if !strings.Contains(err.Error(), "0 to keep everything") {
+		t.Errorf("the error should point at the way to keep everything, got %v", err)
+	}
+}
+
+func TestStorage_ZeroRetentionMeansKeepEverything(t *testing.T) {
+	cfg := repoConfig(t)
+	cfg.Storage.Enabled = true
+	cfg.Storage.RetainFundingDays = 0
+	cfg.Storage.RetainPriceDays = 0
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("0 must be a valid retention meaning keep everything: %v", err)
+	}
+}
+
+func TestLoad_ShippedStorageIsUsable(t *testing.T) {
+	cfg := repoConfig(t)
+	if !cfg.Storage.Enabled {
+		t.Fatal("config.yaml ships storage disabled; step 2.6 is what turns it on")
+	}
+	// The shipped period is what determines the row count, so it is pinned here
+	// and its measured cost is quoted in config.yaml and PLAN 2.6. The upper
+	// bound is not taste: past a minute the series stops being fine enough to
+	// reconstruct a basis move, and below ten seconds the 90-day retention is
+	// measured in multiple gigabytes.
+	if cfg.Storage.PriceSampleEverySec < 10 || cfg.Storage.PriceSampleEverySec > 60 {
+		t.Errorf("price_sample_every_sec = %d; outside 10-60s the measured storage cost or the resolution stops being defensible",
+			cfg.Storage.PriceSampleEverySec)
+	}
+	if cfg.Storage.RetainFundingDays != 365 || cfg.Storage.RetainPriceDays != 90 {
+		t.Errorf("retention = %dd funding / %dd price, want the 12 months / 3 months PLAN 2.6 states",
+			cfg.Storage.RetainFundingDays, cfg.Storage.RetainPriceDays)
+	}
+}
+
+func TestStorage_DefaultsFillAnAbsentBlock(t *testing.T) {
+	var cfg Config
+	cfg.applyDefaults()
+	if cfg.Storage.Enabled {
+		t.Error("an absent storage block must not enable persistence")
+	}
+	// The defaults still have to be coherent, because -db on cmd/backfill can
+	// enable a store the config never described.
+	if cfg.Storage.Path == "" || cfg.Storage.PriceSampleEverySec < 1 {
+		t.Errorf("defaults are unusable: %+v", cfg.Storage)
+	}
+}

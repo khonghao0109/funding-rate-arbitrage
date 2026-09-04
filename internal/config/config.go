@@ -29,6 +29,7 @@ var knownMarketTypes = map[string]bool{
 type Config struct {
 	Server  Server   `yaml:"server"`
 	Scanner Scanner  `yaml:"scanner"`
+	Storage Storage  `yaml:"storage"`
 	Symbols []Symbol `yaml:"symbols"`
 	Sources []Source `yaml:"sources"`
 }
@@ -42,6 +43,31 @@ type Scanner struct {
 	AlertMinSpreadPct float64 `yaml:"alert_min_spread_pct"`
 	// DefaultStaleAfterSec fills in for a source that declares no threshold.
 	DefaultStaleAfterSec int64 `yaml:"default_stale_after_sec"`
+}
+
+// Storage configures the SQLite persistence layer (step 2.6).
+//
+// Every period here is a row-count multiplier, which is why they are
+// configuration and not constants. Measured on the shipped schema: a price
+// sample costs 133.3 bytes, and 4 pairs × 9 sources kept 90 days is 7.46 GB at
+// 5s against 1.24 GB at 30s (internal/store/size_test.go).
+type Storage struct {
+	// Enabled false leaves the scanner exactly as it was before this step:
+	// nothing is opened, nothing is written, no file appears.
+	Enabled bool   `yaml:"enabled"`
+	Path    string `yaml:"path"`
+
+	PriceSampleEverySec          int64 `yaml:"price_sample_every_sec"`
+	FundingTopUpEveryMin         int64 `yaml:"funding_topup_every_min"`
+	InstrumentSnapshotEveryHours int64 `yaml:"instrument_snapshot_every_hours"`
+	PruneEveryHours              int64 `yaml:"prune_every_hours"`
+
+	// Retention in days. 0 means KEEP EVERYTHING — the opposite default would
+	// let an unset field in a YAML file delete a year of collected funding,
+	// which is the one thing here that cannot be re-fetched (three venues cap
+	// their published history at 90-180 days).
+	RetainFundingDays int `yaml:"retain_funding_days"`
+	RetainPriceDays   int `yaml:"retain_price_days"`
 }
 
 // Symbol is one tradable pair. Base and Quote are declared rather than parsed
@@ -165,6 +191,7 @@ func (c *Config) applyDefaults() {
 	if c.Server.Port == "" {
 		c.Server.Port = "8082"
 	}
+	c.Storage.applyDefaults()
 	for i := range c.Sources {
 		if c.Sources[i].StaleAfterSec <= 0 {
 			c.Sources[i].StaleAfterSec = c.Scanner.DefaultStaleAfterSec
@@ -179,6 +206,84 @@ func (c *Config) applyDefaults() {
 	for i := range c.Symbols {
 		c.Symbols[i].Quote = strings.ToUpper(c.Symbols[i].Quote)
 	}
+}
+
+// storageDefaults are the periods used when the block names none. They are the
+// slowest cadence each job is still useful at: funding settles in hours, venue
+// rules change on a venue's own schedule, and a 30s price sample is fine enough
+// to reconstruct a basis series a position is held across for days. The price
+// period is 30 rather than the plan's 5 because the cost was measured:
+// 133.3 bytes a row, which is 7.46 GB at 5s over the 90-day retention against
+// 1.24 GB at 30s (internal/store/size_test.go).
+const (
+	defaultStoragePath                  = "data/scanner.db"
+	defaultPriceSampleEverySec          = 30
+	defaultFundingTopUpEveryMin         = 60
+	defaultInstrumentSnapshotEveryHours = 6
+	defaultPruneEveryHours              = 24
+	defaultRetainFundingDays            = 365
+	defaultRetainPriceDays              = 90
+)
+
+// minRetainFundingDays guards the one irreplaceable series. Three of the seven
+// venues publish only 90-180 days of history, so a corpus pruned below that
+// cannot be rebuilt from the venues at any price — a mistyped retention is
+// permanent in a way a mistyped sampling period is not.
+const minRetainFundingDays = 30
+
+func (s *Storage) applyDefaults() {
+	if s.Path == "" {
+		s.Path = defaultStoragePath
+	}
+	if s.PriceSampleEverySec == 0 {
+		s.PriceSampleEverySec = defaultPriceSampleEverySec
+	}
+	if s.FundingTopUpEveryMin == 0 {
+		s.FundingTopUpEveryMin = defaultFundingTopUpEveryMin
+	}
+	if s.InstrumentSnapshotEveryHours == 0 {
+		s.InstrumentSnapshotEveryHours = defaultInstrumentSnapshotEveryHours
+	}
+	if s.PruneEveryHours == 0 {
+		s.PruneEveryHours = defaultPruneEveryHours
+	}
+	// Retention is NOT defaulted when set to 0: 0 is the documented "keep
+	// everything". It is defaulted only when the whole block is absent, which
+	// applyDefaults cannot distinguish — so absence is handled by the config
+	// file shipping both numbers explicitly, and a deliberate 0 stays 0.
+	if !s.Enabled {
+		return
+	}
+	if s.RetainFundingDays == 0 && s.RetainPriceDays == 0 {
+		s.RetainFundingDays, s.RetainPriceDays = defaultRetainFundingDays, defaultRetainPriceDays
+	}
+}
+
+func (s Storage) validate() error {
+	if !s.Enabled {
+		return nil
+	}
+	switch {
+	case s.Path == "":
+		return fmt.Errorf("storage.path is empty")
+	case s.PriceSampleEverySec < 1:
+		return fmt.Errorf("storage.price_sample_every_sec is %d; below one second the sampler is a spin loop and the row count stops being bounded",
+			s.PriceSampleEverySec)
+	case s.FundingTopUpEveryMin < 1:
+		return fmt.Errorf("storage.funding_topup_every_min is %d; each tick queries seven venues over REST",
+			s.FundingTopUpEveryMin)
+	case s.InstrumentSnapshotEveryHours < 1:
+		return fmt.Errorf("storage.instrument_snapshot_every_hours is %d", s.InstrumentSnapshotEveryHours)
+	case s.PruneEveryHours < 1:
+		return fmt.Errorf("storage.prune_every_hours is %d", s.PruneEveryHours)
+	case s.RetainFundingDays < 0 || s.RetainPriceDays < 0:
+		return fmt.Errorf("storage retention cannot be negative (funding %d, price %d); 0 means keep everything",
+			s.RetainFundingDays, s.RetainPriceDays)
+	case s.RetainFundingDays > 0 && s.RetainFundingDays < minRetainFundingDays:
+		return fmt.Errorf("storage.retain_funding_days is %d; below %d the backtest corpus is pruned faster than the venues can refill it (OKX publishes ~90 days, Gate 180). Use 0 to keep everything",
+			s.RetainFundingDays, minRetainFundingDays)
+	}
+	return nil
 }
 
 // Validate rejects a configuration the rest of the scanner would misread rather
@@ -200,6 +305,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.Sources) == 0 {
 		return fmt.Errorf("no sources configured")
+	}
+	if err := c.Storage.validate(); err != nil {
+		return err
 	}
 
 	seenSymbol := make(map[string]bool, len(c.Symbols))

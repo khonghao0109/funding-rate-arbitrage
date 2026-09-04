@@ -84,19 +84,10 @@ func fetchBybitInstruments(ctx context.Context, source, category, marketType str
 func parseBybitInstrument(resp bybitInstrumentsResponse, source, marketType string, s Symbol) (Instrument, bool, error) {
 	// The two categories signal "not listed" DIFFERENTLY (measured
 	// 2026-09-03): spot answers retCode 0 with an empty list, but linear
-	// answers retCode 10001 "params error: symbol invalid". 10001 is Bybit's
-	// generic parameter error, so only the symbol-invalid form counts as
-	// absent — any other 10001 is a real bug that must stay loud.
-	//
-	// retMsg is human-readable prose, not a contract: Bybit spells this
-	// "Symbol Is Invalid" on other v5 endpoints, so the match folds case and
-	// looks for the two words separately. Wording drift still fails toward
-	// the loud branch, which is the safe direction.
-	if resp.RetCode == 10001 {
-		msg := strings.ToLower(resp.RetMsg)
-		if strings.Contains(msg, "symbol") && (strings.Contains(msg, "invalid") || strings.Contains(msg, "not exist")) {
-			return Instrument{}, false, nil
-		}
+	// answers retCode 10001 "params error: symbol invalid" — see
+	// bybitSaysSymbolNotListed for why only that one shape counts as absent.
+	if bybitSaysSymbolNotListed(resp.RetCode, resp.RetMsg) {
+		return Instrument{}, false, nil
 	}
 	if resp.RetCode != 0 {
 		return Instrument{}, false, fmt.Errorf("%s %s: venue error retCode %d: %s", source, s.Venue, resp.RetCode, resp.RetMsg)
@@ -152,4 +143,26 @@ func parseBybitInstrument(resp bybitInstrumentsResponse, source, marketType stri
 		}
 	}
 	return inst, true, nil
+}
+
+// bybitSaysSymbolNotListed decides whether a Bybit error body means "this market
+// does not exist here" rather than "something went wrong".
+//
+// 10001 is Bybit's GENERIC parameter error, so only the symbol-invalid form
+// counts as absent — any other 10001 is a real bug that must stay loud. retMsg
+// is human-readable prose, not a contract: Bybit spells this "Symbol Is
+// Invalid" on other v5 endpoints, so the match folds case and looks for the two
+// words separately. Wording drift still fails toward the loud branch, which is
+// the safe direction.
+//
+// It lives here, shared with the funding history fetcher, so the prose match
+// exists once: two copies would drift and one of them would start reading a
+// real failure as an empty market.
+func bybitSaysSymbolNotListed(retCode int, retMsg string) bool {
+	if retCode != 10001 {
+		return false
+	}
+	msg := strings.ToLower(retMsg)
+	return strings.Contains(msg, "symbol") &&
+		(strings.Contains(msg, "invalid") || strings.Contains(msg, "not exist"))
 }

@@ -49,6 +49,13 @@ Khảo sát 7 sàn ([DATA-REQUIREMENTS.md §3](DATA-REQUIREMENTS.md#3-khảo-sá
 
 **Không bao giờ** để một biến tên là `rate` trần trụi đi qua nhiều hàm. Phí niêm yết dùng `Bps`, rate từ sàn dùng `Frac`, chỉ đổi sang `Pct` ở tầng hiển thị.
 
+> **Cột SQLite cũng là định danh (Bước 2.6).** `internal/store/schema.sql` mang
+> hậu tố đơn vị y hệt Go: `rate_per_8h_frac`, `interval_sec`, `funding_at_ms`,
+> `mid_price_quote`, `best_bid_qty_coin`, `recorded_at_ms`. Đây không phải tên
+> nội bộ — GĐ 8 đọc thẳng file này từ Python, và `rate_per_8h` nằm cạnh
+> `interval_sec` chính là cách một người đọc chia lần thứ hai một con số đã chia
+> rồi. PLAN 2.6 viết danh sách cột không có đơn vị; schema thật không theo.
+
 > **Sửa ở Bước 1.3 — `Bps` là số thực, không phải số nguyên.** Bản trước của mục này
 > yêu cầu `Bps` số nguyên để tránh sai số dấu phẩy động. Tiền đề đó sai: biểu phí
 > thật không nguyên theo bps. Hyperliquid maker **0,015% = 1,5 bps**, Paradex maker
@@ -314,6 +321,14 @@ func NormalizeFundingRate(...)
   vẫn xanh khi cơ chế nó canh bị gỡ bỏ.
 - Payload **tổng hợp** phải ghi rõ là tổng hợp, và ghi rõ nó chứng minh được gì —
   xem `exchanges/pyth_test.go`.
+- **Payload REST cũng là golden test** (Bước 2.5, 2.6). Ba lệnh capture, ba loại
+  payload, đều gác sau `CAPTURE_TESTDATA=1`: `TestCaptureTestdata` (frame
+  WebSocket), `TestCaptureFundingTestdata` (REST funding hiện tại),
+  `TestCaptureFundingHistoryTestdata` (REST lịch sử funding, 7 sàn 7 kiểu phân
+  trang). URL trong công cụ capture dựng giống production nhưng **không gọi qua**
+  code đang test — bản ghi tạo bằng chính code cần kiểm thì chỉ có thể đồng ý với
+  nó. Cái duy nhất dùng chung là bảng symbol, để không ghi lại thị trường
+  scanner không theo dõi.
 
 ### 11.2. Bẫy JSON: khớp tag không phân biệt hoa thường
 

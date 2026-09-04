@@ -129,3 +129,47 @@ func TestFundingFlowsThroughFeeds(t *testing.T) {
 		}
 	}
 }
+
+func TestPriceSnapshot_SortsAndCarriesIdentity(t *testing.T) {
+	s := New([]string{"BTCUSDT", "ETHUSDT"})
+
+	if got := s.PriceSnapshot(); len(got) != 0 {
+		t.Fatalf("a scanner with no prices returned %d readings", len(got))
+	}
+
+	recvAt := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
+	s.updatePrice(exchanges.PriceData{
+		Symbol: "ETHUSDT", Source: "okx_futures", Price: 3000,
+		BestBid: 2999, BestAsk: 3001, RecvAt: recvAt,
+	})
+	s.updatePrice(exchanges.PriceData{
+		Symbol: "BTCUSDT", Source: "binance_futures", Price: 80000,
+		BestBid: 79999, BestAsk: 80001, BestBidQtyCoin: 1.5, RecvAt: recvAt,
+	})
+	s.updatePrice(exchanges.PriceData{
+		Symbol: "BTCUSDT", Source: "bybit_futures", Price: 80010, RecvAt: recvAt,
+	})
+
+	got := s.PriceSnapshot()
+	if len(got) != 3 {
+		t.Fatalf("got %d readings, want 3", len(got))
+	}
+	// Sorted by symbol then source: the step-2.6 sampler writes a whole round
+	// under one instant, and a stable order keeps a stored cross-section
+	// comparable with the next one.
+	want := [][2]string{
+		{"BTCUSDT", "binance_futures"},
+		{"BTCUSDT", "bybit_futures"},
+		{"ETHUSDT", "okx_futures"},
+	}
+	for i, pair := range want {
+		if got[i].Symbol != pair[0] || got[i].Source != pair[1] {
+			t.Errorf("reading %d = %s/%s, want %s/%s", i, got[i].Symbol, got[i].Source, pair[0], pair[1])
+		}
+	}
+	// The identity the map keys carry has to travel with the value, or a
+	// sampler writing rows would have to re-derive it.
+	if got[0].Price != 80000 || got[0].BestBidQtyCoin != 1.5 || !got[0].RecvAt.Equal(recvAt) {
+		t.Errorf("reading 0 = %+v, want the binance point with its receive stamp", got[0])
+	}
+}

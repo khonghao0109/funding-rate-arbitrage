@@ -294,6 +294,45 @@ func (s *Scanner) FundingSnapshot() []exchanges.FundingData {
 	return out
 }
 
+// PriceReading is one venue's latest price for one symbol, with the identity
+// the map keys carry attached to it.
+type PriceReading struct {
+	Symbol string
+	Source string
+	PricePoint
+}
+
+// PriceSnapshot returns the latest price held per symbol per source, sorted by
+// symbol then source.
+//
+// Written for the step-2.6 sampler, which needs the whole table on a fixed
+// schedule rather than a value per tick. Freshness is the CALLER's judgement,
+// exactly as for FundingSnapshot: nothing here drops a point whose source went
+// quiet, which is why RecvAt travels with every reading and is stored beside
+// the sample instant.
+func (s *Scanner) PriceSnapshot() []PriceReading {
+	s.pricesMutex.RLock()
+	total := 0
+	for _, bySource := range s.prices {
+		total += len(bySource)
+	}
+	out := make([]PriceReading, 0, total)
+	for symbol, bySource := range s.prices {
+		for source, point := range bySource {
+			out = append(out, PriceReading{Symbol: symbol, Source: source, PricePoint: point})
+		}
+	}
+	s.pricesMutex.RUnlock()
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbol != out[j].Symbol {
+			return out[i].Symbol < out[j].Symbol
+		}
+		return out[i].Source < out[j].Source
+	})
+	return out
+}
+
 // logFundingSummary prints the funding table on a slow schedule: what was
 // collected, in the cross-venue comparable unit, with the age of each reading.
 //
