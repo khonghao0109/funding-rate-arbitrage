@@ -72,16 +72,17 @@ func handleGateFunding(source string, symbols []Symbol, f Feeds, raw []byte, rec
 		}
 		data.MarkPrice, _ = strconv.ParseFloat(entry.MarkPrice, 64)
 		data.IndexPrice, _ = strconv.ParseFloat(entry.IndexPrice, 64)
-		// funding_rate is the settled figure for the period now running and
-		// funding_rate_indicative the one still forming; when they differ the
-		// reading is still moving. Measured 2026-09-04 they were equal.
-		//
-		// Compared as NUMBERS: "0.000048" and "4.8e-05" are the same rate, and
-		// a venue that reformats one of the two fields would otherwise mark
-		// every reading estimated.
-		if indicativeFrac, err := strconv.ParseFloat(entry.FundingRateIndicative, 64); err == nil {
-			data.IsEstimated = indicativeFrac != rateFrac
-		}
+		// funding_rate is STILL FORMING, always. Probed 2026-09-04 mid-period:
+		// it moved 0.000075→0.000074 within 12 seconds and neither value was
+		// the last settled rate (0.000052 via REST funding_rate history at the
+		// same instant) — so it is the running period's figure, still moving.
+		// The earlier `indicative != rate` inference measured nothing: the
+		// docs mark funding_rate_indicative "Indicative Funding rate in next
+		// period. (deprecated. use funding_rate)" and the probe saw the two
+		// fields IDENTICAL in every frame — so the comparison published
+		// is_estimated=false for a number demonstrably still drifting.
+		// https://www.gate.com/docs/developers/futures/ws/en/ (futures.tickers)
+		data.IsEstimated = true
 
 		if !f.SendFunding(data) {
 			return true // shutting down

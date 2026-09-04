@@ -73,11 +73,23 @@ func handleKrakenFunding(source string, symbols []Symbol, f Feeds, raw []byte, r
 	}
 	data.MarkPrice = message.MarkPrice
 	data.IndexPrice = message.Index
-	// relative_funding_rate is the rate accrued so far in the hour now
-	// running; relative_funding_rate_prediction is the venue's estimate of
-	// where it lands. The accrued figure is the one that settles, and it keeps
-	// moving until it does.
-	data.IsEstimated = true
+	// relative_funding_rate is a SETTLED figure, not a forming one. The docs
+	// define it as "the absolute funding rate relative to the spot price at
+	// the time of funding rate calculation" — a calculation that already
+	// happened — and put the forming estimate in a SEPARATE field,
+	// relative_funding_rate_prediction ("the estimated next..."), which this
+	// connector does not read. The project's own probe agrees: the WS value
+	// matched the already-settled hour of /v4/historicalfundingrates
+	// (funding_test.go, DATA-REQUIREMENTS §3.3⑥). The earlier hard-coded
+	// `true` here contradicted both, and a phase-3 consumer filtering for
+	// final rates would have discarded the venue entirely.
+	// https://docs.kraken.com/api/docs/futures-api/websocket/ticker
+	//
+	// Nuance a consumer must know: final means final for the LAST COMPLETED
+	// hourly calculation. Paired with next_funding_rate_time it reads "the
+	// most recent settled rate, next settlement at T" — it does not predict
+	// what settles at T.
+	data.IsEstimated = false
 
 	f.SendFunding(data)
 	return true

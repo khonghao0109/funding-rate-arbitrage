@@ -49,37 +49,47 @@ type fundingExpectation struct {
 	// RawRateField is the venue field the number was read from, which is how a
 	// dashboard number is traced back to a message.
 	RawRateField string
+	// Estimated says the venue's published rate is still forming. Kraken is
+	// the one venue whose WS field is a SETTLED figure (its docs put the
+	// forming estimate in a separate relative_funding_rate_prediction field,
+	// and the §3.3⑥ probe saw the WS value match the already-settled hour);
+	// Gate's was probed drifting mid-period 2026-09-04. Pinned here because
+	// mislabeling either direction misleads a phase-3 consumer that filters
+	// on finality.
+	Estimated bool
 }
 
 var fundingExpectations = map[string]fundingExpectation{
 	"bybit_futures": {
 		IntervalSec: 8 * 3600, Model: FundingDiscrete, VenueClock: true,
-		NextFundingStamp: true, RawRateField: "fundingRate",
+		NextFundingStamp: true, RawRateField: "fundingRate", Estimated: true,
 	},
 	"okx_futures": {
 		IntervalSec: 8 * 3600, Model: FundingDiscrete, VenueClock: true,
-		NextFundingStamp: true, RawRateField: "fundingRate",
+		NextFundingStamp: true, RawRateField: "fundingRate", Estimated: true,
 	},
 	"gate_futures": {
 		IntervalSec: 8 * 3600, Model: FundingDiscrete, VenueClock: true,
-		NextFundingStamp: true, RawRateField: "funding_rate",
+		NextFundingStamp: true, RawRateField: "funding_rate", Estimated: true,
 	},
 	// Hourly, not 8-hourly. Annualizing this venue as 8h is wrong by 8×.
+	// And its WS rate is the settled figure of the last completed hour —
+	// see the Estimated field's comment.
 	"kraken_futures": {
 		IntervalSec: 3600, Model: FundingDiscrete, VenueClock: true,
-		NextFundingStamp: true, RawRateField: "relative_funding_rate",
+		NextFundingStamp: true, RawRateField: "relative_funding_rate", Estimated: false,
 	},
 	// Continuous accrual: there is no settlement instant to publish.
 	"paradex_futures": {
 		IntervalSec: 8 * 3600, Model: FundingContinuous, VenueClock: true,
-		NextFundingStamp: false, RawRateField: "funding_rate",
+		NextFundingStamp: false, RawRateField: "funding_rate", Estimated: true,
 	},
 	// Hourly, and its WS payload carries neither a venue clock nor a
 	// settlement stamp — both come from predictedFundings over REST, so the
 	// replay supplies them the way production's meta cache does.
 	"hyperliquid_futures": {
 		IntervalSec: 3600, Model: FundingDiscrete, VenueClock: false,
-		NextFundingStamp: true, RawRateField: "funding",
+		NextFundingStamp: true, RawRateField: "funding", Estimated: true,
 	},
 }
 
@@ -152,6 +162,9 @@ func TestGoldenFunding_EveryVenueHonoursTheContract(t *testing.T) {
 				}
 				if got.IntervalSec != want.IntervalSec {
 					t.Errorf("IntervalSec = %d, want the venue's real %d", got.IntervalSec, want.IntervalSec)
+				}
+				if got.IsEstimated != want.Estimated {
+					t.Errorf("IsEstimated = %v, want %v — mislabeled finality misleads a consumer filtering on it", got.IsEstimated, want.Estimated)
 				}
 				if want.VenueClock == (got.VenueTimeMs == 0) {
 					t.Errorf("VenueTimeMs = %d but VenueClock = %v", got.VenueTimeMs, want.VenueClock)
