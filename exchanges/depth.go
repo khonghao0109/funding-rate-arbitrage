@@ -67,6 +67,15 @@ type DepthBook struct {
 	// by the caller, exactly as for price samples and funding history, because
 	// venue clocks measure skew rather than age (CLAUDE.md rule 13).
 	VenueTimeMs int64
+
+	// IsContractBook says this venue denominates its book in CONTRACTS. It is
+	// a static fact about the venue's API, stamped by the fetcher that read
+	// the book — never inferred from a multiplier's value, because Kraken's
+	// PF_ books are contract-denominated with a multiplier of exactly 1 and
+	// the inference labeled them coin. It also scopes the registry dependency:
+	// only a book that says true needs a multiplier at all, so a registry gap
+	// cannot blank a coin book it was never needed for.
+	IsContractBook bool
 }
 
 // DepthFetchFunc fetches one book. levels is the number of price levels asked

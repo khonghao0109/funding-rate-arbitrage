@@ -111,7 +111,10 @@ func (s Summary) CoversWide() bool {
 // contracts (Gate's BTC contract is 0.0001 BTC), so assuming a multiplier of
 // one where none is known reports ten thousand times the real liquidity — the
 // exact failure that makes a thin market look like the deepest venue in the
-// table. Summarize refuses instead.
+// table. Summarize refuses instead — but consults this ONLY for a book whose
+// fetcher declared it contract-denominated: a coin book needs no conversion,
+// and a registry outage must not blank six venues' measurements over a
+// multiplier none of them uses.
 type ContractSizeFn func(symbol, source string) (contractSizeCoin float64, ok bool)
 
 // Summarize converts one raw book to coin and measures it.
@@ -123,13 +126,21 @@ func Summarize(book exchanges.DepthBook, sampledAtMs int64, contractSize Contrac
 		VenueTimeMs: book.VenueTimeMs,
 	}
 
-	sizeCoin, ok := contractSize(book.Symbol, book.Source)
-	if !ok || sizeCoin <= 0 {
-		summary.ErrVI = "Chưa biết quy đổi contract→coin cho market này (instrument registry chưa có), " +
-			"nên không công bố số thanh khoản — số chưa quy đổi sai tới hàng nghìn lần."
-		return summary
+	// The denomination is the FETCHER's declaration, never inferred from the
+	// multiplier's value: Kraken's PF_ books are contract-denominated with a
+	// multiplier of exactly 1, and the old `sizeCoin != 1` inference labeled
+	// them coin on the wire and in the store.
+	summary.IsContractBook = book.IsContractBook
+	sizeCoin := 1.0
+	if book.IsContractBook {
+		mult, ok := contractSize(book.Symbol, book.Source)
+		if !ok || mult <= 0 {
+			summary.ErrVI = "Chưa biết quy đổi contract→coin cho market này (instrument registry chưa có), " +
+				"nên không công bố số thanh khoản — số chưa quy đổi sai tới hàng nghìn lần."
+			return summary
+		}
+		sizeCoin = mult
 	}
-	summary.IsContractBook = sizeCoin != 1
 
 	if len(book.Bids) == 0 || len(book.Asks) == 0 {
 		summary.ErrVI = "Sổ lệnh trả về thiếu một phía."
@@ -200,9 +211,10 @@ type Collector struct {
 	now          func() time.Time
 }
 
-// New builds a collector. Jobs whose connector has no depth fetcher are dropped
-// here, once, with a line saying so — an oracle has no book, and silently
-// skipping it would look identical to a venue that answered with nothing.
+// New builds a collector. Jobs whose connector has no depth fetcher are
+// dropped here, once — an oracle has no book. This package logs nothing by
+// design; the caller announces what survived (cmd/scanner logs the kept
+// count per sweep), which is where a missing venue becomes visible.
 func New(jobs []Job, contractSize ContractSizeFn, levels int) *Collector {
 	return newCollector(jobs, exchanges.DepthFetchers(), contractSize, levels)
 }

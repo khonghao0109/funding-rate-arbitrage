@@ -64,7 +64,8 @@ func parseOKXDepth(resp okxDepthResponse, source string, symbol Symbol) (DepthBo
 	}
 
 	entry := resp.Data[0]
-	book := DepthBook{Symbol: symbol.Standard, Source: source}
+	// OKX books are quoted in contracts of ctVal×ctMult coin.
+	book := DepthBook{Symbol: symbol.Standard, Source: source, IsContractBook: true}
 	if entry.TS != "" {
 		// A stamp that does not parse is diagnostic data, not a reason to lose
 		// the book: VenueTimeMs stays 0, which is its documented "not supplied".

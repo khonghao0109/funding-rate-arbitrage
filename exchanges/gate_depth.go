@@ -65,6 +65,8 @@ func parseGateDepth(resp gateDepthResponse, source string, symbol Symbol) (Depth
 		Source: source,
 		// Seconds with a fraction, to milliseconds. 0 stays 0.
 		VenueTimeMs: int64(resp.CurrentSec * msPerSecond),
+		// Gate books are quoted in whole contracts of quanto_multiplier coin.
+		IsContractBook: true,
 	}
 	for _, level := range resp.Bids {
 		parsed, err := parseGateDepthLevel(source, symbol.Venue, level.Price, level.SizeContracts)

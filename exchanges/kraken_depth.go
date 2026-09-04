@@ -58,7 +58,9 @@ func parseKrakenDepth(resp krakenDepthResponse, source string, symbol Symbol) (D
 		return DepthBook{}, fmt.Errorf("kraken depth %s: result %q %s", symbol.Venue, resp.Result, resp.Error)
 	}
 
-	book := DepthBook{Symbol: symbol.Standard, Source: source}
+	// Kraken PF_ books are quoted in contracts — contractSize is 1 base unit
+	// today, but that is the registry's measured fact, not this file's.
+	book := DepthBook{Symbol: symbol.Standard, Source: source, IsContractBook: true}
 	var err error
 	if book.Bids, err = parseKrakenDepthSide(symbol.Venue, resp.OrderBook.Bids); err != nil {
 		return DepthBook{}, err

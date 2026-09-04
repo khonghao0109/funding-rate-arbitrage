@@ -65,7 +65,7 @@ func TestSummarize_MeasuresEachWindowFromTheMid(t *testing.T) {
 // reports ten thousand times the liquidity that exists.
 func TestSummarize_ConvertsContractsToCoin(t *testing.T) {
 	book := exchanges.DepthBook{
-		Symbol: "BTCUSDT", Source: "gate_futures",
+		Symbol: "BTCUSDT", Source: "gate_futures", IsContractBook: true,
 		Bids: []exchanges.DepthLevel{{PriceQuote: 100, QtyNative: 10000}}, // 10,000 contracts
 		Asks: []exchanges.DepthLevel{{PriceQuote: 100.01, QtyNative: 10000}},
 	}
@@ -88,9 +88,12 @@ func TestSummarize_ConvertsContractsToCoin(t *testing.T) {
 func TestSummarize_RefusesToGuessAnUnknownMultiplier(t *testing.T) {
 	unknown := func(string, string) (float64, bool) { return 0, false }
 
-	summary := Summarize(coinBook(), 1000, unknown)
+	book := coinBook()
+	book.Source = "gate_futures"
+	book.IsContractBook = true
+	summary := Summarize(book, 1000, unknown)
 	if summary.OK() {
-		t.Fatal("a book with no known multiplier produced figures")
+		t.Fatal("a contract book with no known multiplier produced figures")
 	}
 	if summary.ErrVI == "" {
 		t.Error("the refusal must say why; a blank cell is indistinguishable from an empty book")
@@ -110,6 +113,45 @@ func TestSummarize_RefusesToGuessAnUnknownMultiplier(t *testing.T) {
 func TestSummarize_ACoinBookIsNotMarkedAsContracts(t *testing.T) {
 	if Summarize(coinBook(), 1000, alwaysCoin).IsContractBook {
 		t.Error("a multiplier of 1 was reported as a contract book")
+	}
+}
+
+// The reverse of the test above, and why the label comes from the fetcher's
+// declaration rather than the multiplier's value: Kraken's PF_ books ARE
+// contract-denominated with a multiplier of exactly 1, and the old
+// `sizeCoin != 1` inference labeled them coin on the wire and in the store —
+// a phase-3 reader auditing which figures depend on the registry got a false
+// negative for the whole venue.
+func TestSummarize_AContractBookWithMultiplierOneIsStillAContractBook(t *testing.T) {
+	book := coinBook()
+	book.Source = "kraken_futures"
+	book.IsContractBook = true
+	summary := Summarize(book, 1000, alwaysCoin)
+	if !summary.OK() {
+		t.Fatalf("summary not ok: %s", summary.ErrVI)
+	}
+	if !summary.IsContractBook {
+		t.Error("a contract book with multiplier 1 was labeled a coin book")
+	}
+}
+
+// A registry gap must not blank measurements it was never needed for: six of
+// nine venues quote coin, and their books convert with no multiplier at all.
+// Before the fetcher-declared flag, a persistent instrument-fetch failure on
+// binance_spot blanked binance_spot's depth for the whole outage, blaming a
+// contract conversion that does not exist on that venue.
+func TestSummarize_ACoinBookNeedsNoRegistry(t *testing.T) {
+	unknown := func(string, string) (float64, bool) { return 0, false }
+
+	summary := Summarize(coinBook(), 1000, unknown)
+	if !summary.OK() {
+		t.Fatalf("a coin book was refused over a missing multiplier: %s", summary.ErrVI)
+	}
+	if summary.IsContractBook {
+		t.Error("a coin book was labeled a contract book")
+	}
+	if summary.BestBidQtyCoin != 1 {
+		t.Errorf("best bid qty = %g coin, want the native 1 unconverted", summary.BestBidQtyCoin)
 	}
 }
 
