@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/history"
 	"futures-arbitrage-scanner/internal/store"
@@ -96,7 +97,7 @@ func run() int {
 		return reportWindow(ctx, db, *only, *check)
 	}
 
-	collector := history.New(db, jobsFrom(cfg, *only, *onlySource))
+	collector := history.New(db, jobsFrom(cfg, *only, *onlySource), venues.FundingHistoryFetchers())
 	if len(collector.Jobs()) == 0 {
 		log.Printf("nothing to collect: no configured source has a funding history fetcher for symbol %q source %q",
 			*only, *onlySource)

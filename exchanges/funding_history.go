@@ -33,20 +33,20 @@ import (
 // from the rows themselves.
 
 const (
-	// fundingHistoryPageDelay paces a paginating fetcher. Backfill is a one-off
+	// FundingHistoryPageDelay paces a paginating fetcher. Backfill is a one-off
 	// job with no deadline, and spending a venue's rate limit on it would cost
 	// the live feeds — which share the same IP budget — for no gain.
 	//
 	// It is the DEFAULT, not a rule: pacing is a per-venue fact and a venue that
 	// publishes a budget gets paced to it (hyperliquidHistoryPageDelay). Six of
 	// the seven answer this rate without complaint.
-	fundingHistoryPageDelay = 200 * time.Millisecond
+	FundingHistoryPageDelay = 200 * time.Millisecond
 
-	// maxFundingHistoryPages bounds a paginating loop. It is a runaway guard,
+	// MaxFundingHistoryPages bounds a paginating loop. It is a runaway guard,
 	// not a budget: a venue that keeps answering with rows it already sent
 	// would otherwise spin forever. Paradex needs one request per hour, so it
 	// has to be large enough for a month of those.
-	maxFundingHistoryPages = 2000
+	MaxFundingHistoryPages = 2000
 )
 
 // FundingHistoryEntry is one funding rate as the venue reports it in hindsight.
@@ -78,7 +78,7 @@ type FundingHistoryEntry struct {
 
 	// RatePerIntervalFrac is the rate for one interval of this venue;
 	// IntervalSec is that interval. RatePer8hFrac and APRFrac are derived from
-	// them by deriveFundingRates — the same arithmetic the live path uses, on
+	// them by DeriveFundingRates — the same arithmetic the live path uses, on
 	// purpose: two implementations of "per 8h" would drift, and the phase-3
 	// gate compares the two paths' numbers.
 	RatePerIntervalFrac float64
@@ -114,7 +114,7 @@ type FundingWindow struct {
 }
 
 // contains reports whether a settlement stamp falls inside the window.
-func (w FundingWindow) contains(stampMs int64) bool {
+func (w FundingWindow) Contains(stampMs int64) bool {
 	return stampMs >= w.StartMs && stampMs < w.EndMs
 }
 
@@ -127,24 +127,9 @@ func (w FundingWindow) contains(stampMs int64) bool {
 // limit is not an error and must not read as one.
 type FundingHistoryFetchFunc func(ctx context.Context, source string, symbol Symbol, window FundingWindow) ([]FundingHistoryEntry, error)
 
-// FundingHistoryFetchers maps connector names to their history fetcher. Only
-// perpetual sources appear: a spot market has no funding, and an oracle has
-// neither.
-func FundingHistoryFetchers() map[string]FundingHistoryFetchFunc {
-	return map[string]FundingHistoryFetchFunc{
-		"binance_futures":     FetchBinanceFundingHistory,
-		"bybit_futures":       FetchBybitFundingHistory,
-		"okx_futures":         FetchOKXFundingHistory,
-		"gate_futures":        FetchGateFundingHistory,
-		"kraken_futures":      FetchKrakenFundingHistory,
-		"hyperliquid_futures": FetchHyperliquidFundingHistory,
-		"paradex_futures":     FetchParadexFundingHistory,
-	}
-}
-
-// fundingHistoryRow is one row as a venue's own parser produces it: the venue's
+// FundingHistoryRow is one row as a venue's own parser produces it: the venue's
 // numbers, already in fractional units, before any cross-venue arithmetic.
-type fundingHistoryRow struct {
+type FundingHistoryRow struct {
 	SettledAtMs    int64
 	RateFrac       float64 // the rate for ONE interval of this venue
 	RawRate        float64
@@ -158,7 +143,7 @@ type fundingHistoryRow struct {
 	IntervalSec int64
 }
 
-// finishFundingHistory turns one venue's rows into entries: sorted, deduplicated,
+// FinishFundingHistory turns one venue's rows into entries: sorted, deduplicated,
 // with the cadence measured and the comparison figures derived.
 //
 // The cadence has to be measured because no venue publishes it next to a
@@ -166,8 +151,8 @@ type fundingHistoryRow struct {
 // it looks: Binance moved most symbols from 8h to 4h, so a 12-month backfill
 // annotated with today's number would misstate the older half of the corpus by
 // 2× — in the APR figure phase 3 ranks on.
-func finishFundingHistory(source string, symbol Symbol, model FundingModel, rows []fundingHistoryRow) ([]FundingHistoryEntry, error) {
-	kept := make([]fundingHistoryRow, 0, len(rows))
+func FinishFundingHistory(source string, symbol Symbol, model FundingModel, rows []FundingHistoryRow) ([]FundingHistoryEntry, error) {
+	kept := make([]FundingHistoryRow, 0, len(rows))
 	for _, row := range rows {
 		if row.SettledAtMs > 0 {
 			kept = append(kept, row)
@@ -224,7 +209,7 @@ func finishFundingHistory(source string, symbol Symbol, model FundingModel, rows
 			RateType:            row.RateType,
 			MarkPriceQuote:      row.MarkPriceQuote,
 		}
-		derived, err := deriveFundingRates(FundingData{
+		derived, err := DeriveFundingRates(FundingData{
 			Source: source, Symbol: symbol.Standard,
 			RatePerIntervalFrac: entry.RatePerIntervalFrac,
 			IntervalSec:         entry.IntervalSec,
@@ -245,7 +230,7 @@ func finishFundingHistory(source string, symbol Symbol, model FundingModel, rows
 // pair before it truncates to 3599. A cadence measured in two values is not a
 // cadence.
 func roundedGapSec(fromMs, toMs int64) int64 {
-	return (toMs - fromMs + msPerSecond/2) / msPerSecond
+	return (toMs - fromMs + MsPerSecond/2) / MsPerSecond
 }
 
 // modalGapSec is the most common settlement spacing in a series — the venue's
@@ -361,7 +346,7 @@ func rateLimitBackoff(attempt int) time.Duration {
 	}
 }
 
-// fetchFundingHistoryPage runs one page request, retrying a transient failure.
+// FetchFundingHistoryPage runs one page request, retrying a transient failure.
 //
 // It exists because the alternative is arithmetic nobody would choose: a series
 // is up to 2,000 requests and nine minutes on Paradex, and aborting all of it
@@ -372,16 +357,16 @@ func rateLimitBackoff(attempt int) time.Duration {
 // delay is the venue's own page pacing, which is also the floor for an ordinary
 // retry; a rate limit overrides it with something the venue's window can
 // actually absorb.
-func fetchFundingHistoryPage(ctx context.Context, delay time.Duration, do func() error) error {
+func FetchFundingHistoryPage(ctx context.Context, delay time.Duration, do func() error) error {
 	var err error
 	for attempt := 0; attempt < fundingHistoryPageAttempts; attempt++ {
 		if attempt > 0 {
-			if waitErr := fundingHistoryPause(ctx, retryDelay(err, delay, attempt)); waitErr != nil {
+			if waitErr := FundingHistoryPause(ctx, retryDelay(err, delay, attempt)); waitErr != nil {
 				return waitErr
 			}
 		}
 		err = do()
-		if err == nil || errors.Is(err, errInstrumentNotListed) || ctx.Err() != nil {
+		if err == nil || errors.Is(err, ErrNotListed) || ctx.Err() != nil {
 			return err
 		}
 	}
@@ -403,9 +388,9 @@ func retryDelay(err error, pageDelay time.Duration, attempt int) time.Duration {
 	return delay
 }
 
-// fundingHistoryPause waits between pages, or returns ctx's error if the fetch
+// FundingHistoryPause waits between pages, or returns ctx's error if the fetch
 // was cancelled while waiting.
-func fundingHistoryPause(ctx context.Context, delay time.Duration) error {
+func FundingHistoryPause(ctx context.Context, delay time.Duration) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()

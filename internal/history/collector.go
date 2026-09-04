@@ -94,8 +94,12 @@ type Collector struct {
 // dropped here, once, with a line saying so — a spot source has no funding and
 // an oracle has neither, and silently skipping them would look identical to a
 // venue that answered with nothing.
-func New(st *store.Store, jobs []Job) *Collector {
-	return newCollector(st, jobs, exchanges.FundingHistoryFetchers())
+//
+// The fetcher table is a parameter for the same reason as internal/depth's:
+// this package collects from whatever fetchers it is given, and only the
+// entrypoints know the full venue list (exchanges/venues).
+func New(st *store.Store, jobs []Job, fetchers map[string]exchanges.FundingHistoryFetchFunc) *Collector {
+	return newCollector(st, jobs, fetchers)
 }
 
 // newCollector is New with the fetcher table supplied. The tests use it to run

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/instruments"
 )
 
@@ -24,7 +25,7 @@ func TestDepthJobs_CoverEveryTradableSource(t *testing.T) {
 	for _, job := range jobs {
 		byName[job.Source] = len(job.Symbols)
 	}
-	fetchers := exchanges.DepthFetchers()
+	fetchers := venues.DepthFetchers()
 	for _, source := range cfg.Sources {
 		if _, hasFetcher := fetchers[source.Connector]; !hasFetcher {
 			continue // the oracle

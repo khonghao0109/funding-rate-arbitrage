@@ -76,7 +76,7 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 |---|---|
 | **Mô hình slippage** | Độ sâu sổ lệnh đã thu (Bước 2.7b) nhưng **chưa có mô hình slippage** — bảng nói *có bao nhiêu đang nằm gần giá*, chưa nói *lệnh $60.000 khớp ở đâu*. Đó là Bước 3.1, và cũng là bước đầu tiên được phép dùng chữ "ròng" |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | 344 test (100% ở `internal/fees`, 96,9% ở `internal/instruments`, 95,3% ở `internal/depth`, 86,5% ở `internal/scanner`, 84,2% ở `internal/store`, 84,0% ở `internal/config`, 76,5% ở `internal/history`, 58,8% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ. Vòng phân trang của 7 fetcher lịch sử funding chỉ chạy được với sàn thật nên không nằm trong phần trăm — parser của chúng thì có |
+| **Test tự động** | 382 test (100% ở `internal/fees`, 96,9% ở `internal/instruments`, 95,3% ở `internal/depth`, 86,5% ở `internal/scanner`, 84,2% ở `internal/store`, 84,0% ở `internal/config`, 76,5% ở `internal/history`, 58,8% ở `exchanges`). mỗi `exchanges/<venue>/testdata/` chứa payload **thật** của sàn đó; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ. Vòng phân trang của 7 fetcher lịch sử funding chỉ chạy được với sàn thật nên không nằm trong phần trăm — parser của chúng thì có |
 | **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập biểu phí tài khoản của bạn vào `config.yaml` và đặt `verified: true` |
 | **Size đỉnh sổ của Paradex** | Bước 2.7b đã quy đổi contract→coin cho OKX, Gate và Kraken nên **8/9 nguồn** có khối lượng thật. Paradex vẫn `0` vì sàn không công bố size nào ở book ticker — `0` nghĩa là **chưa biết**, không phải **không có thanh khoản** |
 
@@ -245,14 +245,20 @@ không còn hardcode ở Go hay JavaScript.
 ├── cmd/fundingcheck/          # kiểm chéo field funding của 7 sàn qua REST
 ├── cmd/backfill/              # nạp lịch sử funding vào SQLite (Bước 2.6)
 ├── CLAUDE.md                  # tổng quan cho AI agent
-├── exchanges/                 # connector — CHỈ dữ liệu công khai, không credential
-│   ├── types.go               # kiểu dùng chung
-│   └── <venue>.go             # binance, bybit, okx, gate, kraken, hyperliquid, paradex, pyth
-├── wire.go                    # hợp đồng JSON với dashboard — xem docs/WS-CONTRACT.md
+├── exchanges/                 # cây tích hợp sàn — CHỈ dữ liệu công khai, không credential
+│   ├── (gốc)                  # lõi dùng chung: types, Feeds, vòng đời RunStream, FetchJSON,
+│   │                          #   chuẩn hoá funding/độ sâu/lịch sử mà mọi sàn cùng đi qua
+│   ├── <venue>/               # mỗi sàn một package: binance, bybit, okx, gate, kraken,
+│   │   └── testdata/          #   hyperliquid, paradex, pyth — kèm bản ghi thật của chính nó
+│   ├── venues/                # 4 bảng registry (Connectors, DepthFetchers, …) — nơi DUY NHẤT
+│   │                          #   import đủ 8 sàn; các capture test REST xuyên sàn nằm đây
+│   └── exchangestest/         # harness test chung: recorder, capture, bộ kiểm hợp đồng
 ├── internal/                  # các package đang xây dựng theo lộ trình
 │   ├── scanner/               # engine: state giá, staleness, hợp đồng wire (WS-CONTRACT.md)
+│   ├── config/                # đọc và kiểm config.yaml
+│   ├── depth/                 # sổ lệnh → số thanh khoản; quy đổi contract→coin
 │   ├── instruments/           # registry, ánh xạ spot↔perp, sizing delta-neutral
-│   ├── fees/                  # bảng phí, lợi nhuận ròng
+│   ├── fees/                  # bảng phí giao dịch
 │   ├── history/               # REST sàn → store (dùng chung scanner & backfill)
 │   ├── store/                 # SQLite: funding_history, price_snapshots, instrument_snapshots
 │   ├── strategy/              # APR, tín hiệu vào/ra

@@ -215,8 +215,13 @@ type Collector struct {
 // dropped here, once — an oracle has no book. This package logs nothing by
 // design; the caller announces what survived (cmd/scanner logs the kept
 // count per sweep), which is where a missing venue becomes visible.
-func New(jobs []Job, contractSize ContractSizeFn, levels int) *Collector {
-	return newCollector(jobs, exchanges.DepthFetchers(), contractSize, levels)
+//
+// The fetcher table is a parameter, not a hardwired global: this package
+// computes liquidity from whatever books it is given, and only the entrypoint
+// knows the full venue list (exchanges/venues) — the same inversion
+// ContractSizeFn already uses for the registry.
+func New(jobs []Job, fetchers map[string]exchanges.DepthFetchFunc, contractSize ContractSizeFn, levels int) *Collector {
+	return newCollector(jobs, fetchers, contractSize, levels)
 }
 
 // newCollector is New with the fetcher table supplied, so the tests can run the

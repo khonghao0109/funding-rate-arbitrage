@@ -77,7 +77,7 @@ func waitForState(t *testing.T, events <-chan ConnEvent, want ConnState, within 
 }
 
 func TestBackoff_DoublesUpToTheCeiling(t *testing.T) {
-	retry := newBackoff()
+	retry := NewBackoff()
 
 	want := []time.Duration{2, 4, 8, 16, 32, 60, 60, 60}
 	for i, wantSec := range want {
@@ -90,12 +90,12 @@ func TestBackoff_DoublesUpToTheCeiling(t *testing.T) {
 
 // A venue that comes back must not be punished for the outage that just ended.
 func TestBackoff_ResetReturnsToTheFloor(t *testing.T) {
-	retry := newBackoff()
+	retry := NewBackoff()
 	for i := 0; i < 5; i++ {
 		retry.next()
 	}
 
-	retry.reset()
+	retry.Reset()
 
 	if got := retry.next(); got != backoffMin {
 		t.Errorf("delay after reset = %s, want %s", got, backoffMin)
@@ -109,7 +109,7 @@ func TestBackoffWait_ReturnsImmediatelyWhenTheContextIsCancelled(t *testing.T) {
 	cancel()
 
 	start := time.Now()
-	if newBackoff().wait(ctx) {
+	if NewBackoff().Wait(ctx) {
 		t.Error("wait returned true on a cancelled context")
 	}
 	if elapsed := time.Since(start); elapsed > backoffMin/2 {
@@ -184,7 +184,7 @@ func TestRunStream_StampsReceiveTimeAtTheSocketReadNotAtTheQueue(t *testing.T) {
 	orderbooks := make(chan OrderbookData)
 	feeds := Feeds{Ctx: ctx, Orderbook: orderbooks}
 
-	go runStream(feeds, streamConfig{
+	go RunStream(feeds, StreamConfig{
 		Source: "test",
 		URL:    url,
 		Handle: func(raw []byte, recvAt time.Time) {
@@ -225,7 +225,7 @@ func TestRunStream_StopsPromptlyWhileBlockedOnASilentServer(t *testing.T) {
 
 	stopped := make(chan struct{})
 	go func() {
-		runStream(feeds, streamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) {}})
+		RunStream(feeds, StreamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) {}})
 		close(stopped)
 	}()
 
@@ -240,10 +240,10 @@ func TestRunStream_StopsPromptlyWhileBlockedOnASilentServer(t *testing.T) {
 		// closes the socket underneath the reader rather than waiting for the
 		// read deadline.
 		if elapsed := time.Since(start); elapsed > time.Second {
-			t.Errorf("runStream took %s to stop, want well under the 5s budget", elapsed)
+			t.Errorf("RunStream took %s to stop, want well under the 5s budget", elapsed)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("runStream did not stop within the 5s acceptance budget")
+		t.Fatal("RunStream did not stop within the 5s acceptance budget")
 	}
 }
 
@@ -260,7 +260,7 @@ func TestRunStream_ReconnectsWhenTheServerGoesSilent(t *testing.T) {
 	feeds, cancel, _, events := testFeeds(t)
 	defer cancel()
 
-	go runStream(feeds, streamConfig{
+	go RunStream(feeds, StreamConfig{
 		Source: "test",
 		URL:    url,
 		Handle: func([]byte, time.Time) {},
@@ -296,7 +296,7 @@ func TestRunSession_AServerPingKeepsTheConnectionAlive(t *testing.T) {
 	feeds, cancel, _, events := testFeeds(t)
 	defer cancel()
 
-	go runStream(feeds, streamConfig{
+	go RunStream(feeds, StreamConfig{
 		Source:      "test",
 		URL:         url,
 		Handle:      func([]byte, time.Time) {},
@@ -328,7 +328,7 @@ func TestRunStream_WaitsBeforeReconnectingAfterTheServerHangsUp(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	go runStream(feeds, streamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) {}})
+	go RunStream(feeds, StreamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) {}})
 
 	// Two connections means one reconnect happened, and the gap between them is
 	// the backoff.
@@ -359,7 +359,7 @@ func TestRunSession_ASubscribeFailureEndsTheSession(t *testing.T) {
 	defer cancel()
 
 	var attempts int32
-	go runStream(feeds, streamConfig{
+	go RunStream(feeds, StreamConfig{
 		Source: "test",
 		URL:    url,
 		Subscribe: func(*websocket.Conn) error {
@@ -400,7 +400,7 @@ func TestRunSession_SubscribeRunsOncePerConnection(t *testing.T) {
 	defer cancel()
 
 	var subscribes int32
-	go runStream(feeds, streamConfig{
+	go RunStream(feeds, StreamConfig{
 		Source:    "test",
 		URL:       url,
 		Subscribe: func(*websocket.Conn) error { atomic.AddInt32(&subscribes, 1); return nil },
@@ -422,9 +422,9 @@ func TestRunSession_SubscribeRunsOncePerConnection(t *testing.T) {
 // the backoff would reset every time and the venue would be re-dialled at a
 // fixed interval forever, which is the failure backoff exists to prevent.
 func TestShouldResetBackoff_ASilentSessionIsNotAHealthyOne(t *testing.T) {
-	if healthySession <= defaultReadTimeout {
-		t.Errorf("healthySession %s must outlast defaultReadTimeout %s, or a socket killed by the read deadline always qualifies",
-			healthySession, defaultReadTimeout)
+	if HealthySession <= defaultReadTimeout {
+		t.Errorf("HealthySession %s must outlast defaultReadTimeout %s, or a socket killed by the read deadline always qualifies",
+			HealthySession, defaultReadTimeout)
 	}
 
 	cases := []struct {
@@ -433,10 +433,10 @@ func TestShouldResetBackoff_ASilentSessionIsNotAHealthyOne(t *testing.T) {
 		lasted     time.Duration
 		want       bool
 	}{
-		{"delivered nothing for a long time", 0, healthySession * 2, false},
+		{"delivered nothing for a long time", 0, HealthySession * 2, false},
 		{"killed by the read deadline having said nothing", 0, defaultReadTimeout, false},
 		{"delivered, but dropped immediately", 5, time.Second, false},
-		{"delivered for a long time", 5, healthySession, true},
+		{"delivered for a long time", 5, HealthySession, true},
 	}
 
 	for _, tc := range cases {

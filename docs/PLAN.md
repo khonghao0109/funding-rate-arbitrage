@@ -45,10 +45,10 @@
 | 2 | Connector Bybit Futures + Spot | `exchanges/bybit.go` | ✅ Hoạt động |
 | 3 | Connector OKX Futures | `exchanges/okx.go` | ✅ Hoạt động |
 | 4 | Connector Gate.io Futures | `exchanges/gate.go` | ✅ Hoạt động |
-| 5 | Connector Kraken Futures | `exchanges/kraken.go` | ✅ Hoạt động |
+| 5 | Connector Kraken Futures | `exchanges/kraken/` | ✅ Hoạt động |
 | 6 | Connector Hyperliquid (DEX) Futures | `exchanges/hyperliquid.go` | ✅ Hoạt động |
 | 7 | Connector Paradex Futures | `exchanges/paradex.go` | ✅ Hoạt động |
-| 8 | Pyth oracle price (SSE) | `exchanges/pyth.go` | ✅ Hoạt động |
+| 8 | Pyth oracle price (SSE) | `exchanges/pyth/` | ✅ Hoạt động |
 | 9 | Kiểu dữ liệu chuẩn hoá | `exchanges/types.go` | ✅ `PriceData`, `OrderbookData`, `TradeData` |
 | 10 | Mid-price `(bid+ask)/2` | `main.go:63` | ✅ |
 | 11 | Ma trận spread pairwise | `main.go:213-236` | ✅ |
@@ -1200,8 +1200,29 @@ Sửa:
 > - Các nợ cũ giữ nguyên hiệu lực: speculative-unmarshal OKX/Gate/Paradex
 >   (2.5), `SourceClaim`/`PairAssets` ba-nơi-một-thay-đổi (2.4), gọi thẳng
 >   `Refresh()` không dựng lại mapping (chưa có caller), tên
->   `fetchInstrumentJSON` (đổi trong một commit refactor riêng), broadcast
+>   ~~`fetchInstrumentJSON`~~ (✅ trả khi tổ chức lại `exchanges/` 2026-09-04:
+>   giờ là `exchanges.FetchJSON`), broadcast
 >   theo symbol (§7.3 mục 2), trần trang Paradex ~83 ngày.
+
+#### Tổ chức lại cây `exchanges/` ✅ (2026-09-04)
+
+> Package phẳng 66 file / 11.220 dòng tách thành cây: **lõi** (`exchanges/` —
+> types, Feeds, vòng đời `RunStream`, `FetchJSON`, các hàm chuẩn hoá chung),
+> **8 package sàn** (`exchanges/<venue>/` — trọn bộ connector/funding/depth/
+> instruments/history + `testdata/` riêng), **`exchanges/venues/`** (4 bảng
+> registry — nơi duy nhất import đủ 8 sàn, tránh vòng import; các capture test
+> REST xuyên sàn cũng nằm đây) và **`exchanges/exchangestest/`** (harness:
+> recorder, capture, bộ kiểm hợp đồng). Việc tách KHÔNG làm yếu golden test:
+> trước kia một vòng lặp replay mọi sàn qua CÙNG một bộ khẳng định — giờ mỗi
+> package sàn gọi đúng bộ khẳng định đó trong `exchangestest`
+> (`CheckBookContract`/`CheckFundingContract`), nên một sàn vẫn không thể lệch
+> hợp đồng dữ liệu một cách im lặng. Trả luôn món nợ tên: `fetchInstrumentJSON`
+> → `exchanges.FetchJSON`. Bên ngoài chỉ đổi bốn call site bảng registry
+> (`venues.Connectors()` v.v.) và hai chỗ nhận bảng qua tham số
+> (`depth.New`/`history.New` — đảo phụ thuộc, entrypoint là nơi biết danh sách
+> sàn). Luật phụ thuộc giữ nguyên: không package nào dưới `exchanges/` import
+> `internal/`. 382 test, `go test ./...` + `-race` xanh; re-record giờ là
+> `CAPTURE_TESTDATA=1 go test -run TestCapture ./exchanges/...`.
 
 ### GIAI ĐOẠN 3 — SIGNAL, ALERT & BACKTEST
 

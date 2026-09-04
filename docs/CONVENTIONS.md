@@ -315,7 +315,7 @@ func NormalizeFundingRate(...)
 |---|---|---|
 | Unit | `x_test.go` | `TestNormalizeFundingRate_KrakenUsesRelative` |
 | Table-driven | như trên | tên case viết thường, mô tả điều kiện |
-| Golden | `exchanges/testdata/<source>.jsonl` | một frame THẬT mỗi dòng |
+| Golden | `exchanges/<venue>/testdata/<source>.jsonl` | một frame THẬT mỗi dòng |
 
 - Mẫu tên: `Test<Hàm>_<TìnhHuống>`.
 - **Mọi connector phải có golden test** nạp payload JSON thật đã lưu — đây là lưới an toàn duy nhất khi sàn đổi định dạng.

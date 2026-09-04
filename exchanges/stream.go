@@ -42,7 +42,7 @@ const (
 	backoffMin = 2 * time.Second
 	backoffMax = 60 * time.Second
 
-	// healthySession is how long a connection must last to count as genuinely
+	// HealthySession is how long a connection must last to count as genuinely
 	// established, resetting the backoff. A venue that is rate limiting accepts
 	// the socket and drops it immediately; resetting on connect alone would let
 	// that flap at full speed forever, which is the same failure as no backoff
@@ -52,10 +52,10 @@ const (
 	// connections and then says nothing would be killed by the read deadline at
 	// exactly the qualifying duration, reset the backoff every time, and be
 	// re-dialled every ~60s forever instead of escalating to the ceiling. A
-	// session must also have DELIVERED something to qualify - see runStream -
+	// session must also have DELIVERED something to qualify - see RunStream -
 	// because a socket that carried no data was never working, however long it
 	// stayed open.
-	healthySession = 2 * defaultReadTimeout
+	HealthySession = 2 * defaultReadTimeout
 
 	// defaultReadTimeout is how long a socket may deliver NOTHING - no data, no
 	// pong, no server ping - before it is treated as dead.
@@ -106,17 +106,17 @@ type ConnEvent struct {
 }
 
 // backoff produces the reconnect delay sequence.
-type backoff struct {
+type Backoff struct {
 	current time.Duration
 }
 
-func newBackoff() *backoff {
-	return &backoff{current: backoffMin}
+func NewBackoff() *Backoff {
+	return &Backoff{current: backoffMin}
 }
 
 // next returns the delay to wait before the next attempt and advances the
 // sequence, doubling up to the ceiling.
-func (b *backoff) next() time.Duration {
+func (b *Backoff) next() time.Duration {
 	delay := b.current
 	if b.current < backoffMax {
 		b.current *= 2
@@ -127,7 +127,7 @@ func (b *backoff) next() time.Duration {
 	return delay
 }
 
-func (b *backoff) reset() {
+func (b *Backoff) Reset() {
 	b.current = backoffMin
 }
 
@@ -143,17 +143,17 @@ func (b *backoff) reset() {
 // framesRead counts every frame off the socket, INCLUDING the keepalive replies
 // that Bybit, OKX and Hyperliquid send as ordinary data messages. So on those
 // three a session carrying nothing but pongs still qualifies once it passes
-// healthySession. Distinguishing market data from a pong needs the per-venue
+// HealthySession. Distinguishing market data from a pong needs the per-venue
 // handler to report what it produced, which is recorded as debt in docs/PLAN.md
 // rather than guessed at here.
 func shouldResetBackoff(framesRead int64, lasted time.Duration) bool {
-	return framesRead > 0 && lasted >= healthySession
+	return framesRead > 0 && lasted >= HealthySession
 }
 
 // wait sleeps for the next delay, or returns false immediately if the context is
 // cancelled. A plain time.Sleep here is what made shutdown take up to a minute:
 // the connector would be asleep in the retry gap and could not be told to stop.
-func (b *backoff) wait(ctx context.Context) bool {
+func (b *Backoff) Wait(ctx context.Context) bool {
 	timer := time.NewTimer(b.next())
 	defer timer.Stop()
 
@@ -165,8 +165,8 @@ func (b *backoff) wait(ctx context.Context) bool {
 	}
 }
 
-// streamConfig is everything venue-specific about one WebSocket feed.
-type streamConfig struct {
+// StreamConfig is everything venue-specific about one WebSocket feed.
+type StreamConfig struct {
 	// Source is the configured source name, used for logs and ConnEvents.
 	Source string
 	URL    string
@@ -191,14 +191,14 @@ type streamConfig struct {
 	ReadTimeout time.Duration
 }
 
-func (c streamConfig) pingEvery() time.Duration {
+func (c StreamConfig) pingEvery() time.Duration {
 	if c.PingEvery > 0 {
 		return c.PingEvery
 	}
 	return defaultPingEvery
 }
 
-func (c streamConfig) readTimeout() time.Duration {
+func (c StreamConfig) readTimeout() time.Duration {
 	if c.ReadTimeout > 0 {
 		return c.ReadTimeout
 	}
@@ -214,17 +214,17 @@ var streamDialer = &websocket.Dialer{
 	HandshakeTimeout: dialTimeout,
 }
 
-// runStream connects, reads until the connection dies, then reconnects with
+// RunStream connects, reads until the connection dies, then reconnects with
 // exponential backoff - until the context is cancelled.
 //
 // It returns only on cancellation, so a connector's whole body is a call to it.
-func runStream(f Feeds, cfg streamConfig) {
-	retry := newBackoff()
+func RunStream(f Feeds, cfg StreamConfig) {
+	retry := NewBackoff()
 
 	for {
 		if f.Ctx.Err() != nil {
 			log.Printf("%s: stopped", cfg.Source)
-			f.reportConn(cfg.Source, ConnDisconnected)
+			f.ReportConn(cfg.Source, ConnDisconnected)
 			return
 		}
 
@@ -236,23 +236,23 @@ func runStream(f Feeds, cfg streamConfig) {
 			// Cancellation closes the socket underneath the reader, so the error
 			// this session ended with describes the shutdown, not a fault.
 			log.Printf("%s: stopped", cfg.Source)
-			f.reportConn(cfg.Source, ConnDisconnected)
+			f.ReportConn(cfg.Source, ConnDisconnected)
 			return
 		}
 
 		if shouldResetBackoff(framesRead, lasted) {
-			retry.reset()
+			retry.Reset()
 		}
 
-		f.reportConn(cfg.Source, ConnReconnecting)
+		f.ReportConn(cfg.Source, ConnReconnecting)
 		log.Printf("%s: connection lost after %s: %v", cfg.Source, lasted.Round(time.Second), err)
 
-		if !retry.wait(f.Ctx) {
+		if !retry.Wait(f.Ctx) {
 			// Cancelled while waiting out the backoff. Logged with the same
 			// wording as the other exit so an unattended run's log accounts for
 			// every connector, including the ones that were asleep.
 			log.Printf("%s: stopped", cfg.Source)
-			f.reportConn(cfg.Source, ConnDisconnected)
+			f.ReportConn(cfg.Source, ConnDisconnected)
 			return
 		}
 	}
@@ -261,7 +261,7 @@ func runStream(f Feeds, cfg streamConfig) {
 // runSession owns exactly one connection, from dial to death. It returns how
 // many frames the connection delivered, which is what tells a real connection
 // apart from a socket that was accepted and then ignored.
-func runSession(f Feeds, cfg streamConfig) (int64, error) {
+func runSession(f Feeds, cfg StreamConfig) (int64, error) {
 	var framesRead int64
 
 	conn, _, err := streamDialer.DialContext(f.Ctx, cfg.URL, nil)
@@ -325,7 +325,7 @@ func runSession(f Feeds, cfg streamConfig) (int64, error) {
 	}
 
 	log.Printf("%s: connected", cfg.Source)
-	f.reportConn(cfg.Source, ConnConnected)
+	f.ReportConn(cfg.Source, ConnConnected)
 
 	// Started only after Subscribe has finished writing: gorilla allows one
 	// writer at a time, and WriteControl - which is what a protocol ping and the
@@ -357,7 +357,7 @@ func runSession(f Feeds, cfg streamConfig) (int64, error) {
 }
 
 // pingLoop keeps the connection alive until the session ends.
-func pingLoop(ctx context.Context, sessionDone <-chan struct{}, conn *websocket.Conn, cfg streamConfig) {
+func pingLoop(ctx context.Context, sessionDone <-chan struct{}, conn *websocket.Conn, cfg StreamConfig) {
 	ticker := time.NewTicker(cfg.pingEvery())
 	defer ticker.Stop()
 
@@ -385,25 +385,25 @@ func pingLoop(ctx context.Context, sessionDone <-chan struct{}, conn *websocket.
 	}
 }
 
-// jsonPing sends one JSON keepalive message. Venues that document an
+// JSONPing sends one JSON keepalive message. Venues that document an
 // application-level heartbeat use it instead of a protocol ping frame.
-func jsonPing(message any) func(*websocket.Conn) error {
+func JSONPing(message any) func(*websocket.Conn) error {
 	return func(conn *websocket.Conn) error {
 		return conn.WriteJSON(message)
 	}
 }
 
-// textPing sends a raw text keepalive. OKX documents the literal string "ping",
+// TextPing sends a raw text keepalive. OKX documents the literal string "ping",
 // which is not JSON and not a protocol ping frame.
-func textPing(payload string) func(*websocket.Conn) error {
+func TextPing(payload string) func(*websocket.Conn) error {
 	return func(conn *websocket.Conn) error {
 		return conn.WriteMessage(websocket.TextMessage, []byte(payload))
 	}
 }
 
-// decode unmarshals a frame, reporting nothing on failure. Every connector
+// Decode unmarshals a frame, reporting nothing on failure. Every connector
 // speculatively decodes each frame into several shapes to find out what it is,
 // so a failure here is the normal case, not an error.
-func decode(raw []byte, into any) bool {
+func Decode(raw []byte, into any) bool {
 	return json.Unmarshal(raw, into) == nil
 }

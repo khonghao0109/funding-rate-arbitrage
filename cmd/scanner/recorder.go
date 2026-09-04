@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/history"
 	"futures-arbitrage-scanner/internal/instruments"
@@ -62,7 +63,7 @@ func startStore(ctx context.Context, cfg config.Config, s *scanner.Scanner,
 		snapshotInstruments(ctx, db, registry, time.Duration(cfg.Storage.InstrumentSnapshotEveryHours)*time.Hour)
 	})
 	start(func() {
-		history.New(db, fundingHistoryJobs(cfg)).
+		history.New(db, fundingHistoryJobs(cfg), venues.FundingHistoryFetchers()).
 			Run(ctx, time.Duration(cfg.Storage.FundingTopUpEveryMin)*time.Minute)
 	})
 	start(func() {

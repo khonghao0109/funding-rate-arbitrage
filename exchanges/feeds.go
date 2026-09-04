@@ -85,12 +85,12 @@ func (f Feeds) SendFunding(data FundingData) bool {
 	}
 }
 
-// reportConn publishes a connection-state transition.
+// ReportConn publishes a connection-state transition.
 //
 // It never blocks: a connector must not stall on a socket event, and losing one
 // is harmless because the scanner also infers state from silence. A nil channel
 // is legal so a connector can be exercised without one.
-func (f Feeds) reportConn(source string, state ConnState) {
+func (f Feeds) ReportConn(source string, state ConnState) {
 	if f.Conn == nil {
 		return
 	}

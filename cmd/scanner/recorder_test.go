@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/scanner"
 )
@@ -72,7 +72,7 @@ func TestFundingHistoryJobsCoverEveryPerpSource(t *testing.T) {
 		byConnector[job.Connector] = len(job.Symbols)
 	}
 
-	fetchers := exchanges.FundingHistoryFetchers()
+	fetchers := venues.FundingHistoryFetchers()
 	for connector := range fetchers {
 		symbols, ok := byConnector[connector]
 		if !ok {

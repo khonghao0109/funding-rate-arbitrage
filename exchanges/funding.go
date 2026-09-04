@@ -126,7 +126,7 @@ type FundingData struct {
 	RecvAt      time.Time
 }
 
-// fundingReading is the identity envelope plus the rate — the part every
+// FundingReading is the identity envelope plus the rate — the part every
 // venue's builder needs, in every venue's units.
 //
 // It exists because the builders originally took these as positional
@@ -136,7 +136,7 @@ type FundingData struct {
 // seconds. Step 2.2 recorded that as debt to repay when 2.5 wrote the first
 // real call sites; this is that repayment. Every builder now takes ONE struct
 // whose fields are named at the call site.
-type fundingReading struct {
+type FundingReading struct {
 	Symbol      string // normalized: BTCUSDT
 	Source      string // wire id: binance_futures, ...
 	RecvAt      time.Time
@@ -145,17 +145,17 @@ type fundingReading struct {
 }
 
 const (
-	secPerHour  = 3600
-	secPer8h    = 8 * secPerHour
-	secPerYear  = 365 * 24 * secPerHour
-	msPerSecond = 1000
+	SecPerHour  = 3600
+	secPer8h    = 8 * SecPerHour
+	secPerYear  = 365 * 24 * SecPerHour
+	MsPerSecond = 1000
 )
 
-// deriveFundingRates fills the comparison figures from the per-interval rate.
+// DeriveFundingRates fills the comparison figures from the per-interval rate.
 // It is the backstop for every builder: a non-positive interval is refused,
 // because dividing by it would turn one bad message into an Inf/NaN APR that
 // poisons every consumer downstream.
-func deriveFundingRates(f FundingData) (FundingData, error) {
+func DeriveFundingRates(f FundingData) (FundingData, error) {
 	if f.IntervalSec <= 0 {
 		return FundingData{}, fmt.Errorf("funding %s/%s: non-positive IntervalSec %d", f.Source, f.Symbol, f.IntervalSec)
 	}

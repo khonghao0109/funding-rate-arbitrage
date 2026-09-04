@@ -83,27 +83,7 @@ type DepthBook struct {
 // no limit parameter at all ignores it.
 type DepthFetchFunc func(ctx context.Context, source string, symbol Symbol, levels int) (DepthBook, error)
 
-// DepthFetchers maps connector names to their depth fetcher.
-//
-// Nine entries: every tradable source, spot as well as perp. The spot side is
-// not optional — the exit of a funding position sells the spot leg, so the
-// depth that matters most is the BID side of a market the perp-only view never
-// looks at (docs/PLAN.md §7.4). Pyth has no entry: an oracle has no book.
-func DepthFetchers() map[string]DepthFetchFunc {
-	return map[string]DepthFetchFunc{
-		"binance_futures":     FetchBinanceFuturesDepth,
-		"binance_spot":        FetchBinanceSpotDepth,
-		"bybit_futures":       FetchBybitFuturesDepth,
-		"bybit_spot":          FetchBybitSpotDepth,
-		"okx_futures":         FetchOKXDepth,
-		"gate_futures":        FetchGateDepth,
-		"kraken_futures":      FetchKrakenDepth,
-		"hyperliquid_futures": FetchHyperliquidDepth,
-		"paradex_futures":     FetchParadexDepth,
-	}
-}
-
-// finishDepthBook puts a parsed book into the canonical order and drops levels
+// FinishDepthBook puts a parsed book into the canonical order and drops levels
 // that cannot mean anything.
 //
 // A level at price 0 or size 0 is not liquidity, and a venue that pads its book
@@ -111,7 +91,7 @@ func DepthFetchers() map[string]DepthFetchFunc {
 // a level count. Sorting is unconditional rather than trusting the venue's
 // documented order: Kraken's ascending bids were found by probing, not by
 // reading, and the next venue to change its mind will not announce it.
-func finishDepthBook(book DepthBook) (DepthBook, error) {
+func FinishDepthBook(book DepthBook) (DepthBook, error) {
 	book.Bids = usableDepthLevels(book.Bids)
 	book.Asks = usableDepthLevels(book.Asks)
 
@@ -144,30 +124,30 @@ func usableDepthLevels(levels []DepthLevel) []DepthLevel {
 	return out
 }
 
-// parseDepthLevel reads the [price, size] string pair five of the nine venues
+// ParseDepthLevel reads the [price, size] string pair five of the nine venues
 // use, so the same two error messages are not written five times.
-func parseDepthLevel(source, symbol, price, size string) (DepthLevel, error) {
-	priceQuote, err := parseInstrumentFloat(source, symbol, "price", price)
+func ParseDepthLevel(source, symbol, price, size string) (DepthLevel, error) {
+	priceQuote, err := ParseFloatField(source, symbol, "price", price)
 	if err != nil {
 		return DepthLevel{}, err
 	}
-	qty, err := parseInstrumentFloat(source, symbol, "size", size)
+	qty, err := ParseFloatField(source, symbol, "size", size)
 	if err != nil {
 		return DepthLevel{}, err
 	}
 	return DepthLevel{PriceQuote: priceQuote, QtyNative: qty}, nil
 }
 
-// parseDepthSide reads the [["price","size"], ...] shape. Binance, Bybit and
+// ParseDepthSide reads the [["price","size"], ...] shape. Binance, Bybit and
 // Paradex all publish it; the differences between those venues are in the
 // envelope around it, not in the level.
-func parseDepthSide(source, venueSymbol string, raw [][]string) ([]DepthLevel, error) {
+func ParseDepthSide(source, venueSymbol string, raw [][]string) ([]DepthLevel, error) {
 	out := make([]DepthLevel, 0, len(raw))
 	for _, entry := range raw {
 		if len(entry) < 2 {
 			return nil, fmt.Errorf("depth %s %s: level %v has no price/size pair", source, venueSymbol, entry)
 		}
-		level, err := parseDepthLevel(source, venueSymbol, entry[0], entry[1])
+		level, err := ParseDepthLevel(source, venueSymbol, entry[0], entry[1])
 		if err != nil {
 			return nil, err
 		}

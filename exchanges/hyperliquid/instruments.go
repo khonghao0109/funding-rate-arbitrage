@@ -1,0 +1,83 @@
+package hyperliquid
+
+import (
+	"futures-arbitrage-scanner/exchanges"
+
+	"context"
+	"math"
+)
+
+// Hyperliquid instrument rules — POST /info {"type":"meta"}.
+// https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals
+//
+// Sizes are in coin with 10^-szDecimals steps. Prices have no constant tick:
+// the venue's rule is at most 5 significant figures (and at most
+// 6−szDecimals decimals), so TickSizeQuote stays 0 — the "defined by rule" marker.
+// The minimum order value is a documented flat $10.
+// https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/tick-and-lot-size
+// Verified live 2026-09-03 (BTC: szDecimals 5, maxLeverage 40).
+
+// hyperliquidMinOrderNotionalUSD is the venue-wide minimum order value —
+// policy, not a per-asset API field, so no capture can pin it: "Minimum order
+// value is $10" per the contract specifications page (re-verify there when
+// sizing refusals disagree with the venue):
+// https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications
+const hyperliquidMinOrderNotionalUSD = 10
+
+// hyperliquidQuoteAsset: the meta endpoint declares only the coin name — no
+// quote field exists. That perpetuals are quoted in USD is venue-wide policy,
+// not a per-asset field ("all Hyperliquid perpetual contracts are quoted in
+// USD" per the contract specifications page), so like the $10 minimum above
+// it is a documented constant, not a guess:
+// https://hyperliquid.gitbook.io/hyperliquid-docs/trading/contract-specifications
+const hyperliquidQuoteAsset = "USD"
+
+type hyperliquidMetaResponse struct {
+	Universe []struct {
+		Name        string  `json:"name"`
+		SzDecimals  float64 `json:"szDecimals"`
+		MaxLeverage float64 `json:"maxLeverage"`
+		IsDelisted  bool    `json:"isDelisted"`
+	} `json:"universe"`
+}
+
+func FetchInstruments(ctx context.Context, source string, symbols []exchanges.Symbol) ([]exchanges.Instrument, error) {
+	var resp hyperliquidMetaResponse
+	if err := exchanges.PostJSON(ctx, "https://api.hyperliquid.xyz/info", `{"type":"meta"}`, &resp); err != nil {
+		return nil, err
+	}
+	return parseHyperliquidInstruments(resp, source, symbols)
+}
+
+func parseHyperliquidInstruments(resp hyperliquidMetaResponse, source string, symbols []exchanges.Symbol) ([]exchanges.Instrument, error) {
+	standardByNative := make(map[string]string, len(symbols))
+	for _, s := range symbols {
+		standardByNative[s.Venue] = s.Standard
+	}
+	var out []exchanges.Instrument
+	for _, e := range resp.Universe {
+		standard, wanted := standardByNative[e.Name]
+		if !wanted {
+			continue
+		}
+		stepCoin := math.Pow(10, -e.SzDecimals)
+		out = append(out, exchanges.Instrument{
+			Symbol:       standard,
+			NativeSymbol: e.Name,
+			Source:       source,
+			MarketType:   "perp",
+			Status:       exchanges.NormalizeStatus("delisted", !e.IsDelisted),
+			// The market IS the coin name, kept VERBATIM: seven listings are
+			// mixed-case and the prefix carries meaning (kPEPE is 1000 PEPE).
+			BaseAsset:        e.Name,
+			QuoteAsset:       hyperliquidQuoteAsset,
+			TickSizeQuote:    0, // 5-significant-figure rule, no constant tick
+			StepSizeCoin:     stepCoin,
+			MinQtyCoin:       stepCoin,
+			MinNotionalQuote: hyperliquidMinOrderNotionalUSD,
+			ContractSizeCoin: 1,
+			MaxLeverageX:     e.MaxLeverage,
+		})
+	}
+	return out, nil
+}

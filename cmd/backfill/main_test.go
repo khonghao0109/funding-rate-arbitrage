@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/history"
 )
@@ -26,7 +26,7 @@ func TestJobsFromCoversEveryConfiguredPair(t *testing.T) {
 	if len(jobs) != len(cfg.Sources) {
 		t.Fatalf("got %d jobs for %d sources", len(jobs), len(cfg.Sources))
 	}
-	fetchers := exchanges.FundingHistoryFetchers()
+	fetchers := venues.FundingHistoryFetchers()
 	for _, job := range jobs {
 		if _, ok := fetchers[job.Connector]; !ok {
 			continue // dropped by history.New; a spot source or the oracle
@@ -55,7 +55,7 @@ func TestJobsFromNarrowsToOnePair(t *testing.T) {
 	}
 	// A filter that matched nothing would look identical to a successful run
 	// that had nothing to do.
-	collectable := history.New(nil, jobs)
+	collectable := history.New(nil, jobs, venues.FundingHistoryFetchers())
 	if len(collectable.Jobs()) == 0 {
 		t.Fatal("no source is collectable for BTCUSDT")
 	}
@@ -63,7 +63,7 @@ func TestJobsFromNarrowsToOnePair(t *testing.T) {
 
 func TestJobsFromRejectsAnUnknownPairByCollectingNothing(t *testing.T) {
 	cfg := repoConfig(t)
-	collectable := history.New(nil, jobsFrom(cfg, "NOSUCHUSDT", ""))
+	collectable := history.New(nil, jobsFrom(cfg, "NOSUCHUSDT", ""), venues.FundingHistoryFetchers())
 	// main turns this into a fatal error rather than a silent no-op run that
 	// prints an empty coverage table and exits 0.
 	if len(collectable.Jobs()) != 0 {
@@ -87,7 +87,7 @@ func TestJobsFromNarrowsToOneSource(t *testing.T) {
 
 func TestJobsFromRejectsAnUnknownSourceByCollectingNothing(t *testing.T) {
 	cfg := repoConfig(t)
-	collectable := history.New(nil, jobsFrom(cfg, "", "nosuch_futures"))
+	collectable := history.New(nil, jobsFrom(cfg, "", "nosuch_futures"), venues.FundingHistoryFetchers())
 	if len(collectable.Jobs()) != 0 {
 		t.Fatalf("an unknown source produced %d collectable jobs", len(collectable.Jobs()))
 	}

@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/instruments"
 	"futures-arbitrage-scanner/internal/scanner"
@@ -222,7 +223,7 @@ func reportStopped(cancelledAt time.Time) {
 // symbols each one is asked for, is data: adding a source that uses an existing
 // connector is a config.yaml edit and nothing else.
 func startConnectors(ctx context.Context, cfg config.Config, s *scanner.Scanner) *sync.WaitGroup {
-	available := exchanges.Connectors()
+	available := venues.Connectors()
 	feeds := s.Feeds(ctx)
 
 	var running sync.WaitGroup
@@ -280,7 +281,7 @@ func venueSymbols(cfg config.Config, source config.Source) []exchanges.Symbol {
 // rules still served — the scanner's own data path does not depend on it, so
 // it must never take the process down.
 func startInstrumentRegistry(ctx context.Context, cfg config.Config, s *scanner.Scanner) *instruments.Registry {
-	fetchers := exchanges.InstrumentFetchers()
+	fetchers := venues.InstrumentFetchers()
 	var sources []instruments.Source
 	for _, source := range cfg.Sources {
 		fetch, ok := fetchers[source.Connector]

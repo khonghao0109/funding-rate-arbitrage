@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
 )
 
@@ -31,7 +31,7 @@ func TestShippedConfig_NamesOnlyConnectorsThatExist(t *testing.T) {
 		t.Fatalf("load config.yaml: %v", err)
 	}
 
-	available := exchanges.Connectors()
+	available := venues.Connectors()
 	for _, source := range cfg.Sources {
 		if _, ok := available[source.Connector]; !ok {
 			t.Errorf("source %q names connector %q, which does not exist", source.Source, source.Connector)
@@ -51,7 +51,7 @@ func TestEveryConnector_IsReachableFromTheShippedConfig(t *testing.T) {
 	for _, source := range cfg.Sources {
 		used[source.Connector] = true
 	}
-	for name := range exchanges.Connectors() {
+	for name := range venues.Connectors() {
 		if !used[name] {
 			t.Errorf("connector %q exists but no configured source uses it", name)
 		}

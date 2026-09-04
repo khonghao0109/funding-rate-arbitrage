@@ -414,7 +414,7 @@ bị gỡ biến mất thay vì sống mãi); 404 của endpoint theo-symbol = "
 niêm yết", không phải sự cố nguồn. Kiểm ngày cũng chính là watch delist
 (§7.10). MinQty sàn không công bố để 0 = "không nêu" — tầng sizing tự giữ sàn
 tối-thiểu-một-bước, không bịa số liệu sàn. Golden test trên response thật ghi
-ở `exchanges/testdata/instruments_*.json` (`CAPTURE_TESTDATA=1` để ghi lại).
+ở `exchanges/<venue>/testdata/instruments_*.json` (`CAPTURE_TESTDATA=1` để ghi lại).
 Chạy thật 2026-09-03: 36 instruments × 9 nguồn, đủ 4 cặp.
 
 **Nguồn contract size theo sàn — SỐ ĐO THẬT 2026-09-03:**

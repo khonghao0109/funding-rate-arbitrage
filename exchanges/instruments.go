@@ -102,32 +102,16 @@ const StatusTrading = "trading"
 // error.
 type InstrumentFetchFunc func(ctx context.Context, source string, symbols []Symbol) ([]Instrument, error)
 
-// InstrumentFetchers maps connector names (the same names Connectors uses) to
-// their instrument fetcher. Pyth has no entry: an oracle has no instruments.
-func InstrumentFetchers() map[string]InstrumentFetchFunc {
-	return map[string]InstrumentFetchFunc{
-		"binance_futures":     FetchBinanceFuturesInstruments,
-		"binance_spot":        FetchBinanceSpotInstruments,
-		"bybit_futures":       FetchBybitFuturesInstruments,
-		"bybit_spot":          FetchBybitSpotInstruments,
-		"okx_futures":         FetchOKXInstruments,
-		"gate_futures":        FetchGateInstruments,
-		"kraken_futures":      FetchKrakenInstruments,
-		"hyperliquid_futures": FetchHyperliquidInstruments,
-		"paradex_futures":     FetchParadexInstruments,
-	}
-}
-
 // instrumentHTTPClient is shared by the instrument fetchers. Instrument
 // refreshes run once a day off the hot path, so a generous timeout beats a
 // spurious failure.
 var instrumentHTTPClient = &http.Client{Timeout: 30 * time.Second}
 
-// errInstrumentNotListed marks a per-symbol request the venue answered with
+// ErrNotListed marks a per-symbol request the venue answered with
 // 404: the market does not exist there. Fetchers that query one symbol per
 // request treat it as "absent", per the InstrumentFetchFunc contract — one
 // delisted pair must not fail a whole source.
-var errInstrumentNotListed = errors.New("instrument not listed")
+var ErrNotListed = errors.New("instrument not listed")
 
 // errRateLimited marks a request the venue refused because it arrived too
 // often. It is a transient failure like any other network error, but it needs a
@@ -172,7 +156,7 @@ func parseRetryAfter(header string) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
-func fetchInstrumentJSON(ctx context.Context, url string, into any) error {
+func FetchJSON(ctx context.Context, url string, into any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return err
@@ -180,9 +164,9 @@ func fetchInstrumentJSON(ctx context.Context, url string, into any) error {
 	return doInstrumentRequest(req, into)
 }
 
-// postInstrumentJSON is the POST sibling — Hyperliquid's info endpoint is the
+// PostJSON is the POST sibling — Hyperliquid's info endpoint is the
 // one venue that takes its query in a request body.
-func postInstrumentJSON(ctx context.Context, url, payload string, into any) error {
+func PostJSON(ctx context.Context, url, payload string, into any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(payload))
 	if err != nil {
 		return err
@@ -198,7 +182,7 @@ func doInstrumentRequest(req *http.Request, into any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("%s: %w", req.URL, errInstrumentNotListed)
+		return fmt.Errorf("%s: %w", req.URL, ErrNotListed)
 	}
 	if resp.StatusCode == http.StatusTooManyRequests {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -215,10 +199,10 @@ func doInstrumentRequest(req *http.Request, into any) error {
 	return json.NewDecoder(resp.Body).Decode(into)
 }
 
-// normalizeInstrumentStatus maps a venue's own tradable marker onto
+// NormalizeStatus maps a venue's own tradable marker onto
 // StatusTrading, and keeps the venue's word (lower-cased) for everything else
 // so a refusal can show it.
-func normalizeInstrumentStatus(venueWord string, tradable bool) string {
+func NormalizeStatus(venueWord string, tradable bool) string {
 	if tradable {
 		return StatusTrading
 	}
@@ -231,7 +215,7 @@ func normalizeInstrumentStatus(venueWord string, tradable bool) string {
 	return "not-trading"
 }
 
-func parseInstrumentFloat(source, nativeSymbol, field, value string) (float64, error) {
+func ParseFloatField(source, nativeSymbol, field, value string) (float64, error) {
 	f, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		return 0, fmt.Errorf("%s %s: field %s = %q does not parse as float", source, nativeSymbol, field, value)
@@ -239,11 +223,11 @@ func parseInstrumentFloat(source, nativeSymbol, field, value string) (float64, e
 	return f, nil
 }
 
-// smallerPositiveCap folds two order-size ceilings into the one MaxQtyCoin
+// SmallerPositiveCap folds two order-size ceilings into the one MaxQtyCoin
 // carries. 0 means "not stated" on both sides of this call, so it is never
 // allowed to win over a real cap — and never invented when neither side
 // states one.
-func smallerPositiveCap(a, b float64) float64 {
+func SmallerPositiveCap(a, b float64) float64 {
 	switch {
 	case a <= 0:
 		return b

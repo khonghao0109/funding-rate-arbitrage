@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/instruments"
@@ -40,7 +41,7 @@ func startDepth(ctx context.Context, cfg config.Config, s *scanner.Scanner,
 		return
 	}
 
-	collector := depth.New(depthJobs(cfg), contractSizeFrom(registry), cfg.Depth.Levels)
+	collector := depth.New(depthJobs(cfg), venues.DepthFetchers(), contractSizeFrom(registry), cfg.Depth.Levels)
 	if len(collector.Jobs()) == 0 {
 		log.Printf("depth: no configured source has a depth fetcher")
 		return

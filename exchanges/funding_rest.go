@@ -24,34 +24,34 @@ import (
 //     declaring its own cadence is what CLAUDE.md rule 3 asks for.
 //
 // Both run on the same tiny scheduler below. A REST failure must never take
-// the price feed with it: these run beside runStream, not inside it, so a
+// the price feed with it: these run beside RunStream, not inside it, so a
 // venue that stops answering REST loses its funding readings and keeps its
 // prices.
 
 const (
-	// fundingPollEvery is how often a REST-sourced funding reading is
+	// FundingPollEvery is how often a REST-sourced funding reading is
 	// refreshed. Funding moves continuously with the premium but the figure
 	// that matters settles on a schedule measured in hours, so seconds of
 	// staleness cost nothing — while a tight poll would spend rate-limit
 	// budget the order path needs in phase 4.
-	fundingPollEvery = 15 * time.Second
+	FundingPollEvery = 15 * time.Second
 
-	// fundingMetaEvery is how often the slow-moving metadata is refreshed:
+	// FundingMetaEvery is how often the slow-moving metadata is refreshed:
 	// intervals change on a venue's own schedule (class-A data, once a day
 	// would do), but Hyperliquid's settlement stamp rides along in the same
 	// response and moves hourly, so this is the cadence the FASTEST field in
 	// the payload needs.
-	fundingMetaEvery = 5 * time.Minute
+	FundingMetaEvery = 5 * time.Minute
 
 	// fundingRetryEvery is used after a failure, so a transient outage costs
 	// one gap rather than a full interval.
 	fundingRetryEvery = 30 * time.Second
 )
 
-// pollFunding runs work immediately and then on a schedule until ctx ends,
+// PollFunding runs work immediately and then on a schedule until ctx ends,
 // retrying sooner after a failure. It is the shared loop for every REST-backed
 // funding job; the caller owns what one tick does.
-func pollFunding(ctx context.Context, source, job string, every time.Duration, work func(context.Context) error) {
+func PollFunding(ctx context.Context, source, job string, every time.Duration, work func(context.Context) error) {
 	for {
 		wait := every
 		if err := work(ctx); err != nil {
@@ -69,17 +69,17 @@ func pollFunding(ctx context.Context, source, job string, every time.Duration, w
 	}
 }
 
-// fundingMetaCache holds per-symbol funding metadata a venue publishes only
+// FundingMetaCache holds per-symbol funding metadata a venue publishes only
 // over REST, keyed by the STANDARD symbol. Reads happen on the WebSocket
 // handler's goroutine while the refresher writes, so it is mutex-guarded.
-type fundingMetaCache struct {
+type FundingMetaCache struct {
 	mu       sync.RWMutex
-	bySymbol map[string]fundingMetaEntry
+	bySymbol map[string]FundingMetaEntry
 }
 
-// fundingMetaEntry is what a venue's REST metadata contributes to a reading
+// FundingMetaEntry is what a venue's REST metadata contributes to a reading
 // its WebSocket feed cannot supply on its own.
-type fundingMetaEntry struct {
+type FundingMetaEntry struct {
 	IntervalHours   int64
 	NextFundingAtMs int64 // 0 when the venue publishes none
 	CapFrac         float64
@@ -88,11 +88,11 @@ type fundingMetaEntry struct {
 	HasFloor        bool
 }
 
-func newFundingMetaCache() *fundingMetaCache {
-	return &fundingMetaCache{bySymbol: map[string]fundingMetaEntry{}}
+func NewFundingMetaCache() *FundingMetaCache {
+	return &FundingMetaCache{bySymbol: map[string]FundingMetaEntry{}}
 }
 
-func (c *fundingMetaCache) put(bySymbol map[string]fundingMetaEntry) {
+func (c *FundingMetaCache) Put(bySymbol map[string]FundingMetaEntry) {
 	c.mu.Lock()
 	c.bySymbol = bySymbol
 	c.mu.Unlock()
@@ -102,14 +102,14 @@ func (c *fundingMetaCache) put(bySymbol map[string]fundingMetaEntry) {
 // false when nothing has been fetched for it yet — the caller must then
 // publish NO funding reading at all, because every consumer of IntervalSec
 // divides by it.
-func (c *fundingMetaCache) get(symbol string) (fundingMetaEntry, bool) {
+func (c *FundingMetaCache) Get(symbol string) (FundingMetaEntry, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	entry, ok := c.bySymbol[symbol]
 	return entry, ok
 }
 
-// futureStampMs returns stampMs when it is still ahead of now, and 0 when it
+// FutureStampMs returns stampMs when it is still ahead of now, and 0 when it
 // has already passed.
 //
 // A cached settlement stamp goes stale between refreshes — Hyperliquid settles
@@ -118,7 +118,7 @@ func (c *fundingMetaCache) get(symbol string) (fundingMetaEntry, bool) {
 // would run backwards and phase-3 settlement counting would credit a
 // settlement that already happened. 0 means "not supplied", which every
 // consumer already handles.
-func futureStampMs(stampMs int64, now time.Time) int64 {
+func FutureStampMs(stampMs int64, now time.Time) int64 {
 	if stampMs > now.UnixMilli() {
 		return stampMs
 	}

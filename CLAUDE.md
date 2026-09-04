@@ -229,9 +229,9 @@ showed Binance's running 80ms *ahead* of ours, so differencing the two measures
 skew, not age. `RecvAt` is stamped **as close to the read as the transport
 allows — one place per transport, and there are exactly three**:
 `runSession` in [exchanges/stream.go](exchanges/stream.go) for the nine
-WebSocket connectors, the SSE read loop in [exchanges/pyth.go](exchanges/pyth.go),
+WebSocket connectors, the SSE read loop in [exchanges/pyth/pyth.go](exchanges/pyth/pyth.go),
 and `pollBinancePremiumIndex` in
-[exchanges/binance_funding_rest.go](exchanges/binance_funding_rest.go) for the
+[exchanges/binance/funding_rest.go](exchanges/binance/funding_rest.go) for the
 REST funding poller, which step 2.5 added because Binance's mark-price stream
 delivers nothing to this environment (measured — DATA-REQUIREMENTS §3.4). Never
 add a fourth, and never add a second site for a transport that already has one.
@@ -292,8 +292,21 @@ cmd/fundingcheck/    step-2.1 diagnostic: reads BTC funding from all 7 venues
 cmd/backfill/        step-2.6 one-off: fills funding_history from the venues'
                      history endpoints and reports how deep each series really
                      reached. Safe to re-run — every row is keyed by settlement
-exchanges/           WebSocket connectors — PUBLIC DATA ONLY, no credentials
-  testdata/          one real recording per venue, a frame per line
+exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
+                     the root package is the shared KERNEL: types, Feeds, the
+                     RunStream lifecycle, FetchJSON, and the normalization
+                     helpers (DeriveFundingRates, FinishDepthBook,
+                     FinishFundingHistory) every venue shares
+  <venue>/           one package per venue (binance, bybit, okx, gate, kraken,
+                     hyperliquid, paradex, pyth): connector, funding, depth,
+                     instruments, funding history — and its own testdata/ with
+                     the real recordings its golden tests replay
+  venues/            the four registry tables (Connectors, DepthFetchers,
+                     InstrumentFetchers, FundingHistoryFetchers) — the ONE
+                     package that imports every venue, and where the
+                     cross-venue REST capture tests live
+  exchangestest/     shared test harness: recorder, capture tool, and the
+                     contract checkers every venue's recording must pass
 internal/
   scanner/           the engine: price state, staleness, the wire contract
   depth/             order book -> liquidity figures; contract->coin conversion
@@ -359,9 +372,9 @@ go run ./cmd/backfill -months 6 -symbol BTCUSDT
 MEASURE_STORE=1 go test -run TestPriceSnapshotRowCost -v ./internal/store/
 go test -race ./...   # required for any goroutine change
 
-# Re-record exchanges/testdata/ from the live venues. Opens real sockets, so it
-# is skipped by default; run it when a venue changes its payloads.
-CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata -timeout 5m ./exchanges/
+# Re-record each venue's testdata/ from the live venues. Opens real sockets, so
+# it is skipped by default; run it when a venue changes its payloads.
+CAPTURE_TESTDATA=1 go test -run TestCapture -timeout 10m ./exchanges/...
 go test -race ./...   # required for any goroutine change
 ```
 
@@ -432,7 +445,7 @@ phase 1.
   `symbols × 5/s` — measured 20.0/s and 65 KB/s afterwards. Alerts are not
   queued. Still open, and now the dominant cost: the server ships every symbol
   to every client (PLAN §7.3 item 2), so 50 symbols would be 250 msg/s.
-- 344 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 382 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
   it can be re-measured): `exchanges` 90 (58.8% of statements),
@@ -446,8 +459,8 @@ phase 1.
   and the cadence arithmetic are golden-tested against recorded payloads; the
   loops are not, and pretending otherwise with a mock HTTP server would test
   the mock.
-  `exchanges/testdata/` holds a real recording per venue; re-record with
-  `CAPTURE_TESTDATA=1 go test -run TestCaptureTestdata ./exchanges/`. **Pyth has
+  Each `exchanges/<venue>/testdata/` holds that venue's real recordings;
+  re-record with `CAPTURE_TESTDATA=1 go test -run TestCapture ./exchanges/...`. **Pyth has
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic
   and labelled as such; it proves the arithmetic, not that Pyth's current format
   still matches what the connector decodes.
@@ -460,10 +473,10 @@ phase 1.
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new
   quantity. Fixing it means merging deltas into cached state — trap 3 below.
-- `fetchInstrumentJSON` now serves instruments, REST funding and funding history.
-  The name lies about all but the first. Rename it when a step touches enough of
-  `exchanges/` to make the churn free; renaming it on its own would put ten files
-  in a commit that is about something else.
+- ~~`fetchInstrumentJSON`'s name lied about three of its four jobs.~~ Paid in
+  the exchanges/ reorganization (2026-09-04): it is `exchanges.FetchJSON` now —
+  the shared venue-REST GET with the not-listed sentinel and rate-limit
+  handling, named for what it does.
 - The funding corpus is **not uniformly deep and never will be** — see the
   History depth trap row. Anything that ranks or backtests across venues has to
   read `store.FundingCoverage` first, or it is comparing a year of one venue
