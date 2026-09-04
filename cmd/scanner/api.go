@@ -86,6 +86,14 @@ func newFundingHistoryHandler(db *store.Store, cfg config.Config) http.HandlerFu
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) {
+		// WS-CONTRACT §10 documents this endpoint as GET; everything else is
+		// refused rather than silently served the same read-only answer.
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			writeAPIError(w, http.StatusMethodNotAllowed,
+				"Endpoint này chỉ nhận GET (WS-CONTRACT §10), nhận được: "+r.Method)
+			return
+		}
 		if db == nil {
 			writeAPIError(w, http.StatusServiceUnavailable,
 				"Chưa bật lưu trữ (storage.enabled=false) nên không có lịch sử funding để vẽ.")

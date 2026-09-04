@@ -308,3 +308,49 @@ func TestCheckArbitrage_PublishesWhyASourceWasDropped(t *testing.T) {
 	}
 	t.Fatal("the dropped source was never explained on the wire")
 }
+
+// The connect-time push order is meta → funding → depth (scanner.go's
+// handshake): the client renders the Funding tab from the very first frames
+// instead of staring at an empty table for up to 5s (funding ticker) or an
+// hour (next depth sweep). Nothing pinned that order — a regression dropping
+// the funding/depth push would have failed no test.
+func TestHandleWebSocket_PushesFundingAndDepthAfterMeta(t *testing.T) {
+	scanner := New([]string{"BTCUSDT"})
+
+	server := httptest.NewServer(http.HandlerFunc(scanner.HandleWebSocket))
+	defer server.Close()
+
+	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(server.URL, "http"), nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatalf("set deadline: %v", err)
+	}
+
+	var order []string
+	for i := 0; i < 3; i++ {
+		_, raw, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read message %d: %v", i, err)
+		}
+		var envelope struct {
+			Type string `json:"type"`
+			V    int    `json:"v"`
+		}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			t.Fatalf("unmarshal message %d: %v", i, err)
+		}
+		if envelope.V != wireVersion {
+			t.Errorf("message %d v = %d, want %d", i, envelope.V, wireVersion)
+		}
+		order = append(order, envelope.Type)
+	}
+	want := []string{"meta", "funding", "depth"}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("connect-time push order = %v, want %v", order, want)
+		}
+	}
+}

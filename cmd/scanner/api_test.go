@@ -176,3 +176,20 @@ func TestFundingHistoryHandler_HonoursTheRequestedWindow(t *testing.T) {
 		}
 	}
 }
+
+// WS-CONTRACT §10 documents the endpoint as GET; anything else is refused with
+// 405 + Allow rather than silently served the identical read-only answer.
+func TestFundingHistoryHandler_RefusesNonGET(t *testing.T) {
+	handler := newFundingHistoryHandler(nil, repoConfig(t))
+
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodDelete} {
+		recorder := httptest.NewRecorder()
+		handler(recorder, httptest.NewRequest(method, "/api/funding/history?symbol=BTCUSDT", nil))
+		if recorder.Code != http.StatusMethodNotAllowed {
+			t.Errorf("%s: status = %d, want 405", method, recorder.Code)
+		}
+		if allow := recorder.Header().Get("Allow"); allow != "GET, HEAD" {
+			t.Errorf("%s: Allow = %q, want \"GET, HEAD\"", method, allow)
+		}
+	}
+}
