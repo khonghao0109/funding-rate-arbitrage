@@ -121,6 +121,21 @@ refused and binance leads at 3.48%. **The ranking changes with size** — the ca
 PLAN §7.4 says a screener without depth gets backwards. Venues whose fee
 schedule is `verified: false` refuse to produce a number rather than costing 0.
 
+Step 3.2 added `EvaluateEntry`/`EvaluateExit` — six entry conditions, four exit
+conditions, each returning a `Check` with the numbers behind it, and **every
+check runs even after one fails** so the log names all the problems at once.
+Three rules it fixes in place: the decision is made on **settled history, never
+on a forming rate** (only settled rates exist on both sides of the step-3.5
+gate, and `IsEstimated` means something different at every venue — see the trap
+table); a check whose dependency failed reports "not evaluated" instead of
+inventing a second cause; and the decay exit requires the net APR to stay under
+the floor for N consecutive settlements, because a single-print rule closes on a
+one-period dip and pays a round trip in each direction to do it (measured on
+binance BTCUSDT Aug 2026: 0.79 → 0.51 → 0.23 → 0.20 → 0.83 → 1.00 bps/8h). A
+funding SIGN FLIP still exits immediately — that is money leaving every
+settlement. Measured on the real corpus: strict thresholds give 0 entries / 28
+skips; loose ones give 4 entries at 5.71–6.97% net APR, inside the 5–15% band.
+
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
 (venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),

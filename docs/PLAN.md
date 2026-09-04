@@ -99,7 +99,7 @@
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
-| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **1/5 bước** | Tín hiệu có kiểm chứng lịch sử |
+| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **2/5 bước** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Basis Trade | 4 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot hỗ trợ 2 chiến lược |
@@ -1329,10 +1329,84 @@ Sửa:
 > có chủ đích (hướng thận trọng) và **cả hai vế của cổng 3.5 lấy từ cùng hàm
 > này**, nên nó không thể thành nguồn bất đồng giữa chúng.
 
-#### Bước 3.2 — Sinh tín hiệu
+#### Bước 3.2 — Sinh tín hiệu ✅ (2026-09-04)
 - Điều kiện vào lệnh: funding rate > ngưỡng **VÀ** duy trì qua N chu kỳ **VÀ** APY ròng > sàn tối thiểu **VÀ** thanh khoản đủ.
 - Điều kiện thoát: funding chuyển âm, APY ròng < ngưỡng, hoặc basis giãn bất thường.
 - **Nghiệm thu:** tín hiệu ghi log đầy đủ lý do vào/ra.
+
+> **Kết quả 3.2 (2026-09-04).** `internal/strategy/signal.go`: `EvaluateEntry`
+> và `EvaluateExit` — hai hàm DUY NHẤT, vì Bước 3.5 chấm điểm bằng cách so
+> production với backtest và một cổng giữa hai bản triển khai không phân biệt
+> được "chiến lược sai" với "hai bản đã trôi khỏi nhau" (Q8, §7.1).
+>
+> **Sáu điều kiện vào**, mỗi điều kiện trả về một `Check{Name, Passed, DetailVI}`
+> có số kèm theo: `hedge_leg` · `history_depth` · `rate_threshold` ·
+> `persistence` · `liquidity` · `net_apr`. **Mọi check đều chạy kể cả khi một
+> cái đã hỏng** — dừng sớm thì nêu tên lỗi đầu tiên và giấu phần còn lại, người
+> vận hành sửa một thứ rồi chạy lại mới thấy thứ kế, trong khi log đã có sẵn
+> câu trả lời. **Bốn điều kiện thoát**, ngược cực (Passed = đã KÍCH HOẠT):
+> `hedge_gone` · `funding_negative` · `net_apr_floor` · `basis_widened`.
+>
+> **Ba quyết định thiết kế, đo trên corpus thật:**
+>
+> ① **Quyết định trên lịch sử ĐÃ SETTLE, không dùng rate đang hình thành.** Hai
+> lý do độc lập cùng chỉ một hướng: backtest đứng ở một mốc quá khứ chỉ có số
+> đã settle, nên nếu tín hiệu phụ thuộc rate đang trôi thì cổng 3.5 **không tái
+> lập được quyết định kể cả về nguyên tắc**; và `IsEstimated` mang nghĩa KHÁC
+> NHAU từng sàn (Gate `true` = đang trôi thật; Kraken `false` = số đã settle
+> của giờ vừa xong, **không** dự báo mốc kế) nên mọi luật viết theo cờ đó sẽ có
+> bảy nghĩa — đúng cách đọc ngây thơ mà bảng bẫy cảnh báo. Rate live vẫn được
+> ghi vào log cho người vận hành, nhưng không vào phép tính.
+>
+> ② **Check phụ thuộc không được bịa nguyên nhân thứ hai.** Chạy thật phát
+> hiện: perp quote USD không có chân hedge thì `liquidity` và `net_apr` báo
+> *"biểu phí của (nguồn không tên) chưa xác minh"* — ba dòng đổ lỗi ba thứ
+> trong khi chỉ sai một thứ, và dòng to nhất chỉ sai chỗ. Nay chúng trả
+> "Chưa đánh giá — không có chân hedge".
+>
+> ③ **Thoát theo APR ròng phải BỀN qua N mốc, không theo một mốc.** Đo trên
+> binance BTCUSDT tháng 8/2026, bps/8h: 0,79 → 0,51 → 0,23 → 0,20 → 0,83 →
+> 1,00. Luật một-mốc đóng ở 0,20 rồi lỡ nhịp hồi hai mốc sau, **trả phí vòng cả
+> hai chiều** để làm việc đó. Ngưỡng giữ thấp hơn ngưỡng vào (hysteresis) là
+> chưa đủ: nếu thoát quyết trên một mốc trong khi vào quyết trên cửa sổ bền thì
+> luật thoát nhạy hơn luật vào và khoảng cách hai ngưỡng không mua được gì.
+> **Đảo dấu funding thì vẫn thoát ngay** trên mốc mới nhất — tiền đi ra mỗi kỳ
+> (rủi ro R1), không có lý do chờ.
+>
+> **Nghiệm thu — chạy `EvaluateEntry`/`EvaluateExit` trên corpus thật** (lịch sử
+> funding đã lưu, sổ lệnh đã lưu, ánh xạ hedge từ instrument snapshot):
+>
+> - **Ngưỡng chặt** (0,8 bps/8h bền 6 kỳ, APR ròng ≥ 5%, vốn 50k, giữ 30 ngày):
+>   **0 vào lệnh / 28 bỏ qua** — trung thực, vì funding BTC hiện chỉ 0,16–0,86
+>   bps/8h. Thống kê chặn: liquidity 24 · net_apr 24 · persistence 19 ·
+>   hedge_leg 12 · rate_threshold 11.
+> - **Ngưỡng lỏng** (0,3 bps/8h bền 3 kỳ, APR ròng ≥ 2%): **4 vào lệnh**, tất cả
+>   đều là `binance_futures ← binance_spot` — cặp duy nhất vừa có chân hedge
+>   USDT vừa có biểu phí đã xác minh CẢ HAI chân. APR ròng **5,71% (BTC) ·
+>   6,74% (ETH) · 6,70% (XRP) · 6,97% (SOL)** — nằm gọn trong dải **5–15%**
+>   CLAUDE.md nêu cho chiến lược này, tức số ra không phải là "edge" tưởng tượng.
+> - **Thoát, phát lại đúng mốc funding đảo dấu 2026-06-17**: `funding_negative`
+>   kích hoạt ở −0,6685 bps/8h ("vị thế đang TRẢ chứ không thu") và
+>   `net_apr_floor` ở −10,98%; `hedge_gone` và `basis_widened` **không** kích
+>   hoạt — bốn điều kiện độc lập, không cái nào ăn theo cái nào.
+> - Mỗi quyết định in đủ 6 (hoặc 4) dòng lý do kèm số, cộng khối "đã trừ" /
+>   "CHƯA trừ" lấy thẳng từ `RoundTrip` — tức tiêu chí "ghi log đầy đủ lý do
+>   vào/ra" đo được bằng output chứ không bằng khẳng định.
+>
+> **Một lỗi tìm được khi review, đã sửa trong cùng bước.** `exitNetAPRFloor` đếm
+> `under == len(recent)` trong khi `under` chỉ tăng cho mốc định giá được: một
+> mốc không định giá được nằm trong cửa sổ khiến **lệnh thoát do suy giảm KHÔNG
+> BAO GIỜ kích hoạt** — vị thế cưỡi qua cả một chế độ funding đã chết, trả hoa
+> hồng mà không bao giờ thu lại. Cùng chỗ đó, `worstFrac/bestFrac` gieo mầm theo
+> `i == 0` nên nếu mốc đầu bị bỏ qua thì câu log báo "thấp nhất 0.00%" — một
+> con số không sàn nào công bố. Nay đếm theo `priced`, và có test ghim bằng một
+> rate hữu hạn nhưng đủ lớn để tràn khi annualize (ca duy nhất chạm được nhánh
+> đó, vì `usableSettled` đã lọc mọi hình dạng còn lại).
+>
+> **Nợ ghi nhận.** ① Tín hiệu chưa lên wire và chưa có alert — đó là Bước 3.4;
+> `funding_basis.model` vẫn là `"gross"` cho tới lúc đó. ② `Params` chưa được
+> nạp từ `config.yaml`; hiện là tham số hàm, do caller dựng. Bước 3.3 quét tham
+> số nên sẽ chốt hình dạng trước, rồi mới đưa vào YAML.
 
 #### Bước 3.3 — Backtest engine
 - **Viết bằng Go, import trực tiếp `internal/strategy`** — không viết lại luật vào/ra (quyết định Q8, §7.1). Backtest và production phải chạy cùng một đoạn code, nếu không thì Bước 3.5 mất giá trị chẩn đoán.
@@ -1694,7 +1768,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
-[  ] GĐ 3  Signal, Alert & Backtest      1/5 bước   ← ĐANG LÀM
+[  ] GĐ 3  Signal, Alert & Backtest      2/5 bước   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Basis Trade                   0/4 bước
@@ -1717,7 +1791,17 @@ SQLite với corpus 90.077 mốc settle, và dashboard funding kèm độ sâu s
 slippage dựng từ đường luỹ kế của sổ ĐO ĐƯỢC, hoa hồng taker 4 lượt khớp, và
 cổng chặn cứng khi lệnh vượt độ sâu trong cửa sổ 0,5%. Đo trên corpus thật:
 cùng một funding rate, thứ hạng bốn sàn **đổi theo size** và paradex bị loại từ
-mốc 60k. Việc tiếp theo là **Bước 3.2 — sinh tín hiệu**.
+mốc 60k.
+
+**Bước 3.2 xong (2026-09-04)** — `EvaluateEntry`/`EvaluateExit`, sáu điều kiện
+vào và bốn điều kiện thoát, mỗi cái ghi lý do kèm số. Quyết định chạy trên lịch
+sử **đã settle** chứ không trên rate đang hình thành, vì chỉ số đã settle mới
+tồn tại ở cả hai phía cổng 3.5 và vì `IsEstimated` mang bảy nghĩa khác nhau. Đo
+trên corpus thật: ngưỡng chặt cho **0 lệnh vào / 28 bỏ qua**; ngưỡng lỏng cho
+**4 lệnh**, APR ròng 5,71–6,97% — trong dải 5–15%. Việc tiếp theo là
+**Bước 3.3 — backtest engine**, và nó phải `import internal/strategy` gọi thẳng
+hai hàm trên (Q8), cộng khoản nợ index `funding_at_ms` khi đọc cửa sổ
+toàn-symbol.
 
 ⚠️ GĐ 1 vẫn **chưa đóng**: còn phiên chạy 72h (hạn 2026-09-06) và một phiên khác
 ra phán quyết.

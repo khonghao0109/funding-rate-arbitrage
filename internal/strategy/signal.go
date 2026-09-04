@@ -1,0 +1,640 @@
+package strategy
+
+import (
+	"fmt"
+	"time"
+
+	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/internal/depth"
+	"futures-arbitrage-scanner/internal/fees"
+)
+
+// Entry and exit signals (step 3.2).
+//
+// Two functions, EvaluateEntry and EvaluateExit, and the whole point of the
+// package is that these are the ONLY implementations: the live path and
+// internal/backtest both call them, because docs/PLAN.md step 3.5 gates the
+// project on the two agreeing, and a gate between two implementations cannot
+// tell "the strategy is wrong" from "the implementations drifted" (Q8, §7.1).
+//
+// # Which rate decides
+//
+// The decision is made on the venue's SETTLED history, never on the rate for a
+// period still running. Two independent reasons, and they point the same way:
+//
+//   - Only settled rates exist on both sides of the 3.5 gate. A backtest
+//     standing at an instant in the past has the settlements up to it and
+//     nothing else. If entry depended on a live forming rate, the backtest
+//     could not reproduce the decision even in principle.
+//   - IsEstimated does not mean the same thing at every venue, so a rule
+//     phrased in terms of it would mean seven different things. Measured
+//     (CLAUDE.md trap table, DATA-REQUIREMENTS §3.3⑥): Gate's flag is true
+//     because the rate genuinely drifts mid-period; Kraken's is false because
+//     its WS field is the rate that ALREADY SETTLED for the hour just
+//     finished — it does not forecast the next stamp at all, and its forming
+//     estimate lives in a different field this project does not read. Filtering
+//     venues on that flag, in either direction, is the naive reading the trap
+//     table warns about: it would drop Gate for being honest about drift, or
+//     credit Kraken with a forecast it never made.
+//
+// So a live reading is carried for the operator's log and never enters the
+// arithmetic. Nothing is lost: what makes a funding position worth opening is
+// that the regime has PERSISTED, and persistence is a statement about rates
+// that have already been paid.
+//
+// # Comparison unit
+//
+// Every rate comparison is on RatePer8hFrac. Venues settle hourly, 4-hourly and
+// 8-hourly, and the same per-interval number is three different regimes
+// depending on which (CLAUDE.md rules 3 and 4).
+
+// Action is what the signal says to do.
+type Action string
+
+const (
+	ActionEnter Action = "enter"
+	ActionSkip  Action = "skip"
+	ActionHold  Action = "hold"
+	ActionExit  Action = "exit"
+)
+
+// Check is one condition, its verdict, and the numbers behind it.
+//
+// Name is a stable machine identifier so an alert can be throttled per failing
+// condition; DetailVI is the human sentence. Both are required: the acceptance
+// criterion for this step is that a signal logs its full reasoning, and a
+// verdict with no numbers cannot be argued with after the fact.
+//
+// Polarity differs by direction and is stated on each function: for an ENTRY,
+// Passed means the condition is satisfied and entry may proceed. For an EXIT,
+// Passed means the condition FIRED — the thing it watches for has happened.
+type Check struct {
+	Name     string
+	Passed   bool
+	DetailVI string
+}
+
+// Candidate is one perp, its hedge leg, and everything needed to judge them.
+//
+// Deliberately built from normalized values only: settled history as the store
+// and the venues' REST both deliver it, fee schedules from config, books from
+// internal/depth. No raw venue payload reaches this package (doc.go).
+type Candidate struct {
+	Symbol     string
+	PerpSource string
+
+	// SpotSource is the spot market this perp can actually be hedged against,
+	// or "" when the mapping found none — in which case HedgeNoteVI says why in
+	// the venues' own terms. A USD-quoted perp refused against USDT-only spot
+	// markets is CORRECT behaviour (step 2.4), and the signal's job is to not
+	// emit a lead for a position nobody can open.
+	SpotSource  string
+	HedgeNoteVI string
+
+	// Settled is the venue's already-paid rates for this pair, OLDEST FIRST.
+	Settled []exchanges.FundingHistoryEntry
+
+	// LatestVI describes the venue's current live reading, if the caller has
+	// one. It is LOGGED and never computed with — see the header.
+	LatestVI string
+
+	SpotFee fees.Schedule
+	PerpFee fees.Schedule
+
+	SpotBook depth.Summary
+	PerpBook depth.Summary
+
+	SpotPriceQuote float64
+	PerpPriceQuote float64
+}
+
+// Position is an open funding position, as much of it as the exit rule needs.
+//
+// CLAUDE.md rule 7 — a real position is read from the venue, never from local
+// state. This struct is what the CALLER read; nothing here caches it.
+type Position struct {
+	Symbol     string
+	PerpSource string
+	SpotSource string
+
+	OpenedAtMs    int64
+	NotionalQuote float64
+
+	// EntryBasisPct is the perp-over-spot difference when the position was
+	// opened. The exit rule watches how far it has MOVED, not only its level:
+	// a position opened at a 0.4% basis and now at 0.6% has drifted less than
+	// one opened at 0.0% and now at 0.5%.
+	EntryBasisPct float64
+}
+
+// Decision is one evaluation: what to do, and every condition behind it.
+type Decision struct {
+	At         time.Time
+	Symbol     string
+	PerpSource string
+	SpotSource string
+
+	Action Action
+	Checks []Check
+
+	// NetAPR is the figure the decision was made on. Its OK flag may be false —
+	// that is itself one of the reasons an entry is refused.
+	NetAPR NetAPRResult
+
+	// Cost is what the round trip was priced at, kept so an alert can say what
+	// has been deducted without recomputing it.
+	Cost RoundTrip
+}
+
+// LogLines renders the decision for a log or an alert, verdict first.
+//
+// PLAN.md step 3.2's acceptance criterion is exactly this: every signal carries
+// its full reasoning. A one-line "entered BTCUSDT" is not debuggable a week
+// later, when the question is which condition was marginal.
+func (d Decision) LogLines() []string {
+	lines := []string{fmt.Sprintf("[%s] %s %s/%s ← %s",
+		d.At.UTC().Format(time.RFC3339), d.Action, d.Symbol, d.PerpSource, d.SpotSourceVI())}
+	for _, check := range d.Checks {
+		mark := "✗"
+		if check.Passed {
+			mark = "✓"
+		}
+		lines = append(lines, fmt.Sprintf("  %s %-18s %s", mark, check.Name, check.DetailVI))
+	}
+	if d.NetAPR.OK {
+		lines = append(lines, fmt.Sprintf("  · APR thô %.2f%% → RÒNG %.2f%% (chi phí vòng %.4f%%, giữ %.0f ngày)",
+			d.NetAPR.GrossAPRFrac*pctPerUnit, d.NetAPR.NetAPRFrac*pctPerUnit,
+			d.Cost.TotalPct, d.NetAPR.HoldingDays))
+		if d.NetAPR.DepthIsLowerBound {
+			lines = append(lines, "  ⚠ "+d.NetAPR.NoteVI)
+		}
+	}
+	if d.Cost.OK {
+		for _, applied := range d.Cost.AppliedVI {
+			lines = append(lines, "  − đã trừ: "+applied)
+		}
+		for _, excluded := range d.Cost.ExcludedVI {
+			lines = append(lines, "  ! CHƯA trừ: "+excluded)
+		}
+	}
+	return lines
+}
+
+// SpotSourceVI names the hedge leg, or says there is none.
+func (d Decision) SpotSourceVI() string {
+	if d.SpotSource == "" {
+		return "KHÔNG CÓ CHÂN HEDGE"
+	}
+	return d.SpotSource
+}
+
+// Failed lists the conditions that did not hold, for a caller that wants the
+// short form.
+func (d Decision) Failed() []Check {
+	var out []Check
+	for _, check := range d.Checks {
+		if !check.Passed {
+			out = append(out, check)
+		}
+	}
+	return out
+}
+
+// Params is the strategy's tuning. Every field carries its unit (CONVENTIONS
+// §1); the sweep in internal/backtest varies exactly these.
+type Params struct {
+	// --- entry ---
+	// MinRatePer8hBps is the floor the SETTLED rate must clear, quoted per 8h
+	// so venues on different cadences are comparable.
+	MinRatePer8hBps float64
+	// PersistencePeriods is how many consecutive recent settlements must clear
+	// that floor. One good period is noise; the strategy is paid for a regime.
+	PersistencePeriods int
+	// MinNetAPRFrac is the floor on the NET figure — after commission and
+	// slippage, amortized over HoldingDays.
+	MinNetAPRFrac float64
+
+	NotionalQuote float64
+	HoldingDays   float64
+	MaxBookAge    time.Duration
+
+	// --- exit ---
+	// ExitNetAPRFrac is lower than MinNetAPRFrac on purpose: entering costs a
+	// round trip, so the bar to STAY in is below the bar to get in, or the
+	// position churns across the entry threshold paying commission each way.
+	ExitNetAPRFrac float64
+	// ExitPersistencePeriods is how many CONSECUTIVE recent settlements must
+	// come in under ExitNetAPRFrac before the position closes for decay. 0 and
+	// 1 both mean "close on the first one".
+	//
+	// It exists because the level hysteresis above is not enough on its own.
+	// Entry is decided on a persistence window; if exit were decided on a
+	// single print, the exit rule would be strictly more sensitive than the
+	// entry rule and the gap between the two thresholds would buy nothing.
+	// Measured on the real corpus — binance BTCUSDT, August 2026, per 8h:
+	// 0.79 → 0.51 → 0.23 → 0.20 → 0.83 → 1.00 bps. A single-print rule closes
+	// at 0.20 and misses the recovery two settlements later, paying a round
+	// trip in each direction to do it.
+	//
+	// This does NOT slow the sign-flip exit: funding turning negative is money
+	// leaving on every settlement (risk R1) and fires on the newest reading.
+	ExitPersistencePeriods int
+	// MaxBasisPct is the absolute perp-over-spot difference beyond which the
+	// position is closed regardless of funding; MaxBasisWidenPct is how far it
+	// may move from where it was opened.
+	MaxBasisPct      float64
+	MaxBasisWidenPct float64
+}
+
+// EvaluateEntry decides whether to open a position, and reports every condition.
+//
+// `at` is passed in and never read from a clock: the backtest evaluates
+// historical instants (doc.go).
+//
+// All checks run even after one fails. Short-circuiting would name the first
+// problem and hide the rest, so an operator would fix one thing, re-run, and
+// find the next — while the log had the answer all along.
+//
+// Check polarity here: Passed means the condition is SATISFIED.
+func EvaluateEntry(at time.Time, c Candidate, p Params) Decision {
+	d := Decision{At: at, Symbol: c.Symbol, PerpSource: c.PerpSource, SpotSource: c.SpotSource, Action: ActionSkip}
+
+	usable, droppedSpecial := usableSettled(c.Settled)
+	hedge := checkHedgeLeg(c)
+
+	// The cost is only priced when there IS a hedge leg. Without one there is
+	// no spot book and no spot fee schedule, and pricing against those zero
+	// values made the liquidity and net-APR checks report a FEE problem for an
+	// unnamed venue — three failures describing one cause, and the loudest of
+	// them pointing at the wrong thing. Seen on real data: every USD-quoted
+	// perp logged "biểu phí của (nguồn không tên) chưa xác minh" when its
+	// actual and only problem was having no USDT spot market to hedge against.
+	if hedge.Passed {
+		d.Cost = RoundTripCost(RoundTripInput{
+			NotionalQuote: p.NotionalQuote,
+			SpotFee:       c.SpotFee, PerpFee: c.PerpFee,
+			SpotBook: c.SpotBook, PerpBook: c.PerpBook,
+			At: at, MaxBookAge: p.MaxBookAge,
+		})
+	}
+	newest, haveNewest := newestOf(usable)
+	if haveNewest && hedge.Passed {
+		d.NetAPR = NetAPR(NetAPRInput{
+			Source: c.PerpSource, Symbol: c.Symbol,
+			Model:               newest.Model,
+			RatePerIntervalFrac: newest.RatePerIntervalFrac,
+			IntervalSec:         newest.IntervalSec,
+			HoldingDays:         p.HoldingDays,
+			Cost:                d.Cost,
+		})
+	}
+
+	d.Checks = []Check{
+		hedge,
+		checkHistoryDepth(usable, droppedSpecial, p),
+		checkRateThreshold(newest, haveNewest, p),
+		checkPersistence(usable, p),
+		checkLiquidity(d.Cost, p, hedge.Passed),
+		checkNetAPR(d.NetAPR, p, hedge.Passed),
+	}
+
+	for _, check := range d.Checks {
+		if !check.Passed {
+			return d
+		}
+	}
+	d.Action = ActionEnter
+	return d
+}
+
+// EvaluateExit decides whether to close an open position.
+//
+// Check polarity here is INVERTED against EvaluateEntry: Passed means the
+// condition FIRED — the thing it watches for has happened — and any one of them
+// firing closes the position. Exits are disjunctive because each condition is
+// independently sufficient: funding that has turned costs money every
+// settlement, and a hedge leg that has vanished means the position is not
+// delta-neutral any more whatever funding does.
+func EvaluateExit(at time.Time, pos Position, c Candidate, p Params) Decision {
+	d := Decision{At: at, Symbol: pos.Symbol, PerpSource: pos.PerpSource, SpotSource: c.SpotSource, Action: ActionHold}
+
+	usable, _ := usableSettled(c.Settled)
+	newest, haveNewest := newestOf(usable)
+
+	hedgeGone := exitHedgeGone(c)
+	if !hedgeGone.Passed {
+		d.Cost = RoundTripCost(RoundTripInput{
+			NotionalQuote: pos.NotionalQuote,
+			SpotFee:       c.SpotFee, PerpFee: c.PerpFee,
+			SpotBook: c.SpotBook, PerpBook: c.PerpBook,
+			At: at, MaxBookAge: p.MaxBookAge,
+		})
+	}
+	if haveNewest && !hedgeGone.Passed {
+		d.NetAPR = NetAPR(NetAPRInput{
+			Source: pos.PerpSource, Symbol: pos.Symbol,
+			Model:               newest.Model,
+			RatePerIntervalFrac: newest.RatePerIntervalFrac,
+			IntervalSec:         newest.IntervalSec,
+			HoldingDays:         p.HoldingDays,
+			Cost:                d.Cost,
+		})
+	}
+
+	d.Checks = []Check{
+		hedgeGone,
+		exitFundingNegative(newest, haveNewest),
+		exitNetAPRFloor(pos, usable, d.Cost, d.NetAPR, p, hedgeGone.Passed),
+		exitBasisWidened(pos, c, p),
+	}
+
+	for _, check := range d.Checks {
+		if check.Passed {
+			d.Action = ActionExit
+			return d
+		}
+	}
+	return d
+}
+
+// --- entry conditions ---
+
+func checkHedgeLeg(c Candidate) Check {
+	if c.SpotSource != "" {
+		return Check{"hedge_leg", true, fmt.Sprintf("Chân hedge: spot %s.", c.SpotSource)}
+	}
+	note := c.HedgeNoteVI
+	if note == "" {
+		note = "bảng ghép spot↔perp không có chân nào cho perp này."
+	}
+	return Check{"hedge_leg", false,
+		fmt.Sprintf("KHÔNG mở được vị thế: perp %s không có chân spot để hedge — %s", c.PerpSource, note)}
+}
+
+func checkHistoryDepth(usable []exchanges.FundingHistoryEntry, droppedSpecial int, p Params) Check {
+	detail := fmt.Sprintf("Có %d mốc settle dùng được, cần %d để xét độ bền.", len(usable), p.PersistencePeriods)
+	if droppedSpecial > 0 {
+		detail += fmt.Sprintf(" (Đã loại %d mốc rateType=Special — cổ tức, không phải chế độ funding.)", droppedSpecial)
+	}
+	return Check{"history_depth", p.PersistencePeriods > 0 && len(usable) >= p.PersistencePeriods, detail}
+}
+
+func checkRateThreshold(newest exchanges.FundingHistoryEntry, have bool, p Params) Check {
+	if !have {
+		return Check{"rate_threshold", false, "Không có mốc settle nào để so ngưỡng."}
+	}
+	bps := newest.RatePer8hFrac * bpsPerUnit
+	return Check{"rate_threshold", bps >= p.MinRatePer8hBps, fmt.Sprintf(
+		"Mốc settle mới nhất %.4f bps/8h so với ngưỡng %.4f bps/8h (chu kỳ thật %ds).",
+		bps, p.MinRatePer8hBps, newest.IntervalSec)}
+}
+
+// checkPersistence requires the LAST PersistencePeriods settlements to have all
+// cleared the threshold.
+//
+// Consecutive and recent, not an average: an average lets one enormous
+// settlement carry a series that has otherwise gone quiet, which is the regime
+// this strategy is least able to hold through.
+func checkPersistence(usable []exchanges.FundingHistoryEntry, p Params) Check {
+	if p.PersistencePeriods <= 0 {
+		return Check{"persistence", false, "PersistencePeriods không dương — tham số sai."}
+	}
+	if len(usable) < p.PersistencePeriods {
+		return Check{"persistence", false, fmt.Sprintf(
+			"Chỉ có %d mốc, không đủ %d để kết luận độ bền.", len(usable), p.PersistencePeriods)}
+	}
+	window := usable[len(usable)-p.PersistencePeriods:]
+	var worstBps = window[0].RatePer8hFrac * bpsPerUnit
+	held := 0
+	for _, entry := range window {
+		bps := entry.RatePer8hFrac * bpsPerUnit
+		if bps < worstBps {
+			worstBps = bps
+		}
+		if bps >= p.MinRatePer8hBps {
+			held++
+		}
+	}
+	return Check{"persistence", held == len(window), fmt.Sprintf(
+		"%d/%d mốc gần nhất trên ngưỡng %.4f bps/8h; mốc thấp nhất trong cửa sổ %.4f bps/8h.",
+		held, len(window), p.MinRatePer8hBps, worstBps)}
+}
+
+// notEvaluatedVI is what a check reports when a condition it depends on failed.
+//
+// A dependent check must not manufacture a second, unrelated-looking failure:
+// three lines blaming three things when one thing is wrong is how an operator
+// fixes the wrong one.
+const notEvaluatedVI = "Chưa đánh giá — không có chân hedge nên không có vị thế để định giá."
+
+func checkLiquidity(cost RoundTrip, p Params, hedged bool) Check {
+	if !hedged {
+		return Check{"liquidity", false, notEvaluatedVI}
+	}
+	if !cost.OK {
+		return Check{"liquidity", false, fmt.Sprintf(
+			"Không định giá được vòng vào/ra ở vốn %.0f: %s", p.NotionalQuote, cost.ReasonVI)}
+	}
+	detail := fmt.Sprintf("Cả 4 lượt khớp nằm trong sổ đo được ở vốn %.0f; slippage %.4f%%, phí %.4f%%.",
+		p.NotionalQuote, cost.SlippagePct, cost.FeesPct)
+	if cost.DepthIsLowerBound {
+		detail += " ⚠ Có lượt ăn quá mức sàn công bố → chi phí là cận TRÊN."
+	}
+	return Check{"liquidity", true, detail}
+}
+
+func checkNetAPR(net NetAPRResult, p Params, hedged bool) Check {
+	if !hedged {
+		return Check{"net_apr", false, notEvaluatedVI}
+	}
+	if !net.OK {
+		return Check{"net_apr", false, "Không có APR ròng: " + net.ReasonVI}
+	}
+	return Check{"net_apr", net.NetAPRFrac >= p.MinNetAPRFrac, fmt.Sprintf(
+		"APR RÒNG %.2f%% so với sàn tối thiểu %.2f%% (thô %.2f%%, đã trừ phí và slippage).",
+		net.NetAPRFrac*pctPerUnit, p.MinNetAPRFrac*pctPerUnit, net.GrossAPRFrac*pctPerUnit)}
+}
+
+// --- exit conditions ---
+
+func exitHedgeGone(c Candidate) Check {
+	if c.SpotSource != "" {
+		return Check{"hedge_gone", false, fmt.Sprintf("Chân hedge còn nguyên: spot %s.", c.SpotSource)}
+	}
+	note := c.HedgeNoteVI
+	if note == "" {
+		note = "không rõ lý do."
+	}
+	return Check{"hedge_gone", true,
+		"THOÁT: chân spot không còn ghép được nên vị thế hết delta-neutral — " + note}
+}
+
+func exitFundingNegative(newest exchanges.FundingHistoryEntry, have bool) Check {
+	if !have {
+		return Check{"funding_negative", false, "Chưa có mốc settle mới để xét dấu."}
+	}
+	bps := newest.RatePer8hFrac * bpsPerUnit
+	if bps < 0 {
+		return Check{"funding_negative", true, fmt.Sprintf(
+			"THOÁT: funding đã đảo dấu, mốc mới nhất %.4f bps/8h — vị thế đang TRẢ chứ không thu.", bps)}
+	}
+	return Check{"funding_negative", false, fmt.Sprintf("Funding còn dương: %.4f bps/8h.", bps)}
+}
+
+// exitNetAPRFloor closes a position whose net APR has stayed under the floor
+// for ExitPersistencePeriods consecutive settlements.
+//
+// Consecutive, not the newest alone — see ExitPersistencePeriods for the
+// measurement that forced it. Each period in the window is annualized on its
+// OWN rate through the same NetAPR the entry uses, so decay is judged by the
+// same arithmetic that admitted the position.
+func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost RoundTrip,
+	net NetAPRResult, p Params, hedgeAlreadyGone bool) Check {
+
+	if hedgeAlreadyGone {
+		// The hedge check has already fired and closes the position. Firing
+		// again here would report two independent causes for one event.
+		return Check{"net_apr_floor", false, notEvaluatedVI}
+	}
+	if !net.OK {
+		return Check{"net_apr_floor", true, "THOÁT: không còn tính được APR ròng — " + net.ReasonVI}
+	}
+
+	window := p.ExitPersistencePeriods
+	if window < 1 {
+		window = 1
+	}
+	if len(usable) < window {
+		window = len(usable)
+	}
+
+	recent := usable[len(usable)-window:]
+	// priced counts the settlements this window could actually value, and it is
+	// what `under` is compared against — NOT len(recent).
+	//
+	// usableSettled has already dropped the unusable shapes, so a period that
+	// still cannot be priced here is rare: it takes a rate that is finite but
+	// large enough to overflow once annualized. Rare is not never, and counting
+	// it in the denominator while it can never reach the numerator made the
+	// decay exit UNABLE TO FIRE — one unpriceable row in the window and the
+	// position rides out a dead funding regime paying commission it never earns
+	// back. The min/max are seeded off the same counter for the same reason: an
+	// unpriceable FIRST period used to leave the reported floor at 0.00%, a rate
+	// no venue published.
+	priced, under := 0, 0
+	var worstFrac, bestFrac float64
+	for _, entry := range recent {
+		periodNet := NetAPR(NetAPRInput{
+			Source: pos.PerpSource, Symbol: pos.Symbol,
+			Model:               entry.Model,
+			RatePerIntervalFrac: entry.RatePerIntervalFrac,
+			IntervalSec:         entry.IntervalSec,
+			HoldingDays:         p.HoldingDays,
+			Cost:                cost,
+		})
+		if !periodNet.OK {
+			continue
+		}
+		if priced == 0 || periodNet.NetAPRFrac < worstFrac {
+			worstFrac = periodNet.NetAPRFrac
+		}
+		if priced == 0 || periodNet.NetAPRFrac > bestFrac {
+			bestFrac = periodNet.NetAPRFrac
+		}
+		priced++
+		if periodNet.NetAPRFrac < p.ExitNetAPRFrac {
+			under++
+		}
+	}
+
+	if priced == 0 {
+		// No evidence either way. The newest-reading check above already exits
+		// when the CURRENT figure cannot be computed, so staying silent here
+		// avoids reporting a second cause for that same one.
+		return Check{"net_apr_floor", false, fmt.Sprintf(
+			"Không định giá được mốc nào trong %d mốc gần nhất — không kết luận suy giảm từ cửa sổ này.",
+			len(recent))}
+	}
+	if under == priced {
+		skipped := ""
+		if priced < len(recent) {
+			skipped = fmt.Sprintf(" (%d/%d mốc không định giá được, đã loại khỏi phép đếm)",
+				len(recent)-priced, len(recent))
+		}
+		return Check{"net_apr_floor", true, fmt.Sprintf(
+			"THOÁT: cả %d mốc settle định giá được gần nhất đều cho APR ròng dưới ngưỡng giữ %.2f%% "+
+				"(thấp nhất %.2f%%, cao nhất %.2f%%)%s — chế độ funding đã tàn, không phải một mốc lỗi nhịp.",
+			priced, p.ExitNetAPRFrac*pctPerUnit, worstFrac*pctPerUnit, bestFrac*pctPerUnit, skipped)}
+	}
+	return Check{"net_apr_floor", false, fmt.Sprintf(
+		"%d/%d mốc định giá được gần nhất dưới ngưỡng giữ %.2f%% (mới nhất %.2f%%) — chưa đủ bền để đóng vị thế.",
+		under, priced, p.ExitNetAPRFrac*pctPerUnit, net.NetAPRFrac*pctPerUnit)}
+}
+
+// exitBasisWidened watches the perp-over-spot difference on two axes: how wide
+// it is, and how far it has moved since the position was opened.
+//
+// Both matter, and neither implies the other. A wide basis is capital tied up
+// in a convergence that has not happened; a basis that has MOVED against the
+// entry is an unrealized loss on the pair that funding has to earn back before
+// the position is worth anything.
+func exitBasisWidened(pos Position, c Candidate, p Params) Check {
+	if !isPositiveFinite(c.SpotPriceQuote) || !isPositiveFinite(c.PerpPriceQuote) {
+		return Check{"basis_widened", false, "Chưa đo được basis: thiếu giá một trong hai chân."}
+	}
+	basisPct := (c.PerpPriceQuote - c.SpotPriceQuote) / c.SpotPriceQuote * pctPerUnit
+	movedPct := basisPct - pos.EntryBasisPct
+
+	if abs(basisPct) > p.MaxBasisPct {
+		return Check{"basis_widened", true, fmt.Sprintf(
+			"THOÁT: basis %.4f%% vượt trần %.4f%%.", basisPct, p.MaxBasisPct)}
+	}
+	if abs(movedPct) > p.MaxBasisWidenPct {
+		return Check{"basis_widened", true, fmt.Sprintf(
+			"THOÁT: basis đã dịch %.4f điểm %% so với lúc vào (%.4f%% → %.4f%%), quá hạn %.4f.",
+			movedPct, pos.EntryBasisPct, basisPct, p.MaxBasisWidenPct)}
+	}
+	return Check{"basis_widened", false, fmt.Sprintf(
+		"Basis %.4f%% (vào lệnh %.4f%%), trong cả trần %.4f%% lẫn biên dịch %.4f.",
+		basisPct, pos.EntryBasisPct, p.MaxBasisPct, p.MaxBasisWidenPct)}
+}
+
+// --- shared ---
+
+// usableSettled drops what must never carry a decision, and counts what it
+// dropped so the log can say so.
+//
+// Binance labels dividend-driven rates "Special" and PLAN.md 3.3 requires them
+// filtered; doing it here rather than in the backtest means the live path
+// cannot forget to. A row with a non-positive interval is refused for the same
+// reason exchanges.DeriveFundingRates refuses one: everything downstream
+// divides by it.
+func usableSettled(entries []exchanges.FundingHistoryEntry) (usable []exchanges.FundingHistoryEntry, droppedSpecial int) {
+	for _, entry := range entries {
+		if entry.RateType == "Special" {
+			droppedSpecial++
+			continue
+		}
+		if entry.IntervalSec <= 0 || !isFinite(entry.RatePer8hFrac) || !isFinite(entry.RatePerIntervalFrac) {
+			continue
+		}
+		usable = append(usable, entry)
+	}
+	return usable, droppedSpecial
+}
+
+// newestOf returns the last entry, which is the newest: every producer of this
+// slice — store.FundingHistory and the venue fetchers — orders oldest first.
+func newestOf(entries []exchanges.FundingHistoryEntry) (exchanges.FundingHistoryEntry, bool) {
+	if len(entries) == 0 {
+		return exchanges.FundingHistoryEntry{}, false
+	}
+	return entries[len(entries)-1], true
+}
+
+func abs(v float64) float64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

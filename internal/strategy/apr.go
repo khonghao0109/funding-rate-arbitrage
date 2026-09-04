@@ -50,7 +50,12 @@ import (
 const (
 	secPerDay   = 86400
 	daysPerYear = 365.0
-	pctPerUnit  = 100
+
+	// The two display units. Go and SQLite hold fractions; percent and basis
+	// points exist only where a number is shown or compared against a
+	// configured threshold (CONVENTIONS §1.5).
+	pctPerUnit = 100
+	bpsPerUnit = 10000
 
 	// maxHoldingDays bounds the amortization window at ten years.
 	//
