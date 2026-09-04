@@ -51,8 +51,36 @@ type Config struct {
 	Server  Server   `yaml:"server"`
 	Scanner Scanner  `yaml:"scanner"`
 	Storage Storage  `yaml:"storage"`
+	Depth   Depth    `yaml:"depth"`
 	Symbols []Symbol `yaml:"symbols"`
 	Sources []Source `yaml:"sources"`
+}
+
+// Depth configures the periodic order book sampling (step 2.7b).
+//
+// The WINDOWS are deliberately absent: they are Go constants in internal/depth
+// because the store's column names carry them (bid_depth_within_0_1pct_quote),
+// and a YAML edit must not be able to redefine what a stored column means to a
+// reader six months later.
+type Depth struct {
+	// Enabled false leaves the scanner exactly as it was before this step:
+	// no book is fetched and the liquidity columns stay empty.
+	Enabled bool `yaml:"enabled"`
+
+	// RefreshEveryMin is the sweep period. PLAN §7.4 asks for 1-4 hours: a
+	// funding position is held for days, so there is no reason to know the
+	// book minute by minute, and each sweep is one REST request per market.
+	RefreshEveryMin int64 `yaml:"refresh_every_min"`
+
+	// Levels is how many price levels to ask each venue for. Venues that cap
+	// lower return what they have (Hyperliquid gives 20 whatever is asked) and
+	// Kraken has no limit parameter at all and always returns its whole book.
+	Levels int `yaml:"levels"`
+
+	// RetainDays keeps the snapshots. 0 means KEEP EVERYTHING, the same
+	// asymmetry as the other retention fields — and it matters more here,
+	// because depth is the one series that can never be re-fetched.
+	RetainDays int `yaml:"retain_days"`
 }
 
 type Server struct {
@@ -232,6 +260,7 @@ func (c *Config) applyDefaults() {
 		c.Server.Port = "8082"
 	}
 	c.Storage.applyDefaults()
+	c.Depth.applyDefaults()
 	for i := range c.Sources {
 		if c.Sources[i].StaleAfterSec <= 0 {
 			c.Sources[i].StaleAfterSec = c.Scanner.DefaultStaleAfterSec
@@ -299,6 +328,51 @@ func (s *Storage) applyDefaults() {
 	}
 }
 
+// depthDefaults: hourly is the slow end of PLAN §7.4's 1-4 hours and still 24
+// samples a day per market, and 100 levels is what every venue with a limit
+// parameter answered in full when measured. A year of hourly sweeps over 36
+// markets is ~315k rows, which is small beside one day of price samples.
+const (
+	defaultDepthRefreshEveryMin = 60
+	defaultDepthLevels          = 100
+	defaultDepthRetainDays      = 365
+)
+
+func (d *Depth) applyDefaults() {
+	if d.RefreshEveryMin <= 0 {
+		d.RefreshEveryMin = defaultDepthRefreshEveryMin
+	}
+	if d.Levels <= 0 {
+		d.Levels = defaultDepthLevels
+	}
+	if d.RetainDays == 0 {
+		d.RetainDays = defaultDepthRetainDays
+	}
+}
+
+// minDepthRefreshEveryMin stops a config edit from turning a screening tool
+// into a polling loop. Every sweep is one REST request per market against the
+// same IP budget the live feeds use, and a book sampled every minute answers no
+// question this project asks — full depth while an order is live is phase 4.4's
+// job and belongs on a WebSocket.
+const minDepthRefreshEveryMin = 5
+
+func (d Depth) validate() error {
+	if !d.Enabled {
+		return nil
+	}
+	switch {
+	case d.RefreshEveryMin < minDepthRefreshEveryMin:
+		return fmt.Errorf("depth.refresh_every_min is %d; below %d it polls venues for a book nothing reads that often",
+			d.RefreshEveryMin, minDepthRefreshEveryMin)
+	case d.Levels < 1:
+		return fmt.Errorf("depth.levels must be at least 1, got %d", d.Levels)
+	case d.RetainDays < 0:
+		return fmt.Errorf("depth.retain_days is %d; use 0 to keep everything", d.RetainDays)
+	}
+	return nil
+}
+
 func (s Storage) validate() error {
 	if !s.Enabled {
 		return nil
@@ -345,6 +419,9 @@ func (c Config) Validate() error {
 	}
 	if len(c.Sources) == 0 {
 		return fmt.Errorf("no sources configured")
+	}
+	if err := c.Depth.validate(); err != nil {
+		return err
 	}
 	if err := c.Storage.validate(); err != nil {
 		return err

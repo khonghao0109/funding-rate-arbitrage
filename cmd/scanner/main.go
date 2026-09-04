@@ -77,6 +77,16 @@ func main() {
 	var recorders sync.WaitGroup
 	db := startStore(ctx, cfg, s, registry, &recorders)
 
+	// Depth (step 2.7b) shares the recorders' WaitGroup: it writes to the same
+	// store, so it has to finish before main closes it.
+	startDepth(ctx, cfg, s, registry, db, func(job func()) {
+		recorders.Add(1)
+		go func() {
+			defer recorders.Done()
+			job()
+		}()
+	})
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.HandleWebSocket)
 	// Settled funding history for the chart (step 2.7). Read-only, and the only
@@ -317,6 +327,10 @@ func startInstrumentRegistry(ctx context.Context, cfg config.Config, s *scanner.
 		// is state and must not depend on whether the last refresh happened to
 		// differ. Cheap enough - it is a map of a few dozen entries.
 		s.SetHedges(hedgeLegs(cfg, mapping))
+		// The same refresh carries the contract→coin multipliers the price
+		// path needs (step 2.7b): three venues publish top-of-book size in
+		// contracts, and until now the wire showed 0 for all of them.
+		s.SetContractSizes(contractSizes(registry.Snapshot()))
 
 		// Compared as a STRUCTURE, not as its rendered text: the log lines
 		// carry only symbol and source names, so a venue revising a step or

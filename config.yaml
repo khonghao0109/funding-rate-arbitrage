@@ -72,6 +72,47 @@ storage:
   retain_funding_days: 365
   retain_price_days: 90
 
+# Độ sâu sổ lệnh (Bước 2.7b). Lấy qua REST theo chu kỳ, KHÔNG stream: vị thế
+# funding giữ hàng ngày tới hàng tuần, nên không có lý do biết sổ lệnh đổi từng
+# mili-giây. `depth` incremental với sequence number và resync chỉ đáng khi đang
+# thực sự đặt lệnh — đó là Bước 4.4. Xem PLAN §7.4.
+depth:
+  enabled: true
+
+  # Mỗi lượt quét là 1 request/market (4 cặp × 9 nguồn = 36 request). PLAN §7.4
+  # đề xuất 1–4 giờ; 60 phút là đầu nhanh của khoảng đó và vẫn 24 mẫu/ngày.
+  refresh_every_min: 60
+
+  # Số mức hỏi mỗi phía. Mỗi fetcher tự KẸP xuống trần của sàn nó, nên con số
+  # này đọc là "xin sâu nhất có thể".
+  #
+  # ⚠️ ĐO 2026-09-04 trên BTCUSDT — 100 mức là KHÔNG ĐỦ. Độ trải của sổ trả về,
+  # tính theo % quanh mid, ở 100 mức so với trần từng sàn:
+  #
+  #   binance_futures  100 → 0,017%   1000 → 0,161%   (trần fetcher 1000)
+  #   binance_spot     100 → 0,028%   1000 → 0,235%   (sàn cho tới 5000)
+  #   bybit_futures    100 → 0,024%    500 → 0,101%   (trần tài liệu 500)
+  #   bybit_spot       100 → 0,084%    200 → 0,177%   (trần tài liệu 200)
+  #   gate_futures     100 → 0,077%    300 → 0,175%   (400 trả HTTP 400)
+  #   okx_futures      100 → 0,024%    400 → 0,077%   (trần cứng, KHÔNG tới 0,1%)
+  #   hyperliquid       20 → 0,024%    — cố định 20 mức, không nới được
+  #   kraken           cả sổ → 99,99%  — không có tham số limit
+  #   paradex          100 → 14,5%     — sổ mỏng nên trải rất rộng
+  #
+  # Với 100 mức thì 7/9 sàn không chạm nổi cửa sổ hẹp 0,1%, nên gần như mọi con
+  # số độ sâu là CẬN DƯỚI và bảng xếp hạng sẽ phản ánh "sàn nào trả nhiều mức
+  # nhất" chứ không phải "sàn nào sâu nhất". Đặt 1000 để mỗi sàn cho hết mức nó
+  # cho; OKX và Hyperliquid vẫn không tới được và được gắn cờ `covers_0_1pct`.
+  levels: 1000
+
+  # Lưu bao lâu. 0 = GIỮ TẤT CẢ.
+  #
+  # ⚠️ Đây là chuỗi DUY NHẤT không backfill được. Funding lịch sử thì sàn công
+  # bố lại sau nhiều tháng; sổ lệnh biến mất ngay khi nó đổi, nên mỗi giờ không
+  # ghi là một giờ GĐ 3 vĩnh viễn không mô hình hoá được slippage. Một năm quét
+  # theo giờ trên 36 market là ~315k dòng — nhỏ hơn một ngày price sample.
+  retain_days: 365
+
 # Các cặp scanner theo dõi.
 #
 # `base` và `quote` được khai tường minh, không suy ra từ hậu tố chuỗi: suy ra

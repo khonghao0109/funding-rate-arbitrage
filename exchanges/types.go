@@ -76,6 +76,25 @@ type OrderbookData struct {
 	// "no liquidity". See docs/PLAN.md step 1.2 and docs/DATA-REQUIREMENTS.md §3.
 	BestBidQtyCoin float64
 	BestAskQtyCoin float64
+
+	// BestBidQtyContracts and BestAskQtyContracts are the same size for the
+	// three venues that denominate their book in CONTRACTS (step 2.7b). They
+	// exist because this package cannot do the conversion: the multiplier is a
+	// per-instrument property held by internal/instruments, which exchanges/
+	// must not import.
+	//
+	// Exactly one pair is ever filled. A connector for a coin-denominated venue
+	// fills the ...Coin fields and leaves these 0; OKX, Gate and Kraken do the
+	// opposite. Two explicitly named fields rather than one field plus a flag,
+	// because the whole failure this prevents is a number being read in the
+	// wrong unit, and a name is harder to ignore than a boolean.
+	//
+	// The scanner multiplies by the registry's ContractSizeCoin and leaves the
+	// result at 0 when the multiplier is unknown - Gate's BTC contract is
+	// 0.0001 BTC, so a missing multiplier treated as 1 would report ten
+	// thousand times the real size.
+	BestBidQtyContracts float64
+	BestAskQtyContracts float64
 }
 
 type TradeData struct {

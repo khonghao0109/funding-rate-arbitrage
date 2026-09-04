@@ -132,3 +132,57 @@ CREATE TABLE IF NOT EXISTS instrument_snapshots (
 
     PRIMARY KEY (snapshot_day, source, symbol)
 ) WITHOUT ROWID;
+
+-- depth_snapshots is one periodic order book measurement per market
+-- (step 2.7b).
+--
+-- It exists because depth CANNOT be backfilled. Funding history is published by
+-- the venues months after the fact; an order book is gone the instant it
+-- changes, so every hour not recorded here is an hour phase 3 can never model
+-- slippage for. That is the whole justification for the table — the live
+-- dashboard would be happy with memory.
+--
+-- The window percentages are in the COLUMN NAMES, which is why they are Go
+-- constants and not configuration: a YAML edit must not be able to redefine
+-- what a stored column means for a reader six months later.
+--
+-- Every depth figure is in the market's QUOTE asset, not USD. Kraken,
+-- Hyperliquid and Paradex quote USD while the rest quote USDT, and summing them
+-- as one currency is the mix docs/WS-CONTRACT.md §5.2 refuses elsewhere. Join
+-- instrument_snapshots for the quote if a reader needs to convert.
+CREATE TABLE IF NOT EXISTS depth_snapshots (
+    source          TEXT    NOT NULL,
+    symbol          TEXT    NOT NULL,
+    sampled_at_ms   INTEGER NOT NULL,  -- OUR clock, one stamp per sweep
+    venue_time_ms   INTEGER NOT NULL,  -- the venue's own, 0 when it sends none
+
+    mid_price_quote REAL    NOT NULL,
+    best_bid_quote  REAL    NOT NULL,
+    best_ask_quote  REAL    NOT NULL,
+    -- Already converted from contracts where the venue quoted them; the flag
+    -- below says whether a conversion was involved.
+    best_bid_qty_coin REAL  NOT NULL,
+    best_ask_qty_coin REAL  NOT NULL,
+    spread_pct      REAL    NOT NULL,
+
+    bid_depth_within_0_1pct_quote REAL NOT NULL,
+    ask_depth_within_0_1pct_quote REAL NOT NULL,
+    bid_depth_within_0_5pct_quote REAL NOT NULL,
+    ask_depth_within_0_5pct_quote REAL NOT NULL,
+
+    bid_levels      INTEGER NOT NULL,
+    ask_levels      INTEGER NOT NULL,
+    -- How far from the mid the farthest level returned sits. When a span is
+    -- BELOW a window, that window's figure is a lower bound and not a
+    -- measurement: Hyperliquid returns 20 levels spanning 0.025% on BTC.
+    -- A reader that ignores these two columns will call that venue illiquid.
+    bid_span_pct    REAL    NOT NULL,
+    ask_span_pct    REAL    NOT NULL,
+
+    is_contract_book INTEGER NOT NULL,  -- the numbers above came from a conversion
+
+    PRIMARY KEY (source, symbol, sampled_at_ms)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS depth_snapshots_by_symbol
+    ON depth_snapshots (symbol, sampled_at_ms);

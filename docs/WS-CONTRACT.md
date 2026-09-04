@@ -2,7 +2,8 @@
 
 > **Chốt:** Bước 1.0 · **Phiên bản:** `v: 1`
 > **Phạm vi hiệu lực:** toàn bộ Giai đoạn 1 (Bước 1.0 → 1.6), mở rộng ở Bước 2.7a
-> theo đúng luật ở mục 8 (thêm message type và trường mới có mặc định, `v` giữ nguyên)
+> và 2.7b theo đúng luật ở mục 8 (thêm message type và trường mới có mặc định,
+> `v` giữ nguyên)
 > **Liên quan:** [PLAN.md](PLAN.md) · [CONVENTIONS.md](CONVENTIONS.md#1-quy-tắc-quan-trọng-nhất-của-dự-án-này-hậu-tố-đơn-vị)
 
 ---
@@ -57,7 +58,9 @@ tại trên wire nhưng đang mang giá trị mặc định.
 | `meta.cost_basis` | ⬜ `model:"none"` | ⬜ | ⬜ | ✅ `taker_round_trip` | ✅ | ✅ |
 | `meta.symbols` | ✅ (Go) | ✅ | ✅ | ✅ | ✅(yaml) | ✅ |
 
-🟡 = điền một phần. `best_*_qty_coin` chỉ có ở 5 nguồn báo bằng coin (binance ×2, bybit ×2, hyperliquid); OKX, Gate, Kraken báo bằng contract và Paradex không có size — bốn nguồn đó giữ `0`, nghĩa là **chưa biết**, không phải **không có thanh khoản**. Xem [PLAN §1.2](PLAN.md).
+🟡 = điền một phần. `best_*_qty_coin` ban đầu chỉ có ở 5 nguồn báo bằng coin (binance ×2, bybit ×2, hyperliquid); OKX, Gate, Kraken báo bằng contract và Paradex không có size — bốn nguồn đó giữ `0`, nghĩa là **chưa biết**, không phải **không có thanh khoản**. Xem [PLAN §1.2](PLAN.md).
+
+✅ **Bước 2.7b đóng khoản nợ đó cho 3 trong 4 nguồn.** Connector của OKX/Gate/Kraken giờ phát khối lượng đỉnh sổ dưới dạng CONTRACT (`OrderbookData.Best*QtyContracts`), và scanner nhân với `ContractSizeCoin` của instrument registry trước khi lên wire — đo sống 2026-09-04: gate 1,3384 · okx 1,8104 · kraken 0,0369 BTC, trước đó cả ba là `0`. **8/9 nguồn** giờ có số thật; Paradex vẫn `0` vì sàn không công bố size nào. Không quy đổi được thì vẫn để `0`: một contract count Gate đưa thẳng vào trường `..._coin` sẽ báo thanh khoản gấp **mười nghìn lần** sự thật.
 
 ---
 
@@ -71,7 +74,7 @@ Mọi message đều có:
 
 | Trường | Kiểu | Ý nghĩa |
 |---|---|---|
-| `type` | string | `meta` \| `prices` \| `spreads` \| `arbitrage` |
+| `type` | string | `meta` \| `prices` \| `spreads` \| `arbitrage` \| `funding` (2.7a) \| `depth` (2.7b) |
 | `v` | int | Phiên bản hợp đồng. FE cảnh báo nếu khác `1` |
 | `server_time_ms` | int64 | Đồng hồ server lúc gửi. **Mọi phép tính tuổi dữ liệu phải mốc theo trường này**, không dùng `Date.now()` |
 
@@ -456,6 +459,9 @@ Bước 2.7a đã thêm theo đúng luật đó, `v` giữ nguyên `1`:
 | 2.7a | `meta.sources[].funding_stale_after_sec` | `0` = nguồn này không có funding |
 | 2.7a | `meta.sources[].funding_publish_mode` | `""` = nguồn này không có funding |
 | 2.7a | HTTP `GET /api/funding/history` (mục 10) | — (route mới) |
+| 2.7b | message type **`depth`** (mục 11) | — (type mới, FE cũ bỏ qua) |
+| 2.7b | `meta.depth` | `{refresh_every_sec, windows_pct, note_vi}` |
+| 2.7b | `prices[sym][src].best_bid_qty_coin`/`best_ask_qty_coin` **có dữ liệu thật ở OKX/Gate/Kraken** | không đổi shape — 0 vẫn là "chưa biết" |
 
 ---
 
@@ -633,3 +639,82 @@ Ba điểm không được bỏ:
 Lỗi trả về `{"error_vi": "..."}` kèm status: **503** khi
 `storage.enabled=false` (không có database ≠ không có mốc nào — hai chuyện đó vẽ
 ra cùng một biểu đồ rỗng), **400** cho tham số sai, **500** khi đọc store hỏng.
+
+---
+
+## 11. `depth` — độ sâu sổ lệnh (Bước 2.7b)
+
+Gửi **ngay sau `funding`** lúc client kết nối, rồi **mỗi khi một lượt quét xong**
+(mặc định 1 giờ). Không có ticker: một lượt quét là thứ duy nhất làm bảng này
+đổi, và chờ tick tiếp theo nghĩa là hiển thị sổ lệnh cũ thêm gần một giờ nữa.
+
+```json
+{
+  "type": "depth", "v": 1, "server_time_ms": 1788500000000,
+  "depth": {
+    "BTCUSDT": {
+      "gate_futures": {
+        "sampled_at_ms": 1788499940000, "age_ms": 60000, "status": "live",
+        "venue_time_ms": 1788499939800,
+        "mid_price_quote": 81041.6, "best_bid_quote": 81041.1, "best_ask_quote": 81042.1,
+        "best_bid_qty_coin": 1.3384, "best_ask_qty_coin": 1.4491, "spread_pct": 0.0012,
+        "bid_depth_within_0_1pct_quote": 9681000.0,
+        "ask_depth_within_0_1pct_quote": 7905000.0,
+        "bid_depth_within_0_5pct_quote": 13941000.0,
+        "ask_depth_within_0_5pct_quote": 11020000.0,
+        "bid_levels": 300, "ask_levels": 300,
+        "bid_span_pct": 0.208, "ask_span_pct": 0.199,
+        "covers_0_1pct": true, "covers_0_5pct": false,
+        "is_contract_book": true,
+        "error_vi": ""
+      }
+    }
+  }
+}
+```
+
+| Trường | Kiểu | Mặc định | Ghi chú |
+|---|---|---|---|
+| `sampled_at_ms` | int64 | `0` | Thời điểm **BOT** đo, MỘT mốc cho cả lượt quét. `venue_time_ms` là đồng hồ sàn, chỉ để chẩn đoán |
+| `age_ms` | int64 | `-1` | `server_time_ms - sampled_at_ms` |
+| `status` | string | `unknown` | `live` \| `stale` \| `unknown`. `stale` = quá 2,5 lần chu kỳ quét. Đo hỏng thì là **`unknown`**, không phải `stale`: "không đọc được" khác "số cũ" |
+| `mid_price_quote` | float | `0` | `(best_bid + best_ask)/2`, tính bằng **ĐỒNG QUOTE của sàn đó** |
+| `best_bid_qty_coin` / `best_ask_qty_coin` | float | `0` | Đã quy đổi sang COIN |
+| `spread_pct` | float | `0` | `(ask − bid)/mid × 100` |
+| `*_depth_within_0_1pct_quote` / `*_depth_within_0_5pct_quote` | float | `0` | Tổng **notional** (`giá × khối lượng`) nằm trong cửa sổ, đo từ **MID** chứ không phải từ đỉnh mỗi phía. Đơn vị là đồng quote của sàn — **không cộng chéo quote** |
+| `bid_levels` / `ask_levels` | int | `0` | Số mức sàn thực sự trả về |
+| `bid_span_pct` / `ask_span_pct` | float | `0` | Mức xa nhất sàn trả về, cách mid bao nhiêu % |
+| `covers_0_1pct` / `covers_0_5pct` | bool | `false` | **Backend quyết** (luật 3): span có tới cửa sổ đó không. `false` = con số kia là **CẬN DƯỚI**, FE hiện dấu `≥` |
+| `is_contract_book` | bool | `false` | Sàn niêm yết sổ theo contract và các số trên là kết quả quy đổi — tức chúng phụ thuộc instrument registry đúng |
+| `error_vi` | string | `""` | Không đọc/không quy đổi được. Dòng **vẫn được gửi**: một sàn biến mất khỏi bảng đọc thành "sàn này không có thanh khoản" |
+
+### 11.1. Vì sao `covers_*` tồn tại
+
+Đo 2026-09-04 trên BTCUSDT, độ trải của sổ trả về ở trần từng sàn:
+
+| Sàn | Mức | Span bid | Tới 0,1%? |
+|---|---|---|---|
+| kraken_futures | 1.843 (cả sổ) | 99,999% | ✅ |
+| binance_spot | 1.000 | 0,310% | ✅ |
+| bybit_spot | 200 | 0,240% | ✅ |
+| gate_futures | 300 | 0,208% | ✅ |
+| binance_futures | 1.000 | 0,172% | ✅ |
+| bybit_futures | 500 | 0,091% | ❌ (sát ngưỡng) |
+| okx_futures | 400 | 0,069% | ❌ (trần cứng) |
+| hyperliquid_futures | 20 | 0,024% | ❌ (trần cứng) |
+| paradex_futures | 100 | 14,71% | ✅ (sổ mỏng nên trải rộng) |
+
+Không có con số `levels` nào làm cả chín sàn phủ được cửa sổ 0,5%. Nên độ sâu ở
+đây **không phải lúc nào cũng là phép đo** — ở sàn không phủ nổi, nó là cận
+dưới, và `covers_*` là thứ duy nhất phân biệt "sổ mỏng" với "sàn trả ít mức".
+Bỏ qua hai cờ này thì bảng xếp hạng sẽ đo *sàn nào trả nhiều mức nhất*.
+
+### 11.2. Số này CHƯA phải slippage
+
+Nó nói **có bao nhiêu đang nằm gần giá**, không nói lệnh $60.000 khớp ở đâu. Mô
+hình slippage từ độ sâu là Bước 3.1, và đó cũng là bước đầu tiên được phép dùng
+chữ "ròng" ([PLAN §7.4](PLAN.md#74-chiến-lược-độ-sâu-sổ-lệnh)).
+
+⚠️ Cột đáng nhìn nhất là **phía BID của chân SPOT**: vị thế funding thoát bằng
+cách BÁN chân spot, và lúc thoát là lúc funding đảo chiều — tương quan với thị
+trường căng và sổ mỏng đi. Độ sâu lúc vào không dự báo được độ sâu lúc ra.

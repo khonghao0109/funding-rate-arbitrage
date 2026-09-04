@@ -69,6 +69,7 @@ func startStore(ctx context.Context, cfg config.Config, s *scanner.Scanner,
 		prune(ctx, db, time.Duration(cfg.Storage.PruneEveryHours)*time.Hour, store.Retention{
 			FundingDays: cfg.Storage.RetainFundingDays,
 			PriceDays:   cfg.Storage.RetainPriceDays,
+			DepthDays:   cfg.Depth.RetainDays,
 		})
 	})
 	return db
@@ -203,9 +204,9 @@ func prune(ctx context.Context, db *store.Store, every time.Duration, policy sto
 			log.Printf("storage: prune: %v", err)
 			return
 		}
-		if result.FundingRows > 0 || result.PriceRows > 0 {
-			log.Printf("storage: pruned %d funding rows and %d price rows",
-				result.FundingRows, result.PriceRows)
+		if result.FundingRows > 0 || result.PriceRows > 0 || result.DepthRows > 0 {
+			log.Printf("storage: pruned %d funding rows, %d price rows and %d depth rows",
+				result.FundingRows, result.PriceRows, result.DepthRows)
 		}
 	})
 }

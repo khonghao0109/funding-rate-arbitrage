@@ -17,6 +17,12 @@
 //     of a round sharing one sampled_at_ms so a cross-venue spread stays a
 //     lookup rather than a join on approximate times.
 //   - instrument_snapshots — one day's trading rules per market.
+//   - depth_snapshots — one periodic order book measurement per market
+//     (step 2.7b). The only series here that can NEVER be backfilled: a venue
+//     publishes settled funding months later, but the book it had an hour ago
+//     is gone. Every sweep not written is an hour phase 3 cannot model
+//     slippage for. The window percentages live in the column names, which is
+//     why they are Go constants rather than configuration.
 //
 // Instrument snapshots are versioned by day on purpose: when a venue changes a
 // stepSize or a funding interval, the change must be visible in hindsight,
@@ -27,7 +33,8 @@
 // file from Python, and `rate_per_8h` next to `interval_sec` is how a reader
 // ends up dividing a figure that was already divided.
 //
-// Retention: 12 months of funding, 3 months of price samples, instrument
+// Retention: 12 months of funding, 3 months of price samples, 12 months of
+// depth snapshots, instrument
 // snapshots forever. A retention of 0 means KEEP EVERYTHING, never "delete
 // everything" — an unset field in a YAML file must not be the instruction that
 // empties a corpus three of the seven venues cannot refill.

@@ -18,6 +18,7 @@
 8. [Ngân sách rate limit](#8-ngân-sách-rate-limit)
 9. [Lịch sử funding qua REST](#9-lịch-sử-funding-qua-rest)
 10. [Nhịp phát funding realtime](#10-nhịp-phát-funding-realtime--đo-ở-bước-27a-2026-09-04)
+11. [Độ sâu sổ lệnh qua REST](#11-độ-sâu-sổ-lệnh-qua-rest--đo-ở-bước-27b-2026-09-04)
 
 ---
 
@@ -793,3 +794,77 @@ FAIL. Verdict chỉ khẳng định **đơn vị/ngữ nghĩa**, không ghim gi�
 nên sàn đổi interval hay cap vẫn PASS; một FAIL nghĩa là "sàn đã đổi ngữ nghĩa
 field, hoặc regime thị trường vượt khả năng phân định của kiểm" — đi xem lại,
 đừng mặc định code sai và cũng đừng lờ đi.
+
+---
+
+## 11. ĐỘ SÂU SỔ LỆNH QUA REST — đo ở Bước 2.7b (2026-09-04)
+
+### 11.1 Chín sàn, sáu hình dạng
+
+| Sàn | Endpoint | Tham số mức | Đơn vị size | Thứ tự |
+|---|---|---|---|---|
+| binance futures | `/fapi/v1/depth` | `limit`, tới 1000 | **coin** | bid ↓, ask ↑ |
+| binance spot | `/api/v3/depth` | `limit`, tới 5000 | **coin** | bid ↓, ask ↑ |
+| bybit linear | `/v5/market/orderbook?category=linear` | `limit`, docs 500 | **coin** | `b`/`a`, bid ↓ |
+| bybit spot | `/v5/market/orderbook?category=spot` | `limit`, docs 200 | **coin** | `b`/`a`, bid ↓ |
+| okx swap | `/api/v5/market/books` | `sz`, trần **400** | **contract** | bid ↓, ask ↑ |
+| gate futures | `/api/v4/futures/usdt/order_book` | `limit`, trần **300** | **contract** | bid ↓, ask ↑ |
+| kraken futures | `/derivatives/api/v3/orderbook` | **KHÔNG CÓ** | **contract** (=1 base) | ⚠️ bid **↑** |
+| hyperliquid | POST `/info {"type":"l2Book"}` | **KHÔNG CÓ**, cố định 20 | **coin** | `levels[0]`=bid |
+| paradex | `/v1/orderbook/{market}` | `depth`, trần **100** | **coin** | bid ↓, ask ↑ |
+
+### 11.2 Bốn cái bẫy
+
+**① Kraken trả bid TĂNG DẦN.** `bids[0]` là lệnh chờ ở giá **1** (41 contract),
+best bid nằm ở phần tử CUỐI. Đọc index 0 như tám sàn kia sẽ đặt một lệnh mua $1
+lên đầu mọi phép tính thanh khoản và biến spread thành gần như cả giá. Vì thế
+`finishDepthBook` sắp xếp **vô điều kiện** thay vì tin thứ tự sàn ghi trong tài
+liệu — cái bẫy này tìm ra bằng probe, không phải bằng đọc.
+
+**② Ba sàn niêm yết sổ theo CONTRACT.** Gate BTC_USDT `quanto_multiplier`
+0,0001 · OKX BTC-USDT-SWAP `ctVal` 0,01 · Kraken PF_ = 1 base unit. Không quy
+đổi thì Gate trông sâu gấp **mười nghìn lần**. `exchanges/` cố ý KHÔNG quy đổi
+(không được import `internal/`), nên số rời gói đó nằm ở trường tên
+`QtyNative` kèm tài liệu, và `internal/depth` nhân với `ContractSizeCoin` của
+registry. **Không biết hệ số thì từ chối công bố**, không mặc định 1.
+
+**③ Trần mức là chuyện của TỪNG SÀN, và vượt trần thì MẤT CẢ SỔ.** Gate trả
+HTTP 400 ở `limit=400`; Paradex nói thẳng
+`"Depth: must be no greater than 100."` ở `depth=200`. Hai sàn này từ chối chứ
+không cắt ngắn — nên mỗi fetcher tự kẹp xuống trần của nó. Phát hiện ngay trong
+lượt nghiệm thu 2.7b: nâng con số chung từ 100 lên 1000 biến 4 chuỗi Paradex
+đang khoẻ thành lỗi.
+
+**④ 100 mức là KHÔNG ĐỦ, và đây là phát hiện đổi thiết kế.** Độ trải của sổ
+trả về (khoảng cách từ mid tới mức xa nhất) trên BTCUSDT:
+
+| Sàn | @100 mức | @trần | Tới 0,1%? | Tới 0,5%? |
+|---|---|---|---|---|
+| kraken_futures | — | 99,999% (cả sổ) | ✅ | ✅ |
+| paradex_futures | 14,71% | 14,71% | ✅ | ✅ |
+| binance_spot | 0,028% | 0,310% (1000) | ✅ | ❌ |
+| bybit_spot | 0,084% | 0,240% (200) | ✅ | ❌ |
+| gate_futures | 0,077% | 0,208% (300) | ✅ | ❌ |
+| binance_futures | 0,017% | 0,172% (1000) | ✅ | ❌ |
+| bybit_futures | 0,024% | 0,091% (500) | ❌ | ❌ |
+| okx_futures | 0,024% | 0,077% (400) | ❌ | ❌ |
+| hyperliquid_futures | 0,024% | 0,024% (20) | ❌ | ❌ |
+
+Ở 100 mức thì **7/9 sàn không chạm nổi cửa sổ hẹp 0,1%**, nên gần như mọi con số
+là cận dưới và bảng xếp hạng sẽ đo *sàn nào trả nhiều mức nhất* chứ không phải
+*sàn nào sâu nhất* — đúng kiểu "thông tin sai hướng" mà §7.4 cảnh báo. Sau khi
+nâng lên trần từng sàn: 6/9 phủ 0,1%, và **không con số `levels` nào làm cả chín
+sàn phủ 0,5%**. Đó là lý do `covers_0_1pct`/`covers_0_5pct` tồn tại trên wire.
+
+### 11.3 Chi phí
+
+Một lượt quét = 1 request/market = **36 request/giờ** cho 4 cặp × 9 nguồn, cách
+nhau 150ms. Kraken là chi phí cố định lớn nhất: không có tham số limit nên luôn
+trả cả sổ (~40 KB, 1.843 bid + 873 ask). Không sàn nào trong nhóm này bị rate
+limit ở nhịp đó — `l2Book` của Hyperliquid còn nằm ở bậc weight 2, bậc rẻ nhất.
+
+### 11.4 Vì sao phải LƯU
+
+Đây là chuỗi **duy nhất không backfill được**. Funding lịch sử thì sàn công bố
+lại sau nhiều tháng; sổ lệnh biến mất ngay khi nó đổi. Mỗi giờ không ghi là một
+giờ GĐ 3 vĩnh viễn không mô hình hoá được slippage cho khoảng thời gian đó.

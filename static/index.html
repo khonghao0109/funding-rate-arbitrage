@@ -1062,6 +1062,7 @@
                             Chi tiết <span id="fundingDetailSymbol">—</span>
                             <span class="funding-hint">Đổi cặp ở ô Symbol bên trái.</span>
                         </div>
+                        <div class="funding-note" id="depthNote"></div>
                         <div class="funding-detail-wrap">
                             <table class="funding-detail">
                                 <thead>
@@ -1074,11 +1075,13 @@
                                         <th>Độ tươi</th>
                                         <th>Chân spot để hedge</th>
                                         <th>Hoà phí (ngày)</th>
+                                        <th title="Vào lệnh: bán perp vào phía mua của sổ perp">Sổ perp bid ±0,5%</th>
+                                        <th title="Thoát lệnh: bán chân spot vào phía mua của sổ spot — đây mới là chỗ kẹt">Sổ spot bid ±0,5%</th>
                                     </tr>
                                 </thead>
                                 <tbody id="fundingDetailBody">
                                     <tr>
-                                        <td colspan="8" class="funding-empty">Đang chờ dữ liệu funding…</td>
+                                        <td colspan="10" class="funding-empty">Đang chờ dữ liệu funding…</td>
                                     </tr>
                                 </tbody>
                             </table>

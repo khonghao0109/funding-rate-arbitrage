@@ -92,10 +92,16 @@ SQLite and `internal/scanner` must not learn about the store, and a Funding tab
 with the venue × pair matrix in **bps per 8h**, a per-pair detail table and a
 settled-history chart. The contract grew by the rules of
 [WS-CONTRACT §8](docs/WS-CONTRACT.md) — new type, new fields with defaults, `v`
-still `1`. **Step 2.7b is still owed**: REST order book depth for the nine
-tradable sources, the contract→coin conversion, the liquidity column and a
-`depth_snapshots` table. The four depth traps are already measured — see the P1
-block under PLAN step 2.7.
+still `1`.
+
+Step 2.7b added REST order book depth for all nine tradable sources
+(`exchanges/*_depth.go` → `internal/depth` → `depth_snapshots`, schema v2), the
+`depth` message, and the liquidity columns — including the BID side of the spot
+leg, which is where a funding position actually gets stuck on the way out. It
+also closed the step-1.2 debt: OKX, Gate and Kraken now publish their top-of-book
+size as CONTRACTS and the scanner converts through the registry, so 8 of 9
+sources carry a real coin quantity where 3 of them showed 0 since step 1.2.
+**Phase 2 is complete.**
 
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
@@ -257,6 +263,8 @@ re-research these; do verify before writing the integration.
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
 | **"Not listed"** | Per-symbol instrument endpoints answer "market not listed" in THREE shapes (measured 2026-09-03): Paradex → HTTP **404**; OKX → HTTP 200 + `code 51001`; Bybit linear → HTTP 200 + `retCode 10001` "symbol invalid" while Bybit **spot** → `retCode 0` + empty list. All must read as "absent" — treating any as an error lets one unsupported pair blank a venue's whole rule set (found live in step 2.4 when XLMUSDT killed the Paradex source). Every OTHER non-zero code stays a loud error. |
 | **Assets** | Base/quote must come from what the venue DECLARES, never from slicing the symbol string. OKX swaps leave `baseCcy`/`quoteCcy` empty (spot-only fields — use `ctValCcy`/`settleCcy` for linear); Kraken names BTC "XBT" in symbols but declares `base: "BTC"`, so no alias table exists anywhere; Hyperliquid declares no quote (venue-wide documented "USD"). |
+| **Depth: bid order** | Kraken's REST order book returns its BIDS ASCENDING — `bids[0]` is a resting order at a price of **1**, and the best bid is the LAST element. Every other venue puts the best price first. It also has no limit parameter and returns the whole book (~40 KB). Sort unconditionally; never trust a documented order. |
+| **Depth: level ceilings** | Exceeding a venue's level limit LOSES THE WHOLE BOOK rather than shortening it: Gate answers HTTP 400 above 300, Paradex says `"Depth: must be no greater than 100."` above 100. And 100 levels is not enough — measured 2026-09-04, 7 of 9 venues do not reach even 0.1% of mid at 100 levels, so depth figures become a ranking of *who returns the most levels*. Ask each venue for its own maximum, and read `covers_0_1pct`/`covers_0_5pct` before comparing two venues' depth. |
 | **Contracts** | OKX, Gate and Kraken denominate orders in contracts, not coins (`ctVal`×`ctMult`, `quanto_multiplier`, `contractSize`). Binance, Bybit, Hyperliquid use coins. ✅ The step-1.2 Kraken contradiction was settled at 2.3: PF_ contracts ARE contract-denominated but `contractSize` is **1 base unit** (with `contractValueTradePrecision` decimals), so contract counts are numerically coin — the survey and the 1.2 measurement were both right. Measured sizes live in the registry; note PF_XRPUSD and Hyperliquid XRP trade in WHOLE XRP (precision/szDecimals 0). |
 
 ~~**Known bug:** `coin := symbol[:3]` in the Hyperliquid connector.~~ Fixed in
@@ -281,6 +289,7 @@ exchanges/           WebSocket connectors — PUBLIC DATA ONLY, no credentials
   testdata/          one real recording per venue, a frame per line
 internal/
   scanner/           the engine: price state, staleness, the wire contract
+  depth/             order book -> liquidity figures; contract->coin conversion
   instruments/       trading rules, spot<->perp mapping, delta-neutral sizing
   fees/              fee table, net profit
   history/           venue REST -> store; the only place that knows both
@@ -373,13 +382,14 @@ phase 1.
   the local clock, and `RecvAt` is stamped by the scanner in exactly one place
   (`updatePrice`). Staleness is measured only from `RecvAt`.
 - ~~Top-of-book size is parsed and thrown away.~~ Collected in step 1.2 for the
-  five sources that publish it in **coin**: Binance futures/spot (`B`/`A`), Bybit
-  futures/spot (level index 1), Hyperliquid (`sz`). OKX, Gate and Kraken publish
-  **contract counts** and Paradex publishes no size at all, so those four stay 0.
-  **`0` means "not known", never "no liquidity"**. The instrument registry
-  (step 2.3) now carries every venue's measured `ContractSizeCoin`, so the
-  conversion is a multiplication away — wiring it into the book pipeline is
-  scheduled where the number is first consumed, step 2.7's liquidity ranking.
+  five coin-denominated sources, and finished in step 2.7b: OKX, Gate and Kraken
+  now send their size as `Best*QtyContracts` and the scanner multiplies by the
+  registry's `ContractSizeCoin`. Measured live 2026-09-04 — gate 1.3384, okx
+  1.8104, kraken 0.0369 BTC, all three previously 0. **8 of 9 sources** carry a
+  real quantity; Paradex publishes none and stays 0. **`0` still means "not
+  known", never "no liquidity"** — and a market the registry does not know stays
+  0 rather than being published unconverted, because Gate's 0.0001 BTC contract
+  would otherwise report ten thousand times the real size.
 - ~~Pyth is treated as a tradeable venue.~~ Fixed in step 1.2: an oracle never
   enters a comparison group and can no longer appear at either end of an alert.
 - ~~`checkArbitrage` takes min/max across *all* sources, mixing spot and perp.~~
@@ -415,14 +425,15 @@ phase 1.
   `symbols × 5/s` — measured 20.0/s and 65 KB/s afterwards. Alerts are not
   queued. Still open, and now the dominant cost: the server ships every symbol
   to every client (PLAN §7.3 item 2), so 50 symbols would be 250 msg/s.
-- 286 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 332 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `exchanges` 75 (58.7% of statements),
-  `internal/scanner` 106 (87.5%), `internal/instruments` 27 (96.9%),
-  `internal/store` 13 (84.2%), `internal/config` 29 (82.1%),
-  `internal/history` 6 (76.5%), `internal/fees` 5 (100%), `cmd/scanner` 16,
-  `cmd/backfill` 6, `cmd/fundingcheck` 3. The `exchanges` percentage FELL from
+  it can be re-measured): `exchanges` 90 (58.8% of statements),
+  `internal/scanner` 114 (86.5%), `internal/instruments` 27 (96.9%),
+  `internal/store` 18 (84.2%), `internal/config` 34 (84.0%),
+  `internal/depth` 10 (95.3%), `internal/history` 6 (76.5%),
+  `internal/fees` 5 (100%), `cmd/scanner` 19, `cmd/backfill` 6,
+  `cmd/fundingcheck` 3. The `exchanges` percentage FELL from
   61.8% at step 1.6 while the test count rose: step 2.6 added seven history
   fetchers whose pagination loops only run against live venues. Their parsers
   and the cadence arithmetic are golden-tested against recorded payloads; the

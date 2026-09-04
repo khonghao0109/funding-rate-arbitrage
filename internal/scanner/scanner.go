@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/internal/depth"
 
 	"github.com/gorilla/websocket"
 )
@@ -46,10 +47,11 @@ type PricePoint struct {
 	RecvAt      time.Time
 
 	// Top of book behind Price, 0 when the source publishes none. Prices are in
-	// the source's own quote asset; quantities are in base coin and are 0 for
-	// every venue whose book is denominated in contracts, because converting
-	// needs an instrument registry that does not exist yet. 0 therefore means
-	// "not known", never "no liquidity" - see exchanges.OrderbookData.
+	// the source's own quote asset; quantities are in base COIN, converted from
+	// contracts where the venue quotes them that way (step 2.7b, via the
+	// instrument registry). 0 still means "not known", never "no liquidity":
+	// Paradex publishes no size at all, and a market the registry does not know
+	// keeps 0 rather than being published unconverted.
 	BestBid        float64
 	BestAsk        float64
 	BestBidQtyCoin float64
@@ -109,6 +111,21 @@ type Scanner struct {
 	hedges     map[string]HedgeLeg
 	hedgeMutex sync.RWMutex
 
+	// depthSummaries is the latest order book measurement per symbol per source
+	// (step 2.7b), pushed in from outside on the collector's schedule for the
+	// same reason hedges are: the conversion from contracts to coin needs the
+	// instrument registry, which the wire layer must not import.
+	depthSummaries map[string]map[string]depth.Summary
+	depthMutex     sync.RWMutex
+
+	// contractSizeCoin is how many base coins one contract represents, keyed by
+	// symbol|source. It converts the TOP-OF-BOOK quantities on the price path,
+	// which OKX, Gate and Kraken publish in contracts and which have therefore
+	// been 0 on the wire since step 1.2. A market absent from this map keeps 0,
+	// which the contract defines as "not known" and never as "no liquidity".
+	contractSizes     map[string]float64
+	contractSizeMutex sync.RWMutex
+
 	lastOpportunity  map[string]time.Time // Track last alert per symbol
 	opportunityMutex sync.RWMutex
 
@@ -149,9 +166,11 @@ func New(symbols []string) *Scanner {
 		// Funding changes once per venue-symbol per seconds at worst, so the
 		// buffer only has to absorb a reconnect burst — connChan-style sizing,
 		// not the 1000 of the price firehose.
-		fundingChan: make(chan exchanges.FundingData, 256),
-		funding:     make(map[string]map[string]exchanges.FundingData),
-		hedges:      make(map[string]HedgeLeg),
+		fundingChan:    make(chan exchanges.FundingData, 256),
+		funding:        make(map[string]map[string]exchanges.FundingData),
+		hedges:         make(map[string]HedgeLeg),
+		depthSummaries: make(map[string]map[string]depth.Summary),
+		contractSizes:  make(map[string]float64),
 		// Connection events are rare and must never block a connector, so the
 		// buffer only has to absorb every source flapping at once.
 		connChan:        make(chan exchanges.ConnEvent, 256),
@@ -199,6 +218,13 @@ func (s *Scanner) processOrderbooks(ctx context.Context) {
 			// Calculate mid price from best bid and best ask
 			midPrice := (orderbookData.BestBid + orderbookData.BestAsk) / 2
 
+			// Top-of-book quantities arrive in the venue's OWN order unit.
+			// OKX, Gate and Kraken publish contracts, so they have been 0 on
+			// the wire since step 1.2 — converting needed the instrument
+			// registry. Step 2.7b is where the number is first consumed, and
+			// therefore where the conversion belongs.
+			bidQtyCoin, askQtyCoin := s.qtyInCoin(orderbookData)
+
 			s.updatePrice(exchanges.PriceData{
 				Symbol:      orderbookData.Symbol,
 				Source:      orderbookData.Source,
@@ -212,8 +238,8 @@ func (s *Scanner) processOrderbooks(ctx context.Context) {
 				// first-order liquidity filter, and it costs no extra bandwidth.
 				BestBid:        orderbookData.BestBid,
 				BestAsk:        orderbookData.BestAsk,
-				BestBidQtyCoin: orderbookData.BestBidQtyCoin,
-				BestAskQtyCoin: orderbookData.BestAskQtyCoin,
+				BestBidQtyCoin: bidQtyCoin,
+				BestAskQtyCoin: askQtyCoin,
 			})
 		}
 	}
@@ -331,6 +357,95 @@ func (s *Scanner) SetHedges(legs []HedgeLeg) {
 	s.hedgeMutex.Lock()
 	s.hedges = hedges
 	s.hedgeMutex.Unlock()
+}
+
+// SetDepth installs the latest order book measurements and pushes them out.
+//
+// It broadcasts immediately rather than waiting for a ticker: a sweep happens
+// once an hour, so the alternative is a dashboard showing an hour-old book for
+// however long the next tick is away. There is nothing to throttle — this is
+// the only thing that changes the table.
+func (s *Scanner) SetDepth(summaries []depth.Summary) {
+	byRow := make(map[string]map[string]depth.Summary, len(summaries))
+	for _, summary := range summaries {
+		if byRow[summary.Symbol] == nil {
+			byRow[summary.Symbol] = make(map[string]depth.Summary)
+		}
+		byRow[summary.Symbol][summary.Source] = summary
+	}
+
+	s.depthMutex.Lock()
+	s.depthSummaries = byRow
+	s.depthMutex.Unlock()
+
+	if s.hasClients() {
+		s.broadcast(s.depthMessage())
+	}
+}
+
+// depthMessage builds the current depth table.
+func (s *Scanner) depthMessage() wireDepth {
+	s.depthMutex.RLock()
+	summaries := make([]depth.Summary, 0, len(s.depthSummaries))
+	for _, bySource := range s.depthSummaries {
+		for _, summary := range bySource {
+			summaries = append(summaries, summary)
+		}
+	}
+	s.depthMutex.RUnlock()
+	return newWireDepth(summaries, s.now())
+}
+
+// qtyInCoin resolves the top-of-book quantities to base coin.
+//
+// A connector fills exactly one pair of fields. The ...Coin pair is already in
+// coin and passes through untouched — Binance, Bybit and Hyperliquid have
+// published real quantities there since step 1.2 and must keep doing so even
+// before the instrument registry has refreshed.
+//
+// The ...Contracts pair needs the registry. When the multiplier is unknown the
+// result stays 0, which the contract defines as "not known": publishing an
+// unconverted contract count would report Gate — whose BTC contract is 0.0001
+// BTC — as ten thousand times deeper than it is, and a wrong number here is
+// worse than a missing one because nothing downstream can tell it from a
+// measurement. Paradex publishes no size at all and stays 0 either way.
+func (s *Scanner) qtyInCoin(book exchanges.OrderbookData) (bidQtyCoin, askQtyCoin float64) {
+	if book.BestBidQtyContracts == 0 && book.BestAskQtyContracts == 0 {
+		return book.BestBidQtyCoin, book.BestAskQtyCoin
+	}
+	sizeCoin, ok := s.contractSizeCoin(book.Symbol, book.Source)
+	if !ok {
+		return 0, 0
+	}
+	return book.BestBidQtyContracts * sizeCoin, book.BestAskQtyContracts * sizeCoin
+}
+
+// SetContractSizes installs the contract→coin multipliers for the price path.
+//
+// Keyed symbol|source, from the instrument registry, refreshed with it. This is
+// what finally fills best_bid_qty_coin for OKX, Gate and Kraken — reserved on
+// the wire at step 1.0, left at 0 since 1.2 because converting needed a
+// registry that did not exist, and consumed for the first time here.
+func (s *Scanner) SetContractSizes(sizes map[string]float64) {
+	copied := make(map[string]float64, len(sizes))
+	for key, size := range sizes {
+		copied[key] = size
+	}
+	s.contractSizeMutex.Lock()
+	s.contractSizes = copied
+	s.contractSizeMutex.Unlock()
+}
+
+// contractSizeCoin is the multiplier for one market, and whether it is known.
+//
+// ok=false must never be treated as 1: Gate's BTC contract is 0.0001 BTC, so a
+// missing multiplier applied as one reports ten thousand times the real size.
+// The caller leaves the quantity at 0 — "not known" — instead.
+func (s *Scanner) contractSizeCoin(symbol, source string) (float64, bool) {
+	s.contractSizeMutex.RLock()
+	defer s.contractSizeMutex.RUnlock()
+	size, ok := s.contractSizes[hedgeKey(symbol, source)]
+	return size, ok && size > 0
 }
 
 // hedgeSnapshot copies the mapping for one message build.
@@ -1013,6 +1128,13 @@ func (s *Scanner) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// everything else without it and the next tick will carry the table.
 	if failed, err := s.writeToClients([]*websocket.Conn{conn}, s.fundingMessage()); err != nil || len(failed) > 0 {
 		log.Printf("WebSocket funding write failed for %s: %v", r.RemoteAddr, err)
+	}
+
+	// Depth follows for the same reason and more urgently: it is refreshed once
+	// an HOUR, so a client that connected a minute after a sweep would otherwise
+	// see an empty liquidity column for fifty-nine of them.
+	if failed, err := s.writeToClients([]*websocket.Conn{conn}, s.depthMessage()); err != nil || len(failed) > 0 {
+		log.Printf("WebSocket depth write failed for %s: %v", r.RemoteAddr, err)
 	}
 
 	s.clientsMutex.Lock()

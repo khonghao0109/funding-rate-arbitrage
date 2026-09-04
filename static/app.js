@@ -60,6 +60,10 @@ class FuturesArbitrageScanner {
         // answers "which pair, which venue".
         this.funding = {};
         this.fundingBasis = null;
+        // Depth (Bước 2.7b), keyed symbol -> source. Refreshed on the server's
+        // sweep schedule — about once an hour — not per tick.
+        this.depth = {};
+        this.depthMeta = null;
         this.fundingPending = false;
         this.activeView = 'price';
         this.fundingChart = null;
@@ -169,6 +173,7 @@ class FuturesArbitrageScanner {
         this.symbols = meta.symbols || [];
         this.costBasis = meta.cost_basis || null;
         this.fundingBasis = meta.funding_basis || null;
+        this.depthMeta = meta.depth || null;
 
         this.sourceMeta = new Map();
         (meta.sources || []).forEach(s => this.sourceMeta.set(s.source, s));
@@ -685,6 +690,18 @@ class FuturesArbitrageScanner {
             this.handleSpreadsUpdate(data);
         } else if (data.type === 'funding') {
             this.handleFundingUpdate(data);
+        } else if (data.type === 'depth') {
+            this.handleDepthUpdate(data);
+        }
+    }
+
+    // handleDepthUpdate replaces the whole liquidity table. Like funding, the
+    // server sends every measurement it holds including the ones that failed,
+    // so merging would only keep alive a row it has stopped reporting.
+    handleDepthUpdate(message) {
+        this.depth = message.depth || {};
+        if (this.activeView === 'funding') {
+            this.renderFundingDetail();
         }
     }
 
@@ -1625,6 +1642,22 @@ class FuturesArbitrageScanner {
     renderFunding() {
         this.renderFundingMatrix();
         this.renderFundingDetail();
+        this.renderDepthNote();
+    }
+
+    // The depth note is built from meta.depth, so the windows and the cadence
+    // are never hardcoded here (contract rule 5).
+    renderDepthNote() {
+        const element = document.getElementById('depthNote');
+        if (!element) return;
+        if (!this.depthMeta) {
+            element.innerHTML = '';
+            return;
+        }
+        const windows = (this.depthMeta.windows_pct || []).map(w => `${w}%`).join(' và ');
+        const everyMin = Math.round((this.depthMeta.refresh_every_sec || 0) / 60);
+        element.innerHTML = `<strong>Độ sâu</strong> — cửa sổ ${esc(windows)} quanh mid, `
+            + `lấy lại mỗi ${everyMin} phút. ${esc(this.depthMeta.note_vi || '')}`;
     }
 
     // The matrix: one row per venue, one column per pair, in bps per 8 hours.
@@ -1670,7 +1703,7 @@ class FuturesArbitrageScanner {
         const bySource = this.funding[this.currentSymbol] || {};
         const sources = this.fundingSources().filter(source => bySource[source]);
         if (sources.length === 0) {
-            body.innerHTML = '<tr><td colspan="8" class="funding-empty">Chưa có reading funding nào cho cặp này.</td></tr>';
+            body.innerHTML = '<tr><td colspan="10" class="funding-empty">Chưa có reading funding nào cho cặp này.</td></tr>';
             return;
         }
 
@@ -1684,6 +1717,15 @@ class FuturesArbitrageScanner {
                 || point.breakeven_days_fees_only === undefined
                 ? '—'
                 : point.breakeven_days_fees_only.toFixed(1);
+            // The perp leg is entered by SELLING, so its ask side is not the
+            // constraint — the short is opened into bids. The spot leg is the
+            // one that matters on exit, and it is sold, so its BID side is the
+            // number that decides whether the position can be closed at the
+            // modelled price (PLAN §7.4).
+            const perpDepth = this.depthCell(this.currentSymbol, source, 'bid');
+            const spotDepth = point.hedge_spot_source
+                ? this.depthCell(this.currentSymbol, point.hedge_spot_source, 'bid')
+                : { text: '—', title: 'Không có chân spot để hedge.' };
             return `<tr class="${point.status === 'live' ? '' : 'funding-stale'}">
                 <td style="color:${safeColor(meta.color)}" title="${esc(meta.label || source)}">${esc(meta.short_label || source)}</td>
                 <td class="${this.fundingSignClass(point.rate_per_8h_bps)}">${this.formatBps(point.rate_per_8h_bps)}</td>
@@ -1693,6 +1735,8 @@ class FuturesArbitrageScanner {
                 <td title="${esc(this.freshnessTooltip(source, point))}">${this.formatFreshness(point)}</td>
                 <td title="${esc(point.hedge_note_vi || '')}">${hedge}</td>
                 <td title="Chỉ trừ phí taker bốn lượt khớp; chưa có slippage, chưa có chi phí vay.">${breakeven}</td>
+                <td title="${esc(perpDepth.title)}">${perpDepth.text}</td>
+                <td title="${esc(spotDepth.title)}">${spotDepth.text}</td>
             </tr>`;
         }).join('');
     }
@@ -1780,6 +1824,47 @@ class FuturesArbitrageScanner {
             + (point.hedge_spot_source
                 ? `Hedge: ${point.hedge_spot_source}`
                 : `Hedge: không có — ${point.hedge_note_vi || ''}`);
+    }
+
+    // depthCell renders one side's depth within the wide window.
+    //
+    // The "≥" is not decoration: when the venue's book does not reach the
+    // window, the figure is a lower bound. Hyperliquid returns twenty levels
+    // spanning 0.025% on BTC, so without the marker it would read as the
+    // thinnest venue in the table when it is simply the most truncated.
+    depthCell(symbol, source, side) {
+        const point = (this.depth[symbol] || {})[source];
+        const meta = this.sourceMeta.get(source) || {};
+        if (!point) {
+            return { text: '—', title: `Chưa có số đo độ sâu cho ${meta.label || source}.` };
+        }
+        if (point.error_vi) {
+            return { text: '⚠', title: point.error_vi };
+        }
+        const quote = point[`${side}_depth_within_0_5pct_quote`];
+        const covered = point.covers_0_5pct;
+        const spanPct = point[`${side}_span_pct`];
+        const ageMin = point.age_ms >= 0 ? Math.round(point.age_ms / 60000) : null;
+        const sideVI = side === 'bid' ? 'phía mua (bid)' : 'phía bán (ask)';
+        return {
+            text: `${covered ? '' : '≥'}${this.formatNotional(quote)}`,
+            title: `${meta.label || source} · ${sideVI} trong ±0,5% quanh mid\n`
+                + `${this.formatNotional(quote)} ${meta.quote_asset || ''}`
+                + ` · ${point[`${side}_levels`]} mức · sổ trả về tới ${spanPct.toFixed(3)}%\n`
+                + (covered ? '' : 'Sàn KHÔNG trả đủ mức xa tới 0,5% — đây là cận dưới, không phải sổ mỏng.\n')
+                + (point.is_contract_book ? 'Sổ niêm yết theo contract, số trên đã quy đổi sang coin.\n' : '')
+                + (ageMin === null ? '' : `Đo cách đây ${ageMin} phút.`),
+        };
+    }
+
+    // Compact notional. A liquidity column is read by comparing magnitudes, and
+    // eight-digit numbers side by side defeat that.
+    formatNotional(value) {
+        if (!Number.isFinite(value) || value <= 0) return '—';
+        if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`;
+        if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`;
+        if (value >= 1e3) return `${(value / 1e3).toFixed(0)}k`;
+        return value.toFixed(0);
     }
 
     setupFundingChart() {

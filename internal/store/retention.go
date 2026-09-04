@@ -21,12 +21,20 @@ import (
 type Retention struct {
 	FundingDays int
 	PriceDays   int
+
+	// DepthDays keeps the step-2.7b snapshots. It gets its own number because
+	// the series has a different shape from both of the others: one row per
+	// market per sweep, so an hourly sweep of 36 markets is ~315k rows a year —
+	// small enough to keep long, and unlike funding it can NEVER be re-fetched,
+	// because a venue does not publish the book it had last Tuesday.
+	DepthDays int
 }
 
 // PruneResult is what one pruning pass removed.
 type PruneResult struct {
 	FundingRows int64
 	PriceRows   int64
+	DepthRows   int64
 }
 
 // Prune deletes rows older than the policy allows.
@@ -55,6 +63,14 @@ func (s *Store) Prune(ctx context.Context, policy Retention) (PruneResult, error
 			return result, err
 		}
 		result.PriceRows = removed
+	}
+	if policy.DepthDays > 0 {
+		cutoffMs := now.AddDate(0, 0, -policy.DepthDays).UnixMilli()
+		removed, err := s.deleteOlderThan(ctx, "depth_snapshots", "sampled_at_ms", cutoffMs)
+		if err != nil {
+			return result, err
+		}
+		result.DepthRows = removed
 	}
 	return result, nil
 }

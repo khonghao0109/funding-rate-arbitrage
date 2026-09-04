@@ -166,6 +166,9 @@ func Configure(cfg config.Config) {
 	sourceRegistry = registry
 	sourceOrder = indexRegistry(registry)
 	alertMinSpreadPct = cfg.Scanner.AlertMinSpreadPct
+	if sec := cfg.Depth.RefreshEveryMin * 60; sec > 0 {
+		depthRefreshEverySec = sec
+	}
 }
 
 // scheduleFor is the fee schedule of one source, for the cost calculation.
@@ -367,7 +370,8 @@ type wireMeta struct {
 	DefaultSymbol     string           `json:"default_symbol"`
 	AlertMinSpreadPct float64          `json:"alert_min_spread_pct"`
 	CostBasis         wireCostBasis    `json:"cost_basis"`
-	FundingBasis      wireFundingBasis `json:"funding_basis"` // step 2.7
+	FundingBasis      wireFundingBasis `json:"funding_basis"` // step 2.7a
+	Depth             wireDepthMeta    `json:"depth"`         // step 2.7b
 	Sources           []sourceMeta     `json:"sources"`
 }
 
@@ -560,6 +564,7 @@ func newWireMeta(symbols []string, nowMs int64) wireMeta {
 				"chi phí vay chân spot. Vị thế chỉ nhận tiền nếu còn mở ĐÚNG lúc settle — " +
 				"giữ 7h59m của chu kỳ 8h nhận 0.",
 		},
+		Depth:   newWireDepthMeta(),
 		Sources: sourceRegistry,
 	}
 }

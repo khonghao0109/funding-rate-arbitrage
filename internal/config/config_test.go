@@ -532,3 +532,67 @@ func TestStorage_DefaultsFillAnAbsentBlock(t *testing.T) {
 		t.Errorf("defaults are unusable: %+v", cfg.Storage)
 	}
 }
+
+// Depth sampling (step 2.7b). The windows are Go constants, so only the cadence
+// and the level count are configurable — and the cadence has a floor.
+func TestValidate_RejectsADepthCadenceThatPolls(t *testing.T) {
+	cfg := repoConfig(t)
+	cfg.Depth.RefreshEveryMin = 1
+	if err := cfg.Validate(); err == nil {
+		t.Error("a one-minute depth sweep must be rejected; that is polling, not screening")
+	}
+}
+
+func TestValidate_RejectsNonsenseDepthSettings(t *testing.T) {
+	cfg := repoConfig(t)
+	cfg.Depth.Levels = 0
+	if err := cfg.Validate(); err == nil {
+		t.Error("zero depth levels must be rejected")
+	}
+
+	cfg = repoConfig(t)
+	cfg.Depth.RetainDays = -1
+	if err := cfg.Validate(); err == nil {
+		t.Error("a negative retention must be rejected; 0 already means keep everything")
+	}
+}
+
+// Disabled depth must not be validated into a failure: switching the feature off
+// is a supported state, not a broken config.
+func TestValidate_ADisabledDepthBlockNeedsNoValues(t *testing.T) {
+	cfg := repoConfig(t)
+	cfg.Depth = Depth{Enabled: false}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("a disabled depth block was rejected: %v", err)
+	}
+}
+
+func TestLoad_DepthDefaultsAreApplied(t *testing.T) {
+	// The shipped file sets these explicitly; this checks the fallbacks a file
+	// that omits them would get, since an omitted cadence of 0 would otherwise
+	// mean "sweep continuously".
+	var cfg Config
+	cfg.Depth.applyDefaults()
+	if cfg.Depth.RefreshEveryMin != defaultDepthRefreshEveryMin || cfg.Depth.Levels != defaultDepthLevels {
+		t.Errorf("depth defaults = %+v", cfg.Depth)
+	}
+	if cfg.Depth.RetainDays != defaultDepthRetainDays {
+		t.Errorf("depth retention default = %d", cfg.Depth.RetainDays)
+	}
+}
+
+// The shipped values are what actually runs.
+func TestRepoConfig_DepthIsSaneAndWithinPlanGuidance(t *testing.T) {
+	depth := repoConfig(t).Depth
+	if !depth.Enabled {
+		t.Log("depth is disabled in the shipped config; the liquidity columns will be empty")
+		return
+	}
+	// PLAN §7.4 asks for a sweep every 1-4 hours.
+	if depth.RefreshEveryMin < 60 || depth.RefreshEveryMin > 240 {
+		t.Errorf("depth.refresh_every_min = %d, outside PLAN §7.4's 60-240", depth.RefreshEveryMin)
+	}
+	if depth.Levels < 20 {
+		t.Errorf("depth.levels = %d; below 20 no venue reaches the 0.5%% window", depth.Levels)
+	}
+}

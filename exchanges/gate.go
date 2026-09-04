@@ -163,18 +163,21 @@ func handleGateFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvA
 		venueTimeMs = bookTickerMsg.Result.Timestamp
 	}
 
-	// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0.
-	// GateBookTickerResult.BestBidSize/BestAskSize are int64, which cannot
-	// express a fractional coin amount at all, and measured 2026-09-03 BTC_USDT
-	// published 10099 with BTC near $77.5k - a contract count, not coins.
-	// Converting needs quanto_multiplier per contract, which arrives with the
-	// instrument registry (internal/instruments, phase 2).
+	// The size is a CONTRACT count. BestBidSize/BestAskSize are declared int64,
+	// which cannot express a fractional coin amount at all, and measured
+	// 2026-09-03 BTC_USDT published 10099 with BTC near $77.5k.
+	//
+	// Until step 2.7b it was dropped rather than published in a ...Coin field.
+	// It now travels as contracts and the scanner multiplies by
+	// quanto_multiplier from the instrument registry.
 	f.SendOrderbook(OrderbookData{
-		Symbol:      standardSymbol,
-		Source:      source,
-		BestBid:     bestBid,
-		BestAsk:     bestAsk,
-		VenueTimeMs: venueTimeMs,
-		RecvAt:      recvAt,
+		Symbol:              standardSymbol,
+		Source:              source,
+		BestBid:             bestBid,
+		BestAsk:             bestAsk,
+		BestBidQtyContracts: float64(bookTickerMsg.Result.BestBidSize),
+		BestAskQtyContracts: float64(bookTickerMsg.Result.BestAskSize),
+		VenueTimeMs:         venueTimeMs,
+		RecvAt:              recvAt,
 	})
 }

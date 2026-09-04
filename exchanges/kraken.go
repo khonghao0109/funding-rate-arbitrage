@@ -53,18 +53,23 @@ func processKrakenOrderbook(source string, symbols []Symbol, productID string, o
 		return true // a product this connector never subscribed to
 	}
 
-	// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0. The book entries
-	// do carry a Qty, and measured 2026-09-03 it looks coin denominated
-	// (PF_XBTUSD 0.0929 with BTC near $77.5k, PF_XRPUSD 95000) - but
-	// docs/DATA-REQUIREMENTS.md §3 records Kraken as denominating in contracts,
-	// and a field named ...Coin must not be filled from a measurement that
-	// contradicts the survey. The instrument registry (internal/instruments,
-	// phase 2) settles which is right; until then 0 means "not known".
+	// The Qty is a CONTRACT count, and step 2.3 settled the apparent
+	// contradiction that made step 1.2 drop it: PF_ markets ARE contract
+	// denominated, but one contract is 1 base unit, so the count is
+	// NUMERICALLY coin. The measurement (PF_XBTUSD 0.0929 with BTC near $77.5k)
+	// and the survey were both right.
+	//
+	// It still travels as contracts rather than as coin. The multiplier being 1
+	// is a fact about today's PF_ contract specification, not about the field,
+	// and the registry is where that fact is measured — a venue that revised it
+	// would silently make every quantity here wrong if this file assumed it.
 	return f.SendOrderbook(OrderbookData{
-		Symbol:  symbol,
-		Source:  source,
-		BestBid: orderBook.Bids[0].Price, // bids are held highest first
-		BestAsk: orderBook.Asks[0].Price, // asks lowest first
+		Symbol:              symbol,
+		Source:              source,
+		BestBid:             orderBook.Bids[0].Price, // bids are held highest first
+		BestAsk:             orderBook.Asks[0].Price, // asks lowest first
+		BestBidQtyContracts: orderBook.Bids[0].Qty,
+		BestAskQtyContracts: orderBook.Asks[0].Qty,
 		// Left at 0 although Kraken does publish one: measured 2026-09-03 both
 		// book_snapshot and every book delta carry `timestamp` in milliseconds
 		// (1788413683802). This function receives the ASSEMBLED book rather than

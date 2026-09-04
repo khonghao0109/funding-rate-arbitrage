@@ -152,22 +152,29 @@ func handleOKXFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt
 				continue // an instrument this connector never subscribed to
 			}
 
-			// BestBidQtyCoin/BestAskQtyCoin are deliberately left at 0. A books5
-			// level is [price, sz, liqOrders, numOrders] and sz is a CONTRACT
-			// count, not coins: measured 2026-09-03, BTC-USDT-SWAP published
-			// 1182.68 with BTC near $77.5k, which as coins would be a $91M top of
-			// book, and XRP-USDT-SWAP published 334.52, which as coins would be
-			// $456. Converting needs ctVal x ctMult per instrument, which arrives
-			// with the instrument registry (internal/instruments, phase 2).
-			// Publishing the raw number in a ...Coin field would be wrong without
-			// looking wrong.
+			// A books5 level is [price, sz, liqOrders, numOrders] and sz is a
+			// CONTRACT count, not coins: measured 2026-09-03, BTC-USDT-SWAP
+			// published 1182.68 with BTC near $77.5k, which as coins would be a
+			// $91M top of book, and XRP-USDT-SWAP published 334.52, which as
+			// coins would be $456.
+			//
+			// Until step 2.7b it was therefore dropped, because a ...Coin field
+			// must never carry a contract count. It now travels in the
+			// ...QtyContracts fields instead, and the scanner multiplies by
+			// ctVal x ctMult from the instrument registry — the conversion this
+			// package cannot do without importing internal/.
+			bidContracts, _ := strconv.ParseFloat(book.Bids[0][1], 64)
+			askContracts, _ := strconv.ParseFloat(book.Asks[0][1], 64)
+
 			if !f.SendOrderbook(OrderbookData{
-				Symbol:      standardSymbol,
-				Source:      source,
-				BestBid:     bestBid,
-				BestAsk:     bestAsk,
-				VenueTimeMs: timestamp,
-				RecvAt:      recvAt,
+				Symbol:              standardSymbol,
+				Source:              source,
+				BestBid:             bestBid,
+				BestAsk:             bestAsk,
+				BestBidQtyContracts: bidContracts,
+				BestAskQtyContracts: askContracts,
+				VenueTimeMs:         timestamp,
+				RecvAt:              recvAt,
 			}) {
 				return
 			}

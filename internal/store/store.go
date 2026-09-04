@@ -26,7 +26,7 @@ var schemaSQL string
 // at a HIGHER version than this binary knows is refused rather than migrated
 // backwards — reading a newer file with older code is how a column quietly
 // stops being written.
-const schemaVersion = 1
+const schemaVersion = 2
 
 // Store is the SQLite persistence layer.
 //

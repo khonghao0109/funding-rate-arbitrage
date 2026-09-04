@@ -1022,7 +1022,7 @@ Sửa:
 > Trần `maxFundingHistoryPages` giới hạn Paradex ở ~83 ngày; nếu GĐ 3 cần sâu
 > hơn thì chạy backfill nhiều lượt hoặc nâng trần.
 
-#### Bước 2.7 — Dashboard funding — **2.7a ✅ · 2.7b còn lại**
+#### Bước 2.7 — Dashboard funding ✅ (2.7a + 2.7b)
 
 > **Tách đôi (2026-09-04, có duyệt).** Bước này gánh hai việc tách bạch được và
 > mỗi việc nghiệm thu riêng được: **2.7a** bảng funding + độ tươi + đếm ngược +
@@ -1107,6 +1107,46 @@ Sửa:
 > tự cấu hình chứ chưa xếp hạng — cố ý: xếp hạng mà chưa có thanh khoản là đẩy
 > cặp APR cao/sổ mỏng lên đầu (§7.4). §7.3 mục 2 (client đăng ký symbol) vẫn còn:
 > 20 msg/s hiện tại là 4 symbol, ở 50 symbol sẽ là 250/s.
+
+> **Kết quả 2.7b (2026-09-04).** 9 fetcher độ sâu trong `exchanges/*_depth.go`,
+> `internal/depth` (quy đổi contract→coin + đo cửa sổ), bảng `depth_snapshots`
+> (schema lên **v2**), message `depth` + `meta.depth`, hai cột thanh khoản trên
+> bảng chi tiết, và **khoản nợ 1.2 đã trả**: OKX/Gate/Kraken giờ phát khối lượng
+> đỉnh sổ dạng contract và scanner quy đổi qua registry.
+>
+> **Bốn cái bẫy, đo trực tiếp** (chi tiết ở [DATA-REQUIREMENTS §11](DATA-REQUIREMENTS.md)):
+> ① **Kraken trả bid TĂNG DẦN** — `bids[0]` là giá **1**, best bid ở cuối; nên
+> `finishDepthBook` sắp xếp vô điều kiện chứ không tin thứ tự tài liệu.
+> ② Ba sàn niêm yết theo **contract** (Gate ×0,0001 · OKX ×0,01 · Kraken ×1) —
+> không quy đổi thì Gate trông sâu gấp 10.000 lần; không biết hệ số thì **từ
+> chối công bố**, không mặc định 1.
+> ③ **Vượt trần mức thì MẤT CẢ SỔ**: Gate trả HTTP 400 ở 400 mức, Paradex nói
+> thẳng `"Depth: must be no greater than 100."`. Bắt được ngay trong lượt nghiệm
+> thu khi nâng 100 → 1000 làm hỏng 4 chuỗi Paradex đang khoẻ.
+> ④ **100 mức là KHÔNG ĐỦ** — ở 100 mức thì **7/9 sàn không chạm nổi cửa sổ
+> 0,1%**, nên gần như mọi con số là cận dưới và bảng sẽ xếp hạng theo *sàn nào
+> trả nhiều mức nhất*. Đã nâng lên trần từng sàn (binance 1000 · bybit 500/200 ·
+> okx 400 · gate 300 · paradex 100 · kraken cả sổ · hyperliquid cố định 20):
+> 6/9 phủ 0,1%, và **không con số nào làm cả chín phủ 0,5%** → đó là lý do
+> `covers_0_1pct`/`covers_0_5pct` có mặt trên wire.
+>
+> **Nghiệm thu chạy sống, cổng 8085, soak 8082 không bị đụng:**
+> - **36/36 phép đo** = 4 cặp × 9 nguồn, không lỗi nào, lưu đủ vào SQLite.
+> - **Xếp hạng thanh khoản có ý nghĩa ngay**, BTCUSDT trong ±0,1% phía bid:
+>   bybit-F 26,3M · binance-F 18,6M · okx 15,0M · kraken 14,8M · gate 9,7M ·
+>   binance-S 8,2M · hyperliquid 2,3M · bybit-S 2,0M — và **paradex 0,016M**.
+>   Paradex trả +1,0000 bps/8h funding y hệt các sàn khác trên một sổ mỏng hơn
+>   **ba bậc độ lớn**: đúng trường hợp §7.4 nói screener thiếu độ sâu sẽ đẩy lên
+>   đầu bảng.
+> - **Nợ 1.2 đóng, đo trên wire**: gate 1,3384 · okx 1,8104 · kraken 0,0369 BTC,
+>   trước đó cả ba là `0`. 8/9 nguồn có số thật; Paradex vẫn `0` vì sàn không
+>   công bố size — `0` là "chưa biết", không phải "không có thanh khoản".
+>
+> **Nợ ghi nhận:** `fetchInstrumentJSON` giờ phục vụ instrument, funding REST,
+> lịch sử funding VÀ độ sâu — tên nói dối lần thứ tư; đổi tên trong một commit
+> `refactor(exchanges)` riêng vì nó chạm ~26 file cơ học. Cửa sổ 0,5% là cận dưới
+> ở 6/9 sàn và sẽ còn thế: không sàn CEX nào trả đủ mức. Mô hình slippage từ
+> những con số này là Bước 3.1, và đó mới là chỗ được dùng chữ "ròng".
 
 ---
 
@@ -1486,7 +1526,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          6,5/7 bước (2.7a xong, 2.7b còn)   ← ĐANG LÀM song song với soak
+[✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
@@ -1502,9 +1542,15 @@ subscription bị sàn âm thầm huỷ hiện **không có gì buộc nối l�
 dạng hỏng mà 72 giờ sinh ra để phát hiện — chạy mà không sửa thì nhiều khả năng
 chỉ chứng minh lại rằng nó tồn tại.
 
-GĐ 2 chạy song song và không đụng tiến trình soak. Bước 2.1–2.6 xong, **2.7a
-xong 2026-09-04** (bảng funding, độ tươi đo từ `RecvAt` + mốc settle, đếm ngược,
-biểu đồ lịch sử qua REST, throttle broadcast). Việc tiếp theo là **Bước 2.7b** —
-độ sâu sổ lệnh REST cho 9 nguồn, quy đổi contract→coin qua registry, cột thanh
-khoản (đặc biệt **phía bid của chân spot**, chỗ kẹt lúc thoát) và bảng
-`depth_snapshots`. Bốn cái bẫy độ sâu đã đo sẵn ở khối P1 của Bước 2.7.
+**GĐ 2 đã xong cả 7 bước** (2026-09-04), chạy song song và không đụng tiến trình
+soak: funding realtime 7 sàn, instrument registry, ánh xạ spot↔perp, persistence
+SQLite với corpus 90.077 mốc settle, và dashboard funding kèm độ sâu sổ lệnh.
+
+Việc tiếp theo là **GĐ 3 — Bước 3.1, máy tính APR**, và đó là bước đầu tiên
+trong lộ trình được phép dùng chữ **"ròng"**: giờ đã có cả ba thành phần nó cần
+— biểu phí (1.3), funding chuẩn hoá (2.5) và độ sâu sổ lệnh (2.7b). Lưu ý khi
+bắt đầu: cửa sổ 0,5% là **cận dưới** ở 6/9 sàn, nên mô hình slippage phải đọc
+`covers_0_5pct` chứ không lấy thẳng con số.
+
+⚠️ GĐ 1 vẫn **chưa đóng**: còn phiên chạy 72h (hạn 2026-09-06) và một phiên khác
+ra phán quyết.
