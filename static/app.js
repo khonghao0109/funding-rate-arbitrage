@@ -64,7 +64,6 @@ class FuturesArbitrageScanner {
         // sweep schedule — about once an hour — not per tick.
         this.depth = {};
         this.depthMeta = null;
-        this.fundingPending = false;
         this.activeView = 'price';
         this.fundingChart = null;
         this.fundingSeries = new Map();
@@ -594,6 +593,25 @@ class FuturesArbitrageScanner {
             status.uptime_sec = 0;
             status.reconnect_count = 0;
         });
+        // The funding and depth tables make the same kind of claim the price
+        // table does, and step 1.6's lesson applies to them identically: a
+        // subscription that died while looking healthy. With our socket down,
+        // every "live" funding cell and depth figure is a frozen age presented
+        // as a fresh one — the countdowns may keep ticking (a settlement stamp
+        // is absolute knowledge), but the liveness claim is retracted.
+        for (const bySource of Object.values(this.funding)) {
+            for (const point of Object.values(bySource)) {
+                point.status = 'unknown';
+                point.age_ms = -1;
+            }
+        }
+        for (const bySource of Object.values(this.depth)) {
+            for (const point of Object.values(bySource)) {
+                point.status = 'unknown';
+                point.age_ms = -1;
+            }
+        }
+        if (this.activeView === 'funding') this.renderFunding();
         // Absence was a claim about the venue. With our own socket down we no
         // longer know anything about any venue.
         this.absentSources.clear();
@@ -1680,9 +1698,16 @@ class FuturesArbitrageScanner {
             const cells = this.symbols.map(symbol => {
                 const point = (this.funding[symbol] || {})[source];
                 if (!point) return '<td class="funding-zero">—</td>';
+                // A rate with no spot leg is not an opportunity, and the
+                // matrix is the screenshot people act on: the ∅ marker has to
+                // live in the cell itself, not only in the hover tooltip and
+                // the detail table of whichever pair happens to be selected.
+                const noHedge = !point.hedge_spot_source
+                    ? '<span class="funding-cell-nohedge">∅ hedge</span>' : '';
                 return `<td class="${this.fundingCellClass(point)}" title="${esc(this.fundingTooltip(symbol, source, point))}">`
                     + `${this.formatBps(point.rate_per_8h_bps)}`
-                    + `<span class="funding-cell-apr">APR ${this.formatPct(point.apr_gross_pct)}</span>`
+                    + `<span class="funding-cell-apr">APR thô ${this.formatPct(point.apr_gross_pct)}</span>`
+                    + noHedge
                     + '</td>';
             }).join('');
             return `<tr><td style="color:${safeColor(meta.color)}">${esc(meta.short_label || source)}</td>${cells}</tr>`;
@@ -1717,12 +1742,14 @@ class FuturesArbitrageScanner {
                 || point.breakeven_days_fees_only === undefined
                 ? '—'
                 : point.breakeven_days_fees_only.toFixed(1);
-            // The perp leg is entered by SELLING, so its ask side is not the
-            // constraint — the short is opened into bids. The spot leg is the
-            // one that matters on exit, and it is sold, so its BID side is the
-            // number that decides whether the position can be closed at the
-            // modelled price (PLAN §7.4).
-            const perpDepth = this.depthCell(this.currentSymbol, source, 'bid');
+            // Both liquidity cells show the EXIT pair, because exit is where
+            // a funding position gets stuck: the funding flip that triggers it
+            // correlates with stress and thin books (PLAN §7.4). Closing BUYS
+            // the perp back through its ASK side at the same moment the spot
+            // leg is sold into its BID side — the entry direction (short into
+            // perp bids) is the forgiving one and is not what these columns
+            // are for.
+            const perpDepth = this.depthCell(this.currentSymbol, source, 'ask');
             const spotDepth = point.hedge_spot_source
                 ? this.depthCell(this.currentSymbol, point.hedge_spot_source, 'bid')
                 : { text: '—', title: 'Không có chân spot để hedge.' };
@@ -1788,7 +1815,17 @@ class FuturesArbitrageScanner {
         const next = Number(point.next_funding_at_ms) || 0;
         if (next <= 0) return '—';
         const remainingMs = next - this.serverNowMs();
-        if (remainingMs <= 0) return 'đang settle…';
+        if (remainingMs <= 0) {
+            // Bounded, matching the backend's 2-minute settlement grace: a
+            // reading whose stamp is hours gone describes a period that ENDED
+            // (a dead subscription, the exact case detector ② exists for), and
+            // "đang settle…" forever would present it as an event in progress.
+            const overdueMs = -remainingMs;
+            if (overdueMs <= 2 * 60 * 1000) return 'đang settle…';
+            const overdueMin = Math.floor(overdueMs / 60000);
+            const ago = overdueMin >= 60 ? `${Math.floor(overdueMin / 60)}g${String(overdueMin % 60).padStart(2, '0')}` : `${overdueMin}m`;
+            return `qua mốc ${ago}`;
+        }
         const total = Math.floor(remainingMs / 1000);
         const hh = String(Math.floor(total / 3600)).padStart(2, '0');
         const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
@@ -1800,6 +1837,7 @@ class FuturesArbitrageScanner {
         const ageMs = Number(point.age_ms);
         const age = Number.isFinite(ageMs) && ageMs >= 0 ? `${Math.round(ageMs / 1000)}s` : '—';
         if (point.status === 'live') return age;
+        if (point.status === 'unknown') return '— · mất kết nối scanner';
         const reason = point.stale_reason === 'settled' ? 'đã qua mốc settle' : 'im lặng';
         return `${age} · ${reason}`;
     }
