@@ -523,7 +523,7 @@ trị chẩn đoán.
 | `interval_sec` | int64 | — | Chu kỳ thật, tính bằng giây. **Không bao giờ ghim 8h** ([CLAUDE.md luật 3](../CLAUDE.md)) |
 | `apr_gross_pct` | float | — | Đếm số settle thật trong năm: ×1095 cho 8h, ×8760 cho 1h. **THÔ** |
 | `next_funding_at_ms` | int64 | `0` | Mốc settle kế tiếp, epoch ms tuyệt đối. `0` = không tồn tại (continuous) hoặc sàn không công bố. FE đếm ngược theo `server_time_ms`, **không** `Date.now()` |
-| `is_estimated` | bool | `false` | Rate còn động trong chu kỳ đang chạy, khác với rate đã chốt |
+| `is_estimated` | bool | `false` | Rate còn động trong chu kỳ đang chạy, khác với rate đã chốt. Kraken là sàn duy nhất `false`: field WS của nó là số **đã settle** của giờ vừa xong (đo + docs, DATA-REQUIREMENTS §4.3) |
 | `recv_at_ms` | int64 | `0` | Thời điểm bot nhận. **Cơ sở duy nhất** của độ tươi, y như `prices` |
 | `age_ms` | int64 | `-1` | `server_time_ms - recv_at_ms`. `-1` = chưa đo được |
 | `status` | string | `unknown` | `live` \| `stale` \| `unknown`. **Backend quyết** — xem 9.2 |

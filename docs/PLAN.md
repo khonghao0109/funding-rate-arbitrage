@@ -1150,6 +1150,59 @@ Sửa:
 
 ---
 
+#### Review độc lập GĐ 2 + đợt vá theo review ✅ (2026-09-04)
+
+> **Phán quyết: ĐẠT — không lỗi chặn.** Review chạy 5 trục song song (chuẩn hoá
+> funding · store/history/backfill · registry/mapping/sizing · depth · wire/
+> dashboard), mỗi phát hiện phải có bằng chứng file:dòng; kèm kiểm chứng độc
+> lập ngoài agent: truy vấn thẳng corpus (90.083 mốc khớp bản ghi nghiệm thu,
+> mốc Gate lưu nguyên văn lệch 1–3s, số học per-8h/APR sai số 0 ở 1e-12),
+> `go test`/`-race` toàn bộ, luật phụ thuộc, kỷ luật commit. Đường tiền đúng ở
+> cả 7 sàn — mọi bẫy trong bảng trap đều có test ghim bằng payload thật.
+>
+> **Đợt vá theo review — 7 commit code + 1 commit docs, đã xong:**
+> ① `fix(exchanges)` sổ WS Kraken sort snapshot vô điều kiện (cùng sàn đã đo
+> được đảo thứ tự theo transport ở REST); trần lệnh OKX `maxLmtSz/maxMktSz`
+> (350 BTC market) và Binance `MARKET_LOT_SIZE` (120 vs 1000) vào `MaxQtyCoin`
+> = min hai trần; lọc `type=flexible_futures` cho Kraken; recognizer 51001
+> dùng chung; log khi `fundingIntervalHour` không parse được.
+> ② `fix(instruments)` số contract chốt trên đúng lưới sàn (127,999…97 → 128 —
+> Gate chỉ nhận contract nguyên); retry refresh lũy tiến 5m→6h khi một nguồn
+> hỏng vĩnh viễn; test nhánh MinQty>step chưa từng được chạy.
+> ③ `fix(depth)` `is_contract_book` là KHAI BÁO của fetcher, không suy từ hệ
+> số ≠1 — Kraken (contract, hệ số 1) hết bị dán nhãn coin, và sổ coin không
+> còn bị chặn khi registry thiếu market.
+> ④ `fix(store,config,backfill)` schema **v3**: `mark_price`→`mark_price_quote`
+> qua migration từng-bước THẬT (có test file v2 thật; file v0-có-bảng bị từ
+> chối); comment `interval_sec` phủ trường hợp continuous (Paradex 28800 cạnh
+> gap ~3600 là đúng thiết kế); cận 10–60s vào `Validate`; backfill exit ≠ 0
+> khi bị huỷ giữa chừng; bỏ `log.Fatalf` nuốt `defer Close`.
+> ⑤ `fix(scanner)` 405 cho non-GET trên `/api/funding/history`; test ghim thứ
+> tự push meta→funding→depth lúc connect.
+> ⑥ `fix(ui)` mất socket thu hồi cả độ tươi funding/depth (bài học 1.6 ở tầng
+> client); ô ma trận đánh dấu `∅ hedge` + `APR thô`; đếm ngược có trần ("qua
+> mốc Xg" thay vì "đang settle…" vô hạn); cột sổ perp đổi sang phía ASK — cặp
+> EXIT đúng như §7.4.
+> ⑦ `fix(exchanges)` `is_estimated` theo ĐO chứ không theo comment: Gate
+> **true** (probe 2026-09-04: rate trôi 0,000075→0,000074 trong 12s giữa kỳ;
+> `funding_rate_indicative` deprecated và bằng hệt `funding_rate` nên phép so
+> cũ dán nhãn "đã chốt" cho số đang trôi), Kraken **false** (docs + probe
+> §3.3⑥: field WS là số đã settle của giờ vừa xong; bản ước lượng nằm riêng ở
+> `relative_funding_rate_prediction`). Golden ghim per-venue.
+>
+> **Nợ review ghi nhận, CHƯA xử lý (không chặn GĐ 3):**
+> - Binance funding phụ thuộc trọn vào `fundingInfo` thành công ≥1 lần — thiết
+>   kế cố ý ("không interval thì không reading"), chỉ ghi để nhớ điểm tựa đơn.
+> - `store.FundingHistory` với symbol rỗng là full-table scan — GĐ 3 đọc cửa
+>   sổ toàn-symbol trên corpus cả năm thì thêm index theo `funding_at_ms`.
+> - `mark_price`/`index_price`/`raw_rate` trên WIRE không mang hậu tố đơn vị —
+>   hợp đồng §9 đã đóng dấu, KHÔNG đổi (luật 12); khác với cột SQLite đã đổi.
+> - Các nợ cũ giữ nguyên hiệu lực: speculative-unmarshal OKX/Gate/Paradex
+>   (2.5), `SourceClaim`/`PairAssets` ba-nơi-một-thay-đổi (2.4), gọi thẳng
+>   `Refresh()` không dựng lại mapping (chưa có caller), tên
+>   `fetchInstrumentJSON` (đổi trong một commit refactor riêng), broadcast
+>   theo symbol (§7.3 mục 2), trần trang Paradex ~83 ngày.
+
 ### GIAI ĐOẠN 3 — SIGNAL, ALERT & BACKTEST
 
 **Mục tiêu:** Từ dữ liệu thô ra tín hiệu có kiểm chứng, chưa đặt lệnh.

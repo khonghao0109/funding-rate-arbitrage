@@ -74,10 +74,9 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 
 | Chưa có | Hệ quả |
 |---|---|
-| **Trượt giá (slippage)** | Số sau phí mới trừ phí giao dịch, **chưa trừ trượt giá** — cần độ sâu sổ lệnh, phải tới GĐ 2. Vẫn chưa dùng để ra quyết định vốn được |
 | **Mô hình slippage** | Độ sâu sổ lệnh đã thu (Bước 2.7b) nhưng **chưa có mô hình slippage** — bảng nói *có bao nhiêu đang nằm gần giá*, chưa nói *lệnh $60.000 khớp ở đâu*. Đó là Bước 3.1, và cũng là bước đầu tiên được phép dùng chữ "ròng" |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | 332 test (100% ở `internal/fees`, 96,9% ở `internal/instruments`, 95,3% ở `internal/depth`, 86,5% ở `internal/scanner`, 84,2% ở `internal/store`, 84,0% ở `internal/config`, 76,5% ở `internal/history`, 58,8% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ. Vòng phân trang của 7 fetcher lịch sử funding chỉ chạy được với sàn thật nên không nằm trong phần trăm — parser của chúng thì có |
+| **Test tự động** | 344 test (100% ở `internal/fees`, 96,9% ở `internal/instruments`, 95,3% ở `internal/depth`, 86,5% ở `internal/scanner`, 84,2% ở `internal/store`, 84,0% ở `internal/config`, 76,5% ở `internal/history`, 58,8% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ. Vòng phân trang của 7 fetcher lịch sử funding chỉ chạy được với sàn thật nên không nằm trong phần trăm — parser của chúng thì có |
 | **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập biểu phí tài khoản của bạn vào `config.yaml` và đặt `verified: true` |
 | **Size đỉnh sổ của Paradex** | Bước 2.7b đã quy đổi contract→coin cho OKX, Gate và Kraken nên **8/9 nguồn** có khối lượng thật. Paradex vẫn `0` vì sàn không công bố size nào ở book ticker — `0` nghĩa là **chưa biết**, không phải **không có thanh khoản** |
 
@@ -105,7 +104,7 @@ Lộ trình chia **9 giai đoạn / 41 bước**:
 |---|---|---|
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
 | 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | 🔄 Đang làm (7/7 bước, còn phiên 72h) |
-| 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ⬜ |
+| 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ✅ Xong 7/7 (2026-09-04), đã qua review độc lập |
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |
 | 5 | Risk & Vận hành production | ⬜ |

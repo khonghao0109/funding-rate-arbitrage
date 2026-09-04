@@ -101,7 +101,14 @@ leg, which is where a funding position actually gets stuck on the way out. It
 also closed the step-1.2 debt: OKX, Gate and Kraken now publish their top-of-book
 size as CONTRACTS and the scanner converts through the registry, so 8 of 9
 sources carry a real coin quantity where 3 of them showed 0 since step 1.2.
-**Phase 2 is complete.**
+**Phase 2 is complete.** An independent review of the whole phase
+(2026-09-04) found no blocking defect and eight commits of hardening
+followed it — Kraken WS snapshot ordering, OKX/Binance max order caps,
+whole-contract sizing, fetcher-declared book denomination, schema v3
+(`mark_price_quote`), measured `is_estimated` semantics (Gate forming /
+Kraken settled), and dashboard freshness retraction on socket loss. The
+remaining review debts are recorded at the end of the phase-2 section in
+docs/PLAN.md.
 
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
@@ -248,7 +255,7 @@ re-research these; do verify before writing the integration.
 | Venue | Trap |
 |---|---|
 | **OKX** | `fundingTime` is the NEXT settlement; `nextFundingTime` is the one AFTER that. Mapping it like Binance's `T` is off by one period. |
-| **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). Its WS `next_funding_rate_time` is an **absolute epoch-ms stamp** even though the doc prose says "time until" — probed live twice; see §3.3⑥. |
+| **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). Its WS `next_funding_rate_time` is an **absolute epoch-ms stamp** even though the doc prose says "time until" — probed live twice; see §3.3⑥. And its WS `relative_funding_rate` is the **already-settled** figure of the last completed hour (the forming estimate lives in `relative_funding_rate_prediction`), so `IsEstimated=false` there and the rate does NOT forecast the next stamp. |
 | **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite — and publish only when a FUNDING field actually changed, or the ~100ms delta stream refreshes `RecvAt` ten times a second and a dead subscription looks permanently fresh. Its `fundingIntervalHour` is the string `"8"`, not a number: declared as `int64` the whole frame fails to decode and the venue silently produces no funding at all. It publishes `fundingCap` and **no floor**, so cap and floor need separate flags. |
 | **Binance** | `fundingInfo` documents itself as returning ONLY symbols whose config differs from default — as of 2026-09-03 it happens to cover every TRADING perpetual (777 symbols, BTCUSDT included via its adjusted ±0.3% cap), but the docs promise no such coverage. Default to 8h and override; do not read it as the source of truth for all symbols. Intervals seen: 4h (majority), 8h, and 1h. Also filter `rateType: "Special"` in backtests. |
 | **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. Its `predictedFundings` also lists BinPerp and BybitPerp beside its own **HlPerp** row — read the wrong row and an 8h cadence lands on an hourly venue. And `nextFundingTime` there is the settlement of the period ALREADY RUNNING (measured across an hour boundary 2026-09-04: 02:47→02:00, 03:01→03:00), so the upcoming one is that stamp plus one interval. |
@@ -425,7 +432,7 @@ phase 1.
   `symbols × 5/s` — measured 20.0/s and 65 KB/s afterwards. Alerts are not
   queued. Still open, and now the dominant cost: the server ships every symbol
   to every client (PLAN §7.3 item 2), so 50 symbols would be 250 msg/s.
-- 332 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 344 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
   it can be re-measured): `exchanges` 90 (58.8% of statements),
