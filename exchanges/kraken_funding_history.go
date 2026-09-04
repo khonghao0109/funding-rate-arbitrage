@@ -48,7 +48,7 @@ type krakenFundingHistoryResponse struct {
 func FetchKrakenFundingHistory(ctx context.Context, source string, symbol Symbol, window FundingWindow) ([]FundingHistoryEntry, error) {
 	var resp krakenFundingHistoryResponse
 	url := "https://futures.kraken.com/derivatives/api/v4/historicalfundingrates?symbol=" + symbol.Venue
-	if err := fetchFundingHistoryPage(ctx, func() error {
+	if err := fetchFundingHistoryPage(ctx, fundingHistoryPageDelay, func() error {
 		resp = krakenFundingHistoryResponse{}
 		return fetchInstrumentJSON(ctx, url, &resp)
 	}); err != nil {

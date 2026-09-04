@@ -51,7 +51,7 @@ func FetchOKXFundingHistory(ctx context.Context, source string, symbol Symbol, w
 		url := fmt.Sprintf("https://www.okx.com/api/v5/public/funding-rate-history?instId=%s&limit=%d&after=%d",
 			symbol.Venue, okxFundingHistoryLimit, afterMs)
 		var resp okxFundingHistoryResponse
-		if err := fetchFundingHistoryPage(ctx, func() error {
+		if err := fetchFundingHistoryPage(ctx, fundingHistoryPageDelay, func() error {
 			resp = okxFundingHistoryResponse{}
 			return fetchInstrumentJSON(ctx, url, &resp)
 		}); err != nil {
@@ -76,7 +76,7 @@ func FetchOKXFundingHistory(ctx context.Context, source string, symbol Symbol, w
 			break
 		}
 		afterMs = oldestMs
-		if err := fundingHistoryPause(ctx); err != nil {
+		if err := fundingHistoryPause(ctx, fundingHistoryPageDelay); err != nil {
 			return nil, err
 		}
 	}

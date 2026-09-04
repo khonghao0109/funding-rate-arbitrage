@@ -36,6 +36,10 @@ const (
 	// fundingHistoryPageDelay paces a paginating fetcher. Backfill is a one-off
 	// job with no deadline, and spending a venue's rate limit on it would cost
 	// the live feeds — which share the same IP budget — for no gain.
+	//
+	// It is the DEFAULT, not a rule: pacing is a per-venue fact and a venue that
+	// publishes a budget gets paced to it (hyperliquidHistoryPageDelay). Six of
+	// the seven answer this rate without complaint.
 	fundingHistoryPageDelay = 200 * time.Millisecond
 
 	// maxFundingHistoryPages bounds a paginating loop. It is a runaway guard,
@@ -339,6 +343,23 @@ func FundingGaps(entries []FundingHistoryEntry) FundingGapReport {
 // whole series is given up on.
 const fundingHistoryPageAttempts = 3
 
+// rateLimitBackoff is the wait before retrying a request the venue rate
+// limited, by attempt number.
+//
+// Seconds, not the page delay. A rate limit is a budget over a window — a
+// minute, on every venue here that publishes one — so coming back 200ms later
+// asks the same question inside the same exhausted window and burns an attempt
+// for nothing. Measured 2026-09-04: with the page delay as the only backoff,
+// two Hyperliquid series lost their whole year to three 429s in 600ms.
+func rateLimitBackoff(attempt int) time.Duration {
+	switch attempt {
+	case 1:
+		return 5 * time.Second
+	default:
+		return 20 * time.Second
+	}
+}
+
 // fetchFundingHistoryPage runs one page request, retrying a transient failure.
 //
 // It exists because the alternative is arithmetic nobody would choose: a series
@@ -346,11 +367,15 @@ const fundingHistoryPageAttempts = 3
 // because request 1,999 came back a 502 throws away everything already
 // collected. Two things are never retried — a market the venue does not list is
 // not transient, and a cancelled context means the caller is shutting down.
-func fetchFundingHistoryPage(ctx context.Context, do func() error) error {
+//
+// delay is the venue's own page pacing, which is also the floor for an ordinary
+// retry; a rate limit overrides it with something the venue's window can
+// actually absorb.
+func fetchFundingHistoryPage(ctx context.Context, delay time.Duration, do func() error) error {
 	var err error
 	for attempt := 0; attempt < fundingHistoryPageAttempts; attempt++ {
 		if attempt > 0 {
-			if waitErr := fundingHistoryPause(ctx); waitErr != nil {
+			if waitErr := fundingHistoryPause(ctx, retryDelay(err, delay, attempt)); waitErr != nil {
 				return waitErr
 			}
 		}
@@ -362,13 +387,28 @@ func fetchFundingHistoryPage(ctx context.Context, do func() error) error {
 	return err
 }
 
+// retryDelay picks how long to wait after a failed attempt. A venue that named
+// its own Retry-After wins over both defaults — it knows its window and we are
+// guessing at it.
+func retryDelay(err error, pageDelay time.Duration, attempt int) time.Duration {
+	var limited *rateLimitError
+	if !errors.As(err, &limited) {
+		return pageDelay
+	}
+	delay := rateLimitBackoff(attempt)
+	if limited.RetryAfter > delay {
+		return limited.RetryAfter
+	}
+	return delay
+}
+
 // fundingHistoryPause waits between pages, or returns ctx's error if the fetch
 // was cancelled while waiting.
-func fundingHistoryPause(ctx context.Context) error {
+func fundingHistoryPause(ctx context.Context, delay time.Duration) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(fundingHistoryPageDelay):
+	case <-time.After(delay):
 		return nil
 	}
 }

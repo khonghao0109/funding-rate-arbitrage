@@ -63,7 +63,7 @@ func FetchGateFundingHistory(ctx context.Context, source string, symbol Symbol, 
 		url := fmt.Sprintf("https://api.gateio.ws/api/v4/futures/%s/funding_rate?contract=%s&limit=%d&from=%d&to=%d",
 			gateFundingSettle, symbol.Venue, gateFundingHistoryLimit, startSec, toSec)
 		var raw []gateFundingHistoryRow
-		if err := fetchFundingHistoryPage(ctx, func() error {
+		if err := fetchFundingHistoryPage(ctx, fundingHistoryPageDelay, func() error {
 			raw = nil
 			return fetchInstrumentJSON(ctx, url, &raw)
 		}); err != nil {
@@ -86,7 +86,7 @@ func FetchGateFundingHistory(ctx context.Context, source string, symbol Symbol, 
 			break
 		}
 		toSec = oldestSec - 1
-		if err := fundingHistoryPause(ctx); err != nil {
+		if err := fundingHistoryPause(ctx, fundingHistoryPageDelay); err != nil {
 			return nil, err
 		}
 	}

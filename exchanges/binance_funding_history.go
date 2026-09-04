@@ -37,7 +37,7 @@ func FetchBinanceFundingHistory(ctx context.Context, source string, symbol Symbo
 		url := fmt.Sprintf("https://fapi.binance.com/fapi/v1/fundingRate?symbol=%s&startTime=%d&endTime=%d&limit=%d",
 			symbol.Venue, cursorMs, window.EndMs, binanceFundingHistoryLimit)
 		var raw []binanceFundingHistoryRow
-		if err := fetchFundingHistoryPage(ctx, func() error {
+		if err := fetchFundingHistoryPage(ctx, fundingHistoryPageDelay, func() error {
 			raw = nil
 			return fetchInstrumentJSON(ctx, url, &raw)
 		}); err != nil {
@@ -67,7 +67,7 @@ func FetchBinanceFundingHistory(ctx context.Context, source string, symbol Symbo
 			break
 		}
 		cursorMs = next
-		if err := fundingHistoryPause(ctx); err != nil {
+		if err := fundingHistoryPause(ctx, fundingHistoryPageDelay); err != nil {
 			return nil, err
 		}
 	}

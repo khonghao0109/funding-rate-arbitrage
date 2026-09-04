@@ -42,7 +42,7 @@ func FetchBybitFundingHistory(ctx context.Context, source string, symbol Symbol,
 		url := fmt.Sprintf("https://api.bybit.com/v5/market/funding/history?category=linear&symbol=%s&startTime=%d&endTime=%d&limit=%d",
 			symbol.Venue, window.StartMs, endMs, bybitFundingHistoryLimit)
 		var resp bybitFundingHistoryResponse
-		if err := fetchFundingHistoryPage(ctx, func() error {
+		if err := fetchFundingHistoryPage(ctx, fundingHistoryPageDelay, func() error {
 			resp = bybitFundingHistoryResponse{}
 			return fetchInstrumentJSON(ctx, url, &resp)
 		}); err != nil {
@@ -68,7 +68,7 @@ func FetchBybitFundingHistory(ctx context.Context, source string, symbol Symbol,
 			break // the venue is not moving; stop rather than re-request
 		}
 		endMs = oldestMs - 1
-		if err := fundingHistoryPause(ctx); err != nil {
+		if err := fundingHistoryPause(ctx, fundingHistoryPageDelay); err != nil {
 			return nil, err
 		}
 	}

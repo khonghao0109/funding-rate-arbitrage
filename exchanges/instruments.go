@@ -123,6 +123,49 @@ var instrumentHTTPClient = &http.Client{Timeout: 30 * time.Second}
 // delisted pair must not fail a whole source.
 var errInstrumentNotListed = errors.New("instrument not listed")
 
+// errRateLimited marks a request the venue refused because it arrived too
+// often. It is a transient failure like any other network error, but it needs a
+// different order of magnitude of patience: a rate limit is a budget measured
+// over a MINUTE, so retrying a few hundred milliseconds later only spends what
+// is left of it. Found live 2026-09-04 — see rateLimitError.
+var errRateLimited = errors.New("rate limited by the venue")
+
+// rateLimitError carries what the venue said about when to come back.
+//
+// The header is honoured when present because the venue knows its own window
+// and we do not; RetryAfter is 0 when it named none, and the caller then uses
+// its own backoff. Only the delay-relevant part is kept structured — everything
+// else is for the log.
+type rateLimitError struct {
+	URL        string
+	RetryAfter time.Duration
+	Body       string
+}
+
+func (e *rateLimitError) Error() string {
+	if e.RetryAfter > 0 {
+		return fmt.Sprintf("%s: HTTP 429, retry after %s: %s", e.URL, e.RetryAfter, e.Body)
+	}
+	return fmt.Sprintf("%s: HTTP 429: %s", e.URL, e.Body)
+}
+
+// Is makes errors.Is(err, errRateLimited) work through the wrapping every
+// fetcher does, without every call site knowing this type exists.
+func (e *rateLimitError) Is(target error) bool { return target == errRateLimited }
+
+// parseRetryAfter reads the header's delay-seconds form. The HTTP-date form is
+// deliberately not parsed: it would have to be compared against the venue's
+// clock, and this codebase has already measured venue clocks running ahead of
+// ours (CLAUDE.md rule 13). An unparsable value means "the venue named no
+// delay", which the caller's own backoff covers.
+func parseRetryAfter(header string) time.Duration {
+	seconds, err := strconv.Atoi(strings.TrimSpace(header))
+	if err != nil || seconds <= 0 {
+		return 0
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func fetchInstrumentJSON(ctx context.Context, url string, into any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -150,6 +193,14 @@ func doInstrumentRequest(req *http.Request, into any) error {
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
 		return fmt.Errorf("%s: %w", req.URL, errInstrumentNotListed)
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return &rateLimitError{
+			URL:        req.URL.String(),
+			RetryAfter: parseRetryAfter(resp.Header.Get("Retry-After")),
+			Body:       string(body),
+		}
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))

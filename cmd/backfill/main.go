@@ -51,6 +51,7 @@ func run() int {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
 	months := flag.Int("months", 12, "how far back to ask each venue for")
 	only := flag.String("symbol", "", "collect only this pair (default: every configured pair)")
+	onlySource := flag.String("source", "", "collect only this source (default: every configured source)")
 	dbPath := flag.String("db", "", "database file (default: storage.path from the config)")
 	check := flag.Int("check", 0, "read back the last N days instead of collecting; opens no socket")
 	flag.Parse()
@@ -96,9 +97,10 @@ func run() int {
 		return 0
 	}
 
-	collector := history.New(db, jobsFrom(cfg, *only))
+	collector := history.New(db, jobsFrom(cfg, *only, *onlySource))
 	if len(collector.Jobs()) == 0 {
-		log.Printf("nothing to collect: no configured source has a funding history fetcher for %q", *only)
+		log.Printf("nothing to collect: no configured source has a funding history fetcher for symbol %q source %q",
+			*only, *onlySource)
 		return 1
 	}
 
@@ -145,10 +147,18 @@ func failedSeries(results []history.Result) int {
 }
 
 // jobsFrom builds one collection job per configured source, optionally narrowed
-// to a single pair.
-func jobsFrom(cfg config.Config, only string) []history.Job {
+// to a single pair and a single source.
+//
+// Narrowing by source exists because repairing ONE series is the job that
+// actually comes up: a venue rate-limited two of twenty-eight series, and
+// re-running the pair would spend two thousand requests re-reading a Paradex
+// series that was already complete.
+func jobsFrom(cfg config.Config, only, onlySource string) []history.Job {
 	jobs := make([]history.Job, 0, len(cfg.Sources))
 	for _, source := range cfg.Sources {
+		if onlySource != "" && source.Source != onlySource {
+			continue
+		}
 		symbols := make([]exchanges.Symbol, 0, len(cfg.Symbols))
 		for _, symbol := range cfg.Symbols {
 			if only != "" && symbol.Symbol != only {

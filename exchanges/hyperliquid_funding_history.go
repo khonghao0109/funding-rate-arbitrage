@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"time"
 )
 
 // Hyperliquid settled funding rates (step 2.6).
@@ -27,6 +28,25 @@ import (
 // https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/info-endpoint/perpetuals
 const hyperliquidFundingHistoryLimit = 500
 
+// hyperliquidHistoryPageDelay paces this fetcher to the budget Hyperliquid
+// publishes, which is far tighter for THIS endpoint than the shared default
+// assumes.
+//
+// The documented cost: REST requests share "an aggregated weight limit of 1200
+// per minute" per IP; a documented info request is weight 20; and fundingHistory
+// is on the list carrying "an additional rate limit weight per 20 items returned
+// in the response". A full 500-row page is therefore 20 + 25 = 45, so the budget
+// is 1200/45 ≈ 26 pages a minute — one every 2.3 seconds. 2.5s is that with
+// margin.
+//
+// The shared 200ms default is eleven times over it, and this is not theoretical:
+// on 2026-09-04 a 12-month backfill of four pairs got BTC and ETH in full and
+// then HTTP 429 on XRP and SOL, which left both series at the 7 days the
+// scanner's bootstrap had collected. A backfill has no deadline; a corpus with
+// two holes in it is a phase-3 problem.
+// https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits
+const hyperliquidHistoryPageDelay = 2500 * time.Millisecond
+
 type hyperliquidFundingHistoryRow struct {
 	Coin        string `json:"coin"`
 	FundingRate string `json:"fundingRate"`
@@ -43,7 +63,7 @@ func FetchHyperliquidFundingHistory(ctx context.Context, source string, symbol S
 		payload := fmt.Sprintf(`{"type":"fundingHistory","coin":%q,"startTime":%d,"endTime":%d}`,
 			symbol.Venue, cursorMs, window.EndMs)
 		var raw []hyperliquidFundingHistoryRow
-		if err := fetchFundingHistoryPage(ctx, func() error {
+		if err := fetchFundingHistoryPage(ctx, hyperliquidHistoryPageDelay, func() error {
 			raw = nil
 			return postInstrumentJSON(ctx, "https://api.hyperliquid.xyz/info", payload, &raw)
 		}); err != nil {
@@ -70,7 +90,7 @@ func FetchHyperliquidFundingHistory(ctx context.Context, source string, symbol S
 			break
 		}
 		cursorMs = next
-		if err := fundingHistoryPause(ctx); err != nil {
+		if err := fundingHistoryPause(ctx, hyperliquidHistoryPageDelay); err != nil {
 			return nil, err
 		}
 	}

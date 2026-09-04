@@ -74,7 +74,7 @@ func FetchParadexFundingHistory(ctx context.Context, source string, symbol Symbo
 		url := fmt.Sprintf("https://api.prod.paradex.trade/v1/funding/data?market=%s&end_at=%d&page_size=%d",
 			symbol.Venue, boundaryMs, paradexFundingHistoryPageSize)
 		var resp paradexFundingHistoryResponse
-		if err := fetchFundingHistoryPage(ctx, func() error {
+		if err := fetchFundingHistoryPage(ctx, fundingHistoryPageDelay, func() error {
 			resp = paradexFundingHistoryResponse{}
 			return fetchInstrumentJSON(ctx, url, &resp)
 		}); err != nil {
@@ -97,7 +97,7 @@ func FetchParadexFundingHistory(ctx context.Context, source string, symbol Symbo
 		if boundaryMs <= window.StartMs {
 			break
 		}
-		if err := fundingHistoryPause(ctx); err != nil {
+		if err := fundingHistoryPause(ctx, fundingHistoryPageDelay); err != nil {
 			return nil, err
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"testing"
+	"time"
 )
 
 // Golden tests for the settled-funding parsers (step 2.6), against the real
@@ -577,7 +578,7 @@ func TestFetchFundingHistoryPageRetriesOnlyWhatIsWorthRetrying(t *testing.T) {
 		// The alternative is losing a series: a Paradex fetch is 2,000 requests
 		// and nine minutes, and aborting it over one 502 discards all of it.
 		calls := 0
-		err := fetchFundingHistoryPage(context.Background(), func() error {
+		err := fetchFundingHistoryPage(context.Background(), 0, func() error {
 			calls++
 			if calls < 3 {
 				return transient
@@ -591,7 +592,7 @@ func TestFetchFundingHistoryPageRetriesOnlyWhatIsWorthRetrying(t *testing.T) {
 
 	t.Run("a persistent failure gives up and reports the last error", func(t *testing.T) {
 		calls := 0
-		err := fetchFundingHistoryPage(context.Background(), func() error {
+		err := fetchFundingHistoryPage(context.Background(), 0, func() error {
 			calls++
 			return transient
 		})
@@ -605,7 +606,7 @@ func TestFetchFundingHistoryPageRetriesOnlyWhatIsWorthRetrying(t *testing.T) {
 		// Not transient: retrying it spends two more requests and one more
 		// second per page to be told the same thing.
 		calls := 0
-		err := fetchFundingHistoryPage(context.Background(), func() error {
+		err := fetchFundingHistoryPage(context.Background(), 0, func() error {
 			calls++
 			return fmt.Errorf("wrapped: %w", errInstrumentNotListed)
 		})
@@ -618,7 +619,7 @@ func TestFetchFundingHistoryPageRetriesOnlyWhatIsWorthRetrying(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		calls := 0
-		if err := fetchFundingHistoryPage(ctx, func() error {
+		if err := fetchFundingHistoryPage(ctx, 0, func() error {
 			calls++
 			return transient
 		}); err == nil {
@@ -628,4 +629,91 @@ func TestFetchFundingHistoryPageRetriesOnlyWhatIsWorthRetrying(t *testing.T) {
 			t.Fatalf("%d calls after cancellation; want one", calls)
 		}
 	})
+
+	t.Run("a rate limit is retried like any other transient failure", func(t *testing.T) {
+		// It is transient by definition - the budget refills - and the venue
+		// that produced it (Hyperliquid, 2026-09-04) cost two whole series.
+		calls := 0
+		err := fetchFundingHistoryPage(context.Background(), 0, func() error {
+			calls++
+			if calls < 2 {
+				return &rateLimitError{URL: "https://api.hyperliquid.xyz/info", Body: "null"}
+			}
+			return nil
+		})
+		if err != nil || calls != 2 {
+			t.Fatalf("err = %v after %d calls; want success on the second", err, calls)
+		}
+	})
+}
+
+func TestRetryDelayWaitsLongerForARateLimitThanForABlip(t *testing.T) {
+	const pageDelay = 200 * time.Millisecond
+
+	t.Run("an ordinary failure waits one page delay", func(t *testing.T) {
+		if got := retryDelay(errors.New("HTTP 502"), pageDelay, 1); got != pageDelay {
+			t.Fatalf("retryDelay = %s, want the page delay %s", got, pageDelay)
+		}
+	})
+
+	t.Run("a rate limit waits seconds, and longer the second time", func(t *testing.T) {
+		// The whole point: a budget measured over a minute is not cleared by
+		// coming back 200ms later, which is how three attempts were spent in
+		// 600ms and a 12-month series was lost.
+		limited := fmt.Errorf("wrapped: %w", &rateLimitError{URL: "u", Body: "null"})
+		first, second := retryDelay(limited, pageDelay, 1), retryDelay(limited, pageDelay, 2)
+		if first < time.Second {
+			t.Fatalf("first rate-limit retry waits %s; that is inside the same exhausted window", first)
+		}
+		if second <= first {
+			t.Fatalf("second retry waits %s, not more than the first %s", second, first)
+		}
+	})
+
+	t.Run("the venue's own Retry-After wins when it is longer", func(t *testing.T) {
+		// It knows its window; our backoff is a guess at it.
+		limited := &rateLimitError{URL: "u", RetryAfter: 90 * time.Second}
+		if got := retryDelay(limited, pageDelay, 1); got != 90*time.Second {
+			t.Fatalf("retryDelay = %s, want the venue's 90s", got)
+		}
+	})
+
+	t.Run("a Retry-After shorter than the backoff does not shorten it", func(t *testing.T) {
+		limited := &rateLimitError{URL: "u", RetryAfter: time.Second}
+		if got := retryDelay(limited, pageDelay, 2); got != rateLimitBackoff(2) {
+			t.Fatalf("retryDelay = %s, want the backoff %s", got, rateLimitBackoff(2))
+		}
+	})
+}
+
+func TestRateLimitErrorIsRecognisedThroughWrapping(t *testing.T) {
+	err := fmt.Errorf("hyperliquid funding history BTC: %w",
+		&rateLimitError{URL: "https://api.hyperliquid.xyz/info", Body: "null"})
+	if !errors.Is(err, errRateLimited) {
+		t.Fatal("a wrapped rate limit is not recognised; every retry decision reads it through wrapping")
+	}
+	if errors.Is(err, errInstrumentNotListed) {
+		t.Fatal("a rate limit read as 'market not listed' would end the series silently and report no rows")
+	}
+}
+
+func TestParseRetryAfter(t *testing.T) {
+	for _, tc := range []struct {
+		header string
+		want   time.Duration
+	}{
+		{"30", 30 * time.Second},
+		{" 5 ", 5 * time.Second},
+		{"", 0},
+		{"0", 0},
+		{"-1", 0},
+		// The HTTP-date form is deliberately not parsed: comparing it against
+		// our clock measures venue clock skew, which this project has already
+		// measured at 80ms on Binance (CLAUDE.md rule 13).
+		{"Fri, 04 Sep 2026 12:00:00 GMT", 0},
+	} {
+		if got := parseRetryAfter(tc.header); got != tc.want {
+			t.Errorf("parseRetryAfter(%q) = %s, want %s", tc.header, got, tc.want)
+		}
+	}
 }
