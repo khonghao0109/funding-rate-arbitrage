@@ -8,6 +8,18 @@ import (
 	"futures-arbitrage-scanner/internal/config"
 )
 
+// repoConfig is the config.yaml the scanner actually ships with. Tests here run
+// against it rather than a fixture, for the same reason internal/config's do:
+// the file is the only place the source list exists.
+func repoConfig(t *testing.T) config.Config {
+	t.Helper()
+	cfg, err := config.Load(filepath.Join("..", "..", "config.yaml"))
+	if err != nil {
+		t.Fatalf("load config.yaml: %v", err)
+	}
+	return cfg
+}
+
 // The debt this closes, recorded at step 1.0: wire_test.go held a hand-copied
 // list of the ten sources main() connected, so adding a connector and forgetting
 // to register it was invisible. config.yaml is now the only list, and this

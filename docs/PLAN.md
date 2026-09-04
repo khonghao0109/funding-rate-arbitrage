@@ -1022,7 +1022,13 @@ Sửa:
 > Trần `maxFundingHistoryPages` giới hạn Paradex ở ~83 ngày; nếu GĐ 3 cần sâu
 > hơn thì chạy backfill nhiều lượt hoặc nâng trần.
 
-#### Bước 2.7 — Dashboard funding
+#### Bước 2.7 — Dashboard funding — **2.7a ✅ · 2.7b còn lại**
+
+> **Tách đôi (2026-09-04, có duyệt).** Bước này gánh hai việc tách bạch được và
+> mỗi việc nghiệm thu riêng được: **2.7a** bảng funding + độ tươi + đếm ngược +
+> biểu đồ lịch sử; **2.7b** độ sâu sổ lệnh REST 9 sàn + quy đổi contract→coin +
+> cột thanh khoản + bảng `depth_snapshots`. Hai commit, không hạ tiêu chí nào.
+
 - Bảng funding hiện tại theo sàn × cặp, **quy về cùng đơn vị 8h** để so sánh công bằng, tô màu theo mức hấp dẫn.
 - ⚠️ Đo độ tươi mỗi reading từ `RecvAt` trước khi hiển thị — map funding của scanner giữ bản ghi cuối **mãi mãi** (ghi nhận ở Bước 2.2); subscription chết mà bảng vẫn tô rate cũ như mới là lặp lại lỗi 1.6 ở tầng UI.
 - Đếm ngược mốc funding kế tiếp (ẩn với sàn `continuous`).
@@ -1031,6 +1037,76 @@ Sửa:
 - ⚠️ Kiểm **phía bid của chân spot** — đó là chỗ kẹt lúc thoát, không phải phía ask lúc vào.
 - ⚠️ Nếu mở rộng quá ~20 symbol, tầng broadcast phải sửa trước — xem [§7.3](#73-ngưỡng-mở-rộng-của-tầng-broadcast).
 - **Nghiệm thu:** nhìn dashboard biết ngay nên vào cặp nào, sàn nào — và biết con số đang so sánh là cùng đơn vị.
+
+> **⚠️ Đối chiếu P1 (2026-09-04) — sáu điều khác giả định của kế hoạch.**
+>
+> ① **Không có gì lấy độ sâu sổ lệnh** (`grep depth` = 0). Dò sống cả 9 nguồn,
+> tất cả HTTP 200, và ra bốn bẫy: **Kraken** trả `bids` **TĂNG DẦN** — `bids[0]`
+> là giá **1**, best bid là phần tử CUỐI — và không có tham số limit (1.825 bid +
+> 870 ask, 44 KB); **Hyperliquid** `l2Book` chỉ 20 mức/phía, trải đúng 0,025%
+> quanh mid trên BTC, tức **hẹp hơn cả cửa sổ 0,1%** nên số đo được ở đó là cận
+> dưới; **Gate/OKX** trả size theo **contract nguyên** (`quanto_multiplier`
+> 0,0001 · `ctVal` 0,01) nên không quy đổi thì Gate trông sâu gấp 10.000 lần;
+> **Paradex** trả 100 bid nhưng chỉ 43 ask, best ask cách best bid **0,22%**.
+> → toàn bộ nằm ở 2.7b.
+>
+> ② **Ngưỡng độ tươi của giá KHÔNG dùng được cho funding.** Đo 44 phút liên tục
+> trên cổng 8085: binance 16s · okx 67s · paradex 71s · gate 4s · kraken 1s ·
+> hyperliquid 1s — nhưng **bybit 2.639s và vẫn đang tăng**, vì Bước 2.5 đã sửa nó
+> thành *chỉ phát khi trường funding đổi thật*. Tuổi reading của Bybit **không có
+> trần theo quan sát**, nên ngưỡng tuổi không thể là thứ phát hiện subscription
+> chết ở đó. → thêm phép kiểm thứ hai độc lập với sàn: **mốc settle đã trôi qua**
+> thì reading mô tả một kỳ đã kết thúc, dù nó vừa về một giây trước
+> ([WS-CONTRACT §9.2](WS-CONTRACT.md)).
+>
+> ③ **Paradex là lý do phải đo ĐỦ LÂU**: sau 4 phút nó cho 18s, sau 44 phút cho
+> 71s. Ngưỡng đặt theo cửa sổ ngắn sẽ báo nhầm một feed khoẻ là chết.
+>
+> ④ **Ba sàn perp không hedge được** với spot đang cấu hình — Kraken, Hyperliquid,
+> Paradex quote USD, spot chỉ có USDT (12/12 từ chối, đúng thiết kế Bước 2.4).
+> Bảng funding không nói ra điều này sẽ khoe APR 18,65% của Kraken XRP như một cơ
+> hội **không mở được**. → mỗi ô mang `hedge_spot_source` + lý do từ chối.
+>
+> ⑤ **Lịch sử funding không đi qua WebSocket được**: `internal/scanner` không biết
+> `internal/store` và không nên biết. → HTTP `GET /api/funding/history`, ghi thành
+> [WS-CONTRACT §10](WS-CONTRACT.md).
+>
+> ⑥ **Tầng broadcast tệ hơn §7.3 ước tính rất nhiều.** Đo trên bản trước khi sửa,
+> một client, 30 giây: **101.627 message `spreads` = 3.387/giây = 11,3 MB/giây**,
+> chiếm **99,85%** toàn bộ frame. §7.3 mô tả đúng cơ chế nhưng không có số; con số
+> thật khiến việc throttle không còn là "nên làm sớm" mà là điều kiện để hai
+> message mới chen được vào.
+
+> **Kết quả 2.7a (2026-09-04).** Message `funding` mới (đẩy sau `meta` lúc kết
+> nối rồi mỗi 5s), `meta.funding_basis` + `funding_stale_after_sec` +
+> `funding_publish_mode`, REST `/api/funding/history`, và tab Funding trên
+> dashboard: ma trận **sàn × cặp quy về bps/8h**, bảng chi tiết theo cặp (chu kỳ,
+> đếm ngược, độ tươi, chân spot hedge, hoà phí), biểu đồ lịch sử + độ phủ.
+> Hợp đồng mở rộng đúng luật mục 8 — chỉ thêm, `v` vẫn là `1`.
+>
+> **Nghiệm thu chạy sống, cổng 8085, soak 8082 không bị đụng:**
+> - **28 reading = 4 cặp × 7 sàn**, cùng đơn vị bps/8h. Đếm ngược đúng chu kỳ
+>   thật: 157 phút cho năm sàn 8h, 37 phút cho Kraken và Hyperliquid (settle theo
+>   giờ), Paradex hiện **"liên tục"** và không có đếm ngược — đúng model của nó.
+> - **Đường staleness chứng minh đầu-cuối**: chạy một cấu hình cố ý đặt
+>   `funding_stale_after_sec: 1` cho Binance → ô đó báo `stale`/`age` ở tuổi 13s
+>   trong khi sáu sàn còn lại trên cùng socket vẫn `live`, và **Bybit ở tuổi 19s
+>   vẫn `live`** dưới ngưỡng 29.100s của nó — đúng ý đồ thiết kế.
+> - **Hoà phí chỉ hiện ở nơi có số thật**: 11,9 ngày cho BTC/binance và 10,0 ngày
+>   cho ETH và XRP; `null` ở mọi cặp chạm sàn chưa xác minh biểu phí, và `null`
+>   trên SOL vì rate âm — rate âm là chi phí, chi phí thì không hoà vốn.
+> - **REST trả 7 series cho BTCUSDT** kèm `coverage[]`: Binance/Bybit 364,7 ngày ·
+>   Kraken/Hyperliquid 365,0 · Gate 178,7 · OKX 92,7 · Paradex 83,3 — độ phủ đi
+>   kèm biểu đồ chứ không phải ghi chú bên cạnh.
+> - **Throttle broadcast**: 3.387 `spreads`/giây (11,3 MB/s) → **20,0/giây**
+>   (65 KB/s), tức đúng `số symbol × 5/giây` và có trần. Cảnh báo `arbitrage`
+>   **không** bị hoãn.
+>
+> **Nợ ghi nhận:** 2.7b chưa làm (độ sâu + thanh khoản + `depth_snapshots`), nên
+> `best_*_qty_coin` của OKX/Gate/Kraken/Paradex vẫn là `0`. Bảng vẫn xếp theo thứ
+> tự cấu hình chứ chưa xếp hạng — cố ý: xếp hạng mà chưa có thanh khoản là đẩy
+> cặp APR cao/sổ mỏng lên đầu (§7.4). §7.3 mục 2 (client đăng ký symbol) vẫn còn:
+> 20 msg/s hiện tại là 4 symbol, ở 50 symbol sẽ là 250/s.
 
 ---
 
@@ -1410,7 +1486,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          6/7 bước   ← ĐANG LÀM song song với soak
+[  ] GĐ 2  Funding Rate Monitor          6,5/7 bước (2.7a xong, 2.7b còn)   ← ĐANG LÀM song song với soak
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
@@ -1426,7 +1502,9 @@ subscription bị sàn âm thầm huỷ hiện **không có gì buộc nối l�
 dạng hỏng mà 72 giờ sinh ra để phát hiện — chạy mà không sửa thì nhiều khả năng
 chỉ chứng minh lại rằng nó tồn tại.
 
-GĐ 2 đã bắt đầu song song (không đụng tiến trình soak): Bước 2.1 và 2.2 xong
-2026-09-03. Tiếp theo là **Bước 2.3** — instrument registry
-(`internal/instruments`): `exchangeInfo` cache 1 lần/ngày, contract size 4 sàn,
-sizing delta-neutral.
+GĐ 2 chạy song song và không đụng tiến trình soak. Bước 2.1–2.6 xong, **2.7a
+xong 2026-09-04** (bảng funding, độ tươi đo từ `RecvAt` + mốc settle, đếm ngược,
+biểu đồ lịch sử qua REST, throttle broadcast). Việc tiếp theo là **Bước 2.7b** —
+độ sâu sổ lệnh REST cho 9 nguồn, quy đổi contract→coin qua registry, cột thanh
+khoản (đặc biệt **phía bid của chân spot**, chỗ kẹt lúc thoát) và bảng
+`depth_snapshots`. Bốn cái bẫy độ sâu đã đo sẵn ở khối P1 của Bước 2.7.

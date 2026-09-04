@@ -26,6 +26,27 @@ var knownMarketTypes = map[string]bool{
 	"spot": true, "perp": true, "future": true, "oracle": true,
 }
 
+// Funding publish modes (step 2.7). They are configuration rather than a Go
+// table because they are a MEASURED property of each venue's stream, and the
+// dashboard shows which one applies beside every age it prints.
+const (
+	// FundingPeriodic: the venue republishes on a cadence of its own, so the
+	// age of a reading measures liveness.
+	FundingPeriodic = "periodic"
+	// FundingOnChange: the venue publishes only when a funding field moves, so
+	// silence is the normal state and age measures nothing. Its upper bound is
+	// the settlement interval — every venue in this mode republishes when the
+	// next settlement stamp changes.
+	FundingOnChange = "on_change"
+)
+
+var knownFundingPublishModes = map[string]bool{
+	FundingPeriodic: true, FundingOnChange: true,
+}
+
+// marketTypePerp is the only market type that has funding at all.
+const marketTypePerp = "perp"
+
 type Config struct {
 	Server  Server   `yaml:"server"`
 	Scanner Scanner  `yaml:"scanner"`
@@ -108,6 +129,25 @@ type Source struct {
 	EnabledByDefault bool   `yaml:"enabled_by_default"`
 
 	StaleAfterSec int64 `yaml:"stale_after_sec"`
+
+	// FundingStaleAfterSec is the staleness threshold for this source's FUNDING
+	// readings, which is a different measurement from the price one and much
+	// larger (step 2.7). A price arrives on every book change; a funding rate
+	// arrives when the venue decides to republish it, which on some venues is
+	// only when the number itself moves.
+	//
+	// Required for perp sources and forbidden on every other kind: spot markets
+	// and oracles have no funding, so a threshold there would be a copy-paste
+	// nobody ever reads.
+	FundingStaleAfterSec int64 `yaml:"funding_stale_after_sec"`
+
+	// FundingPublishMode is how this venue emits funding: "periodic" (a fixed
+	// cadence, so age is a real liveness measure) or "on_change" (only when a
+	// funding field moves, so a long silence is normal and age proves nothing).
+	// The dashboard renders the distinction — measured 2026-09-04, Bybit went
+	// 19 minutes without republishing an unchanged rate while the socket carried
+	// book updates the whole time.
+	FundingPublishMode string `yaml:"funding_publish_mode"`
 
 	// SymbolFormat builds the venue's own identifier from a Symbol. {base},
 	// {quote} and {symbol} are substituted.
@@ -356,6 +396,10 @@ func (c Config) validateSource(source Source, seen map[string]bool) error {
 			source.Source, source.StaleAfterSec)
 	}
 
+	if err := validateFunding(source); err != nil {
+		return err
+	}
+
 	// A source that can serve none of the configured pairs would connect,
 	// subscribe to nothing and sit there looking healthy.
 	//
@@ -382,6 +426,33 @@ func (c Config) validateSource(source Source, seen map[string]bool) error {
 	}
 
 	return validateFee(source)
+}
+
+// validateFunding checks the funding freshness settings, which exist for perp
+// sources and only for them.
+//
+// Both directions are enforced. A perp without them would have its funding
+// readings judged by nothing, and every dashboard cell would have to invent a
+// default; a spot source or an oracle carrying them is a copy-paste that reads
+// as configuration nobody will ever consult, which is worse than an error
+// because it looks deliberate.
+func validateFunding(source Source) error {
+	if source.MarketType != marketTypePerp {
+		if source.FundingStaleAfterSec != 0 || source.FundingPublishMode != "" {
+			return fmt.Errorf("source %s is %s and has no funding, but declares funding settings",
+				source.Source, source.MarketType)
+		}
+		return nil
+	}
+	if source.FundingStaleAfterSec <= 0 {
+		return fmt.Errorf("source %s is a perp and needs funding_stale_after_sec; zero would mark every funding reading stale on arrival",
+			source.Source)
+	}
+	if !knownFundingPublishModes[source.FundingPublishMode] {
+		return fmt.Errorf("source %s has funding_publish_mode %q, want %q or %q",
+			source.Source, source.FundingPublishMode, FundingPeriodic, FundingOnChange)
+	}
+	return nil
 }
 
 func validateFee(source Source) error {

@@ -67,9 +67,9 @@ func main() {
 
 	connectors := startConnectors(ctx, cfg, s)
 	// One registry, threaded through. Step 2.4 reads it for the hedge mapping,
-	// 2.6 for the daily snapshots, and 2.7 will for liquidity ranking — do NOT
-	// build a second one elsewhere.
-	registry := startInstrumentRegistry(ctx, cfg)
+	// 2.6 for the daily snapshots, and 2.7 for the funding table's hedge column
+	// — do NOT build a second one elsewhere.
+	registry := startInstrumentRegistry(ctx, cfg, s)
 
 	// Persistence (step 2.6). Its jobs get their own WaitGroup: the store is
 	// closed after they stop, and closing it underneath a job mid-transaction
@@ -79,6 +79,9 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.HandleWebSocket)
+	// Settled funding history for the chart (step 2.7). Read-only, and the only
+	// route that touches the store — the push contract stays on /ws.
+	mux.HandleFunc("/api/funding/history", newFundingHistoryHandler(db, cfg))
 	mux.Handle("/", http.FileServer(http.Dir("./static/")))
 
 	port := os.Getenv("PORT")
@@ -266,7 +269,7 @@ func venueSymbols(cfg config.Config, source config.Source) []exchanges.Symbol {
 // failed refresh is logged and retried at the next cycle with yesterday's
 // rules still served — the scanner's own data path does not depend on it, so
 // it must never take the process down.
-func startInstrumentRegistry(ctx context.Context, cfg config.Config) *instruments.Registry {
+func startInstrumentRegistry(ctx context.Context, cfg config.Config, s *scanner.Scanner) *instruments.Registry {
 	fetchers := exchanges.InstrumentFetchers()
 	var sources []instruments.Source
 	for _, source := range cfg.Sources {
@@ -309,6 +312,12 @@ func startInstrumentRegistry(ctx context.Context, cfg config.Config) *instrument
 	var lastMapping instruments.HedgeMapping
 	go registry.Run(ctx, func() {
 		mapping := instruments.BuildHedgeMapping(registry.Snapshot(), pairs, claims)
+		// Pushed on EVERY refresh, including one that changed nothing: the log
+		// below is deduplicated for a human reading it, but the scanner's copy
+		// is state and must not depend on whether the last refresh happened to
+		// differ. Cheap enough - it is a map of a few dozen entries.
+		s.SetHedges(hedgeLegs(cfg, mapping))
+
 		// Compared as a STRUCTURE, not as its rendered text: the log lines
 		// carry only symbol and source names, so a venue revising a step or
 		// contract size would render identically and go unlogged.

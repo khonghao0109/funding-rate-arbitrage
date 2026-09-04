@@ -17,6 +17,7 @@
 7. [Các bẫy dữ liệu](#7-các-bẫy-dữ-liệu)
 8. [Ngân sách rate limit](#8-ngân-sách-rate-limit)
 9. [Lịch sử funding qua REST](#9-lịch-sử-funding-qua-rest)
+10. [Nhịp phát funding realtime](#10-nhịp-phát-funding-realtime--đo-ở-bước-27a-2026-09-04)
 
 ---
 
@@ -687,12 +688,76 @@ kèm chỉ dẫn đọc `gap_prev_sec`.
 | Top-up scanner (mỗi giờ) | ~30 | Overlap 26h; Paradex 26 request/symbol |
 | Top-up Kraken | 1 request = **1 MB** | Sàn luôn trả cả năm bất kể cửa sổ — chi phí cố định, không tránh được |
 
-Nhịp giữa các trang là 200ms (`fundingHistoryPageDelay`): backfill là việc nền
-không có deadline, còn hạn mức rate limit thì dùng chung với feed đang chạy.
-Mỗi trang được thử lại tối đa 3 lần — một chuỗi dài tới 2.000 request, để một
-502 giữa chừng xoá sạch mọi thứ đã lấy là đánh đổi sai. "Sàn không niêm yết"
+Nhịp giữa các trang là 200ms (`fundingHistoryPageDelay`) cho sáu sàn: backfill là
+việc nền không có deadline, còn hạn mức rate limit thì dùng chung với feed đang
+chạy. Mỗi trang được thử lại tối đa 3 lần — một chuỗi dài tới 2.000 request, để
+một 502 giữa chừng xoá sạch mọi thứ đã lấy là đánh đổi sai. "Sàn không niêm yết"
 và ctx bị huỷ **không** thử lại: cái đầu không phải lỗi tạm thời, cái sau là
 tiến trình đang tắt.
+
+### 9.5 Hyperliquid: nhịp 200ms là **gấp 11 lần** ngân sách của sàn
+
+Phát hiện khi chạy nghiệm thu 2.6: backfill 12 tháng × 4 cặp lấy đủ BTC và ETH
+rồi **HTTP 429** ở XRP và SOL, để lại hai chuỗi ở đúng 7 ngày mà bootstrap của
+scanner đã lấy. Không phải lỗi mạng chập chờn, và retry của 2.6 không thể đỡ nổi.
+
+Tài liệu của sàn nói rõ ba con số phải nhân với nhau:
+
+- REST dùng chung **"an aggregated weight limit of 1200 per minute"** mỗi IP;
+- một `info` request có tài liệu là **weight 20**;
+- `fundingHistory` nằm trong danh sách có **"an additional rate limit weight per
+  20 items returned"** — tức một trang 500 dòng cộng thêm 25.
+
+→ một trang đầy = **45 weight**, ngân sách = **1200/45 ≈ 26 trang/phút**, tức
+**một trang mỗi 2,3 giây**. Nhịp 200ms là 300 trang/phút = 13.500 weight/phút.
+Một chuỗi 12 tháng là ~18 trang = 810 weight, nên hai chuỗi liên tiếp đã vượt
+1200 trong cùng một phút — khớp chính xác với thứ quan sát được.
+
+`hyperliquidHistoryPageDelay` = **2,5s**, kèm hai thứ đi cùng: HTTP 429 giờ giải
+mã thành `rateLimitError` riêng (mang `Retry-After` của sàn) và backoff cho nó là
+**5s rồi 20s**, không phải 200ms — thử lại trong cùng cửa sổ đã cạn thì chỉ đốt
+nốt lượt thử. Dạng HTTP-date của `Retry-After` **cố ý không parse**: so nó với
+đồng hồ của ta là đo lệch đồng hồ, thứ dự án này đã đo được 80ms trên Binance.
+Xác minh bằng cách chạy lại đúng hai chuỗi hỏng: cả hai về **8.760 dòng / 365,0
+ngày**, không còn 429 nào.
+https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api/rate-limits-and-user-limits
+
+---
+
+## 10. NHỊP PHÁT FUNDING REALTIME — đo ở Bước 2.7a (2026-09-04)
+
+Đo 44 phút liên tục, 4 cặp × 7 sàn, khoảng cách **tệ nhất** giữa hai lần một sàn
+phát lại funding cho cùng một cặp:
+
+| Sàn | Gap tệ nhất | Mode | `funding_stale_after_sec` |
+|---|---|---|---|
+| kraken_futures | 1s | periodic | 60 |
+| hyperliquid_futures | 1s | periodic | 60 |
+| gate_futures | 4s | periodic | 60 |
+| binance_futures | 16s | periodic | 60 |
+| okx_futures | 67s | periodic | 210 |
+| paradex_futures | 71s | periodic | 240 |
+| **bybit_futures** | **2.639s và vẫn tăng** | **on_change** | **29.100** |
+
+Ba điều rút ra:
+
+**① Ngưỡng độ tươi của GIÁ không dùng lại được cho funding.** Giá về theo mỗi
+thay đổi sổ lệnh (ngưỡng 10–20s); funding về khi sàn quyết định phát lại. Dùng
+ngưỡng giá sẽ đánh dấu gần như mọi ô funding là cũ trong khi feed hoàn toàn khoẻ.
+
+**② Bybit không có trần theo quan sát, và đó là hệ quả của bản sửa ở 2.5.** Nó
+chỉ publish khi một trường funding **đổi giá trị thật** — sửa như vậy vì stream
+delta ~100ms sẽ làm tươi `RecvAt` mười lần mỗi giây và một subscription chết sẽ
+trông như luôn mới. Cái giá là tuổi reading không còn đo được sức sống ở đó.
+Trần **chứng minh được** duy nhất là chu kỳ settle: `nextFundingTime` đổi thì sàn
+buộc phải phát lại. Nên 8h + 5 phút = 29.100s, và nó là cái chặn cuối chứ không
+phải công cụ phát hiện chết. Thứ phát hiện chết ở đó là `source_status` (im lặng
+trên MỌI loại message) cộng phép kiểm "mốc settle đã trôi qua"
+([WS-CONTRACT §9.2](WS-CONTRACT.md)).
+
+**③ Phải đo ĐỦ LÂU.** Paradex sau 4 phút cho 18s, sau 44 phút cho 71s — chênh
+gần bốn lần. Một ngưỡng đặt theo cửa sổ ngắn sẽ báo nhầm feed khoẻ là chết, và
+đó là kiểu cảnh báo dạy người dùng bỏ qua cảnh báo.
 
 ---
 

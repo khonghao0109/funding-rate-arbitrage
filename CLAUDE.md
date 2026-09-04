@@ -85,6 +85,18 @@ measurement and the two other design-changing findings are in
 the scanner's funding map and are printed once a minute as a GROSS table; the
 dashboard is step 2.7.
 
+Step 2.7a put funding on the dashboard: a new `funding` message (pushed after
+`meta` on connect, then every 5s), `meta.funding_basis`, a REST
+`GET /api/funding/history` served by `cmd/scanner` because the history lives in
+SQLite and `internal/scanner` must not learn about the store, and a Funding tab
+with the venue × pair matrix in **bps per 8h**, a per-pair detail table and a
+settled-history chart. The contract grew by the rules of
+[WS-CONTRACT §8](docs/WS-CONTRACT.md) — new type, new fields with defaults, `v`
+still `1`. **Step 2.7b is still owed**: REST order book depth for the nine
+tradable sources, the contract→coin conversion, the liquidity column and a
+`depth_snapshots` table. The four depth traps are already measured — see the P1
+block under PLAN step 2.7.
+
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
 (venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),
@@ -240,6 +252,8 @@ re-research these; do verify before writing the integration.
 | **History depth** | The three venues that cannot answer a 12-month request, measured 2026-09-04: **OKX** keeps ~3 months and answers beyond it with an EMPTY array and `code "0"` (not an error); **Gate** refuses outright — `from time exceeds 180-day limit` — so the fetcher clamps to 179 days rather than sending a request it knows will fail; **Paradex** has no settlements at all, only a 5-second sample of a cumulative funding index. Never assume the corpus is as deep as it was asked for; read the coverage. |
 | **History interval** | No venue publishes an interval beside a historical rate — Paradex is the lone exception. Annotating a 12-month backfill with today's interval is a **2× error over months** on symbols Binance moved from 8h to 4h. `interval_sec` is the series' MEASURED modal spacing and every row also keeps `gap_prev_sec`, the real distance to the previous settlement. Two cadences with real weight is a different thing from a few missed settlements and is reported separately (`CadenceLooksMixed`, 10% threshold — Kraken's year has 6 outages in 8,771 gaps = 0.07%). |
 | **History stamps** | Settlement stamps are stored VERBATIM. Gate's land 1–3 seconds past the hour, Hyperliquid's carry tens of milliseconds of jitter. Rounding them to a boundary invents a timestamp the venue never published, and the next fetch then misses the primary key and inserts the same settlement again. |
+| **Funding cadence** | How often a venue REPUBLISHES funding is not how often it settles, and it is not the price cadence either. Measured over 44 minutes (DATA-REQUIREMENTS §10): kraken/hyperliquid 1s, gate 4s, binance 16s, okx 67s, paradex 71s — and **Bybit 2,639s and still climbing**, because step 2.5 made it publish only when a funding field really changes. So funding freshness needs its OWN per-venue threshold, and for a venue in that mode age proves nothing: the detectors are `source_status` plus "the settlement this reading names has already passed". Paradex is the warning about measurement windows — 18s after four minutes, 71s after forty-four. |
+| **Hyperliquid rate limit** | `fundingHistory` costs weight 20 **plus 1 per 20 items returned**, against an aggregated 1200/minute per IP — a 500-row page is 45, so the budget is one page every 2.3s. The shared 200ms page delay is 11× over it and cost two whole series to HTTP 429 during the 2.6 acceptance run. Pace per venue, and back off in SECONDS for a 429: retrying inside the same exhausted minute just spends the attempts. |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
 | **"Not listed"** | Per-symbol instrument endpoints answer "market not listed" in THREE shapes (measured 2026-09-03): Paradex → HTTP **404**; OKX → HTTP 200 + `code 51001`; Bybit linear → HTTP 200 + `retCode 10001` "symbol invalid" while Bybit **spot** → `retCode 0` + empty list. All must read as "absent" — treating any as an error lets one unsupported pair blank a venue's whole rule set (found live in step 2.4 when XLMUSDT killed the Paradex source). Every OTHER non-zero code stays a loud error. |
 | **Assets** | Base/quote must come from what the venue DECLARES, never from slicing the symbol string. OKX swaps leave `baseCcy`/`quoteCcy` empty (spot-only fields — use `ctValCcy`/`settleCcy` for linear); Kraken names BTC "XBT" in symbols but declares `base: "BTC"`, so no alias table exists anywhere; Hyperliquid declares no quote (venue-wide documented "USD"). |
@@ -393,16 +407,22 @@ phase 1.
   pings as activity, a keepalive per the venue's own documentation, and a stop
   through `ctx` that closes the socket underneath a blocked read. Pyth is SSE and
   keeps its own loop, sharing the backoff and the cancellation.
-- `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
-  every single price tick.
-- 250 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- ~~`broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
+  every single price tick.~~ Throttled in step 2.7a, after measuring what it
+  actually cost: **101,627 `spreads` frames in 30 seconds to ONE client —
+  3,387/s, 11.3 MB/s, 99.85% of every frame on the wire.** The newest matrix per
+  symbol is now queued and flushed on a 200ms ticker, so the rate is bounded at
+  `symbols × 5/s` — measured 20.0/s and 65 KB/s afterwards. Alerts are not
+  queued. Still open, and now the dominant cost: the server ships every symbol
+  to every client (PLAN §7.3 item 2), so 50 symbols would be 250 msg/s.
+- 286 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `exchanges` 72 (58.4% of statements),
-  `internal/scanner` 90 (86.5%), `internal/instruments` 27 (96.9%),
-  `internal/store` 13 (84.2%), `internal/config` 25 (80.6%),
-  `internal/history` 6 (76.5%), `internal/fees` 5 (100%), `cmd/scanner` 5,
-  `cmd/backfill` 4, `cmd/fundingcheck` 3. The `exchanges` percentage FELL from
+  it can be re-measured): `exchanges` 75 (58.7% of statements),
+  `internal/scanner` 106 (87.5%), `internal/instruments` 27 (96.9%),
+  `internal/store` 13 (84.2%), `internal/config` 29 (82.1%),
+  `internal/history` 6 (76.5%), `internal/fees` 5 (100%), `cmd/scanner` 16,
+  `cmd/backfill` 6, `cmd/fundingcheck` 3. The `exchanges` percentage FELL from
   61.8% at step 1.6 while the test count rose: step 2.6 added seven history
   fetchers whose pagination loops only run against live venues. Their parsers
   and the cadence arithmetic are golden-tested against recorded payloads; the

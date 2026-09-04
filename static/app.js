@@ -54,6 +54,19 @@ class FuturesArbitrageScanner {
         // that was never toggled comes from meta.sources[].enabled_by_default.
         this.enabledSources = this.loadStoredSourceToggles();
         
+        // Funding (Bước 2.7). The whole table as the backend last sent it,
+        // keyed symbol -> source -> point. Kept whole rather than merged per
+        // symbol: the matrix shows every pair at once, which is the view that
+        // answers "which pair, which venue".
+        this.funding = {};
+        this.fundingBasis = null;
+        this.fundingPending = false;
+        this.activeView = 'price';
+        this.fundingChart = null;
+        this.fundingSeries = new Map();
+        this.fundingHistoryDays = 30;
+        this.fundingHistoryToken = 0;
+
         this.chart = null;
         this.chartSeries = new Map(); // Map to store series for each source
         this.ws = null;
@@ -155,6 +168,7 @@ class FuturesArbitrageScanner {
         this.meta = meta;
         this.symbols = meta.symbols || [];
         this.costBasis = meta.cost_basis || null;
+        this.fundingBasis = meta.funding_basis || null;
 
         this.sourceMeta = new Map();
         (meta.sources || []).forEach(s => this.sourceMeta.set(s.source, s));
@@ -175,6 +189,7 @@ class FuturesArbitrageScanner {
         this.populateSymbolSelector();
         this.createChartSeries();
         this.renderCostBasisNote();
+        this.renderFundingBasisNote();
         this.updateSourceList();
 
         if (this.currentSymbol && !this.symbols.includes(this.currentSymbol)) {
@@ -324,6 +339,9 @@ class FuturesArbitrageScanner {
                     height: this.getChartHeight()
                 });
             }
+            if (this.fundingChart) {
+                this.fundingChart.applyOptions({ width: this.fundingChartWidth() });
+            }
         });
 
         // Opportunities table event listeners
@@ -350,6 +368,41 @@ class FuturesArbitrageScanner {
                 this.lastUserScrollTime = 0;
             }
         });
+
+        document.querySelectorAll('.view-tab').forEach(tab => {
+            tab.addEventListener('click', () => this.showView(tab.dataset.view));
+        });
+
+        const historyDays = document.getElementById('fundingHistoryDays');
+        historyDays.addEventListener('change', (e) => {
+            this.fundingHistoryDays = parseInt(e.target.value, 10) || 30;
+            this.loadFundingHistory();
+        });
+
+        // The countdown to the next settlement is the one thing on this page
+        // that has to move without a message arriving. It is redrawn from the
+        // server-anchored clock, never from Date.now() on its own: the contract
+        // measures every age against server_time_ms because the two clocks
+        // differ - 80ms was measured on one venue alone.
+        setInterval(() => this.updateFundingCountdowns(), 1000);
+    }
+
+    // showView switches the main pane. The funding chart is created lazily on
+    // first display: Lightweight Charts sizes itself from its container, and a
+    // container inside display:none measures zero.
+    showView(view) {
+        this.activeView = view;
+        document.querySelectorAll('.view-tab').forEach(tab => {
+            tab.classList.toggle('active', tab.dataset.view === view);
+        });
+        document.getElementById('viewPrice').classList.toggle('hidden', view !== 'price');
+        document.getElementById('viewFunding').classList.toggle('hidden', view !== 'funding');
+
+        if (view === 'funding') {
+            this.setupFundingChart();
+            this.renderFunding();
+            this.loadFundingHistory();
+        }
     }
     
     setupSourceCheckboxDelegation() {
@@ -630,6 +683,18 @@ class FuturesArbitrageScanner {
             this.handleArbitrageOpportunity(data.opportunity);
         } else if (data.type === 'spreads') {
             this.handleSpreadsUpdate(data);
+        } else if (data.type === 'funding') {
+            this.handleFundingUpdate(data);
+        }
+    }
+
+    // handleFundingUpdate replaces the whole table. The backend sends every
+    // reading it holds, including stale ones, so a merge would only keep alive
+    // a row the server has stopped reporting.
+    handleFundingUpdate(message) {
+        this.funding = message.funding || {};
+        if (this.activeView === 'funding') {
+            this.renderFunding();
         }
     }
 
@@ -1529,6 +1594,296 @@ class FuturesArbitrageScanner {
         }
     }
 
+    // ---- funding (Bước 2.7) -------------------------------------------------
+
+    // The perp sources, in the order meta lists them. Built from meta and never
+    // hardcoded (contract rule 5); a source with no funding_publish_mode has no
+    // funding at all and gets no row.
+    fundingSources() {
+        return [...this.sourceMeta.values()]
+            .filter(meta => meta.market_type === 'perp' && meta.funding_publish_mode)
+            .map(meta => meta.source);
+    }
+
+    renderFundingBasisNote() {
+        const element = document.getElementById('fundingBasisNote');
+        if (!element) return;
+        if (!this.fundingBasis) {
+            element.innerHTML = '';
+            return;
+        }
+        // `excluded` is rendered verbatim and in full. It is the contract's
+        // guard against a gross number being read as profit, and the dashboard
+        // is where that misreading would happen.
+        const excluded = (this.fundingBasis.excluded || []).map(esc).join(', ');
+        element.innerHTML =
+            `<strong>THÔ (${esc(this.fundingBasis.model || 'gross')})</strong> — ` +
+            `${esc(this.fundingBasis.note_vi || '')}` +
+            (excluded ? ` <strong>Chưa trừ:</strong> ${excluded}.` : '');
+    }
+
+    renderFunding() {
+        this.renderFundingMatrix();
+        this.renderFundingDetail();
+    }
+
+    // The matrix: one row per venue, one column per pair, in bps per 8 hours.
+    // Every cell is the SAME unit on purpose - that is the whole reason the
+    // backend normalizes, and comparing per-interval rates across a venue that
+    // settles hourly and one that settles 8-hourly compares nothing.
+    renderFundingMatrix() {
+        const table = document.getElementById('fundingMatrix');
+        if (!table) return;
+
+        const sources = this.fundingSources();
+        if (sources.length === 0 || this.symbols.length === 0) {
+            table.innerHTML = '<tbody><tr><td class="funding-empty">Đang chờ dữ liệu funding…</td></tr></tbody>';
+            return;
+        }
+
+        const header = ['<th>Sàn</th>', ...this.symbols.map(s => `<th>${esc(s)}</th>`)].join('');
+        const rows = sources.map(source => {
+            const meta = this.sourceMeta.get(source) || {};
+            const cells = this.symbols.map(symbol => {
+                const point = (this.funding[symbol] || {})[source];
+                if (!point) return '<td class="funding-zero">—</td>';
+                return `<td class="${this.fundingCellClass(point)}" title="${esc(this.fundingTooltip(symbol, source, point))}">`
+                    + `${this.formatBps(point.rate_per_8h_bps)}`
+                    + `<span class="funding-cell-apr">APR ${this.formatPct(point.apr_gross_pct)}</span>`
+                    + '</td>';
+            }).join('');
+            return `<tr><td style="color:${safeColor(meta.color)}">${esc(meta.short_label || source)}</td>${cells}</tr>`;
+        }).join('');
+
+        table.innerHTML = `<thead><tr>${header}</tr></thead><tbody>${rows}</tbody>`;
+    }
+
+    // The detail table for the pair on screen. This is where a rate becomes a
+    // decision: the hedge column says whether the trade can be opened at all,
+    // and the breakeven says how long the fees take to pay back.
+    renderFundingDetail() {
+        const body = document.getElementById('fundingDetailBody');
+        const title = document.getElementById('fundingDetailSymbol');
+        if (!body) return;
+        if (title) title.textContent = this.currentSymbol || '—';
+
+        const bySource = this.funding[this.currentSymbol] || {};
+        const sources = this.fundingSources().filter(source => bySource[source]);
+        if (sources.length === 0) {
+            body.innerHTML = '<tr><td colspan="8" class="funding-empty">Chưa có reading funding nào cho cặp này.</td></tr>';
+            return;
+        }
+
+        body.innerHTML = sources.map(source => {
+            const meta = this.sourceMeta.get(source) || {};
+            const point = bySource[source];
+            const hedge = point.hedge_spot_source
+                ? esc(point.hedge_spot_source)
+                : `<span class="funding-nohedge">không có</span>`;
+            const breakeven = point.breakeven_days_fees_only === null
+                || point.breakeven_days_fees_only === undefined
+                ? '—'
+                : point.breakeven_days_fees_only.toFixed(1);
+            return `<tr class="${point.status === 'live' ? '' : 'funding-stale'}">
+                <td style="color:${safeColor(meta.color)}" title="${esc(meta.label || source)}">${esc(meta.short_label || source)}</td>
+                <td class="${this.fundingSignClass(point.rate_per_8h_bps)}">${this.formatBps(point.rate_per_8h_bps)}</td>
+                <td class="${this.fundingSignClass(point.apr_gross_pct)}">${this.formatPct(point.apr_gross_pct)}</td>
+                <td>${this.formatInterval(point)}</td>
+                <td class="funding-countdown" data-next="${Number(point.next_funding_at_ms) || 0}" data-model="${esc(point.model)}">${this.formatCountdown(point)}</td>
+                <td title="${esc(this.freshnessTooltip(source, point))}">${this.formatFreshness(point)}</td>
+                <td title="${esc(point.hedge_note_vi || '')}">${hedge}</td>
+                <td title="Chỉ trừ phí taker bốn lượt khớp; chưa có slippage, chưa có chi phí vay.">${breakeven}</td>
+            </tr>`;
+        }).join('');
+    }
+
+    // Only the countdown cells are rewritten each second. Redrawing the whole
+    // table would fight the user's text selection and hover for a number that
+    // is the only thing changing between messages.
+    updateFundingCountdowns() {
+        if (this.activeView !== 'funding') return;
+        document.querySelectorAll('.funding-countdown').forEach(cell => {
+            cell.textContent = this.formatCountdown({
+                next_funding_at_ms: Number(cell.dataset.next) || 0,
+                model: cell.dataset.model,
+            });
+        });
+    }
+
+    fundingCellClass(point) {
+        const classes = [this.fundingSignClass(point.rate_per_8h_bps)];
+        if (point.status !== 'live') classes.push('funding-stale');
+        return classes.join(' ');
+    }
+
+    fundingSignClass(value) {
+        if (!Number.isFinite(value) || value === 0) return 'funding-zero';
+        return value > 0 ? 'funding-pos' : 'funding-neg';
+    }
+
+    formatBps(value) {
+        return Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(4)}` : '—';
+    }
+
+    formatPct(value) {
+        return Number.isFinite(value) ? `${value >= 0 ? '+' : ''}${value.toFixed(2)}%` : '—';
+    }
+
+    formatInterval(point) {
+        if (point.model === 'continuous') return 'liên tục';
+        const sec = Number(point.interval_sec) || 0;
+        if (sec <= 0) return '—';
+        return sec % 3600 === 0 ? `${sec / 3600}h` : `${Math.round(sec / 60)}m`;
+    }
+
+    // The countdown is hidden for continuous accrual because there is nothing
+    // to count down to: Paradex pays through a funding index with no settlement
+    // instant, and showing "00:00:00" there would invent an event.
+    formatCountdown(point) {
+        if (point.model === 'continuous') return 'liên tục';
+        const next = Number(point.next_funding_at_ms) || 0;
+        if (next <= 0) return '—';
+        const remainingMs = next - this.serverNowMs();
+        if (remainingMs <= 0) return 'đang settle…';
+        const total = Math.floor(remainingMs / 1000);
+        const hh = String(Math.floor(total / 3600)).padStart(2, '0');
+        const mm = String(Math.floor((total % 3600) / 60)).padStart(2, '0');
+        const ss = String(total % 60).padStart(2, '0');
+        return `${hh}:${mm}:${ss}`;
+    }
+
+    formatFreshness(point) {
+        const ageMs = Number(point.age_ms);
+        const age = Number.isFinite(ageMs) && ageMs >= 0 ? `${Math.round(ageMs / 1000)}s` : '—';
+        if (point.status === 'live') return age;
+        const reason = point.stale_reason === 'settled' ? 'đã qua mốc settle' : 'im lặng';
+        return `${age} · ${reason}`;
+    }
+
+    freshnessTooltip(source, point) {
+        const meta = this.sourceMeta.get(source) || {};
+        const mode = meta.funding_publish_mode === 'on_change'
+            ? 'Sàn chỉ phát khi số funding đổi, nên im lặng lâu là BÌNH THƯỜNG — tuổi ở đây không đo được sức sống. '
+                + 'Xem chấm trạng thái nguồn ở cột trái để biết socket còn sống không.'
+            : 'Sàn phát theo nhịp cố định, nên tuổi ở đây đo được sức sống của feed.';
+        const threshold = meta.funding_stale_after_sec
+            ? ` Ngưỡng cũ: ${meta.funding_stale_after_sec}s.`
+            : '';
+        return `${mode}${threshold}`;
+    }
+
+    fundingTooltip(symbol, source, point) {
+        const meta = this.sourceMeta.get(source) || {};
+        return `${symbol} · ${meta.label || source}\n`
+            + `${this.formatBps(point.rate_per_8h_bps)} bps/8h · APR thô ${this.formatPct(point.apr_gross_pct)}\n`
+            + `Chu kỳ ${this.formatInterval(point)} · ${point.raw_rate_field || '?'} = ${point.raw_rate}\n`
+            + (point.hedge_spot_source
+                ? `Hedge: ${point.hedge_spot_source}`
+                : `Hedge: không có — ${point.hedge_note_vi || ''}`);
+    }
+
+    setupFundingChart() {
+        if (this.fundingChart) {
+            this.fundingChart.applyOptions({ width: this.fundingChartWidth() });
+            return;
+        }
+        const container = document.getElementById('fundingChart');
+        if (!container || typeof LightweightCharts === 'undefined') return;
+
+        this.fundingChart = LightweightCharts.createChart(container, {
+            width: this.fundingChartWidth(),
+            height: container.clientHeight || 300,
+            layout: { background: { color: '#0f0f0f' }, textColor: '#888' },
+            grid: { vertLines: { color: '#1a1a1a' }, horzLines: { color: '#1a1a1a' } },
+            rightPriceScale: { borderColor: '#333' },
+            timeScale: { borderColor: '#333', timeVisible: true },
+        });
+    }
+
+    fundingChartWidth() {
+        const container = document.getElementById('fundingChart');
+        return container ? Math.max(container.clientWidth, 200) : 600;
+    }
+
+    // Settled history comes over HTTP, not the WebSocket: it is a question asked
+    // when the user asks it, and the store it lives in is the entrypoint's, not
+    // the scanner's. See docs/WS-CONTRACT.md §10.
+    async loadFundingHistory() {
+        if (!this.currentSymbol || this.activeView !== 'funding') return;
+        this.setupFundingChart();
+
+        // A later request must win even if an earlier one answers after it.
+        const token = ++this.fundingHistoryToken;
+        const note = document.getElementById('fundingHistoryNote');
+        if (note) note.textContent = 'Đang tải…';
+
+        try {
+            const response = await fetch(
+                `/api/funding/history?symbol=${encodeURIComponent(this.currentSymbol)}&days=${this.fundingHistoryDays}`);
+            const body = await response.json();
+            if (token !== this.fundingHistoryToken) return;
+            if (!response.ok) {
+                if (note) note.textContent = body.error_vi || `Lỗi ${response.status}`;
+                this.clearFundingSeries();
+                return;
+            }
+            this.renderFundingHistory(body);
+            if (note) note.textContent = body.note_vi || '';
+        } catch (error) {
+            if (token !== this.fundingHistoryToken) return;
+            if (note) note.textContent = `Không tải được lịch sử: ${error}`;
+            this.clearFundingSeries();
+        }
+    }
+
+    clearFundingSeries() {
+        if (!this.fundingChart) return;
+        this.fundingSeries.forEach(series => this.fundingChart.removeSeries(series));
+        this.fundingSeries.clear();
+    }
+
+    renderFundingHistory(body) {
+        if (!this.fundingChart) return;
+        this.clearFundingSeries();
+
+        (body.series || []).forEach(series => {
+            const meta = this.sourceMeta.get(series.source) || {};
+            const line = this.fundingChart.addLineSeries({
+                color: safeColor(meta.color),
+                lineWidth: 1,
+                title: meta.short_label || series.source,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            });
+            // Lightweight Charts wants strictly increasing whole seconds, and a
+            // venue can stamp two settlements inside the same second; keep the
+            // first and drop the duplicate rather than letting setData throw.
+            const points = [];
+            let previous = 0;
+            (series.points || []).forEach(point => {
+                const time = Math.floor(point.funding_at_ms / 1000);
+                if (time <= previous) return;
+                previous = time;
+                points.push({ time, value: point.rate_per_8h_bps });
+            });
+            line.setData(points);
+            this.fundingSeries.set(series.source, line);
+        });
+
+        const coverage = document.getElementById('fundingCoverage');
+        if (!coverage) return;
+        // Coverage is not decoration. The corpus is deliberately uneven - OKX
+        // publishes about three months where Kraken publishes a year - and a
+        // line that simply stops would otherwise read as a venue that stopped
+        // paying funding.
+        coverage.innerHTML = (body.coverage || []).map(row => {
+            const meta = this.sourceMeta.get(row.source) || {};
+            const days = (row.newest_at_ms - row.oldest_at_ms) / 86400000;
+            return `<span style="color:${safeColor(meta.color)}">${esc(meta.short_label || row.source)}</span>`
+                + ` ${row.rows} mốc / ${days.toFixed(1)} ngày`;
+        }).join(' · ') || 'Kho dữ liệu chưa có mốc nào cho cặp này.';
+    }
+
     changeSymbol(newSymbol) {
         if (!newSymbol || newSymbol === this.currentSymbol) return;
         
@@ -1550,6 +1905,8 @@ class FuturesArbitrageScanner {
         this.updateOpportunitiesTable();
         this.currentSpreads.clear();
         this.updateSpreadsMatrix();
+        this.renderFundingDetail();
+        this.loadFundingHistory();
 
         console.log(`Switched to symbol: ${newSymbol}`);
     }

@@ -1,7 +1,8 @@
 # HỢP ĐỒNG WEBSOCKET — Backend ↔ Dashboard
 
 > **Chốt:** Bước 1.0 · **Phiên bản:** `v: 1`
-> **Phạm vi hiệu lực:** toàn bộ Giai đoạn 1 (Bước 1.0 → 1.6)
+> **Phạm vi hiệu lực:** toàn bộ Giai đoạn 1 (Bước 1.0 → 1.6), mở rộng ở Bước 2.7a
+> theo đúng luật ở mục 8 (thêm message type và trường mới có mặc định, `v` giữ nguyên)
 > **Liên quan:** [PLAN.md](PLAN.md) · [CONVENTIONS.md](CONVENTIONS.md#1-quy-tắc-quan-trọng-nhất-của-dự-án-này-hậu-tố-đơn-vị)
 
 ---
@@ -445,3 +446,190 @@ chúng **không cần một dòng JavaScript nào**. `state: "reconnecting"` cũ
 Từ Giai đoạn 2 (`funding`, đăng ký symbol theo client): thêm message type mới và
 thêm trường mới có mặc định — **không** đổi tên và **không** đổi kiểu trường đang có.
 Đổi phá vỡ thì tăng `v` và ghi vào bảng ở mục 7.
+
+Bước 2.7a đã thêm theo đúng luật đó, `v` giữ nguyên `1`:
+
+| Bước | Thêm gì | Mặc định |
+|---|---|---|
+| 2.7a | message type **`funding`** (mục 9) | — (type mới, FE cũ bỏ qua) |
+| 2.7a | `meta.funding_basis` | `{model:"gross", applied:[], excluded:[...]}` |
+| 2.7a | `meta.sources[].funding_stale_after_sec` | `0` = nguồn này không có funding |
+| 2.7a | `meta.sources[].funding_publish_mode` | `""` = nguồn này không có funding |
+| 2.7a | HTTP `GET /api/funding/history` (mục 10) | — (route mới) |
+
+---
+
+## 9. `funding` — bảng funding realtime (Bước 2.7a)
+
+Gửi **ngay sau `meta`** lúc client kết nối, rồi **mỗi 5 giây** khi có client. Chậm
+hơn `prices` (200ms) rất nhiều vì funding là con số chậm: sàn nhanh nhất phát lại
+mỗi ~1 giây, sàn chậm nhất im lặng hàng chục phút **theo thiết kế**.
+
+```json
+{
+  "type": "funding", "v": 1, "server_time_ms": 1788496607935,
+  "funding": {
+    "BTCUSDT": {
+      "bybit_futures": {
+        "model": "discrete",
+        "rate_per_8h_bps": 0.6863,
+        "rate_per_interval_bps": 0.6863,
+        "interval_sec": 28800,
+        "apr_gross_pct": 7.51,
+        "next_funding_at_ms": 1788508800000,
+        "is_estimated": true,
+        "recv_at_ms": 1788496581000,
+        "age_ms": 26000,
+        "status": "live",
+        "stale_reason": "",
+        "mark_price": 81124.3,
+        "index_price": 0,
+        "rate_cap_per_interval_bps": 200,
+        "rate_floor_per_interval_bps": 0,
+        "has_cap": true,
+        "has_floor": false,
+        "rate_type": "",
+        "raw_rate": 0.00006863,
+        "raw_rate_field": "fundingRate",
+        "hedge_spot_source": "binance_spot",
+        "hedge_note_vi": "",
+        "breakeven_days_fees_only": null
+      }
+    }
+  }
+}
+```
+
+### 9.1. Đơn vị trên wire
+
+Go và SQLite mang funding ở dạng **phân số** (`RatePer8hFrac`, `APRFrac`) vì phép
+tính cần thế. Wire mang **bps và phần trăm**, vì đó là từ vựng hợp đồng này đã
+dùng sẵn (`taker_fee_bps`, `spread_gross_pct`) và là thứ dashboard hiển thị.
+Chuyển đổi nằm ở **đúng một chỗ** (`newWireFundingPoint`) — hai định nghĩa của
+"per 8h" sẽ trôi khỏi nhau, và Bước 3.5 so backtest với paper trading sẽ mất giá
+trị chẩn đoán.
+
+| Trường | Kiểu | Mặc định | Ghi chú |
+|---|---|---|---|
+| `model` | string | — | `discrete` \| `continuous`. Paradex là `continuous`: tích luỹ qua funding index, **không có mốc settle** |
+| `rate_per_8h_bps` | float | — | **Số so sánh chéo sàn.** Cùng một bps ở chu kỳ 1h và 8h là hai mức lợi suất khác hẳn nhau, nên bảng so per-interval là bảng không so gì cả |
+| `rate_per_interval_bps` | float | — | Rate của ĐÚNG MỘT chu kỳ settle của sàn đó |
+| `interval_sec` | int64 | — | Chu kỳ thật, tính bằng giây. **Không bao giờ ghim 8h** ([CLAUDE.md luật 3](../CLAUDE.md)) |
+| `apr_gross_pct` | float | — | Đếm số settle thật trong năm: ×1095 cho 8h, ×8760 cho 1h. **THÔ** |
+| `next_funding_at_ms` | int64 | `0` | Mốc settle kế tiếp, epoch ms tuyệt đối. `0` = không tồn tại (continuous) hoặc sàn không công bố. FE đếm ngược theo `server_time_ms`, **không** `Date.now()` |
+| `is_estimated` | bool | `false` | Rate còn động trong chu kỳ đang chạy, khác với rate đã chốt |
+| `recv_at_ms` | int64 | `0` | Thời điểm bot nhận. **Cơ sở duy nhất** của độ tươi, y như `prices` |
+| `age_ms` | int64 | `-1` | `server_time_ms - recv_at_ms`. `-1` = chưa đo được |
+| `status` | string | `unknown` | `live` \| `stale` \| `unknown`. **Backend quyết** — xem 9.2 |
+| `stale_reason` | string | `""` | `""` \| `age` \| `settled`. Hai lỗi khác nhau, xem 9.2 |
+| `mark_price` / `index_price` | float | `0` | Giá funding thực sự tính trên. `0` = sàn không gửi |
+| `rate_cap_per_interval_bps` / `rate_floor_per_interval_bps` | float | `0` | Trần/sàn sàn công bố cho MỘT chu kỳ |
+| `has_cap` / `has_floor` | bool | `false` | **Hai cờ TÁCH BIỆT**: Bybit công bố cap và không có floor, một cờ chung sẽ biến floor chưa đặt thành "funding không bao giờ âm" |
+| `rate_type` | string | `""` | Binance gắn nhãn `Special` cho rate do chia cổ tức; backtest phải lọc |
+| `raw_rate` / `raw_rate_field` | float / string | `0` / `""` | Giá trị **y nguyên sàn gửi** và tên trường nó đến từ. Để truy vết một con số trên màn hình về đúng message — **không bao giờ** để tính |
+| `hedge_spot_source` | string | `""` | Chân spot dashboard đề xuất. `""` = không mở được vị thế, `hedge_note_vi` nói vì sao |
+| `hedge_note_vi` | string | `""` | Lý do từ chối bằng lời của sàn, hoặc lý do chọn chân này khi có nhiều ứng viên |
+| `breakeven_days_fees_only` | float\|null | `null` | Số ngày funding thu về đủ bù **hoa hồng bốn lượt khớp**, và KHÔNG gì khác |
+
+### 9.2. `status` — hai phép kiểm độc lập
+
+Độ tươi funding **không đo được bằng ngưỡng tuổi đơn thuần**, và đây là phát hiện
+đo được của Bước 2.7a.
+
+`status` = `stale` khi **một trong hai**:
+
+1. **`stale_reason: "age"`** — im lặng quá `meta.sources[].funding_stale_after_sec`.
+   Ngưỡng này ĐO theo từng sàn (config.yaml) và lớn hơn ngưỡng giá rất nhiều.
+2. **`stale_reason: "settled"`** — mốc settle mà reading này nêu **đã trôi qua**
+   (quá 2 phút ân hạn). Reading mô tả một kỳ đã kết thúc, dù nó vừa về một giây trước.
+
+Phép kiểm ② tồn tại vì ① không làm nổi việc: **Bybit chỉ phát khi một trường
+funding đổi giá trị thật** — đo 2026-09-04, 2.639 giây im lặng trong khi socket
+vẫn tải sổ lệnh — nên ngưỡng tuổi của nó phải bằng cả một chu kỳ settle, và một
+subscription chết sẽ trông "live" suốt 8 tiếng nếu chỉ có ①.
+
+`meta.sources[].funding_publish_mode` nói mode nào áp dụng: `periodic` (tuổi đo
+được sức sống) hay `on_change` (im lặng là bình thường, tuổi không chứng minh gì
+— thứ phát hiện chết là `source_status` ở mục 4.2 cộng phép kiểm ②).
+
+Reading `stale` **vẫn nằm trong message** kèm số cuối cùng, y như giá: xoá nó đi
+sẽ khiến một sàn có subscription chết trông giống một sàn **không có funding**.
+
+### 9.3. `breakeven_days_fees_only` — cái gì đã trừ, cái gì chưa
+
+`null` khi: không có chân spot · một trong hai sàn **chưa xác minh biểu phí** ·
+sàn không công bố chu kỳ dùng được · rate **không trả tiền cho phía này** (spot
+long + perp short NHẬN khi rate dương; rate âm là chi phí, mà chi phí thì không
+hoà vốn).
+
+Khi có số: nó là `phí round-trip taker bốn lượt ÷ funding một ngày`, trong đó
+funding một ngày **đếm số settle** (`86400 / interval_sec`), không nhân APR với
+thời gian nắm giữ ([CLAUDE.md luật 6](../CLAUDE.md)). Chưa trừ slippage, chưa trừ
+chi phí vay chân spot, và giả định rate giữ nguyên — điều sẽ không xảy ra. Nó là
+công cụ **xếp thứ tự một bảng**, không phải dự báo.
+
+`meta.funding_basis` là chỗ khai báo điều đó cho toàn bộ khối funding, song song
+với `meta.cost_basis` của ma trận spread:
+
+```json
+"funding_basis": {
+  "model": "gross",
+  "applied": [],
+  "excluded": ["taker_fee", "slippage", "spot_borrow", "hedge_funding_cost", "withdrawal"],
+  "note_vi": "Mọi số funding ở đây là THÔ …"
+}
+```
+
+`applied` rỗng và **sẽ còn rỗng tới Bước 3.1** — bước đầu tiên trong lộ trình
+được phép nói chữ "ròng".
+
+---
+
+## 10. HTTP API — lịch sử funding (Bước 2.7a)
+
+Không đi qua WebSocket, và có lý do: lịch sử nằm trong SQLite,
+`internal/scanner` không biết `internal/store` và **không nên biết**; hơn nữa
+"cho tôi 30 ngày khi tôi bấm" là câu hỏi kéo, không phải luồng đẩy. `cmd/scanner`
+phục vụ nó vì entrypoint là nơi đã sở hữu store.
+
+```
+GET /api/funding/history?symbol=BTCUSDT&days=30
+```
+
+| Tham số | Bắt buộc | Ghi chú |
+|---|---|---|
+| `symbol` | có | Phải là cặp có trong `config.yaml`, nếu không → **400** |
+| `days` | không | Mặc định 30, hợp lệ 1–400. Ngoài khoảng → **400**, *không* kẹp im lặng: dashboard hỏi 5.000 ngày là dashboard có lỗi |
+
+```json
+{
+  "symbol": "BTCUSDT",
+  "from_ms": 1785904607935, "to_ms": 1788496607935,
+  "note_vi": "Đây là các mốc ĐÃ SETTLE, khác với số realtime trên bảng …",
+  "series": [
+    { "source": "kraken_futures", "model": "discrete", "interval_sec": 3600,
+      "points": [ { "funding_at_ms": 1788480000000, "rate_per_8h_bps": 0.0836,
+                    "apr_gross_pct": 0.92, "interval_sec": 3600,
+                    "gap_prev_sec": 3600, "rate_type": "" } ] }
+  ],
+  "coverage": [
+    { "source": "okx_futures", "model": "discrete", "rows": 279,
+      "oldest_at_ms": 1780560000000, "newest_at_ms": 1788480000000 }
+  ]
+}
+```
+
+Ba điểm không được bỏ:
+
+- **`coverage[]` đi kèm, không phải tuỳ chọn.** Kho dữ liệu **không đều** và sẽ
+  không bao giờ đều: OKX giữ ~3 tháng, Kraken giữ cả năm. Một đường đơn giản
+  dừng lại giữa biểu đồ sẽ bị đọc thành "sàn này ngừng trả funding".
+- **`gap_prev_sec` là khoảng cách ĐO ĐƯỢC tới mốc trước.** Nó khác `interval_sec`
+  đúng ở chỗ có settle bị bỏ lỡ hoặc sàn đổi chu kỳ, và ở những hàng đó nó là
+  con số duy nhất trung thực.
+- **Đây là mốc ĐÃ SETTLE, khác message `funding`.** Message `funding` là rate của
+  một kỳ **đang chạy** và còn đổi. Lẫn hai thứ này làm hỏng corpus của Bước 3.3.
+
+Lỗi trả về `{"error_vi": "..."}` kèm status: **503** khi
+`storage.enabled=false` (không có database ≠ không có mốc nào — hai chuyện đó vẽ
+ra cùng một biểu đồ rỗng), **400** cho tham số sai, **500** khi đọc store hỏng.

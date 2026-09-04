@@ -186,6 +186,79 @@ func TestValidate_RejectsAnUnknownMarketType(t *testing.T) {
 	}
 }
 
+// Funding freshness is measured per venue and belongs to perps only (step 2.7).
+// A perp without it is a dashboard cell whose staleness nothing decides.
+func TestValidate_RejectsAPerpWithNoFundingFreshness(t *testing.T) {
+	cfg := repoConfig(t)
+	for i := range cfg.Sources {
+		if cfg.Sources[i].MarketType == "perp" {
+			cfg.Sources[i].FundingStaleAfterSec = 0
+			break
+		}
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("a perp with no funding_stale_after_sec must be rejected")
+	}
+}
+
+func TestValidate_RejectsAnUnknownFundingPublishMode(t *testing.T) {
+	cfg := repoConfig(t)
+	for i := range cfg.Sources {
+		if cfg.Sources[i].MarketType == "perp" {
+			cfg.Sources[i].FundingPublishMode = "sometimes"
+			break
+		}
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("an unknown funding_publish_mode must be rejected")
+	}
+}
+
+// The other direction matters too: a spot market has no funding, so a threshold
+// there is a copy-paste that reads as configuration nobody will consult.
+func TestValidate_RejectsFundingSettingsOnASourceWithNoFunding(t *testing.T) {
+	cfg := repoConfig(t)
+	for i := range cfg.Sources {
+		if cfg.Sources[i].MarketType == "spot" {
+			cfg.Sources[i].FundingStaleAfterSec = 60
+			break
+		}
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("funding settings on a spot source must be rejected")
+	}
+}
+
+// The shipped values are what the dashboard judges freshness by, so they are
+// under test rather than merely present: an on_change venue needs a threshold
+// far larger than a periodic one, because silence there is normal.
+func TestRepoConfig_FundingThresholdsMatchThePublishMode(t *testing.T) {
+	cfg := repoConfig(t)
+	onChange := 0
+	for _, source := range cfg.Sources {
+		if source.MarketType != "perp" {
+			continue
+		}
+		if source.FundingStaleAfterSec < 60 {
+			t.Errorf("%s: funding_stale_after_sec %d is below the measured floor of 60s",
+				source.Source, source.FundingStaleAfterSec)
+		}
+		if source.FundingPublishMode == FundingOnChange {
+			onChange++
+			// Its only provable bound is the settlement interval: the venue
+			// must republish when the next settlement stamp changes. Anything
+			// shorter marks a healthy feed dead.
+			if source.FundingStaleAfterSec < 8*3600 {
+				t.Errorf("%s publishes on change but its threshold is %ds, under one 8h settlement",
+					source.Source, source.FundingStaleAfterSec)
+			}
+		}
+	}
+	if onChange == 0 {
+		t.Log("no on_change venue configured; the bound above is untested against real config")
+	}
+}
+
 // A fee marked verified without a citation is exactly the remembered number
 // CLAUDE.md rule 5 forbids.
 func TestValidate_RejectsAVerifiedFeeWithNoCitation(t *testing.T) {
@@ -247,6 +320,8 @@ sources:
     quote_asset: USDT
     label: S
     short_label: S
+    funding_stale_after_sec: 60
+    funding_publish_mode: periodic
     fee:
       verified: false
       note_vi: fixture
@@ -296,6 +371,7 @@ func TestValidate_RejectsTwoSymbolsMappingToOneVenueIdentifier(t *testing.T) {
 			Source: "hyperliquid_futures", Connector: "hyperliquid_futures", Venue: "hyperliquid",
 			MarketType: "perp", QuoteAsset: "USD", Label: "H", ShortLabel: "H",
 			StaleAfterSec: 10, SymbolFormat: "{base}",
+			FundingStaleAfterSec: 60, FundingPublishMode: FundingPeriodic,
 			Fee: Fee{NoteVI: "fixture"},
 		}},
 	}
@@ -337,6 +413,8 @@ sources:
     quote_asset: Usdt
     label: S
     short_label: S
+    funding_stale_after_sec: 60
+    funding_publish_mode: periodic
     fee: { verified: false, note_vi: fixture }
 `
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {

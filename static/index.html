@@ -520,6 +520,193 @@
             padding-left: 14px;
         }
 
+        /* ---- Funding (Bước 2.7) ------------------------------------------ */
+
+        .view-tabs {
+            display: flex;
+            gap: 2px;
+            padding: 6px 10px 0 10px;
+            border-bottom: 1px solid #333;
+            flex-shrink: 0;
+        }
+
+        .view-tab {
+            background: transparent;
+            border: 1px solid #333;
+            border-bottom: none;
+            color: #888;
+            font-family: inherit;
+            font-size: 11px;
+            padding: 6px 14px;
+            cursor: pointer;
+        }
+
+        .view-tab:hover {
+            color: #ccc;
+        }
+
+        .view-tab.active {
+            background: rgba(26, 26, 26, 0.9);
+            color: #00d4ff;
+            border-color: #00d4ff;
+        }
+
+        .view {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .view.hidden {
+            display: none;
+        }
+
+        .funding-scroll {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+        }
+
+        .funding-block {
+            margin-bottom: 16px;
+            background: rgba(26, 26, 26, 0.9);
+            border: 1px solid #333;
+        }
+
+        .funding-block-title {
+            font-size: 11px;
+            color: #00d4ff;
+            padding: 8px 10px;
+            border-bottom: 1px solid #333;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .unit-tag {
+            color: #ffa500;
+            font-size: 10px;
+        }
+
+        .funding-hint {
+            color: #777;
+            font-size: 9px;
+            font-weight: normal;
+        }
+
+        .funding-note {
+            font-size: 9px;
+            color: #999;
+            line-height: 1.5;
+            margin-bottom: 12px;
+            padding: 6px;
+            border-left: 2px solid #ffa500;
+            background: rgba(255, 165, 0, 0.06);
+        }
+
+        .funding-note strong {
+            color: #ffa500;
+        }
+
+        .funding-matrix-wrap,
+        .funding-detail-wrap {
+            overflow-x: auto;
+        }
+
+        .funding-matrix,
+        .funding-detail {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 10px;
+        }
+
+        .funding-matrix th,
+        .funding-matrix td,
+        .funding-detail th,
+        .funding-detail td {
+            padding: 5px 8px;
+            border-bottom: 1px solid #262626;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .funding-matrix th,
+        .funding-detail th {
+            color: #888;
+            font-weight: normal;
+            text-align: right;
+            border-bottom: 1px solid #333;
+        }
+
+        .funding-matrix th:first-child,
+        .funding-matrix td:first-child,
+        .funding-detail th:first-child,
+        .funding-detail td:first-child {
+            text-align: left;
+        }
+
+        .funding-matrix tr:hover td,
+        .funding-detail tr:hover td {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .funding-pos {
+            color: #00ff88;
+        }
+
+        .funding-neg {
+            color: #ff4757;
+        }
+
+        .funding-zero {
+            color: #888;
+        }
+
+        /* Một ô cũ vẫn hiển thị số, chỉ mờ đi và có dấu — xoá nó khỏi bảng sẽ
+           đọc thành "sàn này không có funding" thay vì "feed này đã chết". */
+        .funding-stale {
+            opacity: 0.45;
+        }
+
+        .funding-cell-apr {
+            display: block;
+            font-size: 9px;
+            color: #777;
+        }
+
+        .funding-empty {
+            color: #666;
+            text-align: center !important;
+            padding: 14px !important;
+        }
+
+        .funding-nohedge {
+            color: #ffa500;
+        }
+
+        .funding-chart {
+            height: 320px;
+            padding: 8px;
+        }
+
+        .funding-coverage {
+            font-size: 9px;
+            color: #888;
+            padding: 0 10px 10px 10px;
+            line-height: 1.6;
+        }
+
+        .funding-days {
+            background: #1a1a1a;
+            border: 1px solid #333;
+            color: #ccc;
+            font-family: inherit;
+            font-size: 10px;
+            padding: 2px 6px;
+        }
+
         .cost-basis-note {
             font-size: 9px;
             color: #999;
@@ -828,18 +1015,93 @@
             title="Kéo để đổi độ rộng bảng · nhấp đúp để về mặc định"></div>
 
         <div class="main">
-            <div class="chart-container" style="flex: 1.5;">
-                <div class="chart-header">
-                    <div class="chart-title" id="chartTitle">Price Chart - BTCUSDT (Live)</div>
-                    <div class="chart-controls">
-                        <button id="goToRealtimeBtn" class="realtime-btn">Go to realtime</button>
+            <div class="view-tabs">
+                <button class="view-tab active" data-view="price">Biểu đồ giá</button>
+                <button class="view-tab" data-view="funding">Funding</button>
+            </div>
+
+            <div class="view" id="viewPrice">
+                <div class="chart-container" style="flex: 1.5;">
+                    <div class="chart-header">
+                        <div class="chart-title" id="chartTitle">Price Chart - BTCUSDT (Live)</div>
+                        <div class="chart-controls">
+                            <button id="goToRealtimeBtn" class="realtime-btn">Go to realtime</button>
+                        </div>
                     </div>
-                </div>
-                <div id="chart"
-                    style="flex: 1; padding: 10px; overflow: hidden; position: relative; box-sizing: border-box;">
+                    <div id="chart"
+                        style="flex: 1; padding: 10px; overflow: hidden; position: relative; box-sizing: border-box;">
+                    </div>
                 </div>
             </div>
 
+            <!-- Funding (Bước 2.7). Mọi số ở đây là THÔ; nhãn dưới đây dựng từ
+                 meta.funding_basis, không hardcode. -->
+            <div class="view hidden" id="viewFunding">
+                <div class="funding-scroll scrollbar">
+                    <div class="funding-note" id="fundingBasisNote"></div>
+
+                    <div class="funding-block">
+                        <div class="funding-block-title">
+                            Funding theo sàn × cặp — <span class="unit-tag">bps / 8 giờ</span>
+                            <span class="funding-hint">Quy về cùng đơn vị 8h để so được giữa các sàn:
+                                cùng một bps ở chu kỳ 1h và 8h là hai mức lợi suất khác hẳn nhau.</span>
+                        </div>
+                        <div class="funding-matrix-wrap">
+                            <table class="funding-matrix" id="fundingMatrix">
+                                <tbody>
+                                    <tr>
+                                        <td class="funding-empty">Đang chờ dữ liệu funding…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="funding-block">
+                        <div class="funding-block-title">
+                            Chi tiết <span id="fundingDetailSymbol">—</span>
+                            <span class="funding-hint">Đổi cặp ở ô Symbol bên trái.</span>
+                        </div>
+                        <div class="funding-detail-wrap">
+                            <table class="funding-detail">
+                                <thead>
+                                    <tr>
+                                        <th>Sàn</th>
+                                        <th>bps/8h</th>
+                                        <th>APR thô %</th>
+                                        <th>Chu kỳ</th>
+                                        <th>Settle kế tiếp</th>
+                                        <th>Độ tươi</th>
+                                        <th>Chân spot để hedge</th>
+                                        <th>Hoà phí (ngày)</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="fundingDetailBody">
+                                    <tr>
+                                        <td colspan="8" class="funding-empty">Đang chờ dữ liệu funding…</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div class="funding-block">
+                        <div class="funding-block-title">
+                            Lịch sử funding đã settle
+                            <select id="fundingHistoryDays" class="funding-days">
+                                <option value="7">7 ngày</option>
+                                <option value="30" selected>30 ngày</option>
+                                <option value="90">90 ngày</option>
+                                <option value="180">180 ngày</option>
+                                <option value="365">365 ngày</option>
+                            </select>
+                            <span class="funding-hint" id="fundingHistoryNote"></span>
+                        </div>
+                        <div id="fundingChart" class="funding-chart"></div>
+                        <div class="funding-coverage" id="fundingCoverage"></div>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

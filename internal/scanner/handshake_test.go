@@ -1,6 +1,7 @@
 package scanner
 
 import (
+	"context"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -102,6 +103,8 @@ func TestBroadcastMessages_CarryContractEnvelope(t *testing.T) {
 	}
 	waitForClient(t, scanner)
 
+	startSpreadsFlush(t, scanner)
+
 	// Two sources on one symbol with a wide gap produces both a spreads message
 	// and an arbitrage message.
 	scanner.updatePrice(mustPriceData("BTCUSDT", "binance_futures", 65000))
@@ -111,8 +114,11 @@ func TestBroadcastMessages_CarryContractEnvelope(t *testing.T) {
 		t.Fatalf("set deadline: %v", err)
 	}
 
+	// The funding table follows meta on connect (step 2.7), so the stream now
+	// carries a third type before the two this test is about. Read until BOTH
+	// wanted types have arrived rather than until any two have.
 	seen := make(map[string]bool)
-	for i := 0; i < 4 && len(seen) < 2; i++ {
+	for i := 0; i < 8 && !(seen["spreads"] && seen["arbitrage"]); i++ {
 		_, raw, err := conn.ReadMessage()
 		if err != nil {
 			break
@@ -139,6 +145,19 @@ func TestBroadcastMessages_CarryContractEnvelope(t *testing.T) {
 			t.Errorf("never received a %q message, got %v", want, seen)
 		}
 	}
+}
+
+// startSpreadsFlush runs the broadcast ticker for a test.
+//
+// Step 2.7 stopped sending the matrix on the tick that produced it — it fired
+// on every price tick from every venue, and 58 of 60 frames on the wire were
+// spreads (PLAN §7.3). Production starts this in Run; a test that drives
+// updatePrice directly has to start it too, or nothing is ever sent.
+func startSpreadsFlush(t *testing.T, scanner *Scanner) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go scanner.flushSpreads(ctx)
 }
 
 // waitForClient blocks until the handler has registered the dialled connection.
@@ -182,6 +201,8 @@ func TestCheckArbitrage_RepublishesMatrixWhenItShrinks(t *testing.T) {
 		t.Fatalf("read meta: %v", err)
 	}
 	waitForClient(t, scanner)
+
+	startSpreadsFlush(t, scanner)
 
 	// One usable price, one broken source: not enough to compare, but the
 	// dashboard must still be told what the matrix looks like now.
@@ -244,6 +265,7 @@ func TestCheckArbitrage_PublishesWhyASourceWasDropped(t *testing.T) {
 	}
 	waitForClient(t, scanner)
 
+	startSpreadsFlush(t, scanner)
 	scanner.updatePrice(mustPriceData("BTCUSDT", "binance_futures", 65000))
 	scanner.updatePrice(mustPriceData("BTCUSDT", "bybit_futures", 66000))
 	scanner.updatePrice(mustPriceData("BTCUSDT", "okx_futures", math.NaN()))

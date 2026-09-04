@@ -86,6 +86,26 @@ APRFrac             float64 // annualized
 
 ❌ `size`, `amount`, `qty` trần trụi — đặc biệt nguy hiểm vì OKX/Gate/Kraken đặt lệnh theo contract còn Binance/Bybit theo coin.
 
+### 1.5. Wire nói bps/pct, Go và SQLite nói phân số
+
+Ba tầng, hai đơn vị, và ranh giới phải rõ:
+
+| Tầng | Đơn vị | Ví dụ |
+|---|---|---|
+| Go (`exchanges`, `internal/*`) | **phân số** | `RatePer8hFrac`, `APRFrac` |
+| SQLite | **phân số** | `rate_per_8h_frac`, `apr_frac` |
+| Wire (JSON tới dashboard) | **bps / phần trăm** | `rate_per_8h_bps`, `apr_gross_pct` |
+
+Go và SQLite dùng phân số vì phép tính cần thế. Wire dùng bps/pct vì đó là từ
+vựng hợp đồng đã có sẵn (`taker_fee_bps`, `spread_gross_pct`) và là thứ người
+đọc nhìn thấy. **Quy đổi phải nằm ở đúng MỘT hàm** — Bước 2.7a đặt ở
+`newWireFundingPoint`. Hai định nghĩa của "per 8h" sẽ trôi khỏi nhau, và Bước 3.5
+chốt dự án bằng việc so backtest với paper trading: cổng đó vô nghĩa nếu hai bên
+hiểu "bps" khác nhau.
+
+Dù ở tầng nào, **tên vẫn phải mang đơn vị**: `rate_per_8h_bps` chứ không phải
+`rate8h`, và không bao giờ có `profit_*` ([CLAUDE.md luật 2](../CLAUDE.md)).
+
 ---
 
 ## 2. TỪ ĐIỂN THUẬT NGỮ

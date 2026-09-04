@@ -96,10 +96,27 @@ type Scanner struct {
 	// fundingChan, persistence (2.6) and the funding dashboard (2.7) read it.
 	// Values are already normalized by exchanges' normalize<Venue>Funding builders — the
 	// scanner never sees venue units.
-	funding          map[string]map[string]exchanges.FundingData
-	fundingMutex     sync.RWMutex
+	funding      map[string]map[string]exchanges.FundingData
+	fundingMutex sync.RWMutex
+
+	// hedges says which spot market each perpetual can be hedged against, keyed
+	// by symbol|perp source. It is SET from outside (step 2.7): the mapping is
+	// derived from the instrument registry, which refreshes daily, and the wire
+	// layer has no business knowing how venue trading rules are fetched.
+	//
+	// Empty until the first registry refresh lands, and a missing entry reads as
+	// "not known yet" rather than "no hedge exists" - the dashboard says so.
+	hedges     map[string]HedgeLeg
+	hedgeMutex sync.RWMutex
+
 	lastOpportunity  map[string]time.Time // Track last alert per symbol
 	opportunityMutex sync.RWMutex
+
+	// pendingSpreads is the newest matrix per symbol waiting for the broadcast
+	// ticker. See spreadsBroadcastEvery for why it is not sent on the tick that
+	// produced it.
+	pendingSpreads map[string]wireSpreads
+	pendingMutex   sync.Mutex
 
 	// lastUsableSet is the set of sources last published per symbol, so the
 	// staleness timer can skip republishing an identical matrix.
@@ -134,12 +151,14 @@ func New(symbols []string) *Scanner {
 		// not the 1000 of the price firehose.
 		fundingChan: make(chan exchanges.FundingData, 256),
 		funding:     make(map[string]map[string]exchanges.FundingData),
+		hedges:      make(map[string]HedgeLeg),
 		// Connection events are rare and must never block a connector, so the
 		// buffer only has to absorb every source flapping at once.
 		connChan:        make(chan exchanges.ConnEvent, 256),
 		sourceConn:      make(map[string]sourceConn),
 		lastOpportunity: make(map[string]time.Time),
 		lastUsableSet:   make(map[string]string),
+		pendingSpreads:  make(map[string]wireSpreads),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -291,6 +310,37 @@ func (s *Scanner) FundingSnapshot() []exchanges.FundingData {
 		}
 		return out[i].Source < out[j].Source
 	})
+	return out
+}
+
+// SetHedges installs the spot↔perp mapping the funding table reads.
+//
+// It is pushed in rather than pulled: the mapping comes from the instrument
+// registry, which refreshes on its own daily cycle, and the entrypoint already
+// rebuilds it after every refresh (step 2.4). Calling this from there keeps the
+// registry out of the wire layer entirely.
+//
+// The whole table is replaced, never merged. A market a venue has delisted must
+// disappear from the mapping, and merging would keep yesterday's answer alive
+// for a pair that no longer exists.
+func (s *Scanner) SetHedges(legs []HedgeLeg) {
+	hedges := make(map[string]HedgeLeg, len(legs))
+	for _, leg := range legs {
+		hedges[hedgeKey(leg.Symbol, leg.PerpSource)] = leg
+	}
+	s.hedgeMutex.Lock()
+	s.hedges = hedges
+	s.hedgeMutex.Unlock()
+}
+
+// hedgeSnapshot copies the mapping for one message build.
+func (s *Scanner) hedgeSnapshot() map[string]HedgeLeg {
+	s.hedgeMutex.RLock()
+	defer s.hedgeMutex.RUnlock()
+	out := make(map[string]HedgeLeg, len(s.hedges))
+	for key, leg := range s.hedges {
+		out[key] = leg
+	}
 	return out
 }
 
@@ -747,7 +797,72 @@ func (s *Scanner) broadcastSpreads(symbol string, sourcePrices map[string]float6
 	if !s.hasClients() {
 		return
 	}
-	s.broadcast(newWireSpreads(symbol, sourcePrices, excluded, snapshotAt.UnixMilli()))
+	s.queueSpreads(newWireSpreads(symbol, sourcePrices, excluded, snapshotAt.UnixMilli()))
+}
+
+// spreadsBroadcastEvery bounds how often one symbol's matrix goes out.
+//
+// It fires on every price tick from every venue, and step 2.7 measured what
+// that costs on the wire: 58 of 60 consecutive frames to a connected dashboard
+// were `spreads`. The frontend already keeps only the newest snapshot and
+// redraws at 300ms, so all but the last of those were encoded, sent and thrown
+// away — and they were crowding out the messages that carry new information.
+//
+// 200ms matches the price ticker, which is the cadence the dashboard was built
+// around. Alerts are NOT queued: an opportunity still broadcasts the instant it
+// is found. PLAN §7.3 item 1.
+const spreadsBroadcastEvery = 200 * time.Millisecond
+
+// queueSpreads keeps the newest matrix per symbol for the next flush.
+//
+// Newest by the SNAPSHOT time in the message, not by arrival: checkArbitrage
+// and refreshStaleness both publish per symbol from different goroutines, so a
+// matrix computed earlier can be queued later, and taking it would replace a
+// fresher picture with a staler one.
+func (s *Scanner) queueSpreads(message wireSpreads) {
+	s.pendingMutex.Lock()
+	defer s.pendingMutex.Unlock()
+	if existing, ok := s.pendingSpreads[message.Symbol]; ok && existing.ServerTimeMs > message.ServerTimeMs {
+		return
+	}
+	s.pendingSpreads[message.Symbol] = message
+}
+
+// flushSpreads sends at most one matrix per symbol per tick.
+func (s *Scanner) flushSpreads(ctx context.Context) {
+	ticker := time.NewTicker(spreadsBroadcastEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		s.pendingMutex.Lock()
+		pending := s.pendingSpreads
+		if len(pending) == 0 {
+			s.pendingMutex.Unlock()
+			continue
+		}
+		s.pendingSpreads = make(map[string]wireSpreads, len(pending))
+		s.pendingMutex.Unlock()
+
+		// Configured order, so a client watching two symbols sees them in a
+		// stable sequence rather than in Go map order.
+		for _, symbol := range s.symbols {
+			if message, ok := pending[symbol]; ok {
+				s.broadcast(message)
+				delete(pending, symbol)
+			}
+		}
+		// Anything the configured list does not name still goes out; dropping
+		// it would silently lose a symbol the scanner is tracking.
+		for _, message := range pending {
+			s.broadcast(message)
+		}
+	}
 }
 
 // hasClients reports whether any dashboard is connected, so the broadcast path
@@ -756,6 +871,43 @@ func (s *Scanner) hasClients() bool {
 	s.clientsMutex.RLock()
 	defer s.clientsMutex.RUnlock()
 	return len(s.wsClients) > 0
+}
+
+// fundingBroadcastEvery is how often the funding table is pushed.
+//
+// Far slower than the 200ms price ticker because funding is a far slower
+// number: the fastest venue here republishes about once a second and the
+// slowest goes minutes without a message by design. Five seconds keeps the
+// countdown to the next settlement honest to the second it is rendered at,
+// without sending 28 rows of unchanged rates twenty times a minute.
+const fundingBroadcastEvery = 5 * time.Second
+
+// broadcastFunding pushes the funding table on its own slow schedule.
+func (s *Scanner) broadcastFunding(ctx context.Context) {
+	ticker := time.NewTicker(fundingBroadcastEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		if !s.hasClients() {
+			continue
+		}
+		s.broadcast(s.fundingMessage())
+	}
+}
+
+// fundingMessage builds the current funding table.
+//
+// It is sent even when empty: a table with no rows at all says the funding
+// feeds are down, and skipping the message would leave the dashboard showing
+// the last good one indefinitely.
+func (s *Scanner) fundingMessage() wireFunding {
+	return newWireFunding(s.FundingSnapshot(), s.hedgeSnapshot(), s.now())
 }
 
 func (s *Scanner) broadcastPrices(ctx context.Context) {
@@ -851,6 +1003,18 @@ func (s *Scanner) HandleWebSocket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The funding table follows meta immediately, before this client joins the
+	// broadcast set. Its ticker is five seconds, and a dashboard that opens on
+	// an empty funding panel for that long reads as "this venue publishes no
+	// funding" - the same misreading the contract avoids by keeping stale
+	// prices on screen instead of dropping them.
+	//
+	// A failure here is NOT fatal, unlike a failed meta: the client can render
+	// everything else without it and the next tick will carry the table.
+	if failed, err := s.writeToClients([]*websocket.Conn{conn}, s.fundingMessage()); err != nil || len(failed) > 0 {
+		log.Printf("WebSocket funding write failed for %s: %v", r.RemoteAddr, err)
+	}
+
 	s.clientsMutex.Lock()
 	s.wsClients[conn] = true
 	clientCount := len(s.wsClients)
@@ -889,6 +1053,8 @@ func (s *Scanner) Run(ctx context.Context) {
 	go s.processFunding(ctx)
 	go s.processConnEvents(ctx)
 	go s.broadcastPrices(ctx)
+	go s.broadcastFunding(ctx)
+	go s.flushSpreads(ctx)
 	go s.refreshStaleness(ctx)
 	go s.logFundingSummary(ctx)
 }

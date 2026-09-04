@@ -54,6 +54,9 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Lọc dữ liệu cũ** | Sàn ngừng gửi quá ngưỡng riêng của nó bị loại khỏi so sánh và hiện nhãn **CŨ** / **MẤT KẾT NỐI**. Ngưỡng đo từ dữ liệu thật, 10–20s tuỳ sàn |
 | **Dashboard tự dựng theo máy chủ** | Danh sách nguồn, màu, nhãn và danh sách cặp đến từ message `meta`, không hardcode trong JavaScript |
 | **Cấu hình bằng `config.yaml`** | Cặp giao dịch, danh sách sàn, ngưỡng, biểu phí và ánh xạ ký hiệu từng sàn nằm trong một file YAML. Thêm một cặp hoặc một sàn dùng connector sẵn có **không cần sửa Go lẫn JavaScript** |
+| **Bảng funding sàn × cặp** | Funding của 7 sàn quy về **cùng đơn vị bps/8h** để so được chéo sàn — cùng một bps ở chu kỳ 1h và 8h là hai mức lợi suất khác hẳn nhau. Kèm đếm ngược mốc settle kế tiếp (ẩn với sàn tích luỹ liên tục), biểu đồ lịch sử đã settle và **độ phủ thật của kho dữ liệu từng sàn** |
+| **Funding cũ thì nói là cũ** | Độ tươi đo từ `RecvAt` với ngưỡng **đo riêng cho funding** của từng sàn, cộng một phép kiểm độc lập: mốc settle mà số đó nêu đã trôi qua thì nó mô tả một kỳ đã kết thúc, dù vừa về một giây trước |
+| **Nói rõ cặp nào mở được** | Mỗi ô funding mang chân spot ghép được, hoặc lý do từ chối bằng lời của sàn. Ba sàn quote USD hiện không hedge được với spot USDT — APR đẹp mà không mở được vị thế thì không phải cơ hội |
 | **Basis spot ↔ perp** | Chênh lệch spot với perpetual **cùng một sàn** — nguyên liệu của chiến lược funding, tính riêng chứ không trộn vào ma trận chéo sàn |
 | **Đối chiếu oracle** | Độ lệch từng sàn so với Pyth, chỉ tham chiếu, không bao giờ sinh cảnh báo. Dòng nào lệch đồng quote đều được gắn nhãn |
 | **Khối lượng đỉnh sổ** | Thu ở 5/9 nguồn báo bằng coin. Bốn sàn báo bằng contract để `0` — nghĩa là **chưa biết**, không phải không có thanh khoản |
@@ -71,11 +74,11 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | Chưa có | Hệ quả |
 |---|---|
 | **Trượt giá (slippage)** | Số sau phí mới trừ phí giao dịch, **chưa trừ trượt giá** — cần độ sâu sổ lệnh, phải tới GĐ 2. Vẫn chưa dùng để ra quyết định vốn được |
-| **Dashboard funding** | Funding đã thu thật (Bước 2.5) nhưng mới chỉ in ra log mỗi phút; bảng trên dashboard là Bước 2.7 |
+| **Độ sâu sổ lệnh** | Bảng funding đã lên dashboard ở Bước 2.7a (ma trận sàn × cặp quy về bps/8h, đếm ngược mốc settle, biểu đồ lịch sử). Còn thiếu **độ sâu** — Bước 2.7b — nên chưa xếp hạng cơ hội theo thanh khoản, và một cặp APR cao với sổ mỏng vẫn chưa bị đánh dấu |
 | **Đặt lệnh** | Không có REST có ký, không có quản lý credential |
-| **Test tự động** | 250 test (100% ở `internal/fees`, 96,9% ở `internal/instruments`, 86,5% ở `internal/scanner`, 84,2% ở `internal/store`, 80,6% ở `internal/config`, 76,5% ở `internal/history`, 58,4% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ. Vòng phân trang của 7 fetcher lịch sử funding chỉ chạy được với sàn thật nên không nằm trong phần trăm — parser của chúng thì có |
+| **Test tự động** | 286 test (100% ở `internal/fees`, 96,9% ở `internal/instruments`, 87,5% ở `internal/scanner`, 84,2% ở `internal/store`, 82,1% ở `internal/config`, 76,5% ở `internal/history`, 58,7% ở `exchanges`). `exchanges/testdata/` chứa payload **thật** ghi lại từ 9 sàn; golden test cho chúng chạy qua đúng handler production. Pyth không ghi được (sàn trả 401) nên fixture của nó là tổng hợp và được ghi rõ. Vòng phân trang của 7 fetcher lịch sử funding chỉ chạy được với sàn thật nên không nằm trong phần trăm — parser của chúng thì có |
 | **Biểu phí 4/9 sàn** | Bybit (×2), OKX và Gate không đọc được biểu phí từ tài liệu công khai, nên mọi cặp có các sàn đó **không có số sau phí**. Nhập biểu phí tài khoản của bạn vào `config.yaml` và đặt `verified: true` |
-| **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract; chưa có instrument registry để nhân `ctVal`/`quanto_multiplier`, nên bốn sàn chưa có số thanh khoản. Xếp hạng cơ hội theo độ sâu phải chờ GĐ 2 |
+| **Quy đổi contract → coin** | OKX, Gate và Kraken báo khối lượng bằng contract. Instrument registry (Bước 2.3) đã có sẵn `ctVal`/`quanto_multiplier` đo được, nhưng việc nối nó vào đường sổ lệnh nằm ở Bước 2.7b — nơi con số đó lần đầu được dùng — nên bốn sàn vẫn để `0`, nghĩa là **chưa biết**, không phải **không có thanh khoản** |
 
 Toàn bộ các mục trên đều đã có kế hoạch xử lý theo giai đoạn trong [docs/PLAN.md](docs/PLAN.md).
 

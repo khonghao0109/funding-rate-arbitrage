@@ -97,6 +97,27 @@ symbols:
 # nhật tệ nhất của từng sàn rồi để dư khoảng 3 lần. Con số chỉ đúng cho 4 cặp
 # lớn trong giờ hoạt động; cặp thanh khoản mỏng hoặc giờ đêm cần đo lại.
 #
+# `funding_stale_after_sec` là chuyện KHÁC và lớn hơn nhiều (Bước 2.7). Giá về
+# theo mỗi thay đổi sổ lệnh; funding về khi sàn quyết định phát lại. Đo
+# 2026-09-04 trên cổng 8085, 44 phút liên tục, khoảng cách phát tệ nhất:
+#
+#   binance 16s (REST premiumIndex poll 15s) · okx 67s · paradex 71s ·
+#   gate 4s · kraken 1s · hyperliquid 1s   → ngưỡng = ~3× worst, sàn 60s
+#   bybit  KHÔNG CÓ TRẦN theo quan sát: 2.639s (44 phút) và vẫn tăng
+#
+# ⚠️ Paradex là lý do phải đo ĐỦ LÂU: sau 4 phút nó cho 18s, sau 44 phút cho
+# 71s. Ngưỡng 60s đặt theo cửa sổ ngắn sẽ báo nhầm một feed khoẻ là chết.
+#
+# `funding_publish_mode` nói vì sao. `periodic` = sàn phát theo nhịp của nó, nên
+# TUỔI đo được sức sống. `on_change` = chỉ phát khi một trường funding đổi giá
+# trị thật (Bước 2.5 sửa Bybit thành như vậy để một stream delta 100ms không làm
+# subscription chết trông như luôn tươi) — im lặng là trạng thái BÌNH THƯỜNG và
+# tuổi không chứng minh được gì. Trần duy nhất chứng minh được của `on_change`
+# là CHU KỲ SETTLE: mốc settle kế tiếp đổi thì sàn buộc phải phát lại. Nên
+# ngưỡng của Bybit đặt bằng 8h + 5 phút — nó không phải công cụ phát hiện chết,
+# mà chỉ là cái chặn cuối. Thứ phát hiện chết ở đó là `source_status` (im lặng
+# trên MỌI loại message) và phép kiểm "mốc settle đã trôi qua".
+#
 # `fee` là biểu phí bậc mặc định (chưa VIP). `verified: true` nghĩa là con số đã
 # đọc từ tài liệu của chính sàn và `doc_url` chỉ tới đó. `verified: false` nghĩa
 # là CHƯA TRA ĐƯỢC, KHÔNG phải miễn phí — Paradex tính 0% thật cho tài khoản
@@ -119,6 +140,8 @@ sources:
     line_style: solid
     enabled_by_default: true
     stale_after_sec: 10          # gap tệ nhất quan sát được 0,85s
+    funding_stale_after_sec: 60  # poll REST 15s, gap tệ nhất 16s
+    funding_publish_mode: periodic
     fee:
       maker_bps: 2.0
       taker_bps: 5.0
@@ -141,6 +164,9 @@ sources:
     line_style: solid
     enabled_by_default: true
     stale_after_sec: 10          # gap tệ nhất quan sát được 2,25s
+    # 8h + 5 phút: trần chứng minh được, không phải số quan sát (xem đầu mục).
+    funding_stale_after_sec: 29100
+    funding_publish_mode: on_change
     fee:
       verified: false
       note_vi: >-
@@ -160,6 +186,8 @@ sources:
     line_style: solid
     enabled_by_default: true
     stale_after_sec: 20          # gap tệ nhất quan sát được 6,05s
+    funding_stale_after_sec: 60  # activeAssetCtx đẩy liên tục, gap tệ nhất 1s
+    funding_publish_mode: periodic
     # Hyperliquid gọi thị trường bằng tên coin. Trước Bước 1.4 chỗ này là
     # symbol[:3], chỉ đúng vì cả 4 cặp hiện có base dài đúng 3 ký tự —
     # "DOGEUSDT" sẽ lặng lẽ đăng ký nhầm sang "DOG".
@@ -185,6 +213,8 @@ sources:
     line_style: solid
     enabled_by_default: true
     stale_after_sec: 10          # gap tệ nhất quan sát được 2,95s
+    funding_stale_after_sec: 60  # ticker mang funding mỗi frame, gap tệ nhất 1s
+    funding_publish_mode: periodic
     symbol_format: "PF_{base}USD"
     symbol_map:
       # Kraken gọi bitcoin là XBT, nên khuôn ở trên không áp dụng được.
@@ -208,6 +238,8 @@ sources:
     line_style: solid
     enabled_by_default: true
     stale_after_sec: 10          # gap tệ nhất quan sát được 1,00s
+    funding_stale_after_sec: 210 # kênh funding-rate ~60s, gap tệ nhất 67s
+    funding_publish_mode: periodic
     symbol_format: "{base}-{quote}-SWAP"
     fee:
       verified: false
@@ -227,6 +259,8 @@ sources:
     line_style: solid
     enabled_by_default: true
     stale_after_sec: 15          # gap tệ nhất quan sát được 3,37s, book_ticker đẩy theo thay đổi
+    funding_stale_after_sec: 60  # futures.tickers mang funding mỗi frame, gap tệ nhất 4s
+    funding_publish_mode: periodic
     symbol_format: "{base}_{quote}"
     fee:
       verified: false
@@ -248,6 +282,8 @@ sources:
     line_style: solid
     enabled_by_default: true
     stale_after_sec: 10          # gap tệ nhất quan sát được 1,86s
+    funding_stale_after_sec: 240 # funding_data đẩy ~5s nhưng gap tệ nhất 71s
+    funding_publish_mode: periodic
     symbol_format: "{base}-USD-PERP"
     fee:
       maker_bps: 0.3

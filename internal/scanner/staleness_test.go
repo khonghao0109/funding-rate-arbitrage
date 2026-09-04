@@ -219,6 +219,7 @@ func TestCheckArbitrage_PublishesStaleAsTheReasonASourceIsMissing(t *testing.T) 
 	}
 	waitForClient(t, scanner)
 
+	startSpreadsFlush(t, scanner)
 	scanner.updatePrice(mustPriceData("BTCUSDT", "binance_futures", 65000))
 	scanner.now = func() time.Time { return base.Add(time.Hour) }
 	scanner.updatePrice(mustPriceData("BTCUSDT", "bybit_futures", 66000))
@@ -347,6 +348,8 @@ func TestRefreshStaleness_ReexaminesASymbolNothingArrivesFor(t *testing.T) {
 
 	scanner.updatePrice(mustPriceData("BTCUSDT", "binance_futures", 65000))
 	scanner.updatePrice(mustPriceData("BTCUSDT", "bybit_futures", 66000))
+
+	startSpreadsFlush(t, scanner)
 
 	// Everything goes quiet. Nothing will call updatePrice again.
 	scanner.now = func() time.Time { return base.Add(time.Hour) }

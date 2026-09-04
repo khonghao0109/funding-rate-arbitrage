@@ -95,6 +95,19 @@ type sourceMeta struct {
 
 	StaleAfterSec int64 `json:"stale_after_sec"`
 
+	// Funding freshness, added by step 2.7 with documented defaults of 0 and "".
+	// Both are zero for every source that has no funding at all - the two spot
+	// markets and the oracle - and the dashboard reads that as "this source has
+	// no funding row", not as "its funding is instantly stale".
+	//
+	// FundingStaleAfterSec is a much larger number than StaleAfterSec and is a
+	// different measurement: a price arrives on every book change, a funding
+	// rate arrives when the venue decides to republish it. FundingPublishMode
+	// says whether age means anything at all here - see config.yaml, where the
+	// measurements and the reasoning live.
+	FundingStaleAfterSec int64  `json:"funding_stale_after_sec"`
+	FundingPublishMode   string `json:"funding_publish_mode"` // periodic | on_change | ""
+
 	// Commission at the venue's default tier, in FRACTIONAL basis points. Real
 	// schedules are not whole bps - Hyperliquid's maker leg is 1.5 and Paradex's
 	// is 0.3 - so step 1.3 amended docs/CONVENTIONS.md §1.2 rather than round
@@ -140,9 +153,13 @@ func Configure(cfg config.Config) {
 			LineStyle:        source.LineStyle,
 			EnabledByDefault: source.EnabledByDefault,
 			StaleAfterSec:    source.StaleAfterSec,
-			MakerFeeBps:      source.Fee.MakerBps,
-			TakerFeeBps:      source.Fee.TakerBps,
-			FeeVerified:      source.Fee.Verified,
+
+			FundingStaleAfterSec: source.FundingStaleAfterSec,
+			FundingPublishMode:   source.FundingPublishMode,
+
+			MakerFeeBps: source.Fee.MakerBps,
+			TakerFeeBps: source.Fee.TakerBps,
+			FeeVerified: source.Fee.Verified,
 		})
 	}
 
@@ -328,15 +345,30 @@ type wireCostBasis struct {
 	NoteVI   string   `json:"note_vi"`
 }
 
+// wireFundingBasis is to the funding table what wireCostBasis is to the spread
+// matrix: the statement of what has NOT been taken off the numbers beside it.
+//
+// It is separate from cost_basis because the exclusions differ. A spread's
+// after-fee figure has fees removed; every funding figure on the wire is raw
+// venue output with nothing removed at all, and the borrow cost of the spot leg
+// is a cost the spread model never had to name. See CLAUDE.md rule 2.
+type wireFundingBasis struct {
+	Model    string   `json:"model"` // gross - no other value exists before step 3.1
+	Applied  []string `json:"applied"`
+	Excluded []string `json:"excluded"`
+	NoteVI   string   `json:"note_vi"`
+}
+
 type wireMeta struct {
-	Type              string        `json:"type"`
-	V                 int           `json:"v"`
-	ServerTimeMs      int64         `json:"server_time_ms"`
-	Symbols           []string      `json:"symbols"`
-	DefaultSymbol     string        `json:"default_symbol"`
-	AlertMinSpreadPct float64       `json:"alert_min_spread_pct"`
-	CostBasis         wireCostBasis `json:"cost_basis"`
-	Sources           []sourceMeta  `json:"sources"`
+	Type              string           `json:"type"`
+	V                 int              `json:"v"`
+	ServerTimeMs      int64            `json:"server_time_ms"`
+	Symbols           []string         `json:"symbols"`
+	DefaultSymbol     string           `json:"default_symbol"`
+	AlertMinSpreadPct float64          `json:"alert_min_spread_pct"`
+	CostBasis         wireCostBasis    `json:"cost_basis"`
+	FundingBasis      wireFundingBasis `json:"funding_basis"` // step 2.7
+	Sources           []sourceMeta     `json:"sources"`
 }
 
 // wirePricePoint is one price plus everything needed to judge whether it can be
@@ -514,6 +546,19 @@ func newWireMeta(symbols []string, nowMs int64) wireMeta {
 			NoteVI: "Số đã trừ phí giao dịch: taker cả bốn lượt khớp — mở và đóng cả hai chân. " +
 				"Đây KHÔNG phải lợi nhuận ròng. Sàn chưa xác minh được biểu phí thì không có " +
 				"số sau phí, không phải miễn phí.",
+		},
+		FundingBasis: wireFundingBasis{
+			Model: fundingModelGross,
+			// Nothing has been deducted from a funding figure, which is why
+			// Applied is empty and stays empty until step 3.1 - the first step
+			// in the roadmap allowed to say "ròng" at all.
+			Applied: []string{},
+			Excluded: []string{
+				"taker_fee", "slippage", "spot_borrow", "hedge_funding_cost", "withdrawal",
+			},
+			NoteVI: "Mọi số funding ở đây là THÔ: chưa trừ phí, chưa trừ slippage, chưa trừ " +
+				"chi phí vay chân spot. Vị thế chỉ nhận tiền nếu còn mở ĐÚNG lúc settle — " +
+				"giữ 7h59m của chu kỳ 8h nhận 0.",
 		},
 		Sources: sourceRegistry,
 	}
