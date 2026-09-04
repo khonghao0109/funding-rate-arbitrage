@@ -249,3 +249,53 @@ func TestSizeDeltaNeutral_FloatRepresentationOnGrids(t *testing.T) {
 		}
 	}
 }
+
+// The venue-facing contract count must be EXACTLY representable, not a float
+// hair below the whole number: Gate takes only whole contracts, and a
+// 127.999…97 that a later int() truncates ships 127 contracts against a
+// 128-contract-equivalent spot leg — one contract of unhedged delta from the
+// first order. Swept across notionals so the float representation cases are
+// actually hit.
+func TestSizeDeltaNeutral_PerpContractCountLandsOnTheGrid(t *testing.T) {
+	inst := realInstruments()
+	for _, perp := range []string{"gate_futures", "okx_futures", "kraken_futures"} {
+		stepUnits := inst[perp].StepSizeCoin / inst[perp].ContractSizeCoin
+		for notional := 100.0; notional <= 5000; notional += 137.31 {
+			got, err := SizeDeltaNeutral(inst["binance_spot"], inst[perp], req(78000, 78010, notional))
+			if err != nil {
+				t.Fatalf("%s notional %.2f: unexpected refusal: %v", perp, notional, err)
+			}
+			// A fractional step like OKX's 0.01 contract is itself not
+			// binary-representable, so "exactly n steps" can only hold to
+			// representation error — but that error must stay far inside
+			// anything a venue-precision format would truncate.
+			steps := got.PerpQtyUnits / stepUnits
+			if math.Abs(steps-math.Round(steps)) > 1e-9 {
+				t.Fatalf("%s notional %.2f: PerpQtyUnits %v is %v venue steps — not on the grid",
+					perp, notional, got.PerpQtyUnits, steps)
+			}
+			// Gate's step is one whole contract, so there the count itself
+			// must be integral — the exact truncation trap.
+			if perp == "gate_futures" && got.PerpQtyUnits != math.Trunc(got.PerpQtyUnits) {
+				t.Fatalf("gate notional %.2f: %v contracts is not a whole number", notional, got.PerpQtyUnits)
+			}
+		}
+	}
+}
+
+// A published minimum ABOVE the step size must refuse — this branch existed
+// untested: every golden fixture has MinQtyCoin == StepSizeCoin, so a
+// regression dropping the check would have passed the whole suite.
+func TestSizeDeltaNeutral_RefusesBelowPublishedMinimum(t *testing.T) {
+	inst := realInstruments()
+	perp := inst["binance_futures"]
+	perp.MinQtyCoin = 0.1 // some Bybit spot symbols really publish min > step
+
+	_, err := SizeDeltaNeutral(inst["binance_spot"], perp, req(78000, 78010, 1000))
+	if err == nil {
+		t.Fatal("0.012 coin below a published 0.1 minimum was not refused")
+	}
+	if !strings.Contains(err.Error(), "minimum quantity") {
+		t.Fatalf("refusal does not name the rule: %v", err)
+	}
+}

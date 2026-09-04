@@ -144,7 +144,16 @@ func SizeDeltaNeutral(spot, perp exchanges.Instrument, req SizingRequest) (Delta
 
 	perpQtyUnits := qtyCoin
 	if perp.IsContract {
-		perpQtyUnits = qtyCoin / perp.ContractSizeCoin
+		// The venue-facing count must land EXACTLY on the venue's step grid
+		// in contract units, not a float-division hair away from it: the raw
+		// division yields 127.999…97-style values, and a later integer
+		// truncation ships 127 contracts against a 128-contract-equivalent
+		// spot leg — one contract of unhedged delta from the first order on a
+		// venue like Gate that takes only whole contracts. qtyCoin is already
+		// a whole number of steps (verified above), so rounding the STEP
+		// count here changes representation, never size.
+		stepUnits := perp.StepSizeCoin / perp.ContractSizeCoin
+		perpQtyUnits = math.Round(qtyCoin/perp.ContractSizeCoin/stepUnits) * stepUnits
 	}
 	return DeltaNeutralSize{
 		QtyCoin:           qtyCoin,

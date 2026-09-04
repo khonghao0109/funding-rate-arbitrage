@@ -25,6 +25,15 @@ const RefreshInterval = 24 * time.Hour
 // leave a source ruleless for a full day.
 const refreshRetryInterval = 5 * time.Minute
 
+// refreshRetryCeiling caps how far consecutive failures back the retry off.
+// Retrying doubles from refreshRetryInterval, because a PERMANENTLY broken
+// source — a pair the venue simply does not list — otherwise held the whole
+// registry at 5-minute polling forever: Refresh re-fetches every source, two
+// of which are ~1MB unfiltered lists, so that was 288 full sweeps a day with
+// the same missing-symbols line logged every 5 minutes. At the ceiling a
+// broken source still gets four chances a day against the healthy 24h cycle.
+const refreshRetryCeiling = 6 * time.Hour
+
 // Source is one venue feed the registry keeps rules for: its wire name, the
 // symbols it serves (in both spellings), and the fetcher that reads its rules.
 type Source struct {
@@ -136,11 +145,18 @@ func missingSymbols(asked []exchanges.Symbol, fetched []exchanges.Instrument) []
 // truth being served. Step 2.4's hedge-mapping log hangs off it; step 2.7's
 // dashboard feed is expected to as well.
 func (r *Registry) Run(ctx context.Context, afterRefresh func()) {
+	retryWait := time.Duration(refreshRetryInterval)
 	for {
 		wait := time.Duration(RefreshInterval)
 		if err := r.Refresh(ctx); err != nil {
 			log.Printf("instrument refresh: %v", err)
-			wait = refreshRetryInterval
+			// Escalate while the failure persists, reset once it clears: the
+			// fast retry exists for the transient startup blip, not for a
+			// misconfigured pair that will fail identically all day.
+			wait = retryWait
+			retryWait = min(retryWait*2, refreshRetryCeiling)
+		} else {
+			retryWait = refreshRetryInterval
 		}
 		log.Printf("instrument registry: %d instruments across %d sources", r.Count(), len(r.sources))
 		if afterRefresh != nil {
