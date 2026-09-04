@@ -110,6 +110,17 @@ Kraken settled), and dashboard freshness retraction on socket loss. The
 remaining review debts are recorded at the end of the phase-2 section in
 docs/PLAN.md.
 
+**Phase 3 has started.** Step 3.1 built `internal/strategy` — `EstimateFill`
+(slippage for one fill from the measured book), `RoundTripCost` (the four taker
+fills of opening and closing a delta-neutral position: buy spot + sell perp in,
+sell spot + buy perp out) and `NetAPR`. Measured on the real `depth_snapshots`
+with every venue given the SAME funding rate, so cost is the only variable: at
+$20k hyperliquid ranks first at 7.40% net and paradex last at 5.10%; at $60k
+paradex is REFUSED (its book holds $21.5k inside 0.5%); at $12M hyperliquid is
+refused and binance leads at 3.48%. **The ranking changes with size** — the case
+PLAN §7.4 says a screener without depth gets backwards. Venues whose fee
+schedule is `verified: false` refuse to produce a number rather than costing 0.
+
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
 (venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),
@@ -148,10 +159,16 @@ at all — that is deliberate.
 
 **2. Never present gross profit as profit.** Every profit figure must be net of
 maker/taker fees, funding cost, and estimated slippage. Step 1.3 added the fee
-model, so a figure can now be "after trading fees" — but nothing yet deducts
-slippage (needs book depth, step 2.7) or funding cost, and the whole stored
-funding corpus is gross. Nothing is called "net" before step 3.1. Label every
-figure with what has actually been taken off it, wherever it surfaces.
+model, so a figure can now be "after trading fees". **Step 3.1 opened the word
+"net", and only inside `internal/strategy`**: `NetAPR` deducts taker commission
+on all four fills AND slippage estimated from the measured book for the intended
+size, and it carries `AppliedVI`/`ExcludedVI` so no caller can display the
+number without being able to say what it covers. Five costs are still excluded
+by name — spot borrow/margin, basis drift between entry and exit, the book AT
+EXIT, transfer fees, liquidation risk. Everything outside that package is still
+gross or after-fees-only: the wire's `funding_basis.model` is still `"gross"`,
+and the stored funding corpus is gross. Label every figure with what has
+actually been taken off it, wherever it surfaces.
 
 **3. Never hardcode a funding interval.** Not 8h, not anything. Hyperliquid
 settles hourly, Kraken settles hourly with a per-1h rate, Paradex accrues
@@ -314,7 +331,8 @@ internal/
   fees/              fee table, net profit
   history/           venue REST -> store; the only place that knows both
   store/             SQLite persistence
-  strategy/          APR, entry and exit signals
+  strategy/          net APR, slippage from depth, entry and exit signals
+                     ⚠️ the ONLY package allowed to say "net" (step 3.1)
   backtest/          historical replay
   notify/            Telegram and Discord alerts
   broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS
@@ -335,9 +353,10 @@ written one for; `connector:` picks from `exchanges.Connectors()`, and
 Per-venue symbol naming lives there too (`symbol_format`, `symbol_map`), which is
 what removed six hardcoded translation tables from `exchanges/`.
 
-Packages under `internal/` currently contain only `doc.go` stating their
-responsibility and boundaries. Read the relevant `doc.go` before adding code to
-one.
+The remaining empty packages under `internal/` (`backtest`, `notify`, `broker`,
+`execution`, `risk`) contain only `doc.go` stating their responsibility and
+boundaries. Read the relevant `doc.go` before adding code to one — the
+boundaries written there are the contract, not a suggestion.
 
 ### Dependency rules — blocking, not advisory
 
@@ -445,10 +464,11 @@ phase 1.
   `symbols × 5/s` — measured 20.0/s and 65 KB/s afterwards. Alerts are not
   queued. Still open, and now the dominant cost: the server ships every symbol
   to every client (PLAN §7.3 item 2), so 50 symbols would be 250 msg/s.
-- 382 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 417 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `exchanges` 90 (58.8% of statements),
+  it can be re-measured): `internal/strategy` 35 (96.7%),
+  `exchanges` 90 (58.8% of statements),
   `internal/scanner` 114 (86.5%), `internal/instruments` 27 (96.9%),
   `internal/store` 18 (84.2%), `internal/config` 34 (84.0%),
   `internal/depth` 10 (95.3%), `internal/history` 6 (76.5%),
@@ -484,6 +504,20 @@ phase 1.
 - Paradex's history reach is capped at ~83 days by `maxFundingHistoryPages`,
   because one hour of its corpus costs one HTTP request. That is this tool's
   limit, not the venue's; a deeper corpus means more runs or a higher cap.
+- **Depth is stored and published as AGGREGATES, never as levels** — two
+  cumulative figures a side (within 0.1% and 0.5% of mid), the best price, the
+  spread, and how far the response reached. There is no level list anywhere, in
+  memory or in the corpus. So `strategy.EstimateFill` reconstructs a piecewise
+  linear cumulative curve through the points that exist and integrates along it.
+  That assumes liquidity is spread evenly inside a window; real books are denser
+  near the touch, so the estimate is **too expensive**, which is the safe
+  direction. Anything wanting a sharper fill model has to store levels first —
+  and depth cannot be backfilled, so that decision only ever applies forward.
+- **`depth_snapshots` holds one sample per source/pair** (2026-09-04), left over
+  from the step-2.7b acceptance sweep. The live scanner fills it going forward,
+  but there is **no historical depth**, so a backtest cannot model slippage from
+  the book as it was — it has to take slippage as a stated parameter and say so.
+  Every hour the scanner is not running is an hour of depth nobody can recover.
 
 ---
 

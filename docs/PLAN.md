@@ -98,8 +98,8 @@
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
-| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **6/7 bước** | Thu thập + lưu funding rate 24/7 |
-| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
+| **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
+| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **1/5 bước** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Basis Trade | 4 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot hỗ trợ 2 chiến lược |
@@ -1229,12 +1229,105 @@ Sửa:
 **Mục tiêu:** Từ dữ liệu thô ra tín hiệu có kiểm chứng, chưa đặt lệnh.
 **Thời gian:** 3–4 tuần · **5 bước**
 
-#### Bước 3.1 — Máy tính APR
+#### Bước 3.1 — Máy tính APR ✅ (2026-09-04)
 - `APR = RatePerInterval × (31.536.000 / IntervalSec)` — chuẩn hoá theo chu kỳ thật của từng sàn.
 - Tính **APR ròng** = APR thô − phí vào/ra − **slippage ước tính từ độ sâu** (thành quả Bước 2.7), khấu hao theo thời gian giữ dự kiến.
 - Đây là chỗ đầu tiên trong lộ trình được phép dùng chữ "ròng" — trước đó chưa có độ sâu nên chưa có slippage ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
 - Slippage phải tính cho **đúng size dự kiến**, không phải cho size tối thiểu.
 - **Nghiệm thu:** unit test đối chiếu với tính tay trên nhiều chu kỳ; APR ròng của một cặp sổ mỏng phải thấp hơn rõ rệt so với khi bỏ qua slippage.
+
+> **Kết quả 3.1 (2026-09-04).** `internal/strategy` có ba tầng:
+> `EstimateFill` (slippage một lượt khớp từ sổ đo được), `RoundTripCost` (4
+> lượt khớp: MUA spot + BÁN perp lúc vào, BÁN spot + MUA perp lúc thoát) và
+> `NetAPR`. Từ đây chữ **"ròng"** có định nghĩa kiểm được: đã trừ hoa hồng
+> taker 4 lượt **và** slippage đo cho đúng vốn dự kiến — và `ExcludedVI` đi
+> kèm con số liệt kê 5 khoản **chưa** trừ (vay/ký quỹ chân spot, basis giãn
+> giữa vào và ra, sổ lệnh lúc thoát, phí chuyển tài sản, rủi ro thanh lý).
+>
+> **Mô hình slippage — vì sao nó có hình dạng này.** Store lẫn wire chỉ giữ
+> độ sâu ở dạng **tổng hợp**, không giữ danh sách mức: hai con số luỹ kế mỗi
+> phía (trong 0,1% và trong 0,5%), giá tốt nhất, spread, và sổ trả tới đâu.
+> Nên mô hình dựng lại **đường luỹ kế** từ đúng những điểm có thật —
+> `(0, nửa spread) → (sâu trong 0,1%, 0,1%) → (sâu trong 0,5%, 0,5%)` — rồi
+> lấy tích phân hình thang dọc theo nó. Tuyến tính giữa hai điểm nghĩa là giả
+> định thanh khoản rải đều trong cửa sổ; sổ thật dày hơn ở sát giá, nên con số
+> **cao hơn** thực tế — hướng an toàn cho một ước lượng lợi nhuận, và được nói
+> ra thay vì để người sau tự phát hiện.
+>
+> Hai điều mô hình **từ chối** làm: (1) ngoại suy quá sổ đo được — lệnh lớn hơn
+> độ sâu trong 0,5% **không được định giá**, đó chính là cổng chặn cứng
+> [§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh) mục 1; (2) để phản hồi bị cắt cụt đi
+> qua như phép đo — khi lượt khớp ăn quá mức xa nhất sàn công bố, kết quả mang
+> cờ `DepthIsLowerBound` với nghĩa **độ sâu là cận dưới ⇒ chi phí là cận trên**.
+> Lý do hai điều đó khác nhau cũng được ghi thành hai câu từ chối khác nhau:
+> "sàn thật sự mỏng" ≠ "sàn chỉ trả tới 0,09%".
+>
+> **Nghiệm thu chạy trên `depth_snapshots` THẬT (đo 2026-09-04), BTCUSDT, giữ
+> 30 ngày, mọi sàn cùng gán rate 1,0 bps/8h — nên khác biệt duy nhất là chi phí
+> vào/ra:**
+>
+> | Vốn | Xếp hạng theo APR ròng | Cùng số đó nếu BỎ slippage | Ghi chú |
+> |---|---|---|---|
+> | 20.000 | hyperliquid 7,40% · binance 7,29% · kraken 7,28% · **paradex 5,10%** | 7,42 · 7,30 · 7,30 · **7,42** | APR **thô** cả bốn đều 10,95% |
+> | 60.000 | hyperliquid 7,37% · binance 7,29% · kraken 7,27% | 7,42 · 7,30 · 7,30 | **paradex TỪ CHỐI** — sổ chỉ có 21.543 trong cửa sổ 0,5% |
+> | 2.000.000 | binance 6,87% · kraken 6,78% · **hyperliquid 6,30%** ⚠ | 7,30 · 7,30 · 7,42 | hyperliquid tụt từ hạng 1 xuống hạng 3 và mang cờ cận dưới |
+> | 12.000.000 | binance 3,48% ⚠ · kraken 3,06% ⚠ | 7,30 · 7,30 | **hyperliquid TỪ CHỐI**; hai sàn còn lại đều là cận trên chi phí |
+>
+> Đây đúng là ca [§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh) mô tả: **thứ hạng đổi
+> theo size**. Xếp theo funding thô thì bốn sàn bằng nhau ở mọi size; xếp theo
+> APR ròng thì hyperliquid thắng ở 20k và **bị loại** ở 12M. Slippage của
+> paradex ở 20k là **0,1911%** so với **0,0005%** của binance — chênh 380 lần
+> trên cùng một con số funding, và làm mất **2,32 điểm phần trăm** APR: **5,10%
+> so với 7,42%** nếu bỏ qua slippage. Cả hai con số đến từ **cùng một lượt
+> chạy** và trùng khít với unit test `TestNetAPR_ThinBookCostsRealAPRAgainstIgnoringSlippage`,
+> vốn nạp đúng các hàng `depth_snapshots` đó — tiêu chí "sổ mỏng phải thấp hơn
+> rõ rệt" đo được bằng số chứ không bằng khẳng định.
+>
+> Ba sàn `verified: false` (bybit, okx, gate) **từ chối ra số** thay vì tính
+> phí bằng 0 — "chưa tra" không phải "miễn phí" (Bước 1.3).
+>
+> **Review độc lập → REQUEST CHANGES, đã vá hết trước khi commit.** Review chạy
+> ngữ cảnh sạch, 9 phép đột biến; **2 phép sống sót** và cả hai đã được ghim lại:
+> ① đảo ánh xạ `SideBuy→ask / SideSell→bid` mà **toàn bộ suite vẫn xanh**, vì
+> mọi fixture đều đối xứng bid=ask — đúng thứ `cost.go` tồn tại để bảo vệ (chân
+> đau là BÁN spot lúc thoát). Nay có sổ lệch (bid mỏng 2.000, ask dày 250.000) và
+> phép đảo đó chết ngay; ② ngưỡng `DepthIsLowerBound` không được ghim bằng số.
+> Ngoài ra: **NaN/±Inf đi lọt mọi cổng từ chối** (mọi guard là `<= 0`, luôn false
+> với NaN) và ra ngoài dưới dạng `OK: true` — nay có `isFinite`/`isPositiveFinite`
+> ở cả ba biên, cộng trần `maxHoldingDays` vì phép đổi float64→int64 quá tầm là
+> **implementation-dependent** trong Go (bão hoà `MaxInt64` trên arm64, âm trên
+> amd64 — hai máy sẽ bất đồng, đúng thứ cổng 3.5 không chịu được); hai câu từ
+> chối trước đây **khẳng định điều dữ liệu không chứng minh nổi** ("sàn chỉ trả
+> tới đó" — `Summary` không mang số mức đã YÊU CẦU nên không phân biệt được
+> "trả thiếu" với "hết sổ"), nay nói đúng phần đo được; `NetAPR` giờ **đối chiếu
+> danh tính** (`Cost.PerpSource`/`Symbol` phải khớp rate) sau khi review chỉ ra
+> chính các test cũ đang ghép chi phí sàn này với rate sàn khác; `RoundTripInput`
+> nhận `At` + `MaxBookAge` (hợp đồng `doc.go`: thời điểm đánh giá **truyền vào**,
+> không đọc đồng hồ) vì sổ độ sâu quét tối đa mỗi giờ; và `AppliedVI` nay nói rõ
+> **MẪU SỐ** — mọi % tính trên notional MỘT CHÂN, không phải trên vốn triển khai.
+>
+> Review cũng bắt **số nghiệm thu bản nháp là số ghép**: "2,32 điểm (5,10% so với
+> 8,52%)" lấy 2,32 từ unit test và 5,10% từ lượt chạy thật. Gốc rễ: fixture của
+> test dùng số phía BID cho cả hai phía, và biểu phí Paradex trong test là 0 thay
+> vì **4,5 bps** như `config.yaml` (config cố ý lấy bậc **Pro** để con số sau phí
+> là cận DƯỚI của cái giữ lại được; câu "Paradex retail 0%" trong CLAUDE.md là
+> lược giản). Đã sửa cả hai; test và lượt chạy nay ra **cùng** 5,10% / 7,42%.
+>
+> **Nợ ghi nhận.** ① Corpus `depth_snapshots` hiện chỉ có **1 mẫu/nguồn/cặp**
+> (di sản lượt nghiệm thu 2.7b), nên Bước 3.3 **không có** độ sâu lịch sử để
+> mô hình slippage theo thời gian: backtest phải nêu giả định slippage của nó
+> thành tham số, không được vờ như đọc được từ sổ quá khứ. ② Wire vẫn công bố
+> `funding_basis.model: "gross"` — cố ý: chưa message nào mang số ròng, và
+> nhãn phải nói đúng cái đang gửi. Đổi khi Bước 3.2/3.4 đẩy tín hiệu lên wire.
+> ③ `breakevenDaysFeesOnly` trong `internal/scanner` vẫn tự khấu hao phí theo
+> cách riêng; nó chỉ tính phí nên không sai, nhưng khi scanner bắt đầu hiển thị
+> số ròng thì nên gọi thẳng `internal/strategy` thay vì giữ hai phép tính.
+> ④ `SettlementsInHold` là `floor(hold / interval)`, bằng số mốc settle ĐI QUA
+> chỉ khi vị thế mở đúng biên; lệch nhiều nhất một mốc, tức **1,1% lợi nhuận
+> thô** trên chu kỳ 30 ngày/8h. Đếm chính xác cần thời điểm vào lệnh so với lưới
+> settle của sàn — thứ một ước lượng nhìn về phía trước chưa có. Chọn `floor`
+> có chủ đích (hướng thận trọng) và **cả hai vế của cổng 3.5 lấy từ cùng hàm
+> này**, nên nó không thể thành nguồn bất đồng giữa chúng.
 
 #### Bước 3.2 — Sinh tín hiệu
 - Điều kiện vào lệnh: funding rate > ngưỡng **VÀ** duy trì qua N chu kỳ **VÀ** APY ròng > sàn tối thiểu **VÀ** thanh khoản đủ.
@@ -1601,7 +1694,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
-[  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
+[  ] GĐ 3  Signal, Alert & Backtest      1/5 bước   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Basis Trade                   0/4 bước
@@ -1620,11 +1713,11 @@ chỉ chứng minh lại rằng nó tồn tại.
 soak: funding realtime 7 sàn, instrument registry, ánh xạ spot↔perp, persistence
 SQLite với corpus 90.077 mốc settle, và dashboard funding kèm độ sâu sổ lệnh.
 
-Việc tiếp theo là **GĐ 3 — Bước 3.1, máy tính APR**, và đó là bước đầu tiên
-trong lộ trình được phép dùng chữ **"ròng"**: giờ đã có cả ba thành phần nó cần
-— biểu phí (1.3), funding chuẩn hoá (2.5) và độ sâu sổ lệnh (2.7b). Lưu ý khi
-bắt đầu: cửa sổ 0,5% là **cận dưới** ở 6/9 sàn, nên mô hình slippage phải đọc
-`covers_0_5pct` chứ không lấy thẳng con số.
+**Bước 3.1 xong (2026-09-04)** — `internal/strategy` đã có máy tính APR ròng:
+slippage dựng từ đường luỹ kế của sổ ĐO ĐƯỢC, hoa hồng taker 4 lượt khớp, và
+cổng chặn cứng khi lệnh vượt độ sâu trong cửa sổ 0,5%. Đo trên corpus thật:
+cùng một funding rate, thứ hạng bốn sàn **đổi theo size** và paradex bị loại từ
+mốc 60k. Việc tiếp theo là **Bước 3.2 — sinh tín hiệu**.
 
 ⚠️ GĐ 1 vẫn **chưa đóng**: còn phiên chạy 72h (hạn 2026-09-06) và một phiên khác
 ra phán quyết.
