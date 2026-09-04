@@ -425,3 +425,81 @@ func TestOpenRefusesAPathTheDriverWouldMisread(t *testing.T) {
 		t.Fatal("a path containing '?' was accepted")
 	}
 }
+
+// A REAL v2 file — old column name, user_version 2, one row already in it —
+// opened by this binary must come out at v3 with the row intact under the
+// renamed column. Same-version reopen and newer-version refusal were already
+// tested; this is the path neither of them exercises, and the one a machine
+// that lived through step 2.6 will actually take.
+func TestMigrateV2FileToV3(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "scanner.db")
+
+	// Build the v2 shape by hand: the columns as c81a415 created them.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, stmt := range []string{
+		`CREATE TABLE funding_history (
+			source TEXT NOT NULL, symbol TEXT NOT NULL, funding_at_ms INTEGER NOT NULL,
+			model TEXT NOT NULL, rate_per_interval_frac REAL NOT NULL, interval_sec INTEGER NOT NULL,
+			gap_prev_sec INTEGER NOT NULL, rate_per_8h_frac REAL NOT NULL, apr_frac REAL NOT NULL,
+			raw_rate REAL NOT NULL, raw_rate_field TEXT NOT NULL,
+			rate_type TEXT NOT NULL DEFAULT '', mark_price REAL NOT NULL DEFAULT 0,
+			recorded_at_ms INTEGER NOT NULL,
+			PRIMARY KEY (source, symbol, funding_at_ms)) WITHOUT ROWID`,
+		`INSERT INTO funding_history VALUES
+			('binance_futures','BTCUSDT',1000,'discrete',0.0001,28800,28800,0.0001,0.1095,
+			 0.0001,'fundingRate','Regular',81124.3,2000)`,
+		`PRAGMA user_version = 2`,
+	} {
+		if _, err := raw.ExecContext(ctx, stmt); err != nil {
+			t.Fatalf("build v2 file: %v", err)
+		}
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open v2 file with v3 code: %v", err)
+	}
+	defer db.Close()
+
+	var version int
+	if err := db.DB().QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	if version != schemaVersion {
+		t.Fatalf("user_version = %d after migration, want %d", version, schemaVersion)
+	}
+	rows, err := db.FundingHistory(ctx, "BTCUSDT", 0, 5000)
+	if err != nil {
+		t.Fatalf("read migrated row: %v", err)
+	}
+	if len(rows) != 1 || rows[0].MarkPriceQuote != 81124.3 {
+		t.Fatalf("migrated row = %+v, want the v2 mark price under the renamed column", rows)
+	}
+}
+
+// A file with tables but version 0 was not created by this code — every file
+// this store ever wrote was stamped at creation. Stamping it current would
+// mislabel whatever shape it has as migrated.
+func TestOpenRefusesAVersionZeroFileWithTables(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scanner.db")
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`CREATE TABLE funding_history (x INTEGER)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := raw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(path); err == nil {
+		t.Fatal("a foreign version-0 file with tables was opened and stamped")
+	}
+}

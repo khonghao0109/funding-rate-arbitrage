@@ -300,6 +300,16 @@ const (
 // permanent in a way a mistyped sampling period is not.
 const minRetainFundingDays = 30
 
+// The defensible price-sampling range, from the step-2.6 measurement of
+// 133.3 bytes/row (MEASURE_STORE=1 go test -run TestPriceSnapshotRowCost):
+// at 36 series and 90-day retention, 30s ≈ 1.24 GB while 5s ≈ 7.46 GB —
+// below the floor storage grows past what retention was sized for, above the
+// ceiling a days-long funding position loses its price resolution.
+const (
+	minPriceSampleEverySec = 10
+	maxPriceSampleEverySec = 60
+)
+
 func (s *Storage) applyDefaults() {
 	if s.Path == "" {
 		s.Path = defaultStoragePath
@@ -380,9 +390,16 @@ func (s Storage) validate() error {
 	switch {
 	case s.Path == "":
 		return fmt.Errorf("storage.path is empty")
-	case s.PriceSampleEverySec < 1:
-		return fmt.Errorf("storage.price_sample_every_sec is %d; below one second the sampler is a spin loop and the row count stops being bounded",
-			s.PriceSampleEverySec)
+	case s.PriceSampleEverySec < minPriceSampleEverySec || s.PriceSampleEverySec > maxPriceSampleEverySec:
+		// Bounded in VALIDATION, not only by the repo test that pins the
+		// shipped config.yaml: that test never sees a file passed via -config,
+		// and the row count is linear in this number — a typo'd 3 (meant 30)
+		// is ~12 GB per 90 days on the measured 133.3 bytes/row, with no
+		// warning until the disk fills.
+		return fmt.Errorf("storage.price_sample_every_sec is %d; the defensible range is %d–%d "+
+			"(measured 133.3 bytes/row: below it storage grows past what the retention was sized for, "+
+			"above it a days-long funding position loses its price resolution)",
+			s.PriceSampleEverySec, minPriceSampleEverySec, maxPriceSampleEverySec)
 	case s.FundingTopUpEveryMin < 1:
 		return fmt.Errorf("storage.funding_topup_every_min is %d; each tick queries seven venues over REST",
 			s.FundingTopUpEveryMin)

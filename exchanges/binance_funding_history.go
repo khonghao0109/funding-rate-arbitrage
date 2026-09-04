@@ -86,12 +86,12 @@ func parseBinanceFundingHistory(raw []binanceFundingHistoryRow, symbol Symbol, w
 		}
 		markPrice, _ := strconv.ParseFloat(entry.MarkPrice, 64)
 		out = append(out, fundingHistoryRow{
-			SettledAtMs:  entry.FundingTime,
-			RateFrac:     rateFrac,
-			RawRate:      rateFrac,
-			RawRateField: "fundingRate",
-			RateType:     entry.RateType,
-			MarkPrice:    markPrice,
+			SettledAtMs:    entry.FundingTime,
+			RateFrac:       rateFrac,
+			RawRate:        rateFrac,
+			RawRateField:   "fundingRate",
+			RateType:       entry.RateType,
+			MarkPriceQuote: markPrice,
 		})
 	}
 	return out, nil

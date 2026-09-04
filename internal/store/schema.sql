@@ -34,19 +34,29 @@ CREATE TABLE IF NOT EXISTS funding_history (
     interval_sec           INTEGER NOT NULL,
     -- The measured distance to the previous settlement, which is NOT
     -- interval_sec: no venue publishes an interval beside a historical rate, so
-    -- interval_sec is the series' modal spacing (the cadence) while this is
-    -- what happened at this row. They differ exactly where a settlement was
-    -- missed or the cadence changed.
+    -- for a DISCRETE series interval_sec is the modal spacing (the cadence)
+    -- while this is what happened at this row. They differ exactly where a
+    -- settlement was missed or the cadence changed. For a CONTINUOUS series
+    -- (model='continuous', Paradex) interval_sec is instead the rate's QUOTE
+    -- window — 28800 for its per-8h rate — while the rows are hourly SAMPLES,
+    -- so gap_prev_sec (~3600) and interval_sec legitimately disagree there.
     gap_prev_sec           INTEGER NOT NULL,
     rate_per_8h_frac       REAL NOT NULL,
     apr_frac               REAL NOT NULL,
 
+    -- raw_rate is the venue's number VERBATIM, in whatever unit the named
+    -- field carries — it is the debug trail back to the payload, never an
+    -- input to arithmetic. Today it equals rate_per_interval_frac on every
+    -- venue, but that is an observation, not a contract: compute from the
+    -- *_frac columns only.
     raw_rate        REAL NOT NULL,
     raw_rate_field  TEXT NOT NULL,  -- the payload field raw_rate came from
     -- Binance only: 'Regular' | 'Special'. A Special rate is dividend-driven
     -- and must be filtered out of a backtest. Empty everywhere else.
     rate_type       TEXT NOT NULL DEFAULT '',
-    mark_price      REAL NOT NULL DEFAULT 0,
+    -- The price funding was charged on, in the market's QUOTE asset
+    -- (Binance only; 0 = not supplied). Renamed from mark_price at v3.
+    mark_price_quote REAL NOT NULL DEFAULT 0,
 
     -- When this process wrote the row. NOT a receive time: a rate that settled
     -- last March never came off a socket, and RecvAt is stamped in exactly

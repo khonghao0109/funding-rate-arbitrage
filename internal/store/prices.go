@@ -17,9 +17,10 @@ type PriceSample struct {
 	MidPriceQuote float64
 	BestBidQuote  float64
 	BestAskQuote  float64
-	// Named Coin, not Qty: the scanner's pipeline carries base coins, and the
-	// venues that publish contracts contribute 0 until the registry conversion
-	// is wired in at step 2.7.
+	// Named Coin, not Qty: the scanner's pipeline carries base coins. Since
+	// step 2.7b the contract venues (OKX, Gate, Kraken) are converted through
+	// the registry's ContractSizeCoin before landing here; 0 still means "not
+	// known" — Paradex publishes no size at all — never "no liquidity".
 	BestBidQtyCoin float64
 	BestAskQtyCoin float64
 	// RecvAtMs is when the underlying message came off the socket, carried

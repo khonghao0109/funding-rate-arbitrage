@@ -109,8 +109,8 @@ func TestBinanceFundingHistoryGolden(t *testing.T) {
 		if entry.RawRateField != "fundingRate" {
 			t.Errorf("entry %d: RawRateField = %q", i, entry.RawRateField)
 		}
-		if entry.MarkPrice <= 0 {
-			t.Errorf("entry %d: MarkPrice = %g, but this venue publishes one", i, entry.MarkPrice)
+		if entry.MarkPriceQuote <= 0 {
+			t.Errorf("entry %d: MarkPriceQuote = %g, but this venue publishes one", i, entry.MarkPriceQuote)
 		}
 	}
 }

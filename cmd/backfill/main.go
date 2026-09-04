@@ -93,8 +93,7 @@ func run() int {
 		// It goes through store.FundingHistory, the same query the phase-3
 		// backtest will use, rather than through SQL typed at a prompt — the
 		// point is that the READER works, not that the rows exist.
-		reportWindow(ctx, db, *only, *check)
-		return 0
+		return reportWindow(ctx, db, *only, *check)
 	}
 
 	collector := history.New(db, jobsFrom(cfg, *only, *onlySource))
@@ -116,6 +115,15 @@ func run() int {
 	results := collector.Collect(ctx, window)
 	history.LogResults("backfill", results)
 	reportReach(results)
+
+	// Cancellation BETWEEN two series produces no Result for the ones never
+	// attempted, so counting errored results alone would let a
+	// `timeout N go run ./cmd/backfill` read a truncated corpus as success —
+	// and the hourly top-up never re-fills history, only the recent edge.
+	if ctx.Err() != nil {
+		log.Printf("backfill: interrupted with series unattempted; what was written is intact — re-run to complete")
+		return 1
+	}
 
 	coverage, err := db.FundingCoverage(ctx)
 	if err != nil {
@@ -259,17 +267,20 @@ func formatGaps(counts map[int64]int) string {
 //
 // GROSS, and labelled so. Nothing in this corpus has a fee, a slippage estimate
 // or a borrow cost deducted anywhere (CLAUDE.md rule 2).
-func reportWindow(ctx context.Context, db *store.Store, symbol string, days int) {
+func reportWindow(ctx context.Context, db *store.Store, symbol string, days int) int {
 	now := time.Now()
 	fromMs := now.AddDate(0, 0, -days).UnixMilli()
 
 	rows, err := db.FundingHistory(ctx, symbol, fromMs, now.UnixMilli())
 	if err != nil {
-		log.Fatalf("read back: %v", err)
+		// An exit code, never log.Fatalf: main defers everything to run so an
+		// exit cannot skip db.Close(), and os.Exit here skipped exactly that.
+		log.Printf("read back: %v", err)
+		return 1
 	}
 	if len(rows) == 0 {
 		log.Printf("check: nothing stored for the last %d days", days)
-		return
+		return 0
 	}
 
 	type series struct {
@@ -308,6 +319,7 @@ func reportWindow(ctx context.Context, db *store.Store, symbol string, days int)
 			time.UnixMilli(s.newest).UTC().Format(time.DateOnly))
 	}
 	log.Print(b.String())
+	return 0
 }
 
 // reportCoverage prints what the corpus holds, read back from the database

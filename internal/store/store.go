@@ -26,7 +26,22 @@ var schemaSQL string
 // at a HIGHER version than this binary knows is refused rather than migrated
 // backwards — reading a newer file with older code is how a column quietly
 // stops being written.
-const schemaVersion = 2
+const schemaVersion = 3
+
+// migrationSteps alters an EXISTING file on its way up, keyed by the version
+// the step produces. schema.sql always describes the CURRENT shape (it is what
+// a fresh file gets), so any change to an existing table needs a step here —
+// CREATE IF NOT EXISTS cannot rename or retype anything, and before these
+// steps existed the version was stamped without them: a v3 binary would have
+// marked a v2 file migrated while leaving the old column in place, the exact
+// mislabeling the version check exists to prevent.
+//
+//	v2: depth_snapshots added (CREATE IF NOT EXISTS covers it — no step).
+//	v3: funding_history.mark_price → mark_price_quote (CONVENTIONS §1: the
+//	    column is a phase-8 contract and carried no unit).
+var migrationSteps = map[int]string{
+	3: "ALTER TABLE funding_history RENAME COLUMN mark_price TO mark_price_quote",
+}
 
 // Store is the SQLite persistence layer.
 //
@@ -97,6 +112,34 @@ func (s *Store) migrate(ctx context.Context) error {
 		return fmt.Errorf("store: database is at schema version %d, this binary knows %d — "+
 			"an older binary writing a newer file silently stops filling columns it does not know about",
 			version, schemaVersion)
+	}
+	// A version-0 file is legitimate only when it is EMPTY (fresh): every file
+	// this code ever created was stamped ≥1 at creation, so tables under
+	// version 0 mean a file of unknown provenance — running IF NOT EXISTS over
+	// it and stamping it current would mislabel whatever shape it has as
+	// migrated.
+	if version == 0 {
+		var name string
+		err := s.db.QueryRowContext(ctx,
+			"SELECT name FROM sqlite_master WHERE type='table' AND name='funding_history'").Scan(&name)
+		if err == nil {
+			return fmt.Errorf("store: file has tables but schema version 0 — not created by this code, refusing to stamp it")
+		}
+		if err != sql.ErrNoRows {
+			return fmt.Errorf("store: inspect schema: %w", err)
+		}
+	}
+	// Alterations to existing tables first, in order: CREATE IF NOT EXISTS
+	// below cannot rename or retype anything, and a fresh file (version 0)
+	// skips the steps because schema.sql already describes the current shape.
+	for v := version + 1; version > 0 && v <= schemaVersion; v++ {
+		step, ok := migrationSteps[v]
+		if !ok {
+			continue
+		}
+		if _, err := s.db.ExecContext(ctx, step); err != nil {
+			return fmt.Errorf("store: migrate to v%d: %w", v, err)
+		}
 	}
 	// Every statement is CREATE ... IF NOT EXISTS, so applying it to an
 	// existing file at the same version is a no-op and the schema file stays

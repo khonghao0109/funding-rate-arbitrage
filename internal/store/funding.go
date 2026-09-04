@@ -64,7 +64,7 @@ func (s *Store) PutFundingHistory(ctx context.Context, entries []exchanges.Fundi
 			source, symbol, funding_at_ms, model,
 			rate_per_interval_frac, interval_sec, gap_prev_sec,
 			rate_per_8h_frac, apr_frac,
-			raw_rate, raw_rate_field, rate_type, mark_price, recorded_at_ms
+			raw_rate, raw_rate_field, rate_type, mark_price_quote, recorded_at_ms
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
 	if err != nil {
 		return 0, fmt.Errorf("store: prepare funding insert: %w", err)
@@ -87,7 +87,7 @@ func (s *Store) PutFundingHistory(ctx context.Context, entries []exchanges.Fundi
 			entry.Source, entry.Symbol, entry.SettledAtMs, string(entry.Model),
 			entry.RatePerIntervalFrac, entry.IntervalSec, entry.GapPrevSec,
 			entry.RatePer8hFrac, entry.APRFrac,
-			entry.RawRate, entry.RawRateField, entry.RateType, entry.MarkPrice, recordedAtMs)
+			entry.RawRate, entry.RawRateField, entry.RateType, entry.MarkPriceQuote, recordedAtMs)
 		if err != nil {
 			return 0, fmt.Errorf("store: insert funding %s/%s: %w", entry.Source, entry.Symbol, err)
 		}
@@ -112,7 +112,7 @@ func (s *Store) FundingHistory(ctx context.Context, symbol string, fromMs, toMs 
 		SELECT source, symbol, funding_at_ms, model,
 		       rate_per_interval_frac, interval_sec, gap_prev_sec,
 		       rate_per_8h_frac, apr_frac,
-		       raw_rate, raw_rate_field, rate_type, mark_price, recorded_at_ms
+		       raw_rate, raw_rate_field, rate_type, mark_price_quote, recorded_at_ms
 		FROM funding_history
 		WHERE funding_at_ms >= ? AND funding_at_ms < ?`
 	args := []any{fromMs, toMs}
@@ -136,7 +136,7 @@ func (s *Store) FundingHistory(ctx context.Context, symbol string, fromMs, toMs 
 			&row.Source, &row.Symbol, &row.SettledAtMs, &model,
 			&row.RatePerIntervalFrac, &row.IntervalSec, &row.GapPrevSec,
 			&row.RatePer8hFrac, &row.APRFrac,
-			&row.RawRate, &row.RawRateField, &row.RateType, &row.MarkPrice, &row.RecordedAtMs,
+			&row.RawRate, &row.RawRateField, &row.RateType, &row.MarkPriceQuote, &row.RecordedAtMs,
 		); err != nil {
 			return nil, fmt.Errorf("store: scan funding history: %w", err)
 		}

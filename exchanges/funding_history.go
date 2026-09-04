@@ -101,9 +101,10 @@ type FundingHistoryEntry struct {
 	// Empty everywhere else: no other venue publishes one.
 	RateType string
 
-	// MarkPrice is the price funding was charged on, when the venue publishes
-	// it with the historical row (Binance only). 0 means not supplied.
-	MarkPrice float64
+	// MarkPriceQuote is the price funding was charged on, in the market's
+	// QUOTE asset, when the venue publishes it with the historical row
+	// (Binance only). 0 means not supplied.
+	MarkPriceQuote float64
 }
 
 // FundingWindow is the closed-open time range a history fetch covers.
@@ -144,12 +145,12 @@ func FundingHistoryFetchers() map[string]FundingHistoryFetchFunc {
 // fundingHistoryRow is one row as a venue's own parser produces it: the venue's
 // numbers, already in fractional units, before any cross-venue arithmetic.
 type fundingHistoryRow struct {
-	SettledAtMs  int64
-	RateFrac     float64 // the rate for ONE interval of this venue
-	RawRate      float64
-	RawRateField string
-	RateType     string
-	MarkPrice    float64
+	SettledAtMs    int64
+	RateFrac       float64 // the rate for ONE interval of this venue
+	RawRate        float64
+	RawRateField   string
+	RateType       string
+	MarkPriceQuote float64
 
 	// IntervalSec is filled only by a venue that publishes the interval with
 	// the row (Paradex: funding_period_hours). 0 means "measure it from the
@@ -221,7 +222,7 @@ func finishFundingHistory(source string, symbol Symbol, model FundingModel, rows
 			IntervalSec:         interval,
 			GapPrevSec:          gaps[i],
 			RateType:            row.RateType,
-			MarkPrice:           row.MarkPrice,
+			MarkPriceQuote:      row.MarkPriceQuote,
 		}
 		derived, err := deriveFundingRates(FundingData{
 			Source: source, Symbol: symbol.Standard,

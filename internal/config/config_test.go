@@ -454,7 +454,12 @@ func TestStorage_RejectsPeriodsThatWouldNotBound(t *testing.T) {
 		mention string
 	}{
 		{"no path", func(s *Storage) { s.Path = "" }, "path"},
-		{"sub-second sampling", func(s *Storage) { s.PriceSampleEverySec = 0 }, "spin loop"},
+		{"sub-second sampling", func(s *Storage) { s.PriceSampleEverySec = 0 }, "defensible range"},
+		// The 10–60 bound lives in Validate, not only in the repo test that
+		// pins config.yaml: a file passed via -config never meets that test,
+		// and a typo'd 3 (meant 30) is ~12 GB per 90 days.
+		{"sampling below the measured floor", func(s *Storage) { s.PriceSampleEverySec = 3 }, "defensible range"},
+		{"sampling above the resolution ceiling", func(s *Storage) { s.PriceSampleEverySec = 300 }, "defensible range"},
 		{"top-up every zero minutes", func(s *Storage) { s.FundingTopUpEveryMin = 0 }, "seven venues"},
 		{"negative retention", func(s *Storage) { s.RetainFundingDays = -1 }, "keep everything"},
 	} {
