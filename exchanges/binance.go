@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -74,8 +75,24 @@ func binanceStreamURL(host string, symbols []Symbol) string {
 // measured 2026-09-03 against wss://fstream.binance.com, the pong comes back.
 // Binance also pings us, and runSession's handler answers it and counts it as
 // activity.
+// ConnectBinanceFutures runs the market-data socket and, beside it, the REST
+// funding poller (step 2.5).
+//
+// The two are independent on purpose: funding comes from REST because the
+// mark-price stream delivers nothing here (measured — see
+// binance_funding_rest.go), and a REST outage must cost funding readings only,
+// never the price feed. Both stop when the context does, and this returns when
+// both have.
 func ConnectBinanceFutures(source string, symbols []Symbol, f Feeds) {
+	var running sync.WaitGroup
+	running.Add(1)
+	go func() {
+		defer running.Done()
+		runBinanceFunding(f, source, symbols)
+	}()
+
 	runStream(f, binanceStream(source, symbols, f, "wss://fstream.binance.com"))
+	running.Wait()
 }
 
 // ConnectBinanceSpot connects to Binance spot trading WebSocket API.

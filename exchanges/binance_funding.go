@@ -1,31 +1,38 @@
 package exchanges
 
-import (
-	"fmt"
-	"time"
-)
+import "fmt"
 
-// normalizeBinanceFunding normalizes one Binance USDⓈ-M reading.
+// binanceFundingInput is one Binance USDⓈ-M reading in Binance's own units.
 //
-// The WS markPrice stream carries the rate in "r" and the next settlement in
-// "T" (ms); the interval comes from fundingInfo in HOURS, defaulting to 8 for
-// symbols the endpoint omits — it documents itself as returning only adjusted
-// symbols, even though on 2026-09-03 it happened to cover every trading
-// perpetual, at 4h (443), 8h (331) and 1h (3).
-// https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Mark-Price-Stream
+// The rate and the settlement stamp come from REST premiumIndex
+// (lastFundingRate, nextFundingTime): the documented WS mark-price stream is
+// NOT the source, because it delivers nothing to this environment — measured
+// 2026-09-04, a socket that accepted SUBSCRIBE for btcusdt@markPrice@1s and
+// btcusdt@bookTicker together carried 4,782 bookTicker frames and ZERO
+// markPriceUpdate frames in 45 seconds. See docs/DATA-REQUIREMENTS.md §3.4.
+//
+// IntervalHours comes from fundingInfo, which documents itself as returning
+// only symbols whose config differs from the default — so 8 is the default
+// and this is the override, never the other way round.
+// https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price
 // https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-Info
-func normalizeBinanceFunding(symbol, source string, recvAt time.Time, venueTimeMs int64,
-	rateFrac float64, fundingIntervalHours, nextFundingAtMs int64) (FundingData, error) {
-	if fundingIntervalHours <= 0 {
-		return FundingData{}, fmt.Errorf("binance funding %s: non-positive interval %dh", symbol, fundingIntervalHours)
+type binanceFundingInput struct {
+	fundingReading
+	IntervalHours   int64
+	NextFundingAtMs int64
+}
+
+func normalizeBinanceFunding(in binanceFundingInput) (FundingData, error) {
+	if in.IntervalHours <= 0 {
+		return FundingData{}, fmt.Errorf("binance funding %s: non-positive interval %dh", in.Symbol, in.IntervalHours)
 	}
 	return deriveFundingRates(FundingData{
-		Symbol: symbol, Source: source, RecvAt: recvAt, VenueTimeMs: venueTimeMs,
+		Symbol: in.Symbol, Source: in.Source, RecvAt: in.RecvAt, VenueTimeMs: in.VenueTimeMs,
 		Model:               FundingDiscrete,
-		RawRate:             rateFrac,
-		RawRateField:        "r",
-		RatePerIntervalFrac: rateFrac,
-		IntervalSec:         fundingIntervalHours * secPerHour,
-		NextFundingAtMs:     nextFundingAtMs,
+		RawRate:             in.RateFrac,
+		RawRateField:        "lastFundingRate",
+		RatePerIntervalFrac: in.RateFrac,
+		IntervalSec:         in.IntervalHours * secPerHour,
+		NextFundingAtMs:     in.NextFundingAtMs,
 	})
 }

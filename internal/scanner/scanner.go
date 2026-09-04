@@ -28,6 +28,12 @@ const opportunityCooldown = 10 * time.Second
 // nothing arrives for it.
 const stalenessRefreshInterval = time.Second
 
+// fundingLogEvery is how often the collected funding table is printed. Funding
+// moves on a schedule measured in hours, so this is an operational heartbeat —
+// proof the feeds are alive — not a data feed. It is the only visibility step
+// 2.5 has: the dashboard arrives at 2.7.
+const fundingLogEvery = 60 * time.Second
+
 // PricePoint is one venue's latest price for one symbol, with everything needed
 // to decide whether it can still be trusted.
 //
@@ -257,10 +263,82 @@ func (s *Scanner) updateFunding(data exchanges.FundingData) {
 	s.markSourceAlive(data.Source, recvAt)
 }
 
+// FundingSnapshot returns every funding reading held, newest value per symbol
+// per source, sorted by symbol then source.
+//
+// This is the shape the production readers want (2.6 persistence, 2.7
+// dashboard): one locked pass rather than a point lookup per cell. Freshness
+// is the CALLER's judgement — nothing here evicts a reading whose source went
+// quiet, so a consumer that ignores RecvAt will happily show an hour-old rate
+// as current (docs/PLAN.md, step 2.7's warning).
+func (s *Scanner) FundingSnapshot() []exchanges.FundingData {
+	s.fundingMutex.RLock()
+	total := 0
+	for _, bySource := range s.funding {
+		total += len(bySource)
+	}
+	out := make([]exchanges.FundingData, 0, total)
+	for _, bySource := range s.funding {
+		for _, data := range bySource {
+			out = append(out, data)
+		}
+	}
+	s.fundingMutex.RUnlock()
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbol != out[j].Symbol {
+			return out[i].Symbol < out[j].Symbol
+		}
+		return out[i].Source < out[j].Source
+	})
+	return out
+}
+
+// logFundingSummary prints the funding table on a slow schedule: what was
+// collected, in the cross-venue comparable unit, with the age of each reading.
+//
+// It exists because step 2.5 collects funding that nothing displays yet — the
+// dashboard is 2.7 — and a feed nobody can see is a feed nobody knows is
+// broken. The age is printed from RecvAt for the same reason the dashboard
+// will have to: a subscription that died silently keeps its last reading
+// forever, and only the age says so.
+func (s *Scanner) logFundingSummary(ctx context.Context) {
+	ticker := time.NewTicker(fundingLogEvery)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			readings := s.FundingSnapshot()
+			if len(readings) == 0 {
+				log.Printf("funding: no readings yet")
+				continue
+			}
+			var b strings.Builder
+			// "gross" is not decoration: these figures have no fee, no
+			// slippage and no borrow deducted, and a round trip costs about
+			// 0.19% (internal/fees). CLAUDE.md rule 2 — a figure with nothing
+			// deducted is never presented as profit.
+			fmt.Fprintf(&b, "funding: %d readings (GROSS — no fees, slippage or borrow deducted)", len(readings))
+			for _, data := range readings {
+				// Bps per 8h is the cross-venue comparison figure; the interval
+				// is printed beside it because the same bps at 1h and at 8h are
+				// eight different annual returns.
+				fmt.Fprintf(&b, "\n  %-9s %-20s %+8.4f bps/8h  APR_gross %+7.2f%%  every %4ds  age %3.0fs",
+					data.Symbol, data.Source, data.RatePer8hFrac*10000, data.APRFrac*100,
+					data.IntervalSec, now.Sub(data.RecvAt).Seconds())
+			}
+			log.Print(b.String())
+		}
+	}
+}
+
 // latestFunding returns the most recent funding reading for one symbol on one
 // source, if any has arrived. Unexported on purpose: the production readers
-// (2.6 persistence, 2.7 dashboard) will want a locked snapshot, not a point
-// lookup — this accessor exists for tests until that shape is known.
+// (2.6 persistence, 2.7 dashboard) want FundingSnapshot; this point lookup
+// exists for tests.
 func (s *Scanner) latestFunding(symbol, source string) (exchanges.FundingData, bool) {
 	s.fundingMutex.RLock()
 	defer s.fundingMutex.RUnlock()
@@ -773,6 +851,7 @@ func (s *Scanner) Run(ctx context.Context) {
 	go s.processConnEvents(ctx)
 	go s.broadcastPrices(ctx)
 	go s.refreshStaleness(ctx)
+	go s.logFundingSummary(ctx)
 }
 
 // Feeds is what the venue connectors write into, and what tells them to stop.

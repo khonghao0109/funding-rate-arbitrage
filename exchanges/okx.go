@@ -67,12 +67,13 @@ func okxStream(source string, symbols []Symbol, f Feeds) streamConfig {
 		Subscribe: func(conn *websocket.Conn) error {
 			// config.yaml supplies the venue identifier (symbol_format
 			// "{base}-{quote}-SWAP").
-			args := make([]okxChannelArg, 0, len(symbols)*2)
+			args := make([]okxChannelArg, 0, len(symbols)*3)
 			for _, symbol := range symbols {
 				args = append(args,
 					okxChannelArg{Channel: "trades", InstID: symbol.Venue},
 					// books5 is the top 5 levels, pushed as a snapshot.
 					okxChannelArg{Channel: "books5", InstID: symbol.Venue},
+					okxChannelArg{Channel: "funding-rate", InstID: symbol.Venue},
 				)
 			}
 			return conn.WriteJSON(OKXSubscribeMessage{Op: "subscribe", Args: args})
@@ -87,6 +88,10 @@ func okxStream(source string, symbols []Symbol, f Feeds) streamConfig {
 }
 
 func handleOKXFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+	if handleOKXFunding(source, symbols, f, raw, recvAt) {
+		return
+	}
+
 	// The keepalive reply is the literal text "pong", which is not JSON and
 	// falls through both decodes below.
 	var tradeMsg OKXFuturesTrade

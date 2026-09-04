@@ -40,7 +40,20 @@ const (
 	// and no Binance futures trade at all.
 	framesPerKind    = 8
 	captureDirectory = "testdata"
+
+	// framesPerSequenceKind is the cap for a message shape whose MEANING is a
+	// sequence rather than a sample. Kraken's book deltas are the only such
+	// shape: the connector's top of book is the result of every frame since
+	// the snapshot, so a recording has to hold enough of them to actually
+	// reach the best level. Measured 2026-09-04, the first eight deltas after
+	// a snapshot all landed 80-90 ticks behind the top on both products, which
+	// left the assembler's golden test unable to observe a single change.
+	framesPerSequenceKind = 40
 )
+
+// sequenceKindPrefix marks the frame kinds capped by framesPerSequenceKind.
+// frameKind renders Kraken book updates as "feed=book|<product>".
+const sequenceKindPrefix = "feed=book|"
 
 // captureSymbols mirrors the mapping in config.yaml for the two most liquid
 // pairs. It is written out rather than loaded because the exchanges package must
@@ -65,14 +78,17 @@ var captureSymbols = map[string][]Symbol{
 // it speaks SSE over HTTP rather than WebSocket, so it has no streamConfig.
 func captureStreams(f Feeds) map[string]streamConfig {
 	return map[string]streamConfig{
-		"binance_futures":     binanceStream("binance_futures", captureSymbols["binance_futures"], f, "wss://fstream.binance.com"),
-		"binance_spot":        binanceStream("binance_spot", captureSymbols["binance_spot"], f, "wss://stream.binance.com:9443"),
-		"bybit_futures":       bybitStream("bybit_futures", captureSymbols["bybit_futures"], f, "wss://stream.bybit.com/v5/public/linear"),
-		"bybit_spot":          bybitStream("bybit_spot", captureSymbols["bybit_spot"], f, "wss://stream.bybit.com/v5/public/spot"),
-		"okx_futures":         okxStream("okx_futures", captureSymbols["okx_futures"], f),
-		"gate_futures":        gateStream("gate_futures", captureSymbols["gate_futures"], f),
-		"kraken_futures":      krakenStream("kraken_futures", captureSymbols["kraken_futures"], f),
-		"hyperliquid_futures": hyperliquidStream("hyperliquid_futures", captureSymbols["hyperliquid_futures"], f),
+		"binance_futures": binanceStream("binance_futures", captureSymbols["binance_futures"], f, "wss://fstream.binance.com"),
+		"binance_spot":    binanceStream("binance_spot", captureSymbols["binance_spot"], f, "wss://stream.binance.com:9443"),
+		"bybit_futures":   bybitStream("bybit_futures", captureSymbols["bybit_futures"], f, "wss://stream.bybit.com/v5/public/linear", true),
+		"bybit_spot":      bybitStream("bybit_spot", captureSymbols["bybit_spot"], f, "wss://stream.bybit.com/v5/public/spot", false),
+		"okx_futures":     okxStream("okx_futures", captureSymbols["okx_futures"], f),
+		"gate_futures":    gateStream("gate_futures", captureSymbols["gate_futures"], f),
+		"kraken_futures":  krakenStream("kraken_futures", captureSymbols["kraken_futures"], f),
+		// The meta cache only gates PUBLISHING a reading; capture replaces
+		// Handle and stores raw frames, so an empty one records the same
+		// activeAssetCtx payloads production sees.
+		"hyperliquid_futures": hyperliquidStream("hyperliquid_futures", captureSymbols["hyperliquid_futures"], f, newFundingMetaCache()),
 		"paradex_futures":     paradexStream("paradex_futures", captureSymbols["paradex_futures"], f),
 	}
 }
@@ -113,7 +129,11 @@ func captureFrom(t *testing.T, source string, cfg streamConfig) [][]byte {
 	recording := cfg
 	recording.Handle = func(raw []byte, _ time.Time) {
 		kind := frameKind(raw, captureSymbols[source])
-		if kept[kind] >= framesPerKind {
+		limit := framesPerKind
+		if strings.HasPrefix(kind, sequenceKindPrefix) {
+			limit = framesPerSequenceKind
+		}
+		if kept[kind] >= limit {
 			return
 		}
 		kept[kind]++

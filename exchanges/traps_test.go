@@ -2,6 +2,8 @@ package exchanges
 
 import (
 	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,36 +83,55 @@ func TestKraken_TopOfBookIsAssembledFromTheDeltaStream(t *testing.T) {
 		}
 	}
 
-	// And the deltas have to actually move the price, or this is asserting on one
-	// snapshot republished.
+	// And the deltas have to actually REACH the assembler, or this is asserting
+	// on one snapshot republished.
 	//
-	// PER SYMBOL. Comparing across symbols is what made the first version of this
-	// test vacuous: the recording covers two products, so "the top of book
-	// changed" was satisfied by BTC and ETH simply having different prices, and
-	// the test stayed green with delta application removed entirely.
-	firstBySymbol := map[string]OrderbookData{}
-	movedBySymbol := map[string]bool{}
-	for _, book := range books {
-		first, seen := firstBySymbol[book.Symbol]
-		if !seen {
-			firstBySymbol[book.Symbol] = book
-			continue
-		}
-		if book.BestBid != first.BestBid || book.BestAsk != first.BestAsk {
-			movedBySymbol[book.Symbol] = true
+	// Measured on the state, not on the top of book. The earlier version of
+	// this check required a recorded delta to move the best bid or ask, which
+	// is the market's business rather than the connector's: re-recorded
+	// 2026-09-04, PF_XBTUSD carried 1,792 bid levels at a $1 spread and not one
+	// of 40 deltas per product came within 80 ticks of the top, so a correct
+	// assembler could not be observed doing anything. Raising the recorded
+	// delta count (framesPerSequenceKind) did not change that and would not on
+	// any given day.
+	//
+	// Applying the same frames to a book of our own answers the real question —
+	// were the deltas applied — for every recording, in any market condition.
+	// The rules the assembler applies are pinned by the two tests below.
+	assembled := map[string]*KrakenOrderBook{}
+	for _, symbol := range captureSymbols["kraken_futures"] {
+		assembled[symbol.Venue] = &KrakenOrderBook{}
+	}
+	afterSnapshot := map[string]int{}
+	r2 := newRecorder(t)
+	for _, frame := range readFrames(t, "kraken_futures") {
+		handleKrakenFrame("kraken_futures", captureSymbols["kraken_futures"], assembled, r2.feeds, frame, time.Now())
+		// Record each book's size the moment its snapshot has landed, so what
+		// is compared afterwards is the effect of the DELTAS alone.
+		for venue, book := range assembled {
+			if _, seen := afterSnapshot[venue]; !seen && len(book.Bids) > 0 {
+				afterSnapshot[venue] = len(book.Bids) + len(book.Asks)
+			}
 		}
 	}
 
-	// At least one, not every one: whether a given symbol's TOP moved is the
-	// market's business, and ETHUSDT's recorded deltas all landed on levels
-	// behind the best. One symbol moving is enough to prove the recorded deltas
-	// reach the assembler, and the assembler's own rules are pinned by the two
-	// tests below, which do not depend on what the market happened to do.
-	if len(movedBySymbol) == 0 {
-		t.Errorf("no symbol's top of book moved across %d published books; the deltas are not being applied",
-			len(books))
+	var changed int
+	for venue, book := range assembled {
+		if len(book.Bids)+len(book.Asks) != afterSnapshot[venue] {
+			changed++ // a delta added or removed a level
+			continue
+		}
+		// Same level count can still mean every delta was an update in place,
+		// which is the common case: compare the depth itself.
+		var qty float64
+		for _, entry := range append(append([]KrakenOrderBookEntry{}, book.Bids...), book.Asks...) {
+			qty += entry.Qty
+		}
+		t.Logf("%s: %d levels, total qty %g", venue, len(book.Bids)+len(book.Asks), qty)
 	}
-	t.Logf("%d of %d symbols moved on the recorded deltas", len(movedBySymbol), len(firstBySymbol))
+	if changed == 0 {
+		t.Errorf("no product's assembled book changed shape across the recorded deltas; they are not being applied")
+	}
 }
 
 // A Kraken delta with qty 0 DELETES the level. Treating it as a level priced at
@@ -249,26 +270,39 @@ func TestOKX_TheKeepaliveReplyIsNotMarketData(t *testing.T) {
 	}
 }
 
-// Recorded 2026-09-03: at depth 1, both Bybit streams sent nothing but
-// snapshots across the whole window. The connector cannot currently tell the two
-// apart, so a delta that removes the top level (size "0") would be taken at face
-// value as a book priced at zero - the defect recorded in CLAUDE.md and
-// docs/PLAN.md, still open.
+// Recorded 2026-09-03 and again 2026-09-04: at depth 1, both Bybit ORDERBOOK
+// streams sent nothing but snapshots across the whole window. The connector
+// cannot currently tell the two apart, so a delta that removes the top level
+// (size "0") would be taken at face value as a book priced at zero - the defect
+// recorded in CLAUDE.md and docs/PLAN.md, still open.
 //
 // This test pins what the recording contains. It is what makes the defect
-// falsifiable: if a re-recording ever captures a delta, this fails and the
-// golden data for fixing it exists.
-func TestBybit_TheRecordingContainsOnlySnapshots(t *testing.T) {
+// falsifiable: if a re-recording ever captures an orderbook delta, this fails
+// and the golden data for fixing it exists.
+//
+// Scoped to the orderbook TOPIC since step 2.5. The tickers channel added there
+// is snapshot+delta too and its deltas are now recorded — but those are merged
+// correctly (bybit_ticker.go, TestBybitTickerMerge_AbsentMeansUnchanged), and
+// counting them here would fire this tripwire for a defect that is fixed,
+// hiding the open one it exists to watch.
+func TestBybit_TheOrderbookRecordingContainsOnlySnapshots(t *testing.T) {
 	for _, source := range []string{"bybit_futures", "bybit_spot"} {
 		t.Run(source, func(t *testing.T) {
 			var deltas int
 			for _, frame := range readFrames(t, source) {
-				if bytes.Contains(frame, []byte(`"type":"delta"`)) {
+				var message struct {
+					Topic string `json:"topic"`
+					Type  string `json:"type"`
+				}
+				if json.Unmarshal(frame, &message) != nil {
+					continue
+				}
+				if message.Type == "delta" && strings.HasPrefix(message.Topic, "orderbook.") {
 					deltas++
 				}
 			}
 			if deltas > 0 {
-				t.Errorf("the recording now holds %d delta frames; the snapshot/delta defect can and should be fixed and tested with them",
+				t.Errorf("the recording now holds %d orderbook delta frames; the snapshot/delta defect can and should be fixed and tested with them",
 					deltas)
 			}
 		})

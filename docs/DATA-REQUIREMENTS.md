@@ -221,6 +221,51 @@ Hệ quả tương tự với Hyperliquid ở mức nhẹ hơn: chu kỳ 1h, n�
 
 ---
 
+### 3.4. Phát hiện mới từ Bước 2.5 (đo trực tiếp 2026-09-04, probe WS + REST)
+
+Ba phát hiện dưới đây đến từ việc mở THẬT các kênh funding của 7 sàn, và cả ba
+đều đổi thiết kế đã định trong PLAN.
+
+⑦ **Binance: kênh `@markPrice@1s` KHÔNG đẩy dữ liệu tới môi trường này.**
+PLAN Bước 2.5 ghi `@markPrice@1s` là nguồn funding của Binance. Đo được:
+một socket `wss://fstream.binance.com/ws` subscribe ĐỒNG THỜI
+`btcusdt@markPrice@1s` và `btcusdt@bookTicker`, server xác nhận
+(`{"result":null,"id":1}`), rồi trong **45 giây** chuyển **4.782 frame
+bookTicker và 0 frame markPriceUpdate**. Thử cả ba dạng URL (combined
+`/stream?streams=`, raw `/ws/<stream>`, và SUBSCRIBE tường minh) đều như nhau.
+Không kết luận được nguyên nhân (chặn theo vùng, theo IP, hay chính sách sàn),
+nên **không đoán**: Binance funding chuyển sang REST `premiumIndex`, endpoint
+công khai trả đúng `lastFundingRate`, `nextFundingTime`, `markPrice`,
+`indexPrice`, `time` và trả lời mọi lần. Poll 15s, gọi **theo từng symbol**
+(`?symbol=`): dạng không lọc trả 198.811 byte cho ~780 hợp đồng — 1,1 GB/ngày
+để lấy 4 dòng — và tốn request weight 10 so với 1.
+
+⑧ **Hyperliquid: `nextFundingTime` là mốc của kỳ ĐANG CHẠY, không phải kỳ kế.**
+Cùng họ với bẫy ① của OKX nhưng lệch theo hướng ngược lại. Đo qua ranh giới giờ
+ngày 2026-09-04:
+
+| Lúc đo (UTC) | `HlPerp.nextFundingTime` | Trạng thái |
+|---|---|---|
+| 02:47:49 | 02:00:00 | đã qua 47 phút |
+| 03:01:30 | 03:00:00 | đã qua 90 giây |
+
+Trong CÙNG response, `BinPerp` và `BybitPerp` trả 08:00:00Z — một mốc tương
+lai đúng nghĩa. Vậy mốc settlement kế tiếp của Hyperliquid =
+`nextFundingTime + fundingIntervalHours`. Lấy nguyên field sẽ công bố một thời
+điểm đã trôi qua: đồng hồ đếm ngược chạy ngược, và phép đếm settlement ở GĐ 3
+sẽ tính công một kỳ đã trả. Connector cộng thêm một chu kỳ **và** vẫn lọc qua
+`futureStampMs`, vì metadata refresh mỗi 5 phút trong khi sàn settle mỗi giờ.
+
+⑨ **Bybit `fundingIntervalHour` là CHUỖI `"8"`, không phải số.** Khai báo
+`*int64` làm cả bản tin decode hỏng — và vì handler nào cũng "thử decode rồi bỏ
+qua nếu không khớp", frame rơi xuống nhánh orderbook và **Bybit không phát ra
+funding nào cả**, im lặng. Golden test bắt được ngay lần chạy đầu. Bybit cũng
+chỉ công bố `fundingCap`, **không có** `fundingFloor` — nên `FundingData` tách
+`HasCap`/`HasFloor` riêng: gộp một cờ sẽ khiến "chưa biết sàn" đọc thành "sàn
+này không bao giờ trả funding âm".
+
+---
+
 ## 4. THIẾT KẾ `FundingData`
 
 ### 4.1. Ba yêu cầu rút ra từ khảo sát

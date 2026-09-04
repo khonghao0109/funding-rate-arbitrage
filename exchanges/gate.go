@@ -96,12 +96,23 @@ func gateStream(source string, symbols []Symbol, f Feeds) streamConfig {
 		Subscribe: func(conn *websocket.Conn) error {
 			// config.yaml supplies the venue identifiers (symbol_format
 			// "{base}_{quote}"), so this connector no longer keeps its own table.
-			return conn.WriteJSON(GateSubscribeMessage{
-				Time:    time.Now().Unix(),
-				Channel: "futures.book_ticker",
-				Event:   "subscribe",
-				Payload: VenueSymbols(symbols),
-			})
+			//
+			// futures.tickers is the funding source (step 2.5) and carries the
+			// rate, the interval in SECONDS and the next settlement in epoch
+			// SECONDS in one payload — the only venue here that needs no
+			// second endpoint for any of the three.
+			for _, channel := range []string{"futures.book_ticker", "futures.tickers"} {
+				err := conn.WriteJSON(GateSubscribeMessage{
+					Time:    time.Now().Unix(),
+					Channel: channel,
+					Event:   "subscribe",
+					Payload: VenueSymbols(symbols),
+				})
+				if err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleGateFrame(source, symbols, f, raw, recvAt)
@@ -120,6 +131,10 @@ func handleGateFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvA
 		if wsMsg.Event == "subscribe" {
 			return
 		}
+	}
+
+	if handleGateFunding(source, symbols, f, raw, recvAt) {
+		return
 	}
 
 	var bookTickerMsg GateBookTickerMessage

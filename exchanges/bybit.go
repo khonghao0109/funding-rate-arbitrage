@@ -45,41 +45,68 @@ const bybitPingEvery = 20 * time.Second
 
 var bybitPing = jsonPing(map[string]string{"op": "ping"})
 
-// bybitSubscribe asks for the top of book and the trade feed for every symbol.
-func bybitSubscribe(symbols []Symbol) func(*websocket.Conn) error {
+// bybitSubscribe asks for the top of book and the trade feed for every symbol,
+// plus the ticker when this feed carries funding.
+//
+// tickers is a LINEAR-only channel here: it is where Bybit publishes the
+// funding rate, and spot has no funding to publish. Subscribing to it on the
+// spot socket would ask a venue for a market that does not exist.
+func bybitSubscribe(symbols []Symbol, tickers map[string]*bybitTicker, withFunding bool) func(*websocket.Conn) error {
 	return func(conn *websocket.Conn) error {
-		args := make([]string, len(symbols)*2)
-		for i, symbol := range symbols {
-			args[i*2] = fmt.Sprintf("orderbook.1.%s", symbol.Venue)
-			args[i*2+1] = fmt.Sprintf("publicTrade.%s", symbol.Venue)
+		args := make([]string, 0, len(symbols)*3)
+		for _, symbol := range symbols {
+			args = append(args,
+				fmt.Sprintf("orderbook.1.%s", symbol.Venue),
+				fmt.Sprintf("publicTrade.%s", symbol.Venue))
+			if withFunding {
+				args = append(args, fmt.Sprintf("tickers.%s", symbol.Venue))
+			}
 		}
+		// Ticker state describes the socket that carried it: a snapshot arrives
+		// once per subscription and every later delta builds on it, so state
+		// kept across a reconnect could supply a field the new session never
+		// confirmed. Bybit resends the snapshot, so nothing is lost.
+		clear(tickers)
 		return conn.WriteJSON(map[string]any{"op": "subscribe", "args": args})
 	}
 }
 
 func ConnectBybitFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, bybitStream(source, symbols, f, "wss://stream.bybit.com/v5/public/linear"))
+	runStream(f, bybitStream(source, symbols, f, "wss://stream.bybit.com/v5/public/linear", true))
 }
 
 // ConnectBybitSpot connects to Bybit spot trading WebSocket API.
 func ConnectBybitSpot(source string, symbols []Symbol, f Feeds) {
-	runStream(f, bybitStream(source, symbols, f, "wss://stream.bybit.com/v5/public/spot"))
+	runStream(f, bybitStream(source, symbols, f, "wss://stream.bybit.com/v5/public/spot", false))
 }
 
-func bybitStream(source string, symbols []Symbol, f Feeds, url string) streamConfig {
+// bybitStream builds the config for one Bybit feed. withFunding is passed in
+// rather than inferred from the URL: a testnet host, a regional mirror or one
+// added query parameter would defeat a suffix test, and the failure would be
+// silent — a healthy socket, live prices, and no funding at all.
+func bybitStream(source string, symbols []Symbol, f Feeds, url string, withFunding bool) streamConfig {
+	tickers := make(map[string]*bybitTicker, len(symbols))
+
 	return streamConfig{
 		Source:    source,
 		URL:       url,
-		Subscribe: bybitSubscribe(symbols),
+		Subscribe: bybitSubscribe(symbols, tickers, withFunding),
 		Ping:      bybitPing,
 		PingEvery: bybitPingEvery,
 		Handle: func(raw []byte, recvAt time.Time) {
-			handleBybitFrame(source, symbols, f, raw, recvAt)
+			handleBybitFrame(source, symbols, tickers, f, raw, recvAt)
 		},
 	}
 }
 
-func handleBybitFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+func handleBybitFrame(source string, symbols []Symbol, tickers map[string]*bybitTicker, f Feeds, raw []byte, recvAt time.Time) {
+	// Tried first: a ticker frame decodes as an orderbook too (both carry a
+	// data object), and the orderbook branch below only rejects it because the
+	// bids/asks arrays are empty — an accident, not a check.
+	if handleBybitTicker(source, symbols, tickers, f, raw, recvAt) {
+		return
+	}
+
 	// Try to parse as orderbook first
 	var orderbookMsg BybitOrderbook
 	if decode(raw, &orderbookMsg) &&

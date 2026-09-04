@@ -98,9 +98,16 @@ type FundingData struct {
 	// Venue-published bounds on the rate, when the venue states them
 	// (Binance fundingInfo cap/floor, OKX min/maxFundingRate, Bybit
 	// fundingCap). A rate pinned at its cap is a regime signal, not noise.
+	//
+	// The two flags are SEPARATE because one venue publishes only half the
+	// pair: Bybit's ticker carries fundingCap and no floor at all (measured
+	// 2026-09-04). A single flag would make its unset floor read as a floor of
+	// exactly 0 — "funding can never be negative" — which is false and would
+	// make a phase-3 regime check treat every negative rate as pinned.
 	RateCapFrac   float64
 	RateFloorFrac float64
 	HasCap        bool
+	HasFloor      bool
 
 	// MarkPrice is what funding is actually charged on at settlement — never
 	// the entry price. IndexPrice rides along when the venue sends it.
@@ -117,6 +124,24 @@ type FundingData struct {
 	// staleness.
 	VenueTimeMs int64
 	RecvAt      time.Time
+}
+
+// fundingReading is the identity envelope plus the rate — the part every
+// venue's builder needs, in every venue's units.
+//
+// It exists because the builders originally took these as positional
+// parameters, which put two adjacent int64s (a venue timestamp and an
+// interval) next to each other in every signature: transposing them compiles,
+// and produces a settlement stamped in 1970 or an interval of 1.7 trillion
+// seconds. Step 2.2 recorded that as debt to repay when 2.5 wrote the first
+// real call sites; this is that repayment. Every builder now takes ONE struct
+// whose fields are named at the call site.
+type fundingReading struct {
+	Symbol      string // normalized: BTCUSDT
+	Source      string // wire id: binance_futures, ...
+	RecvAt      time.Time
+	VenueTimeMs int64   // the venue's own clock; 0 when it publishes none
+	RateFrac    float64 // the rate as the venue quotes it, fractional
 }
 
 const (

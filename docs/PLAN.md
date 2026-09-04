@@ -98,7 +98,7 @@
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
-| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **4/7 bước** | Thu thập + lưu funding rate 24/7 |
+| **2** | Funding Rate Monitor | 7 | 4–5 tuần | 🔄 **5/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | ⬜ Chưa bắt đầu | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
@@ -882,11 +882,43 @@ Sửa:
 > - Từ vựng market type (`spot`/`perp`) hiện khai ở 4 package không có ràng
 >   buộc biên dịch nào nối chúng.
 
-#### Bước 2.5 — Thu thập funding rate
-- **WebSocket** (ưu tiên): Binance `@markPrice@1s`, Bybit `tickers`, OKX `funding-rate`, Gate `futures.tickers`, Kraken `ticker`, Hyperliquid `activeAssetCtx`.
+#### Bước 2.5 — Thu thập funding rate ✅
+- **WebSocket** (ưu tiên): ~~Binance `@markPrice@1s`~~ (**không đẩy dữ liệu tới môi trường này** — đo 2026-09-04: 4.782 frame bookTicker và 0 markPriceUpdate trên cùng socket trong 45s; chuyển sang REST `premiumIndex`, xem [DATA-REQUIREMENTS §3.4⑦](DATA-REQUIREMENTS.md)), Bybit `tickers`, OKX `funding-rate`, Gate `futures.tickers`, Kraken `ticker`, Hyperliquid `activeAssetCtx`, Paradex `funding_data.{market}`.
 - ⚠️ Bybit ticker là **snapshot + delta** — field vắng mặt nghĩa là *chưa đổi*, phải merge vào cache, không ghi đè.
 - ⚠️ Binance `fundingInfo` **theo docs chỉ trả symbol lệch mặc định** (thực tế 2026-09-03 phủ 100% — vẫn phải mặc định 8h rồi ghi đè, không đọc ngược lại; xem [DATA-REQUIREMENTS §3.3](DATA-REQUIREMENTS.md)).
 - **Nghiệm thu:** funding rate 4 cặp × 7 sàn realtime, khớp số `cmd/fundingcheck` đọc qua REST tại cùng thời điểm (và web sàn khi đối chiếu được bằng mắt), đã chuẩn hoá về `RatePer8hFrac` so sánh được chéo sàn.
+
+> **Kết quả (2026-09-04).** Chạy sống cổng 8085: **28 reading = 4 cặp × 7 sàn**,
+> tuổi mọi reading < 30s. Đối chiếu BTC với `cmd/fundingcheck` (đọc REST, cố ý
+> không dùng chung code) tại cùng thời điểm: binance +0,8678 / bybit +0,6233 /
+> gate +0,6300 / kraken −1,1839 / okx +0,7151 bps/8h — **khớp đến chữ số cuối**;
+> hyperliquid (+0,6142 vs 0,6047) và paradex (+0,7519 vs 0,7481) lệch nhỏ đúng
+> bằng bản chất tích luỹ liên tục của hai sàn này giữa hai lần đọc. Kraken và
+> Hyperliquid hiển thị `every 3600s`, năm sàn còn lại `28800s` — đúng chu kỳ
+> thật của từng sàn.
+>
+> **Ba phát hiện đổi thiết kế** (chi tiết + số đo ở [DATA-REQUIREMENTS §3.4](DATA-REQUIREMENTS.md)):
+> ⑦ Binance `@markPrice@1s` không đẩy gì → REST `premiumIndex` theo từng symbol
+> (dạng không lọc là 198.811 byte ≈ 1,1 GB/ngày cho 4 dòng, weight 10 so với 1).
+> ⑧ Hyperliquid `nextFundingTime` là mốc kỳ **đang chạy** (đo qua ranh giới giờ:
+> 02:47→02:00, 03:01→03:00, trong khi BinPerp/BybitPerp cùng response trả
+> 08:00) → cộng một chu kỳ. ⑨ Bybit `fundingIntervalHour` là **chuỗi** `"8"`;
+> khai `*int64` làm hỏng cả decode và Bybit im lặng không phát funding nào.
+>
+> **Review 10 góc tìm và đã SỬA trong bước:** Bybit publish trên MỌI delta
+> (~40 msg/s, và mỗi lần làm tươi `RecvAt` — phá đúng cơ chế phát hiện
+> subscription chết mà 2.7 cần) → chỉ publish khi trường funding đổi thật;
+> `HasCap` bật kèm floor = 0 (đọc thành "không bao giờ âm") → tách `HasFloor`;
+> một symbol lỗi giết cả vòng poll Binance → `continue` + `errors.Join`;
+> goroutine `fundingInfo` rò khi shutdown → `WaitGroup`; Kraken unmarshal 2 lần
+> mỗi frame (sổ ~1.800 mức) → dispatch trên `feed` đã decode; Gate so sánh
+> rate bằng CHUỖI → parse số; `withFunding` suy từ hậu tố URL → tham số tường
+> minh; log APR không nhãn gross (luật 2) → `APR_gross` + tiêu đề GROSS.
+>
+> **Nợ ghi nhận:** OKX/Gate/Paradex vẫn speculative-unmarshal mỗi frame như
+> Kraken trước đây — gom về một envelope dispatch khi 2.7 đụng các connector
+> này. `fundingLogEvery` 60s là cửa sổ quan sát duy nhất của 2.5; 2.7 thay bằng
+> dashboard và khi đó nên bỏ hoặc hạ tần suất log.
 
 #### Bước 2.6 — Persistence (SQLite)
 - `funding_history(exchange, symbol, raw_rate, rate_per_8h, interval_sec, funding_time, rate_type, recorded_at)`.
@@ -1277,7 +1309,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
-[  ] GĐ 2  Funding Rate Monitor          4/7 bước   ← ĐANG LÀM song song với soak
+[  ] GĐ 2  Funding Rate Monitor          5/7 bước   ← ĐANG LÀM song song với soak
 [  ] GĐ 3  Signal, Alert & Backtest      0/5 bước
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước

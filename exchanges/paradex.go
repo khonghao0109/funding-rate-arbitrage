@@ -77,12 +77,30 @@ func paradexStream(source string, symbols []Symbol, f Feeds) streamConfig {
 			// The error from this write used to be discarded by an empty if
 			// body, which left a connected socket subscribed to nothing and
 			// looking healthy.
-			return conn.WriteJSON(ParadexWSRequest{
+			err := conn.WriteJSON(ParadexWSRequest{
 				ID:      1,
 				JSONRPC: "2.0",
 				Method:  "subscribe",
 				Params:  map[string]any{"channel": "markets_summary"},
 			})
+			if err != nil {
+				return err
+			}
+			// funding_data is per market, so unlike markets_summary it needs
+			// one subscription each. It is the only Paradex channel that
+			// states the quote window its rate belongs to (step 2.5).
+			for i, symbol := range symbols {
+				err := conn.WriteJSON(ParadexWSRequest{
+					ID:      int64(i + 2),
+					JSONRPC: "2.0",
+					Method:  "subscribe",
+					Params:  map[string]any{"channel": paradexFundingChannelPrefix + symbol.Venue},
+				})
+				if err != nil {
+					return err
+				}
+			}
+			return nil
 		},
 		Handle: func(raw []byte, recvAt time.Time) {
 			handleParadexFrame(source, symbols, f, raw, recvAt)
@@ -91,6 +109,10 @@ func paradexStream(source string, symbols []Symbol, f Feeds) streamConfig {
 }
 
 func handleParadexFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+	if handleParadexFunding(source, symbols, f, raw, recvAt) {
+		return
+	}
+
 	// The subscription acknowledgement shares the envelope with the data.
 	var subResponse ParadexWSResponse
 	if decode(raw, &subResponse) && subResponse.Result.Channel == "markets_summary" {

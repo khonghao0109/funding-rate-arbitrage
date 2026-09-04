@@ -74,6 +74,15 @@ validated both ways against config's declarations, and anything unpairable is
 a named rejection — never a guess. USD-quoted perps (Kraken, Hyperliquid,
 Paradex) are refused against USDT spots by design.
 
+Step 2.5 collects funding from all 7 venues in real time: six over WebSocket
+(Bybit `tickers`, OKX `funding-rate`, Gate `futures.tickers`, Kraken `ticker`,
+Hyperliquid `activeAssetCtx`, Paradex `funding_data.{market}`) and Binance over
+REST `premiumIndex`, because its mark-price stream delivers nothing here — the
+measurement and the two other design-changing findings are in
+[docs/DATA-REQUIREMENTS.md §3.4](docs/DATA-REQUIREMENTS.md). Readings land in
+the scanner's funding map and are printed once a minute as a GROSS table; the
+dashboard is step 2.7.
+
 ---
 
 ## How work is done here
@@ -177,10 +186,15 @@ frontend builds its source list, symbol selector and cost disclaimer from the
 **13. Freshness is measured from the receive time only.** `VenueTimeMs` is the
 venue's own clock and is 0 for the venues that publish none; a real measurement
 showed Binance's running 80ms *ahead* of ours, so differencing the two measures
-skew, not age. `RecvAt` is stamped **at the socket read** — in exactly two places,
-one per transport: `runSession` in
-[exchanges/stream.go](exchanges/stream.go) for the nine WebSocket connectors, and
-the SSE read loop in [exchanges/pyth.go](exchanges/pyth.go). Never add a third.
+skew, not age. `RecvAt` is stamped **as close to the read as the transport
+allows — one place per transport, and there are exactly three**:
+`runSession` in [exchanges/stream.go](exchanges/stream.go) for the nine
+WebSocket connectors, the SSE read loop in [exchanges/pyth.go](exchanges/pyth.go),
+and `pollBinancePremiumIndex` in
+[exchanges/binance_funding_rest.go](exchanges/binance_funding_rest.go) for the
+REST funding poller, which step 2.5 added because Binance's mark-price stream
+delivers nothing to this environment (measured — DATA-REQUIREMENTS §3.4). Never
+add a fourth, and never add a second site for a transport that already has one.
 Step 1.5 moved it there from the scanner's dequeue: the ingestion channels hold
 1000 messages, and stamping at the far end restarted each message's clock after
 it had already waited, so a backed-up scanner reported prices seconds old as
@@ -202,10 +216,11 @@ re-research these; do verify before writing the integration.
 |---|---|
 | **OKX** | `fundingTime` is the NEXT settlement; `nextFundingTime` is the one AFTER that. Mapping it like Binance's `T` is off by one period. |
 | **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). Its WS `next_funding_rate_time` is an **absolute epoch-ms stamp** even though the doc prose says "time until" — probed live twice; see §3.3⑥. |
-| **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite. |
+| **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite — and publish only when a FUNDING field actually changed, or the ~100ms delta stream refreshes `RecvAt` ten times a second and a dead subscription looks permanently fresh. Its `fundingIntervalHour` is the string `"8"`, not a number: declared as `int64` the whole frame fails to decode and the venue silently produces no funding at all. It publishes `fundingCap` and **no floor**, so cap and floor need separate flags. |
 | **Binance** | `fundingInfo` documents itself as returning ONLY symbols whose config differs from default — as of 2026-09-03 it happens to cover every TRADING perpetual (777 symbols, BTCUSDT included via its adjusted ±0.3% cap), but the docs promise no such coverage. Default to 8h and override; do not read it as the source of truth for all symbols. Intervals seen: 4h (majority), 8h, and 1h. Also filter `rateType: "Special"` in backtests. |
-| **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. |
+| **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. Its `predictedFundings` also lists BinPerp and BybitPerp beside its own **HlPerp** row — read the wrong row and an 8h cadence lands on an hourly venue. And `nextFundingTime` there is the settlement of the period ALREADY RUNNING (measured across an hour boundary 2026-09-04: 02:47→02:00, 03:01→03:00), so the upcoming one is that stamp plus one interval. |
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
+| **Binance** | The `@markPrice@1s` stream delivers NOTHING to this environment — measured 2026-09-04, one socket carried 4,782 bookTicker frames and zero markPriceUpdate frames in 45s after the server acknowledged both subscriptions. Funding comes from REST `premiumIndex`, queried per symbol (the unfiltered form is 199 KB for ~780 entries and costs request weight 10 against 1). See DATA-REQUIREMENTS §3.4⑦. |
 | **Binance** | The aggTrade payload carries both `m` (buyer is maker) and `M` (deprecated, always true). Go's `encoding/json` prefers an exact tag match but **falls back to a case-insensitive one**, so declaring only `m` let `M` overwrite it and every trade came out a sell. Declare BOTH members of every case-colliding key pair, including the one you do not use — leaving it out is not "ignore it", it is "let it overwrite the other". |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
 | **"Not listed"** | Per-symbol instrument endpoints answer "market not listed" in THREE shapes (measured 2026-09-03): Paradex → HTTP **404**; OKX → HTTP 200 + `code 51001`; Bybit linear → HTTP 200 + `retCode 10001` "symbol invalid" while Bybit **spot** → `retCode 0` + empty list. All must read as "absent" — treating any as an error lets one unsupported pair blank a venue's whole rule set (found live in step 2.4 when XLMUSDT killed the Paradex source). Every OTHER non-zero code stays a loud error. |
@@ -344,12 +359,12 @@ phase 1.
   keeps its own loop, sharing the backoff and the cancellation.
 - `broadcastSpreads` recomputes an O(n²) matrix and writes to every client on
   every single price tick.
-- 187 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 196 test functions (`grep -r '^func Test' --include='*_test.go'`, most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `exchanges` 42 (58.9% of statements — the new
-  instrument fetchers' HTTP wrappers run only against live venues, their
-  parsers are golden-tested), `internal/scanner` 89 (89.9%),
+  it can be re-measured): `exchanges` 51 (61.8% of statements — the REST
+  fetchers' HTTP wrappers run only against live venues, their parsers are
+  golden-tested), `internal/scanner` 89 (86.1%),
   `internal/instruments` 27 (96.9%), `internal/config` 19 (78.2%),
   `internal/fees` 5 (100%), `cmd/scanner` 2, `cmd/fundingcheck` 3.
   `exchanges/testdata/` holds a real recording per venue; re-record with

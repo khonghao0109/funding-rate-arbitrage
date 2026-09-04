@@ -1,9 +1,11 @@
 package exchanges
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -48,11 +50,29 @@ type HyperliquidL2BookData struct {
 // survivable.
 const hyperliquidPingEvery = 20 * time.Second
 
+// ConnectHyperliquidFutures runs the market-data socket and, beside it, the
+// REST refresher for the funding cadence and settlement stamp the WebSocket
+// payload does not carry (step 2.5).
+//
+// A REST failure costs funding readings only: the socket, and with it every
+// price, keeps running.
 func ConnectHyperliquidFutures(source string, symbols []Symbol, f Feeds) {
-	runStream(f, hyperliquidStream(source, symbols, f))
+	meta := newFundingMetaCache()
+
+	var running sync.WaitGroup
+	running.Add(1)
+	go func() {
+		defer running.Done()
+		pollFunding(f.Ctx, source, "predictedFundings", fundingMetaEvery, func(ctx context.Context) error {
+			return refreshHyperliquidFundingMeta(ctx, meta, symbols)
+		})
+	}()
+
+	runStream(f, hyperliquidStream(source, symbols, f, meta))
+	running.Wait()
 }
 
-func hyperliquidStream(source string, symbols []Symbol, f Feeds) streamConfig {
+func hyperliquidStream(source string, symbols []Symbol, f Feeds, meta *fundingMetaCache) streamConfig {
 	return streamConfig{
 		Source: source,
 		URL:    "wss://api.hyperliquid.xyz/ws",
@@ -62,7 +82,7 @@ func hyperliquidStream(source string, symbols []Symbol, f Feeds) streamConfig {
 				// symbol_format. It used to be symbol[:3], which worked only
 				// because every configured base happened to be three characters
 				// long and would have subscribed to "DOG" for DOGEUSDT.
-				for _, feed := range []string{"trades", "l2Book"} {
+				for _, feed := range []string{"trades", "l2Book", "activeAssetCtx"} {
 					err := conn.WriteJSON(map[string]any{
 						"method": "subscribe",
 						"subscription": map[string]any{
@@ -80,12 +100,16 @@ func hyperliquidStream(source string, symbols []Symbol, f Feeds) streamConfig {
 		Ping:      jsonPing(map[string]string{"method": "ping"}),
 		PingEvery: hyperliquidPingEvery,
 		Handle: func(raw []byte, recvAt time.Time) {
-			handleHyperliquidFrame(source, symbols, f, raw, recvAt)
+			handleHyperliquidFrame(source, symbols, meta, f, raw, recvAt)
 		},
 	}
 }
 
-func handleHyperliquidFrame(source string, symbols []Symbol, f Feeds, raw []byte, recvAt time.Time) {
+func handleHyperliquidFrame(source string, symbols []Symbol, meta *fundingMetaCache, f Feeds, raw []byte, recvAt time.Time) {
+	if handleHyperliquidFunding(source, symbols, meta, f, raw, recvAt) {
+		return
+	}
+
 	var tradeMessage HyperliquidTrade
 	if decode(raw, &tradeMessage) && tradeMessage.Channel == "trades" && len(tradeMessage.Data) > 0 {
 		// Handle both array and single object formats

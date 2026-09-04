@@ -1,34 +1,37 @@
 package exchanges
 
-import (
-	"fmt"
-	"time"
-)
+import "fmt"
 
-// normalizeOKXFunding normalizes one OKX funding-rate reading.
+// okxFundingInput is one OKX funding-rate reading.
 //
-// Trap ①, verified live 2026-09-03: OKX's "fundingTime" is the UPCOMING
-// settlement and "nextFundingTime" the one AFTER it — mapping nextFundingTime
-// like Binance's "T" is off by one full period. The interval is derived from
-// the two timestamps because OKX publishes no interval field; never pass a
-// constant instead of the real timestamps.
+// Trap ①, verified live 2026-09-03 and again 2026-09-04: OKX's "fundingTime"
+// is the UPCOMING settlement and "nextFundingTime" the one AFTER it — mapping
+// nextFundingTime like Binance's "T" is off by one full period. The interval
+// is DERIVED from the two timestamps because OKX publishes no interval field;
+// never pass a constant instead of the real stamps.
 //
-// nextFundingRate arrives EMPTY under method=current_period (measured
-// 2026-09-03): the connector must leave HasFollowingRate false rather than
-// parse "" as 0.
+// nextFundingRate arrives EMPTY under method=current_period (measured both
+// days): the connector leaves HasFollowingRate false rather than parsing ""
+// as 0.
 // https://www.okx.com/docs-v5/en/#public-data-websocket-funding-rate-channel
-func normalizeOKXFunding(symbol, source string, recvAt time.Time, venueTimeMs int64,
-	rateFrac float64, fundingAtMs, nextFundingAtMs int64) (FundingData, error) {
-	if nextFundingAtMs <= fundingAtMs {
-		return FundingData{}, fmt.Errorf("okx funding %s: nextFundingTime %d not after fundingTime %d", symbol, nextFundingAtMs, fundingAtMs)
+type okxFundingInput struct {
+	fundingReading
+	FundingAtMs     int64 // "fundingTime" — the UPCOMING settlement
+	NextFundingAtMs int64 // "nextFundingTime" — the one after it
+}
+
+func normalizeOKXFunding(in okxFundingInput) (FundingData, error) {
+	if in.NextFundingAtMs <= in.FundingAtMs {
+		return FundingData{}, fmt.Errorf("okx funding %s: nextFundingTime %d not after fundingTime %d",
+			in.Symbol, in.NextFundingAtMs, in.FundingAtMs)
 	}
 	return deriveFundingRates(FundingData{
-		Symbol: symbol, Source: source, RecvAt: recvAt, VenueTimeMs: venueTimeMs,
+		Symbol: in.Symbol, Source: in.Source, RecvAt: in.RecvAt, VenueTimeMs: in.VenueTimeMs,
 		Model:               FundingDiscrete,
-		RawRate:             rateFrac,
+		RawRate:             in.RateFrac,
 		RawRateField:        "fundingRate",
-		RatePerIntervalFrac: rateFrac,
-		IntervalSec:         (nextFundingAtMs - fundingAtMs) / msPerSecond,
-		NextFundingAtMs:     fundingAtMs, // fundingTime, NOT nextFundingTime
+		RatePerIntervalFrac: in.RateFrac,
+		IntervalSec:         (in.NextFundingAtMs - in.FundingAtMs) / msPerSecond,
+		NextFundingAtMs:     in.FundingAtMs, // fundingTime, NOT nextFundingTime
 	})
 }

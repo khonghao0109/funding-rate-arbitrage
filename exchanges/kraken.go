@@ -109,13 +109,18 @@ func krakenStream(source string, symbols []Symbol, f Feeds) streamConfig {
 				// config.yaml supplies the venue identifier (symbol_format
 				// "PF_{base}USD", with BTCUSDT overridden to PF_XBTUSD because
 				// Kraken calls bitcoin XBT).
-				err := conn.WriteJSON(map[string]any{
-					"event":       "subscribe",
-					"feed":        "book",
-					"product_ids": []string{symbol.Venue},
-				})
-				if err != nil {
-					return err
+				//
+				// "ticker" is the funding source (step 2.5): it carries
+				// relative_funding_rate and the absolute next_funding_rate_time.
+				for _, feed := range []string{"book", "ticker"} {
+					err := conn.WriteJSON(map[string]any{
+						"event":       "subscribe",
+						"feed":        feed,
+						"product_ids": []string{symbol.Venue},
+					})
+					if err != nil {
+						return err
+					}
 				}
 				orderbooks[symbol.Venue] = &KrakenOrderBook{}
 			}
@@ -138,6 +143,15 @@ func krakenStream(source string, symbols []Symbol, f Feeds) streamConfig {
 func handleKrakenFrame(source string, symbols []Symbol, orderbooks map[string]*KrakenOrderBook, f Feeds, raw []byte, recvAt time.Time) {
 	var data KrakenOrderBookData
 	if !decode(raw, &data) || data.Feed == "" {
+		return
+	}
+	// Dispatched on the feed this decode already read, rather than by
+	// speculatively unmarshalling every frame into the funding shape first: a
+	// PF_XBTUSD book snapshot carries ~1,800 levels and encoding/json walks the
+	// whole document even to read one field, so a second pass would double the
+	// cost of the busiest connector's hottest path.
+	if data.Feed == "ticker" {
+		handleKrakenFunding(source, symbols, f, raw, recvAt)
 		return
 	}
 
