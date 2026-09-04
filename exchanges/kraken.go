@@ -1,6 +1,7 @@
 package exchanges
 
 import (
+	"sort"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -169,6 +170,16 @@ func handleKrakenFrame(source string, symbols []Symbol, orderbooks map[string]*K
 	case "book_snapshot":
 		orderbook.Bids = data.Bids
 		orderbook.Asks = data.Asks
+		// Sorted unconditionally, like finishDepthBook on the REST side, and
+		// for the same measured reason: this SAME venue orders the SAME book
+		// differently per transport. The step-2.7b probe found the REST book's
+		// bids ASCENDING with a resting order at price 1 first, while the WS
+		// recording arrives descending — trusting the WS order means one
+		// venue-side change makes every published Kraken best bid the $1
+		// order, silently. upsertPriceLevel assumes sortedness from here on,
+		// so the snapshot is the one place the order must be established.
+		sort.Slice(orderbook.Bids, func(i, j int) bool { return orderbook.Bids[i].Price > orderbook.Bids[j].Price })
+		sort.Slice(orderbook.Asks, func(i, j int) bool { return orderbook.Asks[i].Price < orderbook.Asks[j].Price })
 	case "book":
 		updateKrakenOrderbook(orderbook, data)
 	default:

@@ -345,3 +345,43 @@ func TestVenueSymbols_IsTheSubscriptionList(t *testing.T) {
 		}
 	}
 }
+
+// Kraken orders the SAME book differently per transport: the step-2.7b REST
+// probe found bids ASCENDING with a resting order at price 1 first, while the
+// WS recording arrives descending. The assembler therefore sorts every
+// snapshot instead of trusting arrival order — this feeds it the REST-shaped
+// order over the WS path and asserts the published top of book is the real
+// one, not the $1 junk order.
+func TestKrakenSnapshotOrderIsNotTrusted(t *testing.T) {
+	symbols := []Symbol{{Standard: "BTCUSDT", Venue: "PF_XBTUSD"}}
+	orderbooks := map[string]*KrakenOrderBook{"PF_XBTUSD": {}}
+	r := newRecorder(t)
+
+	frame := []byte(`{"feed":"book_snapshot","product_id":"PF_XBTUSD",` +
+		`"bids":[{"price":1,"qty":41},{"price":77000,"qty":0.5},{"price":77100,"qty":0.2}],` +
+		`"asks":[{"price":77300,"qty":0.4},{"price":77200,"qty":0.1}],"timestamp":1788413683802}`)
+	handleKrakenFrame("kraken_futures", symbols, orderbooks, r.feeds, frame, time.Now())
+
+	books := r.orderbooks()
+	if len(books) != 1 {
+		t.Fatalf("published %d orderbooks, want 1", len(books))
+	}
+	if books[0].BestBid != 77100 || books[0].BestAsk != 77200 {
+		t.Fatalf("best bid/ask = %g/%g, want 77100/77200 — snapshot order was trusted",
+			books[0].BestBid, books[0].BestAsk)
+	}
+	if books[0].BestBidQtyContracts != 0.2 || books[0].BestAskQtyContracts != 0.1 {
+		t.Fatalf("top-of-book qty = %g/%g contracts, want 0.2/0.1",
+			books[0].BestBidQtyContracts, books[0].BestAskQtyContracts)
+	}
+
+	// And the invariant survives deltas, which assume sortedness: inserting a
+	// new best bid must land at the front, not wherever the venue's order
+	// would have put it.
+	delta := []byte(`{"feed":"book","product_id":"PF_XBTUSD","side":"buy","price":77150,"qty":0.3,"timestamp":1788413683903}`)
+	handleKrakenFrame("kraken_futures", symbols, orderbooks, r.feeds, delta, time.Now())
+	books = r.orderbooks()
+	if len(books) != 1 || books[0].BestBid != 77150 {
+		t.Fatalf("after delta: published %d books, best bid %v, want 1 book at 77150", len(books), books)
+	}
+}

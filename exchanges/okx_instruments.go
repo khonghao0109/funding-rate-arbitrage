@@ -18,6 +18,19 @@ import (
 // state "live" is the tradable status.
 // https://www.okx.com/docs-v5/en/#public-data-rest-api-get-instruments
 
+// okxCodeMeansNotListed is the ONE OKX body code that means "this instrument
+// does not exist here": 51001, "Instrument ID ... doesn't exist"
+// (https://www.okx.com/docs-v5/en/#error-code, measured 2026-09-03). That is
+// "absent" per the InstrumentFetchFunc contract — treating it as an error
+// would let one unsupported pair blank the whole source. Every OTHER non-zero
+// code stays a loud failure: a "system busy" read as "not listed" silently
+// blanks contract sizes or truncates the funding corpus. Shared by the
+// instrument, depth and funding-history fetchers so the three cannot drift —
+// the same reason bybitSaysSymbolNotListed is one function.
+func okxCodeMeansNotListed(code string) bool {
+	return code == "51001"
+}
+
 type okxInstrumentsResponse struct {
 	Code string `json:"code"`
 	Msg  string `json:"msg"`
@@ -27,6 +40,8 @@ type okxInstrumentsResponse struct {
 		TickSz    string `json:"tickSz"`
 		LotSz     string `json:"lotSz"`
 		MinSz     string `json:"minSz"`
+		MaxLmtSz  string `json:"maxLmtSz"`
+		MaxMktSz  string `json:"maxMktSz"`
 		CtVal     string `json:"ctVal"`
 		CtMult    string `json:"ctMult"`
 		CtValCcy  string `json:"ctValCcy"`
@@ -64,12 +79,8 @@ func FetchOKXInstruments(ctx context.Context, source string, symbols []Symbol) (
 func parseOKXInstrument(resp okxInstrumentsResponse, source string, s Symbol) (Instrument, bool, error) {
 	// OKX wraps errors in HTTP 200 + code≠"0" + empty data — without this
 	// check a "system busy" response reads as "market not listed" and blanks
-	// the venue's 100×-sensitive contract sizes. The one code that really
-	// MEANS "not listed" is 51001 ("Instrument ID ... doesn't exist",
-	// https://www.okx.com/docs-v5/en/#error-code, measured 2026-09-03):
-	// that is "absent" per the InstrumentFetchFunc contract, and treating it
-	// as an error would let one unsupported pair blank the whole source.
-	if resp.Code == "51001" {
+	// the venue's 100×-sensitive contract sizes.
+	if okxCodeMeansNotListed(resp.Code) {
 		return Instrument{}, false, nil
 	}
 	if resp.Code != "" && resp.Code != "0" {
@@ -116,6 +127,23 @@ func parseOKXInstrument(resp okxInstrumentsResponse, source string, s Symbol) (I
 	if err != nil {
 		return Instrument{}, false, err
 	}
+	// OKX publishes TWO order-size ceilings, both in contracts: maxLmtSz for
+	// limit orders and maxMktSz for market orders (same instruments endpoint,
+	// measured 2026-09-04: BTC-USDT-SWAP maxLmtSz 100,000,000 · maxMktSz
+	// 35,000 = 350 BTC). The cap kept is the SMALLER of the two: a size above
+	// it cannot be done as one order of at least one type, and this strategy's
+	// fee model already assumes taker fills — which the tighter maxMktSz
+	// governs. Ignoring these fields left MaxQtyCoin 0 = "not stated", and
+	// sizing waved a 400 BTC leg past a venue that refuses it at 350.
+	maxLmtContracts, err := parseInstrumentFloat(source, e.InstID, "maxLmtSz", e.MaxLmtSz)
+	if err != nil {
+		return Instrument{}, false, err
+	}
+	maxMktContracts, err := parseInstrumentFloat(source, e.InstID, "maxMktSz", e.MaxMktSz)
+	if err != nil {
+		return Instrument{}, false, err
+	}
+	maxQtyContracts := smallerPositiveCap(maxLmtContracts, maxMktContracts)
 	return Instrument{
 		Symbol:       s.Standard,
 		NativeSymbol: e.InstID,
@@ -134,6 +162,7 @@ func parseOKXInstrument(resp okxInstrumentsResponse, source string, s Symbol) (I
 		TickSizeQuote:    tickSize,
 		StepSizeCoin:     lotSzContracts * contractSizeCoin,
 		MinQtyCoin:       minSzContracts * contractSizeCoin,
+		MaxQtyCoin:       maxQtyContracts * contractSizeCoin,
 		IsContract:       true,
 		ContractSizeCoin: contractSizeCoin,
 		MaxLeverageX:     lever,

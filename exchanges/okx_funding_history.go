@@ -85,11 +85,10 @@ func FetchOKXFundingHistory(ctx context.Context, source string, symbol Symbol, w
 
 func parseOKXFundingHistory(resp okxFundingHistoryResponse, symbol Symbol, window FundingWindow) ([]fundingHistoryRow, int64, error) {
 	// OKX wraps its errors in HTTP 200, so the body's code is the only signal.
-	// 51001 is the one code that MEANS "this instrument does not exist here"
-	// (measured 2026-09-03, docs/CLAUDE.md "Not listed" trap row): absent, not
-	// a failure. Every other non-zero code stays loud — reading a "system busy"
+	// The shared recognizer owns which code means "not listed" (absent, not a
+	// failure). Every other non-zero code stays loud — reading a "system busy"
 	// as an empty history would silently truncate the corpus.
-	if resp.Code == "51001" {
+	if okxCodeMeansNotListed(resp.Code) {
 		return nil, 0, nil
 	}
 	if resp.Code != "0" {

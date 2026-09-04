@@ -15,7 +15,9 @@ import (
 // Fetching the full list keeps the InstrumentFetchFunc contract: an unlisted
 // symbol is simply absent.
 // Rules live in the filters array: PRICE_FILTER.tickSize, LOT_SIZE
-// (stepSize/minQty/maxQty), and MIN_NOTIONAL.notional (futures) /
+// (stepSize/minQty/maxQty), MARKET_LOT_SIZE.maxQty (the market-order
+// ceiling, usually far tighter — BTCUSDT futures: 1000 vs 120 BTC, measured
+// in the 2026-09-03 recording), and MIN_NOTIONAL.notional (futures) /
 // NOTIONAL.minNotional (spot).
 // https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Exchange-Information
 // https://developers.binance.com/docs/binance-spot-api-docs/rest-api/general-endpoints
@@ -90,6 +92,11 @@ func parseBinanceInstruments(info binanceExchangeInfo, source, marketType string
 			QuoteAsset:       entry.QuoteAsset,
 			ContractSizeCoin: 1, // Binance orders are denominated in coin
 		}
+		// The two maxQty ceilings are collected separately because filter
+		// order in the array is the venue's choice, then folded below: LOT_SIZE
+		// caps limit orders, MARKET_LOT_SIZE caps market orders, and reading
+		// only the first waved a 200 BTC size past a 120 BTC market cap.
+		var limitMaxQtyCoin, marketMaxQtyCoin float64
 		for _, f := range entry.Filters {
 			var err error
 			switch f.FilterType {
@@ -102,7 +109,9 @@ func parseBinanceInstruments(info binanceExchangeInfo, source, marketType string
 				if inst.MinQtyCoin, err = parseInstrumentFloat(source, entry.Symbol, "minQty", f.MinQty); err != nil {
 					return nil, err
 				}
-				inst.MaxQtyCoin, err = parseInstrumentFloat(source, entry.Symbol, "maxQty", f.MaxQty)
+				limitMaxQtyCoin, err = parseInstrumentFloat(source, entry.Symbol, "maxQty", f.MaxQty)
+			case "MARKET_LOT_SIZE":
+				marketMaxQtyCoin, err = parseInstrumentFloat(source, entry.Symbol, "maxQty", f.MaxQty)
 			case "MIN_NOTIONAL":
 				inst.MinNotionalQuote, err = parseInstrumentFloat(source, entry.Symbol, "notional", f.Notional)
 			case "NOTIONAL":
@@ -112,6 +121,7 @@ func parseBinanceInstruments(info binanceExchangeInfo, source, marketType string
 				return nil, err
 			}
 		}
+		inst.MaxQtyCoin = smallerPositiveCap(limitMaxQtyCoin, marketMaxQtyCoin)
 		out = append(out, inst)
 	}
 	return out, nil

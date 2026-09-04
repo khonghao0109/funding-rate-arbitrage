@@ -70,6 +70,12 @@ type Instrument struct {
 	// Order-size rules in BASE COIN (converted from contracts where needed).
 	// MaxQtyCoin and MinNotionalQuote are 0 when the venue publishes none —
 	// 0 means "not stated", never "no limit is enforced".
+	//
+	// Where a venue publishes SEPARATE ceilings for limit and market orders
+	// (OKX maxLmtSz/maxMktSz, Binance LOT_SIZE/MARKET_LOT_SIZE), MaxQtyCoin
+	// carries the SMALLER: above it the size cannot be done as one order of
+	// at least one type, and the taker fills this strategy's fee model
+	// assumes are governed by the tighter market cap.
 	StepSizeCoin     float64
 	MinQtyCoin       float64
 	MaxQtyCoin       float64
@@ -231,4 +237,19 @@ func parseInstrumentFloat(source, nativeSymbol, field, value string) (float64, e
 		return 0, fmt.Errorf("%s %s: field %s = %q does not parse as float", source, nativeSymbol, field, value)
 	}
 	return f, nil
+}
+
+// smallerPositiveCap folds two order-size ceilings into the one MaxQtyCoin
+// carries. 0 means "not stated" on both sides of this call, so it is never
+// allowed to win over a real cap — and never invented when neither side
+// states one.
+func smallerPositiveCap(a, b float64) float64 {
+	switch {
+	case a <= 0:
+		return b
+	case b <= 0 || a < b:
+		return a
+	default:
+		return b
+	}
 }

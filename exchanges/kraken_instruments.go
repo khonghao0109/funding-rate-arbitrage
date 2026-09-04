@@ -64,6 +64,18 @@ func parseKrakenInstruments(resp krakenInstrumentsResponse, source string, symbo
 		if !wanted {
 			continue
 		}
+		// Every other fetcher verifies the product kind (Binance
+		// ContractType==PERPETUAL, OKX instType=SWAP, Paradex asset_kind);
+		// stamping "perp" unconditionally here meant a symbol_map typo
+		// pointing at a dated future like FI_XBTUSD_251226 would sail through
+		// the mapping's market-type validation as a perpetual. The one type a
+		// PF_ perpetual carries is "flexible_futures" (measured 2026-09-03,
+		// all four configured PF_ markets; the instruments doc above lists
+		// the field). Anything else is skipped → the symbol goes absent and
+		// Refresh names it, which is the loud path for a wrong mapping.
+		if e.Type != "flexible_futures" {
+			continue
+		}
 		stepContracts := math.Pow(10, -e.ContractValueTradePrecision)
 		inst := Instrument{
 			Symbol:       standard,

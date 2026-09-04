@@ -1,6 +1,7 @@
 package exchanges
 
 import (
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -159,6 +160,13 @@ func handleBybitTicker(source string, symbols []Symbol, tickers map[string]*bybi
 	nextFundingAtMs, _ := strconv.ParseInt(ticker.nextFundingTime, 10, 64)
 	intervalHours, err := strconv.ParseInt(ticker.fundingIntervalHour, 10, 64)
 	if err != nil {
+		// Logged, not just skipped: this exact field already killed Bybit
+		// funding once, silently, when its string type poisoned an int64
+		// decode (trap ⑨). A future format change ("0.5", "8h") stops this
+		// symbol's funding — the log line is the only difference between
+		// "venue changed the format" and "subscription died".
+		log.Printf("%s: fundingIntervalHour %q for %s does not parse as whole hours; funding for this symbol is NOT published",
+			source, ticker.fundingIntervalHour, standard)
 		return true
 	}
 

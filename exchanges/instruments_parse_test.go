@@ -66,16 +66,20 @@ func TestParseBinanceInstruments_Golden(t *testing.T) {
 	if len(got) != 2 {
 		t.Fatalf("parsed %d instruments, want 2", len(got))
 	}
+	// MaxQtyCoin is the SMALLER of LOT_SIZE.maxQty (limit cap) and
+	// MARKET_LOT_SIZE.maxQty (market cap) — in the recording BTCUSDT is
+	// 1000 vs 120 and XRPUSDT 10,000,000 vs 2,000,000: the market cap wins,
+	// and it is the one the taker fills of this strategy are governed by.
 	assertInstrument(t, got[0], Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTCUSDT", Source: "binance_futures",
 		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
-		TickSizeQuote: 0.10, StepSizeCoin: 0.001, MinQtyCoin: 0.001, MaxQtyCoin: 1000,
+		TickSizeQuote: 0.10, StepSizeCoin: 0.001, MinQtyCoin: 0.001, MaxQtyCoin: 120,
 		MinNotionalQuote: 50, ContractSizeCoin: 1,
 	})
 	assertInstrument(t, got[1], Instrument{
 		Symbol: "XRPUSDT", NativeSymbol: "XRPUSDT", Source: "binance_futures",
 		MarketType: "perp", Status: StatusTrading, BaseAsset: "XRP", QuoteAsset: "USDT",
-		TickSizeQuote: 0.0001, StepSizeCoin: 0.1, MinQtyCoin: 0.1, MaxQtyCoin: 10_000_000,
+		TickSizeQuote: 0.0001, StepSizeCoin: 0.1, MinQtyCoin: 0.1, MaxQtyCoin: 2_000_000,
 		MinNotionalQuote: 5, ContractSizeCoin: 1,
 	})
 
@@ -89,10 +93,13 @@ func TestParseBinanceInstruments_Golden(t *testing.T) {
 	if len(gotSpot) != 1 {
 		t.Fatalf("parsed %d spot instruments, want 1", len(gotSpot))
 	}
+	// Spot's MARKET_LOT_SIZE cap is dynamic (a rolling average the venue
+	// updates); the value here is whatever the recording froze, and far
+	// tighter than LOT_SIZE's 9000.
 	assertInstrument(t, gotSpot[0], Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTCUSDT", Source: "binance_spot",
 		MarketType: "spot", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
-		TickSizeQuote: 0.01, StepSizeCoin: 0.00001, MinQtyCoin: 0.00001, MaxQtyCoin: 9000,
+		TickSizeQuote: 0.01, StepSizeCoin: 0.00001, MinQtyCoin: 0.00001, MaxQtyCoin: 149.14262137,
 		MinNotionalQuote: 5, ContractSizeCoin: 1,
 	})
 }
@@ -134,10 +141,13 @@ func TestParseOKXInstrument_Golden(t *testing.T) {
 	}
 	// lotSz 0.01 ct × (ctVal 0.01 BTC × ctMult 1) = 0.0001 BTC per step —
 	// trap: lotSz alone looks like a plausible coin step and is 100× off.
+	// MaxQtyCoin = min(maxLmtSz 100,000,000, maxMktSz 35,000) contracts
+	// × 0.01 BTC = 350 BTC: the market-order ceiling, which the strategy's
+	// taker fills are governed by.
 	assertInstrument(t, got, Instrument{
 		Symbol: "BTCUSDT", NativeSymbol: "BTC-USDT-SWAP", Source: "okx_futures",
 		MarketType: "perp", Status: StatusTrading, BaseAsset: "BTC", QuoteAsset: "USDT",
-		TickSizeQuote: 0.1, StepSizeCoin: 0.0001, MinQtyCoin: 0.0001,
+		TickSizeQuote: 0.1, StepSizeCoin: 0.0001, MinQtyCoin: 0.0001, MaxQtyCoin: 350,
 		IsContract: true, ContractSizeCoin: 0.01, MaxLeverageX: 100,
 	})
 }
@@ -293,5 +303,40 @@ func TestParseInstruments_UnlistedSymbolIsAbsent(t *testing.T) {
 	bybit.RetCode, bybit.RetMsg = 10001, "params error: category invalid"
 	if _, _, err := parseBybitInstrument(bybit, "bybit_futures", "perp", Symbol{Standard: "XLMUSDT", Venue: "XLMUSDT"}); err == nil {
 		t.Fatal("a non-symbol Bybit 10001 must stay an error, not read as absent")
+	}
+}
+
+// A symbol_map typo pointing PF_XBTUSD's slot at a dated future must go
+// ABSENT (so Refresh names it), not sail through stamped "perp" — Kraken's
+// list carries every product family and the fetcher used to stamp perp
+// unconditionally. flexible_futures is the one type a PF_ perpetual carries
+// (measured 2026-09-03, all four configured markets).
+func TestParseKrakenInstruments_SkipsNonPerpetualTypes(t *testing.T) {
+	var resp krakenInstrumentsResponse
+	loadInstrumentTestdata(t, "instruments_kraken_futures.json", &resp)
+	resp.Instruments[0].Type = "futures_inverse" // a dated/inverse product under the wanted symbol
+
+	got, err := parseKrakenInstruments(resp, "kraken_futures",
+		[]Symbol{{Standard: "BTCUSDT", Venue: resp.Instruments[0].Symbol}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("a %q product parsed as %d instrument(s), want absent", "futures_inverse", len(got))
+	}
+}
+
+func TestSmallerPositiveCap(t *testing.T) {
+	cases := []struct{ a, b, want float64 }{
+		{0, 0, 0},     // neither stated → stays "not stated", never invented
+		{0, 120, 120}, // 0 must not win over a real cap
+		{1000, 0, 1000},
+		{1000, 120, 120}, // the tighter ceiling governs
+		{120, 1000, 120},
+	}
+	for _, c := range cases {
+		if got := smallerPositiveCap(c.a, c.b); got != c.want {
+			t.Errorf("smallerPositiveCap(%g, %g) = %g, want %g", c.a, c.b, got, c.want)
+		}
 	}
 }

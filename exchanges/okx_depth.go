@@ -50,10 +50,10 @@ func FetchOKXDepth(ctx context.Context, source string, symbol Symbol, levels int
 }
 
 func parseOKXDepth(resp okxDepthResponse, source string, symbol Symbol) (DepthBook, error) {
-	// OKX wraps its errors in HTTP 200. 51001 is the one code that means the
-	// instrument does not exist here (docs/CLAUDE.md "Not listed" trap);
-	// everything else non-zero stays a loud failure.
-	if resp.Code == "51001" {
+	// OKX wraps its errors in HTTP 200; the shared recognizer owns which code
+	// means "not listed" (docs/CLAUDE.md "Not listed" trap); everything else
+	// non-zero stays a loud failure.
+	if okxCodeMeansNotListed(resp.Code) {
 		return DepthBook{}, fmt.Errorf("okx depth %s: %w", symbol.Venue, errInstrumentNotListed)
 	}
 	if resp.Code != "0" {
