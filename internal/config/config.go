@@ -15,6 +15,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -681,23 +682,51 @@ func (c Config) CheapestVerifiedSpot(candidates []string) (source, noteVI string
 	if len(candidates) == 0 {
 		return "", ""
 	}
-	best := candidates[0]
+	// Ties resolve by CONFIG order, never by the order the caller handed the
+	// candidates over in: cmd/scanner takes them from the hedge mapping and
+	// cmd/backtest from its own loop, and the step-3.5 gate compares the two
+	// commands' positions leg for leg. Sorting first (stably) makes the strict
+	// "<" below keep the earlier-configured leg on equal fees.
+	ordered := append([]string(nil), candidates...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		return c.sourceIndex(ordered[i]) < c.sourceIndex(ordered[j])
+	})
+	best := ordered[0]
 	bestFee, bestVerified := c.takerFee(best)
-	for _, candidate := range candidates[1:] {
+	ties := 0
+	for _, candidate := range ordered[1:] {
 		fee, verified := c.takerFee(candidate)
 		switch {
 		case verified && !bestVerified:
 		case verified == bestVerified && fee < bestFee:
 		default:
+			if verified == bestVerified && fee == bestFee {
+				ties++
+			}
 			continue
 		}
-		best, bestFee, bestVerified = candidate, fee, verified
+		best, bestFee, bestVerified, ties = candidate, fee, verified, 0
 	}
 	if len(candidates) == 1 {
 		return best, ""
 	}
+	if ties > 0 {
+		return best, fmt.Sprintf("Chọn %s trong %d chân spot ghép được (phí taker thấp nhất đã xác minh; "+
+			"%d chân khác hoà phí, lấy theo thứ tự trong config).", best, len(candidates), ties)
+	}
 	return best, fmt.Sprintf("Chọn %s trong %d chân spot ghép được (phí taker thấp nhất đã xác minh).",
 		best, len(candidates))
+}
+
+// sourceIndex is a source's position in the config, the one order the file
+// documents; an unknown name sorts last.
+func (c Config) sourceIndex(source string) int {
+	for i, s := range c.Sources {
+		if s.Source == source {
+			return i
+		}
+	}
+	return len(c.Sources)
 }
 
 func (c Config) takerFee(source string) (bps float64, verified bool) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/instruments"
 	"futures-arbitrage-scanner/internal/scanner"
 )
@@ -90,10 +91,20 @@ func TestHedgeLegs_PrefersTheCheapestVerifiedSpotLeg(t *testing.T) {
 		t.Skip("binance_spot's fee is unverified in the shipped config; this test needs one verified leg")
 	}
 
+	// The scenario is stated here rather than borrowed from config.yaml: the
+	// shipped file verified bybit_spot on 2026-09-07 (10 bps, a tie with
+	// binance_spot), and a test that leaned on it silently started testing the
+	// tie-break instead of the rule in its name.
+	cfg.Sources = append([]config.Source(nil), cfg.Sources...)
+	for i := range cfg.Sources {
+		if cfg.Sources[i].Source == "bybit_spot" {
+			cfg.Sources[i].Fee = config.Fee{TakerBps: 0, Verified: false}
+		}
+	}
 	mapping := instruments.HedgeMapping{Pairs: []instruments.HedgePair{
 		{
 			Symbol: "BTCUSDT",
-			Spot:   exchanges.Instrument{Source: "bybit_spot"}, // unverified in config.yaml
+			Spot:   exchanges.Instrument{Source: "bybit_spot"}, // unverified — by this test's own hand
 			Perp:   exchanges.Instrument{Source: "binance_futures"},
 		},
 		{

@@ -272,6 +272,7 @@ func TestNewWireSpreads_EnvelopeAndArraysAlwaysPresent(t *testing.T) {
 }
 
 func TestNewWireSpreads_MatrixMathAndShape(t *testing.T) {
+	markFeeUnverified(t, "bybit_futures")
 	prices := map[string]float64{
 		"binance_futures": 100,
 		"bybit_futures":   101,
@@ -285,7 +286,7 @@ func TestNewWireSpreads_MatrixMathAndShape(t *testing.T) {
 	if math.Abs(cell.SpreadGrossPct-1.0) > 1e-9 {
 		t.Errorf("spread_gross_pct = %g, want 1.0", cell.SpreadGrossPct)
 	}
-	// bybit_futures has no verified fee schedule, so the after-fee number must
+	// bybit_futures is unverified for this test, so the after-fee number must
 	// be null - never a copy of the gross number, and never the gross number
 	// with a missing fee silently treated as zero.
 	if cell.SpreadAfterFeesPct != nil {
@@ -351,6 +352,7 @@ func TestNewWireSpreads_EmptyAndSingleSource(t *testing.T) {
 }
 
 func TestNewWireOpportunity_NamesGrossAsGross(t *testing.T) {
+	markFeeUnverified(t, "bybit_futures")
 	opp := newWireOpportunity("BTCUSDT", "perp_usdt", "binance_futures", "bybit_futures", 100, 101, 1756368000000)
 
 	if opp.Kind != "cross_venue" {
@@ -362,7 +364,7 @@ func TestNewWireOpportunity_NamesGrossAsGross(t *testing.T) {
 	if math.Abs(opp.SpreadGrossPct-1.0) > 1e-9 {
 		t.Errorf("spread_gross_pct = %g, want 1.0", opp.SpreadGrossPct)
 	}
-	// bybit_futures has no verified fee schedule, so this pair carries no
+	// bybit_futures is unverified for this test, so this pair carries no
 	// after-fee figure. fees_test.go covers the verified case.
 	if opp.SpreadAfterFeesPct != nil {
 		t.Errorf("spread_after_fees_pct = %v, want null while bybit's fee is unverified",

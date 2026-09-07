@@ -168,10 +168,12 @@ func TestNewWireSpreads_AfterFeesGoesNegativeOnATightSpread(t *testing.T) {
 // An unverified fee must produce no figure at all. Treating the missing number
 // as zero would report the full gross spread as if it were free to capture.
 func TestNewWireSpreads_NoAfterFeesWhenAVenueIsUnverified(t *testing.T) {
+	markFeeUnverified(t, "bybit_futures")
+	markFeeUnverified(t, "okx_futures")
 	msg := newWireSpreads("BTCUSDT", map[string]float64{
 		"binance_futures": 100, // verified
-		"bybit_futures":   101, // not verified
-		"okx_futures":     102, // not verified
+		"bybit_futures":   101, // unverified — by this test's own hand
+		"okx_futures":     102, // unverified — by this test's own hand
 	}, nil, 1)
 
 	for _, g := range msg.CrossVenueGroups {
@@ -192,6 +194,7 @@ func TestNewWireSpreads_NoAfterFeesWhenAVenueIsUnverified(t *testing.T) {
 // An alert carries the same disclosure as a cell: the gross number that
 // triggered it, and what survives the fees.
 func TestNewWireOpportunity_CarriesTheAfterFeeFigure(t *testing.T) {
+	markFeeUnverified(t, "bybit_futures")
 	verified := newWireOpportunity("BTCUSDT", "perp_usd",
 		"hyperliquid_futures", "kraken_futures", 100, 101, 1)
 	if verified.SpreadAfterFeesPct == nil {
@@ -270,4 +273,25 @@ func matrixCell(msg wireSpreads, groupID, buySource, sellSource string) (wireSpr
 		return cell, ok
 	}
 	return wireSpreadCell{}, false
+}
+
+// markFeeUnverified turns one registered source's fee schedule into "never
+// looked up" for the duration of a test, restoring it afterwards. The package
+// deliberately tests against the shipped config.yaml (see TestMain), and on
+// 2026-09-07 that file verified every tradable venue — so a test about the
+// unverified rule has to state its own scenario instead of borrowing one.
+func markFeeUnverified(t *testing.T, source string) {
+	t.Helper()
+	for i := range sourceRegistry {
+		if sourceRegistry[i].Source != source {
+			continue
+		}
+		saved := sourceRegistry[i]
+		sourceRegistry[i].FeeVerified = false
+		sourceRegistry[i].MakerFeeBps = 0
+		sourceRegistry[i].TakerFeeBps = 0
+		t.Cleanup(func() { sourceRegistry[i] = saved })
+		return
+	}
+	t.Fatalf("%s is not a registered source", source)
 }

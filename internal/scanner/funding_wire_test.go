@@ -241,8 +241,9 @@ func TestBreakevenDaysFeesOnly(t *testing.T) {
 	})
 
 	t.Run("an unverified schedule produces no number", func(t *testing.T) {
+		markFeeUnverified(t, "bybit_futures")
 		data := fundingFixture(now)
-		data.Source = "bybit_futures" // fee_verified: false in config.yaml
+		data.Source = "bybit_futures"
 		if got := breakevenDaysFeesOnly(data, "binance_spot"); got != nil {
 			t.Errorf("breakeven = %v against an unverified fee; unknown is not free", *got)
 		}

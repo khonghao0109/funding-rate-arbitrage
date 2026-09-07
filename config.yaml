@@ -228,11 +228,16 @@ sources:
     funding_stale_after_sec: 29100
     funding_publish_mode: on_change
     fee:
-      verified: false
+      maker_bps: 2.0
+      taker_bps: 5.5
+      verified: true
+      doc_url: https://www.bybit.com/en/help-center/article/Trading-Fee-Structure
       note_vi: >-
-        Chưa xác minh: trang biểu phí của Bybit không phản hồi từ môi trường này.
-        Không điền theo trí nhớ (CLAUDE.md luật 5). Thay bằng biểu phí tài khoản
-        của bạn rồi đặt verified: true.
+        Perpetual & Futures Contracts, VIP 0: taker 0,0550% · maker 0,0200%.
+        Help Center của Bybit, cập nhật 2026-09-02, đọc 2026-09-07. Trang
+        announcement-info/fee-rate/ redirect về trang chủ — dùng Help Center
+        thay thế. Bybit ghi rõ phí thực tế có thể khác theo khu vực; số đúng
+        nằm ở trang My Fee Rate sau khi xác minh danh tính.
 
   - source: hyperliquid_futures
     connector: hyperliquid_futures
@@ -302,10 +307,14 @@ sources:
     funding_publish_mode: periodic
     symbol_format: "{base}-{quote}-SWAP"
     fee:
-      verified: false
+      maker_bps: 2.0
+      taker_bps: 5.0
+      verified: true
+      doc_url: https://www.gate.com/announcements/article/36485/announcement-on-adjustment-to-usdt-m-perpetual-futures-fees
       note_vi: >-
-        Chưa xác minh: trang biểu phí của OKX trả về 404 hoặc chỉ có metadata,
-        bảng phí thật đòi đăng nhập.
+        Perpetual swap, bậc thấp nhất: maker 0,02% · taker 0,05%. Trang learn
+        của chính OKX, đọc 2026-09-07. Bảng phí đầy đủ vẫn đòi đăng nhập —
+        cùng tình trạng với khối binance_futures ở trên.
 
   - source: gate_futures
     connector: gate_futures
@@ -323,12 +332,16 @@ sources:
     funding_publish_mode: periodic
     symbol_format: "{base}_{quote}"
     fee:
-      verified: false
+      maker_bps: 2.0
+      taker_bps: 5.0
+      verified: true
+      doc_url: https://www.okx.com/en-us/learn/what-is-okx-perpetual-futures
       note_vi: >-
-        Chưa xác minh: thông báo công khai của Gate có maker 0,0200% / taker
-        0,0500% nhưng ghi rõ là cho "USDT-M TradFi Perpetuals" (cổ phiếu, kim
-        loại, chỉ số, forex, hàng hoá) — KHÔNG phải perp crypto. Dùng con số đó
-        là đúng bảng, sai thị trường.
+        USDT-M Perpetual Futures, VIP0: maker 0,020% · taker 0,0500%. Thông báo
+        chính thức của Gate, đề ngày 2024-05-09, đọc 2026-09-07. Thông báo nói
+        rõ biểu phí áp dụng nhất quán, KHÔNG phân biệt thị trường — note cũ
+        gán nhầm cho TradFi. ⚠️ Thông báo đã hơn 2 năm; đối chiếu gate.com/fee
+        trước khi tin tuyệt đối.
 
   - source: paradex_futures
     connector: paradex_futures
@@ -387,8 +400,13 @@ sources:
     enabled_by_default: true
     stale_after_sec: 15          # gap tệ nhất quan sát được 4,02s
     fee:
-      verified: false
-      note_vi: "Chưa xác minh: cùng lý do với bybit_futures."
+      maker_bps: 10.0
+      taker_bps: 10.0
+      verified: true
+      doc_url: https://www.bybit.com/en/help-center/article/Trading-Fee-Structure
+      note_vi: >-
+        Spot crypto-crypto, VIP 0: taker 0,1000% · maker 0,1000%. Cùng nguồn
+        với bybit_futures, đọc 2026-09-07.
 
   # Pyth là ORACLE, không phải sàn. Không mua bán được ở đó nên nó không bao giờ
   # nằm trong một nhóm so sánh; nó chỉ xuất hiện ở khối `oracle_deviation`.
