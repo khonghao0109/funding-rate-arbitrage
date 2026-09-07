@@ -1881,6 +1881,41 @@ Sửa:
 > Cả hai đều là cặp bridged nên mang rủi ro USDT/USD chưa trừ. Chưa chạy lại
 > lưới rộng trên 24 chuỗi; báo cáo HTML hiện tại vẫn là của 16 chuỗi.
 >
+> **Lưới rộng chạy lại trên 24 chuỗi (lượt v6, 2026-09-07 14:48–14:59, binary
+> từ `800d182`).** Một lưới DUY NHẤT thay cho hai lưới ghép của báo cáo trước,
+> vì khối `strategy:` nay đã mang cả ba cổng nên trục vào, trục thoát và trục
+> cổng thuộc cùng một lượt: ngưỡng 0,3/0,5/0,8/1,0 × bền 1/2/3/6 × sàn giữ
+> 0/0,005 × kỳ thoát 3/12 × X 0/0,5/1/2 × N 1/2/3/6 × C 0/0,25/0,5/1 = **4.096
+> bộ** × 28 chuỗi × 3 cửa sổ = 344.064 lượt (16.384 lượt là paradex, từ chối
+> vì `model='continuous'`). Trước khi chạy được, `UsableSettled` phải bỏ việc
+> sao chép toàn bộ lịch sử ở mỗi mốc — xem commit `800d182`; nếu không, 4.096
+> bộ trên 24 chuỗi là 14 giờ thay vì 11 phút.
+>
+> **12 tháng, kết quả chính.** Bộ shipped mới cho tổng **+14,86%** trên 24
+> chuỗi (14/24 dương, 4,0 lệnh mỗi chuỗi). Bộ 3.3 cũ, cùng lưới cùng sổ, cho
+> **−533,36%** (0/24, **73 lệnh** mỗi chuỗi) — khoảng cách nở ra vì luật cũ
+> thoát ở BẤT KỲ mốc âm nào, mà hyperliquid và kraken settle theo giờ nên mốc
+> âm nhiều gấp 8 lần và nó trả 73 vòng phí mỗi chuỗi. Đây là bằng chứng đắt
+> giá rằng luật 3.2 không mở rộng sang nhịp 1h.
+>
+> **Nhưng mốc chuẩn cũng lớn lên:** giữ suốt cửa sổ cho **+29,63%** (18/24
+> dương) và **0 trong 4.096 bộ** chạm tới; bộ tốt nhất lưới +19,27% (16/24,
+> 2,8 lệnh, ngưỡng 1,0 / bền 2 / sàn giữ 0 / 12 kỳ / X 1,0 / N 2 / C 1,0).
+> Khoảng cách RỘNG HƠN lượt 16 chuỗi (+10,29 so với +9,45) đúng vì lý do trên:
+> giữ suốt thu đủ 8.760 mốc mỗi năm ở nhịp 1h, còn mọi luật thoát đều bỏ lỡ
+> một phần trong khi vẫn trả phí. Số bộ vượt giữ suốt theo chuỗi: 0/4.096 ở
+> BTC·hyperliquid, ETH·hyperliquid, BTC/ETH·bybit, BTC·kraken; 2 ở
+> BTC·binance; 2.342 ở SOL·binance (nơi giữ suốt ÂM −2,05%). Nói cách khác
+> luật chỉ thắng ở chuỗi mà giữ suốt thua — nó né đoạn xấu, không tạo funding.
+>
+> **Báo cáo được tối giản theo yêu cầu:** bỏ hẳn bốn mục (Tương tác/heatmap,
+> Phân bố, Bối cảnh, Phạm vi) và hai hàm vẽ không còn dùng; bảng xếp hạng gộp
+> mười cột tham số thành một ô; bảng cổng còn 10 dòng tốt nhất cộng dòng luật
+> đang chạy thay vì 64; mọi bảng có tiêu đề dính, sọc chẵn lẻ và cột đầu ghim.
+> Số chuỗi nay là một chỗ thay duy nhất trong template (`SERIES_N`), vì nhãn
+> "16 chuỗi" ghi cứng đã sai ngay khi tập chuỗi đổi. `analyze.py` lấy bộ nền
+> là bộ SHIPPED và thêm `prev_set` để trang so được cũ với mới trên cùng lưới.
+>
 > **Nợ 3.4, làm SAU phán quyết 3.5:** `internal/notify` (Telegram trước,
 > Discord tuỳ chọn), throttle theo khoá cơ hội, token qua env/.env (godotenv có
 > sẵn), **không** chạm `internal/broker`, không bao giờ chặn đường dữ liệu.

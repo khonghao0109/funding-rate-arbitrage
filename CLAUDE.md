@@ -250,6 +250,18 @@ would restart the 14-day clock. Measured with the new set over 12 months on
 figures this project has produced inside the 5–15% band — both on a
 quote-bridged pair, so both carry undeducted USDT/USD exposure.
 
+**The 24-series wide sweep (2026-09-07, 4,096 sets × 3 windows, one grid now
+that config carries the gates) says the same thing louder.** The shipped set
+sums +14.86% over 24 series (14/24 positive, 4.0 trades each) where the
+retired 3.3 set sums **−533%** at **73 trades** each — the old rule left on any
+negative print, and at an hourly cadence there are 8× as many, so it paid 73
+round trips a year per series. But hold-through grew too: **+29.63%** (18/24),
+and **0 of 4,096 sets reach it**; the grid's best is +19.27%. Per series, the
+count of sets beating hold-through is 0 at BTC/ETH on hyperliquid and bybit,
+2 at BTC/binance, and 2,342 at SOL/binance where hold-through is itself
+negative. The rule wins only where holding loses. Anything proposing to trade
+this must beat hold-through on the 365-day series, not merely turn positive.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
