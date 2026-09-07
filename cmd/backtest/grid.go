@@ -29,6 +29,9 @@ const (
 	// Minimum hold (strategy.Params.MinHoldRecoveredCostFrac): 0 is off, and
 	// off is the rule as it stood before the axis existed.
 	defaultMinHold = "0"
+	// Margin on the perp leg: off, exactly as every run before it existed.
+	defaultPerpMargin = "0"
+	defaultLiqBuffer  = "0"
 )
 
 // gridSpec is every axis of a sweep, named as strategy.Params names them.
@@ -46,6 +49,9 @@ type gridSpec struct {
 	ExitNegativeCumCostFrac []float64
 
 	MinHoldRecoveredCostFrac []float64
+
+	PerpMarginFrac          []float64
+	MinLiquidationBufferPct []float64
 }
 
 func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hold string) (gridSpec, error) {
@@ -76,7 +82,23 @@ func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hol
 	spec.ExitNegativeMinBps, spec.ExitNegativePeriods, spec.ExitNegativeCumCostFrac = []float64{0}, []int{1}, []float64{0}
 	// The minimum-hold floor defaults to off for the same reason.
 	spec.MinHoldRecoveredCostFrac = []float64{0}
+	spec.PerpMarginFrac, spec.MinLiquidationBufferPct = []float64{0}, []float64{0}
 	return spec, nil
+}
+
+// withMargin sets the two perp-margin axes. They move together because a
+// margin fraction with no buffer only leaves once the venue has ALREADY
+// liquidated, which is a report and not a rule (config.Strategy.validate says
+// the same thing about the live block).
+func (g gridSpec) withMargin(marginFrac, bufferPct string) (gridSpec, error) {
+	var err error
+	if g.PerpMarginFrac, err = parseFloatList(marginFrac); err != nil {
+		return g, fmt.Errorf("-perp-margin: %w", err)
+	}
+	if g.MinLiquidationBufferPct, err = parseFloatList(bufferPct); err != nil {
+		return g, fmt.Errorf("-liq-buffer: %w", err)
+	}
+	return g, nil
 }
 
 // withMinHold sets the minimum-hold axis from its flag.
@@ -125,7 +147,7 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 					if exitNet >= minNet {
 						dropped += len(g.MinRatePer8hBps) * len(g.PersistencePeriods) * len(g.ExitPersistencePeriods) *
 							len(g.ExitNegativeMinBps) * len(g.ExitNegativePeriods) * len(g.ExitNegativeCumCostFrac) *
-							len(g.MinHoldRecoveredCostFrac)
+							len(g.MinHoldRecoveredCostFrac) * len(g.PerpMarginFrac) * len(g.MinLiquidationBufferPct)
 						continue
 					}
 					for _, minBps := range g.MinRatePer8hBps {
@@ -135,17 +157,23 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 									for _, negPeriods := range g.ExitNegativePeriods {
 										for _, negCum := range g.ExitNegativeCumCostFrac {
 											for _, minHold := range g.MinHoldRecoveredCostFrac {
-												p := baseParams(notional, hold)
-												p.MinRatePer8hBps = minBps
-												p.PersistencePeriods = periods
-												p.MinNetAPRFrac = minNet
-												p.ExitNetAPRFrac = exitNet
-												p.ExitPersistencePeriods = exitPeriods
-												p.ExitNegativeMinBps = negBps
-												p.ExitNegativePeriods = negPeriods
-												p.ExitNegativeCumCostFrac = negCum
-												p.MinHoldRecoveredCostFrac = minHold
-												grid = append(grid, p)
+												for _, marginFrac := range g.PerpMarginFrac {
+													for _, buffer := range g.MinLiquidationBufferPct {
+														p := baseParams(notional, hold)
+														p.MinRatePer8hBps = minBps
+														p.PersistencePeriods = periods
+														p.MinNetAPRFrac = minNet
+														p.ExitNetAPRFrac = exitNet
+														p.ExitPersistencePeriods = exitPeriods
+														p.ExitNegativeMinBps = negBps
+														p.ExitNegativePeriods = negPeriods
+														p.ExitNegativeCumCostFrac = negCum
+														p.MinHoldRecoveredCostFrac = minHold
+														p.PerpMarginFrac = marginFrac
+														p.MinLiquidationBufferPct = buffer
+														grid = append(grid, p)
+													}
+												}
 											}
 										}
 									}
@@ -222,6 +250,27 @@ func (g gridSpec) check() error {
 			return fmt.Errorf("-min-hold %g: a fraction of the round trip cannot be negative", v)
 		}
 	}
+	for _, v := range g.PerpMarginFrac {
+		if v < 0 || v > 1 {
+			return fmt.Errorf("-perp-margin %g: collateral as a fraction of notional must be in [0,1]; 0.1 is 10x", v)
+		}
+	}
+	for _, v := range g.MinLiquidationBufferPct {
+		if v < 0 {
+			return fmt.Errorf("-liq-buffer %g: a distance to the liquidation price cannot be negative", v)
+		}
+	}
+	for _, m := range g.PerpMarginFrac {
+		if m <= 0 {
+			continue
+		}
+		for _, b := range g.MinLiquidationBufferPct {
+			if b <= 0 {
+				return fmt.Errorf("-perp-margin %g with -liq-buffer 0: the position would only leave once "+
+					"the venue had ALREADY liquidated it, which is not a rule", m)
+			}
+		}
+	}
 	return nil
 }
 
@@ -259,9 +308,10 @@ func parseIntList(s string) ([]int, error) {
 
 // sweepOnlyFlagsTouched reports whether a flag only -sweep reads was given a
 // non-default value, so a plain run can refuse it instead of ignoring it.
-func sweepOnlyFlagsTouched(minRate, persist, minNet, exitNet, exitPersist, negBps, negPeriods, negCum, minHold string, top int) bool {
+func sweepOnlyFlagsTouched(minRate, persist, minNet, exitNet, exitPersist, negBps, negPeriods, negCum, minHold,
+	perpMargin, liqBuffer string, top int) bool {
 	return minRate != defaultMinRateBps || persist != defaultPersist || minNet != defaultMinNetAPR ||
 		exitNet != defaultExitNetAPR || exitPersist != defaultExitPersist ||
 		negBps != defaultExitNegBps || negPeriods != defaultExitNegPeriods || negCum != defaultExitNegCum ||
-		minHold != defaultMinHold || top != 0
+		minHold != defaultMinHold || perpMargin != defaultPerpMargin || liqBuffer != defaultLiqBuffer || top != 0
 }

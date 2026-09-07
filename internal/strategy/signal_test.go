@@ -10,6 +10,7 @@ import (
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/fees"
+	"futures-arbitrage-scanner/internal/risk"
 )
 
 var evalAt = time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
@@ -1101,4 +1102,189 @@ func detailOf(d Decision, name string) string {
 		}
 	}
 	return ""
+}
+
+// --- margin on the perp leg ---
+
+func verifiedBracket() risk.Bracket {
+	return risk.Bracket{Source: "binance_futures", MaintenanceMarginFrac: 0.005, MaxLeverage: 125, Verified: true}
+}
+
+// The condition the whole model exists for: the position is flat in the coin
+// and the PERP leg is not, because the spot gain sits in an account the perp
+// venue cannot see.
+func TestEvaluateExit_ClosesWhenTheShortNearsLiquidation(t *testing.T) {
+	c := goodCandidate()
+	c.PerpMargin = verifiedBracket()
+	pos := openPosition()
+	pos.PerpEntryPriceQuote = 81_000
+
+	p := entryParams()
+	p.PerpMarginFrac = 0.10                      // 10x: liquidation about 9.4% up
+	p.MinLiquidationBufferPct = 2.0              // leave with 2% of room left
+	p.MaxBasisPct, p.MaxBasisWidenPct = 100, 100 // keep the basis rule out of this test
+
+	// Comfortably below: hold.
+	c.PerpPriceQuote, c.SpotPriceQuote = 82_000, 82_000
+	if got := EvaluateExit(evalAt, pos, c, p); got.Action != ActionHold {
+		t.Fatalf("2%% up is not close to a 9.4%% liquidation:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	// Inside the buffer: leave.
+	c.PerpPriceQuote, c.SpotPriceQuote = 87_500, 87_500
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionExit || !hasTriggeredCheck(got, "margin_thin") {
+		t.Fatalf("a short 1%% from liquidation must close:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	if !strings.Contains(detailOf(got, "margin_thin"), "thanh lý") {
+		t.Errorf("the exit must name the liquidation price: %s", detailOf(got, "margin_thin"))
+	}
+}
+
+// It is a RISK exit, so the minimum-hold floor — which governs YIELD exits —
+// must never hold a position through it. A floor that could pin a position
+// into a liquidation would be worse than the churn it prevents.
+func TestEvaluateExit_MinHoldNeverBlocksTheMarginExit(t *testing.T) {
+	c := goodCandidate()
+	c.PerpMargin = verifiedBracket()
+	c.PerpPriceQuote, c.SpotPriceQuote = 88_000, 88_000
+	pos := openPosition()
+	pos.PerpEntryPriceQuote = 81_000
+
+	p := entryParams()
+	p.PerpMarginFrac, p.MinLiquidationBufferPct = 0.10, 2.0
+	p.MaxBasisPct, p.MaxBasisWidenPct = 100, 100
+	p.MinHoldRecoveredCostFrac = 100 // a floor nothing could ever clear
+
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionExit || !hasTriggeredCheck(got, "margin_thin") {
+		t.Fatalf("the hold floor blocked a margin exit:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// Off is off: with no margin fraction configured the condition reports "not
+// evaluated" and every earlier run replays unchanged.
+func TestEvaluateExit_MarginConditionIsOffByDefault(t *testing.T) {
+	c := goodCandidate()
+	c.PerpPriceQuote, c.SpotPriceQuote = 200_000, 200_000 // far past any liquidation
+	pos := openPosition()
+	pos.PerpEntryPriceQuote = 81_000
+
+	p := entryParams()
+	p.MaxBasisPct, p.MaxBasisWidenPct = 100, 100
+	got := EvaluateExit(evalAt, pos, c, p)
+	if hasTriggeredCheck(got, "margin_thin") {
+		t.Errorf("the margin exit fired with no margin fraction configured:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+	for _, check := range got.Checks {
+		if check.Name == "margin_thin" && !check.NotEvaluated {
+			t.Error("an unconfigured margin condition must read as NOT EVALUATED, not as passed")
+		}
+	}
+}
+
+// An unverified maintenance schedule cannot state a liquidation price, and a
+// leveraged short whose distance to a forced close nobody can state is not one
+// to keep holding.
+func TestEvaluateExit_UnverifiedMarginScheduleClosesRatherThanGuesses(t *testing.T) {
+	c := goodCandidate()
+	c.PerpMargin = risk.Bracket{Source: "binance_futures", MaintenanceMarginFrac: 0} // never looked up
+	c.PerpPriceQuote, c.SpotPriceQuote = 81_000, 81_000
+	pos := openPosition()
+	pos.PerpEntryPriceQuote = 81_000
+
+	p := entryParams()
+	p.PerpMarginFrac, p.MinLiquidationBufferPct = 0.10, 2.0
+	p.MaxBasisPct, p.MaxBasisWidenPct = 100, 100
+
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionExit || !hasTriggeredCheck(got, "margin_thin") {
+		t.Fatalf("an unverified schedule must not be treated as a zero maintenance rate:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// Without the perp entry price there is no quantity and no liquidation price.
+// That is "not evaluated", never a confident number.
+func TestEvaluateExit_MarginConditionNeedsTheEntryPrice(t *testing.T) {
+	c := goodCandidate()
+	c.PerpMargin = verifiedBracket()
+	c.PerpPriceQuote, c.SpotPriceQuote = 81_000, 81_000
+
+	p := entryParams()
+	p.PerpMarginFrac, p.MinLiquidationBufferPct = 0.10, 2.0
+	p.MaxBasisPct, p.MaxBasisWidenPct = 100, 100
+
+	got := EvaluateExit(evalAt, openPosition(), c, p) // no PerpEntryPriceQuote
+	for _, check := range got.Checks {
+		if check.Name == "margin_thin" {
+			if !check.NotEvaluated {
+				t.Errorf("a missing entry price produced a verdict: %+v", check)
+			}
+			return
+		}
+	}
+	t.Fatal("no margin_thin check was reported")
+}
+
+// A leveraged short whose liquidation price cannot be stated must be refused at
+// the DOOR, not opened and closed again at the next settlement. Measured before
+// this check existed: 46 trades per series and -322% summed over 24 series,
+// against 1.7 trades and +27.6% with the margin model off — pure churn on the
+// venues with no verified bracket.
+func TestEvaluateEntry_RefusesLeverageOnAnUnverifiedMarginSchedule(t *testing.T) {
+	c := goodCandidate()
+	c.PerpPriceQuote = 81_000
+	p := entryParams()
+	p.PerpMarginFrac, p.MinLiquidationBufferPct = 0.10, 2.0
+
+	// Unverified: refused, by name.
+	c.PerpMargin = risk.Bracket{Source: "binance_futures"}
+	got := EvaluateEntry(evalAt, c, p)
+	if got.Action == ActionEnter {
+		t.Fatalf("opened a 10x short with no verified maintenance rate:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	if !hasFailedCheck(got, "margin_known") {
+		t.Errorf("the refusal must name the margin schedule:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+
+	// Verified: the same candidate enters.
+	c.PerpMargin = verifiedBracket()
+	if got := EvaluateEntry(evalAt, c, p); got.Action != ActionEnter {
+		t.Fatalf("a verified bracket must not block entry:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// A position above the venue's tier ceiling belongs to a stricter bracket, so
+// its liquidation price computed from this one is optimistic. Refused too.
+func TestEvaluateEntry_RefusesANotionalAboveTheTierCeiling(t *testing.T) {
+	c := goodCandidate()
+	c.PerpPriceQuote = 81_000
+	c.PerpMargin = verifiedBracket()
+	c.PerpMargin.TierCeilingQuote = 30_000
+
+	p := entryParams()
+	p.PerpMarginFrac, p.MinLiquidationBufferPct = 0.10, 2.0
+	p.NotionalQuote = 50_000 // above the ceiling
+
+	got := EvaluateEntry(evalAt, c, p)
+	if got.Action == ActionEnter || !hasFailedCheck(got, "margin_known") {
+		t.Fatalf("a position above the tier ceiling was opened against this tier's rate:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// With no leverage configured the condition passes and says why, so an entry
+// log never leaves a reader wondering whether the margin was checked.
+func TestEvaluateEntry_MarginCheckIsSilentWhenLeverageIsOff(t *testing.T) {
+	got := EvaluateEntry(evalAt, goodCandidate(), entryParams())
+	if got.Action != ActionEnter {
+		t.Fatalf("the unleveraged candidate stopped entering:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	if hasFailedCheck(got, "margin_known") {
+		t.Error("the margin check failed with no leverage configured")
+	}
+	if !strings.Contains(detailOf(got, "margin_known"), "perp_margin_frac") {
+		t.Errorf("the check must say it was not needed: %q", detailOf(got, "margin_known"))
+	}
 }

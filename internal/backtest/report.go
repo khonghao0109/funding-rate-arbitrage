@@ -34,7 +34,8 @@ var csvHeader = []string{
 	"settlements", "trades", "periods_in_position",
 	"total_return_frac", "realized_apr_frac", "max_drawdown_frac",
 	"funding_reversals", "positive_funding_period_share", "dropped_special",
-	"basis_not_evaluable", "basis_evaluable", "entered_without_basis",
+	"basis_not_evaluable", "basis_evaluable", "entered_without_basis", "liquidations",
+	"perp_margin_frac", "min_liquidation_buffer_pct",
 	"coverage_short", "ok", "reason_vi", "assumptions_vi",
 }
 
@@ -60,6 +61,8 @@ func WriteCSV(w io.Writer, results []Result) error {
 			f(r.TotalReturnFrac), f(r.RealizedAPRFrac), f(r.MaxDrawdownFrac),
 			strconv.Itoa(r.FundingReversals), f(r.PositiveFundingPeriodShare), strconv.Itoa(r.DroppedSpecial),
 			strconv.Itoa(r.BasisNotEvaluable), strconv.Itoa(r.BasisEvaluable), strconv.Itoa(r.EnteredWithoutBasis),
+			strconv.Itoa(r.Liquidations),
+			f(r.Params.PerpMarginFrac), f(r.Params.MinLiquidationBufferPct),
 			strconv.FormatBool(r.CoverageShort),
 			strconv.FormatBool(r.OK), r.ReasonVI, strings.Join(r.AssumptionsVI, " | "),
 		}

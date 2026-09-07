@@ -497,7 +497,8 @@ internal/
   notify/            Telegram and Discord alerts — step 3.4, DEFERRED behind 3.5
   broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS
   execution/         delta-neutral position open and close
-  risk/              margin, kill switch, capital limits
+  risk/              margin, kill switch, capital limits — since 2026-09-07 it
+                     holds the perp liquidation model strategy calls
 static/              vanilla JS dashboard
 docs/                PLAN.md, DATA-REQUIREMENTS.md, CONVENTIONS.md
 config.yaml          pairs, venues, thresholds, fees, symbol mapping
@@ -699,6 +700,23 @@ phase 1.
   near the touch, so the estimate is **too expensive**, which is the safe
   direction. Anything wanting a sharper fill model has to store levels first —
   and depth cannot be backfilled, so that decision only ever applies forward.
+- ~~Nothing models the perp leg's margin.~~ Added 2026-09-07: `internal/risk`
+  prices the short perp leg (liquidation price = entry × (1+margin)/(1+mm)),
+  `strategy` gained a `margin_known` ENTRY refusal and a `margin_thin` RISK
+  exit, and the backtest detects liquidation from the candle **HIGH** — a short
+  dies on a spike and an hourly close steps over it. Maintenance brackets are in
+  `config.yaml` per source, read from the venues' PUBLIC endpoints on
+  2026-09-07: bybit 0.33% (tier ≤$300k), okx 0.4%, gate 0.3% (≤500k), kraken
+  0.5% (≤$1M). **Binance is `verified: false` because its `leverageBracket`
+  needs an API key**, and Hyperliquid's is derived per coin from `maxLeverage`
+  rather than published — both are refused at entry rather than assumed free.
+  **Measured, and the result is one-way**: on the same 16 series over 12 months,
+  no leverage sums +9.54% with 0 liquidations, 3× +8.18% with 2, 10× −2.76%
+  with **18**, 20× −19.28% with 21. Monotone — there is no optimum in the
+  middle. And it FLATTERS leverage: the equity curve charges only the round trip
+  on a liquidation, not the posted margin (18 × 10% = 180% of a notional,
+  unrecorded). Using leverage on the perp leg to free capital is arithmetically
+  wrong on this corpus. Ships at 0.
 - ~~The basis exit cannot be evaluated in a backtest.~~ Fixed 2026-09-07 by
   `price_history`: hourly candles for all 8 tradable sources, backfilled 12
   months (`go run ./cmd/backfill -prices`). Unlike depth, candles CAN be

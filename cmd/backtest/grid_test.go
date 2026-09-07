@@ -152,13 +152,13 @@ func TestPlainRun_ChecksItsAxesAndRefusesSweepOnlyFlags(t *testing.T) {
 	if err := spec.check(); err == nil {
 		t.Error("-hold-days 0 must be refused by name before the engine sees it")
 	}
-	if sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 0) {
+	if sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, 0) {
 		t.Error("defaults must not count as touched")
 	}
-	if !sweepOnlyFlagsTouched("1.2", defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 0) {
+	if !sweepOnlyFlagsTouched("1.2", defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, 0) {
 		t.Error("-min-rate-bps 1.2 without -sweep must be refused, not silently ignored")
 	}
-	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 40) {
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, 40) {
 		t.Error("-top without -sweep must be refused")
 	}
 }
@@ -188,7 +188,7 @@ func TestGrid_NegativeGatesDefaultToTheOldRuleAndMultiplyWhenSet(t *testing.T) {
 	if err != nil || dropped != 0 || len(grid) != 24*8 {
 		t.Errorf("with gates: %d sets, %d dropped, %v — want 192", len(grid), dropped, err)
 	}
-	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, "0.5", defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 0) {
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, "0.5", defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, 0) {
 		t.Error("-exit-neg-bps without -sweep must be refused, not ignored")
 	}
 	for _, bad := range [][3]string{{"-0.5", "1", "0"}, {"0", "0", "0"}, {"0", "1", "-1"}} {
@@ -260,12 +260,54 @@ func TestGrid_MinHoldDefaultsToOffAndMultipliesWhenSet(t *testing.T) {
 		t.Errorf("with the floor: %d sets, %d dropped, %v — want 72", len(grid), dropped, err)
 	}
 	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
-		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, "1", 0) {
+		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, "1", defaultPerpMargin, defaultLiqBuffer, 0) {
 		t.Error("-min-hold without -sweep must be refused, not ignored")
 	}
 	if bad, err := spec.withMinHold("-1"); err == nil {
 		if _, _, err := bad.params(); err == nil {
 			t.Error("a negative floor is not a fraction of anything and must be refused")
 		}
+	}
+}
+
+// The two margin axes move together: a margin fraction with no buffer leaves
+// only once the venue has ALREADY liquidated, which is a report and not a rule.
+// The live config block refuses the same combination.
+func TestGrid_MarginAxesRefuseAMarginWithNoBuffer(t *testing.T) {
+	spec, err := parseGridSpec(defaultMinRateBps, defaultPersist, defaultMinNetAPR,
+		defaultExitNetAPR, defaultExitPersist, defaultNotional, defaultHoldDays)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	grid, _, err := spec.params()
+	if err != nil || len(grid) != 24 {
+		t.Fatalf("defaults: %d sets, %v", len(grid), err)
+	}
+	for _, p := range grid {
+		if p.PerpMarginFrac != 0 || p.MinLiquidationBufferPct != 0 {
+			t.Fatalf("the margin axes must default to off: %+v", p)
+		}
+	}
+
+	bad, err := spec.withMargin("0.1", "0")
+	if err != nil {
+		t.Fatalf("withMargin: %v", err)
+	}
+	if _, _, err := bad.params(); err == nil {
+		t.Error("a margin fraction with a zero buffer was accepted")
+	}
+
+	good, err := spec.withMargin("0.1,0.33", "2,5")
+	if err != nil {
+		t.Fatalf("withMargin: %v", err)
+	}
+	grid, dropped, err := good.params()
+	if err != nil || dropped != 0 || len(grid) != 24*4 {
+		t.Errorf("with the margin axes: %d sets, %d dropped, %v — want 96", len(grid), dropped, err)
+	}
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
+		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold,
+		"0.1", defaultLiqBuffer, 0) {
+		t.Error("-perp-margin without -sweep must be refused, not ignored")
 	}
 }

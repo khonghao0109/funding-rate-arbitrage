@@ -7,6 +7,7 @@ import (
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/fees"
+	"futures-arbitrage-scanner/internal/risk"
 )
 
 // Entry and exit signals (step 3.2).
@@ -114,6 +115,12 @@ type Candidate struct {
 
 	SpotPriceQuote float64
 	PerpPriceQuote float64
+
+	// PerpMargin is the maintenance bracket the perp venue publishes for a
+	// position this size. An unverified one refuses to produce a liquidation
+	// price rather than defaulting to zero — the same rule the fee schedules
+	// follow, and for the same reason.
+	PerpMargin risk.Bracket
 }
 
 // Position is an open funding position, as much of it as the exit rule needs.
@@ -127,6 +134,12 @@ type Position struct {
 
 	OpenedAtMs    int64
 	NotionalQuote float64
+
+	// PerpEntryPriceQuote is what the perp leg was SHORTED at, which together
+	// with the notional fixes the quantity and hence the liquidation price. 0
+	// means it was not recorded, and the margin condition then reports that
+	// rather than inventing a price to divide by.
+	PerpEntryPriceQuote float64
 
 	// EntryBasisPct is the perp-over-spot difference when the position was
 	// opened. The exit rule watches how far it has MOVED, not only its level:
@@ -321,6 +334,27 @@ type Params struct {
 	// may move from where it was opened.
 	MaxBasisPct      float64
 	MaxBasisWidenPct float64
+
+	// --- margin on the perp leg (added 2026-09-07) ---
+	// PerpMarginFrac is the collateral posted on the SHORT PERP leg as a
+	// fraction of its notional — the reciprocal of leverage, so 0.10 is 10x.
+	// 0 turns the margin condition off entirely, which is what every run
+	// before this field existed did.
+	//
+	// It is a DECISION and not a venue fact. The venue sets only the maximum
+	// leverage; how much collateral to post against a delta-neutral short is
+	// the operator's, and it is the single biggest lever on whether this
+	// strategy survives a rally: at 10x a short liquidates about 9.4% up, at
+	// 3x about 32%, at 1x about 99%.
+	PerpMarginFrac float64
+	// MinLiquidationBufferPct closes the position when the price is within
+	// this many percent of the perp leg's liquidation price. 0 means "only
+	// when actually liquidated", which is too late to be a rule.
+	//
+	// This is a RISK exit, not a yield one: MinHoldRecoveredCostFrac never
+	// blocks it. A position that is about to be force-closed by the venue is
+	// not a position whose funding economics are still the question.
+	MinLiquidationBufferPct float64
 }
 
 // EffectiveExitNegativePeriods is the gate as the rule reads it: 0 and 1 both
@@ -383,6 +417,7 @@ func EvaluateEntry(at time.Time, c Candidate, p Params) Decision {
 		checkPersistence(usable, p),
 		checkLiquidity(d.Cost, p, hedge.Passed),
 		checkNetAPR(d.NetAPR, p, hedge.Passed),
+		checkMarginKnown(c, p),
 	}
 
 	for _, check := range d.Checks {
@@ -434,6 +469,9 @@ func EvaluateExit(at time.Time, pos Position, c Candidate, p Params) Decision {
 		exitFundingNegative(usable, d.Cost, p, floor),
 		exitNetAPRFloor(pos, usable, d.Cost, d.NetAPR, p, hedgeGone.Passed, floor),
 		exitBasisWidened(pos, c, p),
+		// A RISK condition, evaluated after the others and blocked by nothing:
+		// the floor above governs exits about YIELD only.
+		exitMarginThin(pos, c, p),
 	}
 
 	for _, check := range d.Checks {
@@ -505,6 +543,47 @@ func checkPersistence(usable []exchanges.FundingHistoryEntry, p Params) Check {
 	return Check{Name: "persistence", Passed: held == len(window), DetailVI: fmt.Sprintf(
 		"%d/%d mốc gần nhất trên ngưỡng %.4f bps/8h; mốc thấp nhất trong cửa sổ %.4f bps/8h.",
 		held, len(window), p.MinRatePer8hBps, worstBps)}
+}
+
+// checkMarginKnown refuses to OPEN a leveraged short whose liquidation price
+// cannot be stated.
+//
+// It is an ENTRY condition and that placement is the point. The exit side
+// (exitMarginThin) also leaves when the liquidation price becomes unknowable,
+// which is right for a position already open — but if that were the only rule,
+// a venue with no verified bracket would be entered and closed at the very next
+// settlement, forever. Measured before this check existed: 12 months, 24
+// series, margin model on — 46 trades per series and −322% summed, against 1.7
+// trades and +27.6% with the model off. Nothing about the strategy had changed;
+// the four Binance and four Hyperliquid series were simply churning, because
+// Binance publishes its brackets only behind an API key and Hyperliquid's rate
+// is derived per coin rather than published.
+//
+// Refusing at the door costs those series their trades and says why, which is
+// the honest outcome: an unverified maintenance rate is not a zero one, and a
+// leveraged short whose distance to a forced close nobody can state is not a
+// position this project will open.
+func checkMarginKnown(c Candidate, p Params) Check {
+	if p.PerpMarginFrac <= 0 {
+		return Check{Name: "margin_known", Passed: true,
+			DetailVI: "Không dùng đòn bẩy trên chân perp (perp_margin_frac = 0) — không cần biểu ký quỹ."}
+	}
+	// A notional and an entry price the venue would accept; the price is not
+	// known at this point, so the bracket is probed with the current perp
+	// price, which is what the position would open at.
+	state := risk.Evaluate(risk.Position{
+		NotionalQuote:   p.NotionalQuote,
+		EntryPriceQuote: c.PerpPriceQuote,
+		MarginFrac:      p.PerpMarginFrac,
+	}, c.PerpMargin, c.PerpPriceQuote)
+	if !state.OK {
+		return Check{Name: "margin_known", Passed: false, DetailVI: fmt.Sprintf(
+			"KHÔNG mở vị thế đòn bẩy %.1fx trên %s: %s", 1/p.PerpMarginFrac, c.PerpSource, state.ReasonVI)}
+	}
+	return Check{Name: "margin_known", Passed: true, DetailVI: fmt.Sprintf(
+		"Ký quỹ %.1f%% notional trên %s: giá thanh lý %.2f, cách %.2f%% (duy trì %.4f%%, bậc tới %.0f).",
+		p.PerpMarginFrac*pctPerUnit, c.PerpSource, state.LiquidationPriceQuote, state.BufferPct,
+		c.PerpMargin.MaintenanceMarginFrac*pctPerUnit, c.PerpMargin.TierCeilingQuote)}
 }
 
 // notEvaluatedVI is what a check reports when a condition it depends on failed.
@@ -813,6 +892,59 @@ func exitBasisWidened(pos Position, c Candidate, p Params) Check {
 	return Check{Name: "basis_widened", Passed: false, DetailVI: fmt.Sprintf(
 		"Basis %.4f%% (vào lệnh %.4f%%), trong cả trần %.4f%% lẫn biên dịch %.4f.",
 		basisPct, pos.EntryBasisPct, p.MaxBasisPct, p.MaxBasisWidenPct)}
+}
+
+// exitMarginThin closes a position whose SHORT PERP leg is close to being
+// force-closed by the venue.
+//
+// A delta-neutral position is flat in the coin and its perp leg is not: the
+// spot gain sits in a different account, usually at a different venue, and
+// margin is not fungible between them. A rally can therefore liquidate the
+// perp while the combined position is exactly where it started — the one way
+// this strategy loses far more than the funding it was collecting.
+//
+// It is deliberately expressed as a distance to the LIQUIDATION PRICE and not
+// as a leverage limit: the liquidation price is what the venue acts on, it
+// moves with the maintenance bracket the position's SIZE falls into, and the
+// leverage a user picked is only one of its inputs (internal/risk doc.go).
+func exitMarginThin(pos Position, c Candidate, p Params) Check {
+	if p.PerpMarginFrac <= 0 {
+		return Check{Name: "margin_thin", NotEvaluated: true,
+			DetailVI: "Chưa bật mô hình ký quỹ (perp_margin_frac = 0) — không xét khoảng cách thanh lý."}
+	}
+	if !isPositiveFinite(pos.PerpEntryPriceQuote) || !isPositiveFinite(c.PerpPriceQuote) {
+		return Check{Name: "margin_thin", NotEvaluated: true,
+			DetailVI: "Chưa đo được khoảng cách thanh lý: thiếu giá perp lúc vào hoặc lúc này."}
+	}
+	state := risk.Evaluate(risk.Position{
+		NotionalQuote:   pos.NotionalQuote,
+		EntryPriceQuote: pos.PerpEntryPriceQuote,
+		MarginFrac:      p.PerpMarginFrac,
+	}, c.PerpMargin, c.PerpPriceQuote)
+	if !state.OK {
+		// Not knowing how far liquidation is, is itself a reason to leave: the
+		// alternative is holding a leveraged short whose distance to a forced
+		// close nobody can state. Same direction as the net-APR check, which
+		// exits when the position can no longer be valued.
+		return Check{Name: "margin_thin", Passed: true,
+			DetailVI: "THOÁT: không suy ra được giá thanh lý của chân perp — " + state.ReasonVI}
+	}
+	if state.Liquidated {
+		return Check{Name: "margin_thin", Passed: true, DetailVI: fmt.Sprintf(
+			"THOÁT: chân perp ĐÃ chạm giá thanh lý %.2f (giá hiện tại %.2f, ký quỹ %.1f%% notional, "+
+				"duy trì %.4f%%). Đây là mất vốn, không phải một lần thoát bình thường.",
+			state.LiquidationPriceQuote, c.PerpPriceQuote,
+			p.PerpMarginFrac*pctPerUnit, c.PerpMargin.MaintenanceMarginFrac*pctPerUnit)}
+	}
+	if state.BufferPct <= p.MinLiquidationBufferPct {
+		return Check{Name: "margin_thin", Passed: true, DetailVI: fmt.Sprintf(
+			"THOÁT: chân perp chỉ còn %.2f%% tới giá thanh lý %.2f, dưới biên an toàn %.2f%%.",
+			state.BufferPct, state.LiquidationPriceQuote, p.MinLiquidationBufferPct)}
+	}
+	return Check{Name: "margin_thin", Passed: false, DetailVI: fmt.Sprintf(
+		"Chân perp còn %.2f%% tới giá thanh lý %.2f (biên tối thiểu %.2f%%); vốn %.2f so với mức duy trì %.2f.",
+		state.BufferPct, state.LiquidationPriceQuote, p.MinLiquidationBufferPct,
+		state.EquityQuote, state.MaintenanceQuote)}
 }
 
 // --- shared ---

@@ -86,3 +86,30 @@ func (p priceSeries) closeAt(atMs int64) (float64, bool) {
 func basisPct(spotQuote, perpQuote float64) float64 {
 	return (perpQuote - spotQuote) / spotQuote * 100
 }
+
+// highBetween is the highest traded price over (fromMs, toMs], and when it
+// happened.
+//
+// A liquidation happens INTRABAR: a short dies on a spike, and an hourly close
+// steps straight over one. The candle HIGH is the coarsest thing that still
+// sees it — a real venue would have marked and closed at some price inside the
+// bar, which this cannot know, so it reports the high and the bar it was in.
+//
+// The range is left-open because the settlement at fromMs is where the position
+// was opened: the bar containing the entry is not one the position was exposed
+// to for its whole span, and counting its high would liquidate positions on
+// moves that happened before they existed.
+func (p priceSeries) highBetween(fromMs, toMs int64) (float64, int64, bool) {
+	if len(p.candles) == 0 || toMs <= fromMs {
+		return 0, 0, false
+	}
+	highest, atMs, found := 0.0, int64(0), false
+	// First candle opening strictly after fromMs.
+	i := sort.Search(len(p.candles), func(i int) bool { return p.candles[i].OpenTimeMs > fromMs })
+	for ; i < len(p.candles) && p.candles[i].OpenTimeMs < toMs; i++ {
+		if h := p.candles[i].HighPriceQuote; h > highest {
+			highest, atMs, found = h, p.candles[i].OpenTimeMs, true
+		}
+	}
+	return highest, atMs, found
+}

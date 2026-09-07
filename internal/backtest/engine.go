@@ -10,6 +10,7 @@ import (
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/fees"
+	"futures-arbitrage-scanner/internal/risk"
 	"futures-arbitrage-scanner/internal/strategy"
 )
 
@@ -97,6 +98,11 @@ type Series struct {
 	// basis never moved. Result.BasisNotEvaluable counts it either way.
 	SpotCandles []exchanges.PriceCandle
 	PerpCandles []exchanges.PriceCandle
+
+	// PerpMargin is the perp venue's maintenance bracket. An unverified one
+	// makes the margin condition refuse rather than assume a zero maintenance
+	// requirement — see internal/risk.
+	PerpMargin risk.Bracket
 }
 
 // Window is the closed-open replay range.
@@ -181,6 +187,15 @@ type Result struct {
 	// were instead of letting a 0 pass for a measurement.
 	EnteredWithoutBasis int
 
+	// Liquidations counts positions the perp venue would have force-closed
+	// between two settlements — detected from the candle HIGH, not the close,
+	// because a short dies on a spike and an hourly close steps right over it.
+	//
+	// It is reported apart from Trades on purpose. A liquidation is not an
+	// exit the strategy chose, and folding it into the trade count would let a
+	// run that was force-closed read like a run that decided to leave.
+	Liquidations int
+
 	// CoverageShort marks a window the corpus does not fill. Three venues cap
 	// their published history (OKX ~3 months, Gate 180 days, Paradex none), so
 	// comparing two venues over "the same" window can silently compare a year
@@ -246,6 +261,22 @@ func assumptions(series Series, params strategy.Params) []string {
 			"thoát ở đúng mốc đó — 'thoát ngay' nghĩa là ngay mốc kế, không phải trước nó.",
 		"Đường equity ghi nhận toàn bộ chi phí vòng lúc ĐÓNG; trong lúc giữ nó là số thô của một khoản chắc " +
 			"chắn phải trả. Lệnh vào ở mốc cuối cửa sổ bị đóng cưỡng bức với 0 kỳ funding và trọn phí — cố ý, thận trọng.",
+	}
+	if params.PerpMarginFrac > 0 {
+		out = append(out, fmt.Sprintf(
+			"MÔ HÌNH KÝ QUỸ chân perp BẬT: ký quỹ %.1f%% notional (đòn bẩy %.1fx), thoát khi còn dưới %.2f%% "+
+				"tới giá thanh lý, và một cú thanh lý được phát hiện từ ĐỈNH nến 1h chứ không phải giá đóng — "+
+				"short chết ở cú nhọn, giá đóng bước qua nó. CHƯA mô hình hoá: funding đã thu vào tài khoản "+
+				"perp (sẽ đẩy giá thanh lý ra xa), cross-margin, nạp thêm ký quỹ, và cơ chế thanh lý từng "+
+				"phần kèm phí của sàn — nên mô hình này nổ SỚM hơn thực tế, là hướng an toàn. Số ghi ở lệnh "+
+				"bị thanh lý chỉ là vòng phí, chưa gồm phần ký quỹ mất.",
+			params.PerpMarginFrac*100, 1/params.PerpMarginFrac, params.MinLiquidationBufferPct))
+		if !series.PerpMargin.Verified {
+			out = append(out, fmt.Sprintf(
+				"⚠ Biểu ký quỹ duy trì của %s CHƯA XÁC MINH: mô hình từ chối suy ra giá thanh lý, nên điều "+
+					"kiện ký quỹ sẽ THOÁT ngay thay vì đoán. Xem margin.verified trong config.yaml.",
+				series.PerpSource))
+		}
 	}
 	if params.MinHoldRecoveredCostFrac > 0 {
 		// A floor that holds a position through a signal is a change to what
@@ -362,6 +393,8 @@ func Run(series Series, window Window, params strategy.Params) Result {
 
 	spotPrices := newPriceSeries(series.SpotCandles)
 	perpPrices := newPriceSeries(series.PerpCandles)
+	// The instant the intrabar liquidation scan has already covered.
+	var lastCheckedMs int64
 
 	for i, entry := range usable {
 		if !inWindow(entry.SettledAtMs) {
@@ -411,6 +444,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 			SpotFee: series.SpotFee, PerpFee: series.PerpFee,
 			SpotBook: series.SpotBook, PerpBook: series.PerpBook,
 			SpotPriceQuote: spotQuote, PerpPriceQuote: perpQuote,
+			PerpMargin: series.PerpMargin,
 		}
 
 		if !open {
@@ -434,10 +468,57 @@ func Run(series Series, window Window, params strategy.Params) Result {
 				} else {
 					out.EnteredWithoutBasis++
 				}
+				// The price the short was opened at, which with the notional
+				// fixes the quantity and hence the liquidation price. 0 when
+				// the perp had no candle, and the margin condition then
+				// reports that rather than dividing by it.
+				position.PerpEntryPriceQuote = perpQuote
 				trade = Trade{OpenAtMs: entry.SettledAtMs}
+				lastCheckedMs = entry.SettledAtMs
 			}
 			continue
 		}
+
+		// A liquidation happens INTRABAR. Between the previous settlement and
+		// this one the perp may have spiked through the liquidation price and
+		// come back, and an hourly close steps straight over it — so the
+		// highs in that span are checked before the decision is asked for.
+		// Checked first because there is no decision to make afterwards: the
+		// venue has already closed the position.
+		if params.PerpMarginFrac > 0 && position.PerpEntryPriceQuote > 0 {
+			// From the PREVIOUS settlement, not from the open: this check runs
+			// at every settlement while the position is held, so scanning back
+			// to the open would re-read the same candles once per settlement —
+			// O(n²) on the 8,760-settlement hourly venues, which is the same
+			// defect UsableSettled had. Any spike is still caught, at the
+			// settlement immediately after it, and the trade is stamped with
+			// the bar it happened in.
+			if high, at, ok := perpPrices.highBetween(lastCheckedMs, entry.SettledAtMs); ok {
+				state := risk.Evaluate(risk.Position{
+					NotionalQuote:   position.NotionalQuote,
+					EntryPriceQuote: position.PerpEntryPriceQuote,
+					MarginFrac:      params.PerpMarginFrac,
+				}, series.PerpMargin, high)
+				if state.OK && state.Liquidated {
+					out.Liquidations++
+					equity -= closeTrade(&trade, at, costFrac, strategy.Decision{})
+					if drawdown := peak - equity; drawdown > out.MaxDrawdownFrac {
+						out.MaxDrawdownFrac = drawdown
+					}
+					trade.ExitReasonVI = fmt.Sprintf(
+						"THANH LÝ: đỉnh %.2f chạm giá thanh lý %.2f của chân perp (vào %.2f, ký quỹ %.1f%%, "+
+							"duy trì %.4f%%). Đây là MẤT VỐN — chi phí ghi ở đây chỉ là vòng phí, chưa gồm "+
+							"phần ký quỹ bị mất và phí thanh lý của sàn.",
+						high, state.LiquidationPriceQuote, position.PerpEntryPriceQuote,
+						params.PerpMarginFrac*100, series.PerpMargin.MaintenanceMarginFrac*100)
+					out.Trades = append(out.Trades, trade)
+					open = false
+					continue
+				}
+			}
+		}
+
+		lastCheckedMs = entry.SettledAtMs
 
 		decision := strategy.EvaluateExit(at, position, candidate, params)
 		for _, check := range decision.Checks {

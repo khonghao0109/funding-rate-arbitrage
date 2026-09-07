@@ -13,6 +13,7 @@ import (
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/fees"
+	"futures-arbitrage-scanner/internal/risk"
 	"futures-arbitrage-scanner/internal/scanner"
 	"futures-arbitrage-scanner/internal/store"
 	"futures-arbitrage-scanner/internal/strategy"
@@ -163,6 +164,7 @@ func buildCandidates(cfg config.Config, legs []scanner.HedgeLeg, rows []store.Fu
 			PerpFee:        schedule(cfg, leg.PerpSource),
 			PerpBook:       bookBy[key(leg.Symbol, leg.PerpSource)],
 			PerpPriceQuote: priceBy[key(leg.Symbol, leg.PerpSource)],
+			PerpMargin:     marginBracket(cfg, leg.PerpSource),
 		}
 		if leg.SpotSource != "" {
 			c.SpotFee = schedule(cfg, leg.SpotSource)
@@ -201,6 +203,17 @@ func formatBps(frac float64) string { return jsonNumber(frac * 10000) }
 func jsonNumber(v float64) string {
 	b, _ := json.Marshal(v)
 	return string(b)
+}
+
+// marginBracket is the perp venue's maintenance bracket as config declares it.
+// An unverified one makes the margin condition refuse to state a liquidation
+// price rather than assume there is none — see internal/risk.
+func marginBracket(cfg config.Config, source string) risk.Bracket {
+	src, ok := cfg.SourceByName(source)
+	if !ok {
+		return risk.Bracket{Source: source}
+	}
+	return src.Margin.Bracket(source)
 }
 
 func schedule(cfg config.Config, source string) fees.Schedule {

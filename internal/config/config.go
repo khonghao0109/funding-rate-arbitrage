@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"futures-arbitrage-scanner/internal/risk"
 	"futures-arbitrage-scanner/internal/strategy"
 
 	"gopkg.in/yaml.v3"
@@ -154,6 +155,16 @@ type Strategy struct {
 	// jurisdiction is written on strategy.Params.
 	MinHoldRecoveredCostFrac float64 `yaml:"min_hold_recovered_cost_frac"`
 
+	// PerpMarginFrac is collateral posted on the short perp leg as a fraction
+	// of its notional — the reciprocal of leverage, so 0.1 is 10x. 0 turns the
+	// margin condition off, which is every run before it existed.
+	PerpMarginFrac float64 `yaml:"perp_margin_frac"`
+	// MinLiquidationBufferPct closes the position when the price is within
+	// this many percent of the perp leg's liquidation price. Required to be
+	// non-zero whenever PerpMarginFrac is set: leaving only once the venue has
+	// already liquidated is not a rule, it is a report.
+	MinLiquidationBufferPct float64 `yaml:"min_liquidation_buffer_pct"`
+
 	MaxBasisPct      float64 `yaml:"max_basis_pct"`
 	MaxBasisWidenPct float64 `yaml:"max_basis_widen_pct"`
 }
@@ -252,6 +263,38 @@ type Fee struct {
 	NoteVI   string  `yaml:"note_vi"`
 }
 
+// Margin is one perp venue's MAINTENANCE margin bracket, in the same shape and
+// with the same discipline as Fee.
+//
+// Verified separates "the venue publishes this and it was read on the stated
+// day" from "nobody looked it up". It is not cosmetic here: an unverified 0
+// would put the liquidation price further from the market than any venue would
+// allow, which is the most dangerous direction a missing number can round, so
+// internal/risk REFUSES to produce a liquidation price for an unverified
+// bracket rather than treating it as free.
+//
+// TierCeilingQuote is the top of the tier the rate applies to, because
+// maintenance is a STEP function of position size. Left at 0 when the venue
+// expresses its ceiling in CONTRACTS (OKX), because converting it needs the
+// instrument registry and a wrong ceiling is worse than none.
+type Margin struct {
+	MaintenanceFrac  float64 `yaml:"maintenance_frac"`
+	TierCeilingQuote float64 `yaml:"tier_ceiling_quote"`
+	MaxLeverage      float64 `yaml:"max_leverage"`
+	Verified         bool    `yaml:"verified"`
+	DocURL           string  `yaml:"doc_url"`
+	NoteVI           string  `yaml:"note_vi"`
+}
+
+// Bracket is the internal/risk view of this block.
+func (m Margin) Bracket(source string) risk.Bracket {
+	return risk.Bracket{
+		Source: source, MaintenanceMarginFrac: m.MaintenanceFrac,
+		TierCeilingQuote: m.TierCeilingQuote, MaxLeverage: m.MaxLeverage,
+		Verified: m.Verified, NoteVI: m.NoteVI,
+	}
+}
+
 type Source struct {
 	Source    string `yaml:"source"`
 	Connector string `yaml:"connector"`
@@ -297,6 +340,9 @@ type Source struct {
 	SymbolMap map[string]string `yaml:"symbol_map"`
 
 	Fee Fee `yaml:"fee"`
+	// Margin is the perp maintenance bracket. Absent on spot sources and on
+	// the oracle, which hold no leveraged position.
+	Margin Margin `yaml:"margin"`
 }
 
 // VenueSymbol translates one pair into the identifier this source uses for it.
@@ -651,7 +697,10 @@ func (c Config) validateSource(source Source, seen map[string]bool) error {
 		return fmt.Errorf("source %s maps none of the configured symbols", source.Source)
 	}
 
-	return validateFee(source)
+	if err := validateFee(source); err != nil {
+		return err
+	}
+	return validateMargin(source)
 }
 
 // validateFunding checks the funding freshness settings, which exist for perp
@@ -677,6 +726,33 @@ func validateFunding(source Source) error {
 	if !knownFundingPublishModes[source.FundingPublishMode] {
 		return fmt.Errorf("source %s has funding_publish_mode %q, want %q or %q",
 			source.Source, source.FundingPublishMode, FundingPeriodic, FundingOnChange)
+	}
+	return nil
+}
+
+// validateMargin checks the maintenance bracket the same way validateFee checks
+// the commission, and for a sharper reason: an unverified 0 here does not make
+// a position look free, it makes it look UNLIQUIDATABLE.
+func validateMargin(source Source) error {
+	m := source.Margin
+	switch {
+	case m.MaintenanceFrac < 0 || m.MaintenanceFrac >= 1:
+		return fmt.Errorf("source %s has margin.maintenance_frac %g; it is a fraction and must be in [0,1)",
+			source.Source, m.MaintenanceFrac)
+	case m.TierCeilingQuote < 0:
+		return fmt.Errorf("source %s has a negative margin.tier_ceiling_quote (%g)", source.Source, m.TierCeilingQuote)
+	case m.MaxLeverage < 0:
+		return fmt.Errorf("source %s has a negative margin.max_leverage (%g)", source.Source, m.MaxLeverage)
+	case m.Verified && m.MaintenanceFrac <= 0:
+		return fmt.Errorf("source %s declares margin.verified: true with maintenance_frac %g — a venue that "+
+			"required no maintenance margin would never liquidate anything, so this is a transcription "+
+			"error, not a measurement", source.Source, m.MaintenanceFrac)
+	case m.Verified && m.DocURL == "":
+		return fmt.Errorf("source %s declares margin.verified: true with no doc_url; a verified figure has "+
+			"to say where it was read", source.Source)
+	case source.MarketType != "perp" && m.MaintenanceFrac > 0:
+		return fmt.Errorf("source %s is %s, not a perp, but declares a maintenance margin — spot holds no "+
+			"leveraged position and the number would be read as one", source.Source, source.MarketType)
 	}
 	return nil
 }
@@ -761,6 +837,14 @@ func (st Strategy) validate(d Depth) error {
 		return fmt.Errorf("strategy.exit_negative_periods must be >= 0, got %d", st.ExitNegativePeriods)
 	case st.ExitNegativeCumCostFrac < 0:
 		return fmt.Errorf("strategy.exit_negative_cum_cost_frac must be >= 0 (a fraction of the round trip), got %g", st.ExitNegativeCumCostFrac)
+	case st.PerpMarginFrac < 0 || st.PerpMarginFrac > 1:
+		return fmt.Errorf("strategy.perp_margin_frac must be in [0,1] — it is collateral as a fraction "+
+			"of the perp notional, so 0.1 is 10x; got %g", st.PerpMarginFrac)
+	case st.MinLiquidationBufferPct < 0:
+		return fmt.Errorf("strategy.min_liquidation_buffer_pct must be >= 0, got %g", st.MinLiquidationBufferPct)
+	case st.PerpMarginFrac > 0 && st.MinLiquidationBufferPct == 0:
+		return fmt.Errorf("strategy.perp_margin_frac is set but min_liquidation_buffer_pct is 0: the position " +
+			"would only leave once the venue had ALREADY liquidated it, which is not a rule")
 	case st.MinHoldRecoveredCostFrac < 0:
 		return fmt.Errorf("strategy.min_hold_recovered_cost_frac must be >= 0 (a fraction of the round trip), got %g", st.MinHoldRecoveredCostFrac)
 	case d.Enabled && st.MaxBookAgeMin < d.RefreshEveryMin:
@@ -784,6 +868,8 @@ func (st Strategy) StrategyParams() strategy.Params {
 		ExitNegativeMinBps: st.ExitNegativeMinBps, ExitNegativePeriods: st.ExitNegativePeriods,
 		ExitNegativeCumCostFrac:  st.ExitNegativeCumCostFrac,
 		MinHoldRecoveredCostFrac: st.MinHoldRecoveredCostFrac,
+		PerpMarginFrac:           st.PerpMarginFrac,
+		MinLiquidationBufferPct:  st.MinLiquidationBufferPct,
 		MaxBasisPct:              st.MaxBasisPct, MaxBasisWidenPct: st.MaxBasisWidenPct,
 	}
 }

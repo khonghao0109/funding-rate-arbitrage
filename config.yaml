@@ -212,6 +212,36 @@ strategy:
   # Kết luận: đây là BẢO HIỂM cho một luật thoát đặt sai, không phải nguồn lợi
   # nhuận. Giữ 0 ở bộ hiện tại; bật khi thử một luật thoát nhạy hơn.
   min_hold_recovered_cost_frac: 0
+  # Mô hình ký quỹ chân perp (thêm 2026-09-07). Vị thế trung tính về COIN
+  # nhưng chân perp thì KHÔNG: khoản lãi của chân spot nằm ở tài khoản khác,
+  # thường ở sàn khác, và ký quỹ không chuyển qua lại được. Một đợt tăng giá
+  # có thể thanh lý chân short trong khi vị thế gộp vẫn đứng yên — đây là cách
+  # duy nhất chiến lược này mất nhiều hơn phần funding nó đang thu.
+  # 0 là TẮT, và tắt là đúng mọi lượt chạy trước khi khoá này tồn tại.
+  # perp_margin_frac là ký quỹ đặt trên chân perp theo tỷ lệ notional, tức
+  # NGHỊCH ĐẢO đòn bẩy: 0,1 là 10x. Đây là QUYẾT ĐỊNH, không phải dữ kiện sàn —
+  # sàn chỉ đặt trần. Đo với biểu duy trì đã xác minh: 10x thanh lý ở khoảng
+  # +9,4%, 3x ở +32%, 1x ở +99%.
+  #
+  # ĐO ĐƯỢC 2026-09-07, 12 tháng, trên CÙNG 16 chuỗi mà lượt có đòn bẩy mở
+  # được (binance và hyperliquid bị từ chối vì biểu ký quỹ chưa xác minh):
+  #
+  #   đòn bẩy   thanh lý ở   tổng 16 chuỗi   lệnh/chuỗi   số lần thanh lý
+  #   tắt       —            +9,54%          1,75         0
+  #   2x        +49,3%       +9,20%          1,81         2
+  #   3x        +32,3%       +8,18%          2,00         2
+  #   5x        +19,4%       +6,88%          2,19         4
+  #   10x       +9,5%        −2,76%          3,88         18
+  #   20x       +4,5%        −19,28%         6,75         21
+  #
+  # Đơn điệu: đòn bẩy càng cao lợi nhuận càng thấp, không có điểm tối ưu ở
+  # giữa. Và bảng này còn NHẸ hơn thực tế — đường equity chỉ trừ vòng phí khi
+  # bị thanh lý, chưa trừ phần ký quỹ mất: 18 lần × 10% notional = 180% vốn
+  # một vị thế, không ghi ở đâu cả.
+  # Kết luận: trên corpus này, dùng đòn bẩy ở chân perp để "giải phóng vốn"
+  # là sai về mặt số học. Giữ 0.
+  perp_margin_frac: 0
+  min_liquidation_buffer_pct: 0
 
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }
@@ -287,6 +317,14 @@ sources:
         USDⓈ-M futures, Regular User. Con số nằm trong ví dụ tính toán trên trang
         hỗ trợ chính thức của Binance; bảng biểu phí gốc (/en/fee/futureFee) đòi
         đăng nhập.
+    # Ký quỹ duy trì: chưa xác minh. GET /fapi/v1/leverageBracket đòi API key
+    # (đo 2026-09-07: code -2014 "API-key format invalid"), mà dự án này không
+    # giữ khoá cho tới phase 4. verified: false nghĩa là CHƯA TRA, không phải
+    # bằng 0 — mô hình sẽ từ chối suy ra giá thanh lý thay vì đặt nó xa hơn
+    # mức bất kỳ sàn nào cho phép.
+    margin:
+      maintenance_frac: 0
+      verified: false
 
   - source: bybit_futures
     connector: bybit_futures
@@ -314,6 +352,18 @@ sources:
         announcement-info/fee-rate/ redirect về trang chủ — dùng Help Center
         thay thế. Bybit ghi rõ phí thực tế có thể khác theo khu vực; số đúng
         nằm ở trang My Fee Rate sau khi xác minh danh tính.
+    # Đo trực tiếp 2026-09-07, công khai không cần khoá:
+    # GET /v5/market/risk-limit?category=linear&symbol=BTCUSDT
+    # → bậc 1: riskLimitValue 300000, maintenanceMargin 0.0033, maxLeverage 150.
+    margin:
+      maintenance_frac: 0.0033
+      tier_ceiling_quote: 300000
+      max_leverage: 150
+      verified: true
+      doc_url: https://bybit-exchange.github.io/docs/v5/market/risk-limit
+      note_vi: >-
+        Bậc rủi ro 1 của BTCUSDT linear. Vị thế lớn hơn 300.000 USDT rơi vào bậc
+        khắt khe hơn và mô hình sẽ TỪ CHỐI trả số thay vì trả một con số lạc quan.
 
   - source: hyperliquid_futures
     connector: hyperliquid_futures
@@ -339,6 +389,20 @@ sources:
       verified: true
       doc_url: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/fees
       note_vi: "Perps bậc 0 (không yêu cầu khối lượng): maker 0,015% · taker 0,045%."
+    # SUY RA, không phải trường sàn công bố. Đo 2026-09-07: POST /info {"type":"meta"}
+    # cho maxLeverage = 40 với BTC (25 ETH, 20 SOL), và tài liệu Hyperliquid nêu
+    # quy tắc "maintenance margin bằng MỘT NỬA initial margin ở đòn bẩy tối đa"
+    # → 1/(2×40) = 0,0125 cho BTC. Đánh dấu verified: false vì đây là một phép
+    # suy từ quy tắc trong tài liệu chứ không phải một con số đọc được từ API,
+    # và nó KHÁC NHAU theo từng coin — BTC 0,0125 nhưng SOL 1/(2×20) = 0,025.
+    margin:
+      maintenance_frac: 0.0125
+      max_leverage: 40
+      verified: false
+      doc_url: https://hyperliquid.gitbook.io/hyperliquid-docs/trading/margining
+      note_vi: >-
+        Suy ra từ maxLeverage của BTC. Khác nhau theo coin, nên một giá trị duy
+        nhất ở đây đã sai với SOL/XRP — cần fetcher theo coin trước khi bật.
 
   - source: kraken_futures
     connector: kraken_futures
@@ -366,6 +430,18 @@ sources:
       verified: true
       doc_url: https://www.kraken.com/features/fee-schedule
       note_vi: "Kraken Futures bậc 1 (khối lượng futures 30 ngày < 5 triệu USD)."
+    # Đo trực tiếp 2026-09-07, công khai:
+    # GET /derivatives/api/v3/instruments → PF_XBTUSD.marginLevels[0]
+    # = {numNonContractUnits 0, initialMargin 0.01, maintenanceMargin 0.005}.
+    margin:
+      maintenance_frac: 0.005
+      tier_ceiling_quote: 1000000
+      max_leverage: 100
+      verified: true
+      doc_url: https://docs.kraken.com/api/docs/futures-api/trading/get-instruments
+      note_vi: >-
+        Bậc đầu của PF_XBTUSD; bậc kế (từ 1.000.000 USD) gấp đôi lên 0,01.
+        PF_ETHUSD cùng 0,005 nhưng bậc kế bắt đầu từ 500.000.
 
   - source: okx_futures
     connector: okx_futures
@@ -391,6 +467,19 @@ sources:
         Perpetual swap, bậc thấp nhất: maker 0,02% · taker 0,05%. Trang learn
         của chính OKX, đọc 2026-09-07. Bảng phí đầy đủ vẫn đòi đăng nhập —
         cùng tình trạng với khối binance_futures ở trên.
+    # Đo trực tiếp 2026-09-07, công khai:
+    # GET /api/v5/public/position-tiers?instType=SWAP&tdMode=cross&instFamily=BTC-USDT
+    # → bậc 1: mmr 0.004, imr 0.01, maxLever 100, maxSz 1000 (HỢP ĐỒNG, không
+    # phải USDT — ctVal của BTC-USDT-SWAP là 0,01 BTC nên 1000 hợp đồng ≈ 10 BTC).
+    margin:
+      maintenance_frac: 0.004
+      max_leverage: 100
+      verified: true
+      doc_url: https://www.okx.com/docs-v5/en/#public-data-rest-api-get-position-tiers
+      note_vi: >-
+        Bậc 1 của BTC-USDT-SWAP. Trần bậc tính bằng HỢP ĐỒNG nên không khai
+        tier_ceiling_quote — quy đổi cần registry, và một trần sai còn tệ hơn
+        không có trần.
 
   - source: gate_futures
     connector: gate_futures
@@ -418,6 +507,17 @@ sources:
         rõ biểu phí áp dụng nhất quán, KHÔNG phân biệt thị trường — note cũ
         gán nhầm cho TradFi. ⚠️ Thông báo đã hơn 2 năm; đối chiếu gate.com/fee
         trước khi tin tuyệt đối.
+    # Đo trực tiếp 2026-09-07, công khai:
+    # GET /api/v4/futures/usdt/risk_limit_tiers?contract=BTC_USDT
+    # → bậc 1: maintenance_rate 0.003, initial_rate 0.005, risk_limit 500000.
+    margin:
+      maintenance_frac: 0.003
+      tier_ceiling_quote: 500000
+      max_leverage: 200
+      verified: true
+      doc_url: https://www.gate.com/docs/developers/apiv4/#list-risk-limit-tiers
+      note_vi: >-
+        Bậc 1 của BTC_USDT. Bậc 2 lên 0,0035 kèm deduction 250.
 
   - source: paradex_futures
     connector: paradex_futures
@@ -443,6 +543,9 @@ sources:
         Bậc Pro, đầu cao của thang taker (0,035–0,045%): maker 0,003% · taker
         0,045%. Tài khoản Retail hiện là 0%, nên số sau phí là cận DƯỚI của cái
         giữ lại được.
+    margin:
+      maintenance_frac: 0
+      verified: false
 
   - source: binance_spot
     connector: binance_spot

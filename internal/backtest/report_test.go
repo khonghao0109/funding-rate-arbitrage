@@ -17,7 +17,7 @@ func TestWriteCSV_EveryColumnCarriesItsUnit(t *testing.T) {
 		case "symbol", "perp_source", "spot_source", "settlements", "trades",
 			"funding_reversals", "coverage_short", "ok", "reason_vi", "assumptions_vi",
 			"periods_in_position", "basis_not_evaluable", "basis_evaluable",
-			"entered_without_basis", "persistence_periods",
+			"entered_without_basis", "liquidations", "persistence_periods",
 			"exit_persistence_periods", "exit_negative_periods", "dropped_special":
 			continue // counts and identifiers carry no unit
 		}
