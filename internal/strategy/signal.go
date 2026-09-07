@@ -728,8 +728,37 @@ func exitBasisWidened(pos Position, c Candidate, p Params) Check {
 // reader's convenience: a backtest that accrued a Binance "Special" rate the
 // signal never saw would diverge from production for a reason step 3.5 could
 // not diagnose (doc.go, PLAN Q8).
+// The returned slice is READ-ONLY: when nothing needs dropping it IS the
+// caller's slice, not a copy. That fast path is not a micro-optimization —
+// internal/backtest calls this once per settlement on a growing prefix of the
+// history, so copying made one replay O(n²) in the number of settlements.
+// Venues that settle hourly publish ~8,760 rows a year (Hyperliquid, Kraken),
+// where the copies came to gigabytes per replay and a parameter sweep over
+// them became hours. Every caller only reads the result; a caller that ever
+// needs to mutate it must copy first.
 func UsableSettled(entries []exchanges.FundingHistoryEntry) (usable []exchanges.FundingHistoryEntry, droppedSpecial int) {
-	for _, entry := range entries {
+	drop := func(e exchanges.FundingHistoryEntry) bool {
+		return e.RateType == "Special" || e.IntervalSec <= 0 ||
+			!isFinite(e.RatePer8hFrac) || !isFinite(e.RatePerIntervalFrac)
+	}
+	if len(entries) == 0 {
+		// nil, not an empty slice: identical to what the copying version
+		// returned, so no caller can tell the two implementations apart.
+		return nil, 0
+	}
+	first := -1
+	for i := range entries {
+		if drop(entries[i]) {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		return entries, 0
+	}
+	usable = make([]exchanges.FundingHistoryEntry, first, len(entries))
+	copy(usable, entries[:first])
+	for _, entry := range entries[first:] {
 		if entry.RateType == "Special" {
 			droppedSpecial++
 			continue
@@ -738,6 +767,9 @@ func UsableSettled(entries []exchanges.FundingHistoryEntry) (usable []exchanges.
 			continue
 		}
 		usable = append(usable, entry)
+	}
+	if len(usable) == 0 {
+		return nil, droppedSpecial
 	}
 	return usable, droppedSpecial
 }

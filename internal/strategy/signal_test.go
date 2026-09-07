@@ -2,6 +2,7 @@ package strategy
 
 import (
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -754,4 +755,142 @@ func TestEvaluateExit_ContinuousSeriesFallsBackToTheOldRuleAndSaysSo(t *testing.
 	if !strings.Contains(strings.Join(got.LogLines(), "\n"), "MẪU liên tục") {
 		t.Error("the check must say the gates were not evaluable on a continuous series")
 	}
+}
+
+// UsableSettled hands back the caller's own slice when it drops nothing. The
+// backtest calls it once per settlement on a growing prefix, so a copy made
+// one replay quadratic in the settlement count — invisible at Binance's 1,095
+// rows a year, hours of sweep time at Hyperliquid's 8,759.
+func TestUsableSettled_CleanInputIsNotCopied(t *testing.T) {
+	entries := []exchanges.FundingHistoryEntry{
+		{Symbol: "BTCUSDT", Model: exchanges.FundingDiscrete, IntervalSec: 3600,
+			RatePer8hFrac: 0.0001, RatePerIntervalFrac: 0.0000125, SettledAtMs: 1},
+		{Symbol: "BTCUSDT", Model: exchanges.FundingDiscrete, IntervalSec: 3600,
+			RatePer8hFrac: 0.0002, RatePerIntervalFrac: 0.000025, SettledAtMs: 2},
+	}
+	usable, dropped := UsableSettled(entries)
+	if dropped != 0 || len(usable) != len(entries) {
+		t.Fatalf("clean input: got %d entries, %d dropped", len(usable), dropped)
+	}
+	if &usable[0] != &entries[0] {
+		t.Error("a clean input must be returned as-is, not copied")
+	}
+	if n := testing.AllocsPerRun(50, func() { UsableSettled(entries) }); n != 0 {
+		t.Errorf("clean input allocated %v times per call; the backtest calls this once per settlement", n)
+	}
+}
+
+// The slow path must still drop exactly what it always dropped, and must not
+// alias the input once it has to build a new slice.
+func TestUsableSettled_DirtyInputStillFiltersAndCopies(t *testing.T) {
+	good := exchanges.FundingHistoryEntry{Symbol: "BTCUSDT", Model: exchanges.FundingDiscrete,
+		IntervalSec: 3600, RatePer8hFrac: 0.0001, RatePerIntervalFrac: 0.0000125}
+	special := good
+	special.RateType = "Special"
+	zeroInterval := good
+	zeroInterval.IntervalSec = 0
+	notFinite := good
+	notFinite.RatePer8hFrac = math.Inf(1)
+
+	first := good
+	first.SettledAtMs = 1
+	last := good
+	last.SettledAtMs = 2
+	entries := []exchanges.FundingHistoryEntry{first, special, zeroInterval, notFinite, last}
+
+	usable, dropped := UsableSettled(entries)
+	if dropped != 1 {
+		t.Errorf("droppedSpecial = %d, want 1", dropped)
+	}
+	if len(usable) != 2 || usable[0].SettledAtMs != 1 || usable[1].SettledAtMs != 2 {
+		t.Fatalf("want the two usable rows in order, got %+v", usable)
+	}
+	if &usable[0] == &entries[0] {
+		t.Error("the filtered result must be its own slice")
+	}
+}
+
+// referenceUsableSettled is UsableSettled as it was written before the
+// no-copy fast path — kept here, and only here, so the optimization can be
+// proven to change nothing but allocation. If the RULE ever changes, both
+// implementations must change together and this test will say so.
+func referenceUsableSettled(entries []exchanges.FundingHistoryEntry) (usable []exchanges.FundingHistoryEntry, droppedSpecial int) {
+	for _, entry := range entries {
+		if entry.RateType == "Special" {
+			droppedSpecial++
+			continue
+		}
+		if entry.IntervalSec <= 0 || !isFinite(entry.RatePer8hFrac) || !isFinite(entry.RatePerIntervalFrac) {
+			continue
+		}
+		usable = append(usable, entry)
+	}
+	return usable, droppedSpecial
+}
+
+func TestUsableSettled_MatchesTheReferenceImplementation(t *testing.T) {
+	// A deterministic pseudo-random walk over every shape the filter reacts
+	// to, at the lengths the hourly venues really produce.
+	seed := uint64(1)
+	next := func(n int) int { seed = seed*6364136223846793005 + 1442695040888963407; return int(seed>>33) % n }
+	for _, length := range []int{0, 1, 2, 17, 300, 8760} {
+		entries := make([]exchanges.FundingHistoryEntry, 0, length)
+		for i := 0; i < length; i++ {
+			e := exchanges.FundingHistoryEntry{
+				Symbol: "BTCUSDT", Model: exchanges.FundingDiscrete, SettledAtMs: int64(i),
+				IntervalSec: 3600, RatePer8hFrac: 0.0001, RatePerIntervalFrac: 0.0000125,
+			}
+			switch next(12) {
+			case 0:
+				e.RateType = "Special"
+			case 1:
+				e.IntervalSec = 0
+			case 2:
+				e.RatePer8hFrac = math.Inf(1)
+			case 3:
+				e.RatePerIntervalFrac = math.NaN()
+			}
+			entries = append(entries, e)
+		}
+		input := make([]exchanges.FundingHistoryEntry, len(entries))
+		copy(input, entries)
+		gotUsable, gotDropped := UsableSettled(input)
+		wantUsable, wantDropped := referenceUsableSettled(entries)
+		if gotDropped != wantDropped {
+			t.Errorf("len %d: droppedSpecial %d, want %d", length, gotDropped, wantDropped)
+		}
+		// DeepEqual, not an element walk: nil and an empty slice must not be
+		// swapped either, or a caller distinguishing them would see the two
+		// implementations differ.
+		if !reflect.DeepEqual(gotUsable, wantUsable) {
+			t.Errorf("len %d: filtered result differs from the reference (%d vs %d entries)",
+				length, len(gotUsable), len(wantUsable))
+		}
+		// NaN is deliberately in the data and never equals itself, so the
+		// mutation check compares NaN-aware rather than with DeepEqual.
+		if !sameEntries(input, entries) {
+			t.Errorf("len %d: the input slice was modified", length)
+		}
+	}
+}
+
+// sameEntries compares two settlement slices treating NaN as equal to NaN, so
+// a mutation check can use inputs that deliberately contain NaN.
+func sameEntries(a, b []exchanges.FundingHistoryEntry) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	sameFloat := func(x, y float64) bool { return x == y || (math.IsNaN(x) && math.IsNaN(y)) }
+	for i := range a {
+		x, y := a[i], b[i]
+		if !sameFloat(x.RatePer8hFrac, y.RatePer8hFrac) || !sameFloat(x.RatePerIntervalFrac, y.RatePerIntervalFrac) {
+			return false
+		}
+		x.RatePer8hFrac, x.RatePerIntervalFrac = 0, 0
+		y.RatePer8hFrac, y.RatePerIntervalFrac = 0, 0
+		if x != y {
+			return false
+		}
+	}
+	return true
 }
