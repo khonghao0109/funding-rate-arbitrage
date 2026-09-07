@@ -123,32 +123,53 @@ depth:
 # backtest so được với nhau qua CÙNG cửa sổ. Không đặt lệnh: đây là vị thế
 # GIẤY, tiến trình không giữ credential. Mọi ngưỡng là BẮT BUỘC khi bật —
 # không có mặc định ngầm, vì một ngưỡng code tự điền là ngưỡng không ai chọn.
+# Ghép chân spot với chân perp: KHAI BÁO của người vận hành, không phải dữ kiện
+# của sàn. internal/instruments từ chối ghép hai chân khác quote, vì perp quote
+# USD đấu với spot quote USDT thì trung tính về coin nhưng CÒN MỞ rủi ro
+# USDT/USD — USDT đã từng lệch par vài phần trăm, và không con số nào trong dự
+# án này trừ khoản đó. Viết ra đây là cách nhận rủi ro ấy một cách có ý thức;
+# bỏ cả khối đi thì quay lại hành vi cũ, chỉ ghép khi hai quote giống hệt.
+#
+# Khai báo USD ≡ USDT mở khoá 3 sàn perp quote USD (hyperliquid, kraken,
+# paradex) — trước đó cả 12 chuỗi của chúng bị loại ở ánh xạ hedge và không
+# backtest được. Mọi cặp ghép nhờ khai báo này đều mang cờ QuoteBridged và
+# dashboard in cảnh báo ngay trên chân đó.
+hedge:
+  quote_equivalents:
+    - [USD, USDT]
+
 strategy:
   enabled: true
   evaluate_every_min: 10      # funding settle nhanh nhất là 1h; 10 phút là dư
   max_book_age_min: 120       # phải ≥ depth.refresh_every_min, nếu không mọi fill bị coi là cũ
-  min_rate_per_8h_bps: 0.5    # ngưỡng rate ĐÃ SETTLE, quy về 8h để so chéo sàn
-  persistence_periods: 3      # số mốc settle liên tiếp phải trên ngưỡng
+  # Bộ ngưỡng TỐT NHẤT của lưới cổng 8.000 bộ × 16 chuỗi × 12 tháng
+  # (2026-09-07, xem docs/reports/backtest-3.3-wide-2026-09-07.html): tổng
+  # +9,72% trên 16 chuỗi, 12/16 chuỗi dương, 1,7 lệnh mỗi chuỗi — thay cho bộ
+  # 3.3 cũ (0,5 / 3 / 0,005 / 3) vốn cho −87,78% và 0/16. Đọc thành lời: vào
+  # CHẬM mà chắc, rồi gần như KHÔNG thoát. Lưu ý nó vẫn chưa vượt mốc chuẩn
+  # "giữ suốt cửa sổ, trả một vòng phí" (+10,23%) — đây là bộ tốt nhất trong
+  # họ luật hiện có, không phải bằng chứng rằng luật này đáng chạy thật.
+  min_rate_per_8h_bps: 0.3    # ngưỡng rate ĐÃ SETTLE, quy về 8h để so chéo sàn
+  persistence_periods: 6      # số mốc settle liên tiếp phải trên ngưỡng
   min_net_apr_frac: 0.02      # APR RÒNG tối thiểu để vào (0.02 = 2%)
   notional_quote: 50000       # vốn mỗi vị thế giấy — slippage tính theo đúng size này
   holding_days: 30            # thời gian giữ dự kiến, để khấu hao chi phí vào/ra
-  exit_net_apr_frac: 0.005    # sàn giữ, thấp hơn sàn vào để không churn
-  exit_persistence_periods: 3 # thoát do suy giảm cần N mốc liên tiếp dưới sàn giữ
+  exit_net_apr_frac: 0        # sàn giữ 0: không thoát vì APR dự phóng tụt
+  exit_persistence_periods: 12 # thoát do suy giảm cần N mốc liên tiếp dưới sàn giữ
   max_basis_pct: 1.0          # thoát nếu |perp − spot| vượt mức này
   max_basis_widen_pct: 0.5    # thoát nếu basis dịch xa mức lúc vào hơn mức này
   # Cổng thoát khi funding đảo dấu (thêm 2026-09-07 sau khi đo: đợt âm trên
   # BTC/ETH binance trung vị 1 mốc và 0,3 bps, còn mỗi lần thoát-rồi-vào-lại
-  # trả 30 bps). Ba giá trị dưới đây TÁI TẠO ĐÚNG luật 3.2 — thoát ở bất kỳ
-  # mốc âm nào — nên bộ tham số của cổng 3.5 không đổi, và tiến trình 3.5
-  # đang chạy cũng không nạp lại file này. Ba cổng ghép theo AND. Giá trị khác
-  # 0/1/0 là ĐỔI LUẬT: chỉ sau cổng 3.5, và phải qua đúng lưới backtest 3.3.
+  # trả 30 bps). Ba cổng ghép theo AND. 0/1/0 là luật 3.2 cũ — thoát ở BẤT KỲ
+  # mốc âm nào — và là thứ tiến trình 3.5 đang chạy vẫn giữ, vì nó nạp config
+  # đúng một lần lúc khởi động và không đọc lại file này.
   # Thẩm quyền: mốc ÂM chỉ do lối thoát đảo dấu (ba cổng này) xét; lối thoát
   # suy giảm (exit_net_apr_frac / exit_persistence_periods) chỉ đếm các mốc
   # KHÔNG âm — nếu không, exit_persistence_periods là trần cứng của cả ba cổng
-  # (review 2026-09-07). Với 0/1/0 hai cách đếm cho cùng kết quả (test ghim).
-  exit_negative_min_bps: 0        # mốc mới nhất phải ≤ −X bps/8h; 0 = bất kỳ mốc âm nào
-  exit_negative_periods: 1        # N mốc liên tiếp gần nhất đều âm; 1 = chỉ mốc mới nhất
-  exit_negative_cum_cost_frac: 0  # funding âm tích luỹ của đợt ≥ C × chi phí vòng; 0 = không xét
+  # (review 2026-09-07).
+  exit_negative_min_bps: 2.0       # mốc mới nhất phải ≤ −X bps/8h; đo được: mốc âm sâu nhất của năm là −1,52 nên thực tế là "không thoát vì đảo dấu"
+  exit_negative_periods: 2         # N mốc liên tiếp gần nhất đều âm
+  exit_negative_cum_cost_frac: 0.25 # funding âm tích luỹ của đợt ≥ C × chi phí vòng (đợt đắt nhất của năm 9,1 bps so với 30 bps vòng)
 
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }

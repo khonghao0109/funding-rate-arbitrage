@@ -67,6 +67,16 @@ type Series struct {
 	SpotFee fees.Schedule
 	PerpFee fees.Schedule
 
+	// QuoteBridged marks a series whose two legs quote DIFFERENT assets and
+	// were paired only because config.yaml declared those quotes equivalent
+	// (instruments.HedgePair.QuoteBridged — USD perp against a USDT spot).
+	// Such a replay is delta-neutral in the coin and OPEN in the quote pair,
+	// and no figure here deducts that, so it goes in the assumptions block.
+	// SpotQuoteAsset/PerpQuoteAsset name the two sides for the message.
+	QuoteBridged   bool
+	SpotQuoteAsset string
+	PerpQuoteAsset string
+
 	// The books the cost is priced against. ONE measurement, held fixed for the
 	// whole window — see the header.
 	SpotBook depth.Summary
@@ -149,6 +159,14 @@ type Result struct {
 	CoverageShort  bool
 	CoverageNoteVI string
 
+	// QuoteBridged carries Series.QuoteBridged onto the result, because the
+	// assumptions block prints ONE result's assumptions for a whole run — a
+	// per-series fact stated only there would be invisible in every run whose
+	// first series is not bridged. SummaryLines prints it per series instead.
+	QuoteBridged   bool
+	SpotQuoteAsset string
+	PerpQuoteAsset string
+
 	OK            bool
 	ReasonVI      string
 	AssumptionsVI []string
@@ -156,7 +174,7 @@ type Result struct {
 
 // assumptions is what every result must carry, in words.
 func assumptions(series Series, params strategy.Params) []string {
-	return []string{
+	out := []string{
 		fmt.Sprintf("Chi phí vào/ra định giá trên MỘT phép đo sổ lệnh (%s / %s), giữ CỐ ĐỊNH suốt cửa sổ — "+
 			"độ sâu không backfill được, nên đây là tham số được NÊU chứ không phải đo từ quá khứ.",
 			series.SpotSource, series.PerpSource),
@@ -171,6 +189,18 @@ func assumptions(series Series, params strategy.Params) []string {
 		"Đường equity ghi nhận toàn bộ chi phí vòng lúc ĐÓNG; trong lúc giữ nó là số thô của một khoản chắc " +
 			"chắn phải trả. Lệnh vào ở mốc cuối cửa sổ bị đóng cưỡng bức với 0 kỳ funding và trọn phí — cố ý, thận trọng.",
 	}
+	if series.QuoteBridged {
+		// Named FIRST for a bridged series: it is the one assumption that
+		// changes what the position IS, not just how precisely it is priced.
+		out = append([]string{fmt.Sprintf(
+			"CHÂN SPOT KHÁC QUOTE: spot quote %s ghép với perp quote %s theo khai báo hedge.quote_equivalents. "+
+				"Vị thế trung tính về coin nhưng CÒN MỞ rủi ro %s/%s — không con số nào ở đây trừ khoản đó, "+
+				"và funding thu được tính bằng %s trong khi vốn spot nằm ở %s.",
+			series.SpotQuoteAsset, series.PerpQuoteAsset,
+			series.SpotQuoteAsset, series.PerpQuoteAsset,
+			series.PerpQuoteAsset, series.SpotQuoteAsset)}, out...)
+	}
+	return out
 }
 
 // Run replays one series over one window with one parameter set.
@@ -178,6 +208,8 @@ func Run(series Series, window Window, params strategy.Params) Result {
 	out := Result{
 		Symbol: series.Symbol, PerpSource: series.PerpSource, SpotSource: series.SpotSource,
 		Params: params, Window: window, AssumptionsVI: assumptions(series, params),
+		QuoteBridged:   series.QuoteBridged,
+		SpotQuoteAsset: series.SpotQuoteAsset, PerpQuoteAsset: series.PerpQuoteAsset,
 	}
 
 	if window.ToMs <= window.FromMs {

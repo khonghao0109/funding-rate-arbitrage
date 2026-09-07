@@ -1793,6 +1793,94 @@ Sửa:
 > khoá; một tiến trình lên lại từ working tree ghi 13 khoá (thêm ba cổng =
 > 0/1/0) — cùng tham số, khác số khoá, so theo khoá chung.
 >
+> **Lưới cổng chạy lại từ HEAD đã commit (lượt v5, 2026-09-07 13:14–13:47,
+> binary dựng từ `5510ee6`, cây làm việc sạch, sổ lệnh 05:42 UTC — cùng sổ
+> với phép so 24.192/24.192 ở trên).** Rộng hơn v4 cả hai chiều: 64 bộ nền
+> (ngưỡng 0,3/0,5/0,8/1,0 × bền 1/2/3/6 × sàn giữ 0/0,5% × kỳ thoát 3/12;
+> sàn vào 2%, 50k, 30 ngày) × 125 biến thể cổng (X 0/0,25/0,5/1/2 × N
+> 1/2/3/6/12 × C 0/0,25/0,5/1/2) × 16 chuỗi × 3 cửa sổ = 384.000 lượt, 0 từ
+> chối; 22 phút 39 giây / 7 phút 40 / 2 phút 40. Kết luận của v4 đứng
+> nguyên; số liệu v5 thay v4 trong báo cáo (mục "Thử luật thoát" nay có thêm
+> đoạn số liệu toàn lưới, bảng từng chuỗi so với giữ suốt và bản đồ nhiệt
+> sàn giữ × kỳ thoát; mốc chuẩn giữ suốt của mục đó tính trên đúng cửa sổ
+> của lượt cổng; trang nay mở ở cửa sổ 12 tháng — trước mở ở 3 tháng vì JS
+> xếp khoá dạng số tăng dần, lỗi của trang, đã sửa). Trang cũng được sửa lại
+> cho dễ đọc theo yêu cầu: bỏ hẳn mục "Tái lập / Lệnh đã chạy" và footer
+> (`META` rút còn dấu thời gian sinh trang, in ở cuối mục Giả định), thêm mục
+> lục điều hướng, mục **Trả lời nhanh** ba dòng (luật đang chạy live / bộ
+> ngưỡng tốt nhất / giữ suốt — cả ba lấy từ CÙNG lưới cổng nên cùng cửa sổ và
+> cùng sổ lệnh, và bộ 3.3 có mặt trong lưới đó nên so được) kèm bộ ngưỡng tốt
+> nhất viết đầy đủ, và mục **Thuật ngữ** 12 mục song ngữ. Sửa hai chỗ dễ đọc
+> sai: tiêu đề lớn nay kèm mức lãi tốt nhất nên không đọc thành thắng lợi, và
+> "tổng 16 chuỗi" được nói rõ là thước đo xếp hạng chứ không phải lợi nhuận
+> danh mục (mỗi chuỗi tính trên đủ vốn; chia đều vốn thì chia 16 — con số
+> trung bình mỗi chuỗi nay in ngay trong câu kết luận).
+>
+> 12 tháng, giữ suốt cùng cửa sổ **+10,23%, 12/16**: ① bộ 3.3 với 0/1/0
+> −87,78% (0/16, 19,1 lệnh/chuỗi) → cổng tốt nhất tại bộ 3.3 X 2 / N 6 / C 0:
+> **−43,03% (1/16, 11,1 lệnh)**; 125 biến thể chỉ cho 56 kết cục (tổng 16
+> chuỗi) phân biệt được và 25/125 trùng biến thể lỏng nhất (2/12/2: −43,59%)
+> — trên corpus này cổng "đủ lỏng" nào cũng là "không thoát vì đảo dấu". ②
+> Toàn lưới: **3.398/8.000 bộ có tổng dương, 0 bộ đạt giữ suốt**, tốt nhất
+> +9,72% (ngưỡng 0,3 / bền 6 / sàn giữ 0 / 12 kỳ / X 2 / N 2 / C 0,25; 12/16
+> dương; 1,7 lệnh/chuỗi; BTC·binance +3,00% so với giữ suốt +3,05%). Trục
+> quyết định là kỳ thoát suy giảm (3 → 12 kỳ: 5,4% → 59,0% lượt có lãi,
+> trung vị −1,6/−2,1% → +0,21%) rồi cổng C (0 → ≥ 0,25: 23,5% → 33–35%); X
+> và N chỉ dịch nhẹ (X 0 → 2: 30,5% → 35,0%; N 1 → 12: 30,4% → 34,3%). Luật
+> 3.2 thuần (0/1/0) trên 64 bộ nền: 0,6% lượt có lãi, trung vị −3,36%.
+> Top-50 theo tổng: 50/50 kỳ thoát 12, 49/50 sàn giữ 0, 45/50 C 1,0, ngưỡng
+> vào chia đôi giữa 0,3 (bền 6) và 1,0 (bền 2) — vào chậm mà chắc, rồi gần
+> như không thoát. ③ Từng chuỗi, số bộ vượt giữ suốt trong 8.000: BTC·binance
+> 2, ETH·binance 12, BTC/ETH·bybit 0/0, BTC/ETH·okx 0/230 — ở chuỗi giữ suốt
+> mạnh luật chỉ BẰNG; nó vượt ở chuỗi giữ suốt yếu hoặc âm (SOL·binance
+> 4.471 bộ, giữ suốt −2,05% so với bộ tốt nhất −0,05%; SOL·okx 2.920;
+> BTC·gate 2.729): né đoạn xấu, không tạo thêm funding. ④ Cửa sổ ngắn: 6
+> tháng tốt nhất +6,02% (12/16, 1,1 lệnh; 0,3/6/0/12/X0/N1/C1) so với giữ
+> suốt +5,70%, 50 bộ đạt hoặc vượt; 3 tháng +6,39% (15/16, 1,0 lệnh;
+> 0,5/3/0/12/X0/N1/C0,25) so với +5,55%, 1.096 bộ — vượt vì vào muộn hơn đầu
+> cửa sổ, và 0 bộ giữ được lợi thế đó trên 12 tháng. So với v4 (+9,45 so
+> với +10,29): khác do sổ và cửa sổ, kết luận không đổi. Tham số 3.5 không
+> đổi; lượt này không chạm tiến trình 8085.
+>
+> **Đổi bộ tham số shipped + mở khoá perp quote USD (2026-09-07, yêu cầu của
+> người dùng sau khi đọc báo cáo).** Hai việc, trong một commit vì việc thứ hai
+> đổi tập chuỗi mà việc thứ nhất được đo trên.
+>
+> ① `config.yaml` khối `strategy:` chuyển từ bộ 3.3 (0,5 / bền 3 / sàn giữ
+> 0,005 / 3 kỳ, cổng 0/1/0) sang **bộ tốt nhất của lưới cổng v5**: ngưỡng 0,3 /
+> bền 6 / sàn giữ 0 / 12 kỳ / X 2,0 / N 2 / C 0,25. `cmd/backtest.baseParams`
+> đi theo để test ghim `baseParams == khối shipped` vẫn đúng; lưới sweep mặc
+> định KHÔNG đổi vì nó ghi đè đúng những trục đó (test
+> `TestDefaultGrid_ReproducesTheStep33Grid` vẫn xanh). Hệ quả cho cổng 3.5,
+> ghi ở đây để không ai quên: tiến trình đang chạy (PID 58422, 09:39:52) nạp
+> config MỘT lần nên vẫn dùng bộ cũ và biểu phí cũ — file không còn mô tả nhật
+> ký nó đang sinh ra, và phép so của cổng phải dựng lại bộ cũ bằng
+> `git show ba5ee31:config.yaml`, y như đã phải làm với phí. Khởi động lại để
+> ăn bộ mới = đặt lại đồng hồ 14 ngày. **Không restart trước 2026-09-21.**
+>
+> ② Lỗi người dùng báo — `BTCUSDT/hyperliquid_futures` bị từ chối "không có
+> spot nào cùng quote USD" — được sửa bằng KHAI BÁO, không phải bằng đoán:
+> `hedge.quote_equivalents` mới trong `config.yaml` liệt kê các nhóm quote
+> được phép hedge lẫn nhau, và file shipped khai báo `[USD, USDT]`.
+> `instruments.BuildHedgeMapping` nhận thêm tham số đó; cặp ghép nhờ khai báo
+> mang cờ `QuoteBridged` + `SpotQuoteAsset`. Vì sao là khai báo: perp quote USD
+> đấu spot quote USDT thì trung tính về coin nhưng CÒN MỞ rủi ro USDT/USD
+> (USDT từng lệch par vài phần trăm) và không con số nào trong dự án trừ khoản
+> đó — nên đây là quyết định rủi ro của người vận hành, viết ra file, chứ không
+> phải luật code tự suy. Nhãn đi tới ba nơi: ghi chú chân hedge trên dashboard,
+> dòng ⚠ của TỪNG chuỗi trong báo cáo backtest, và một dòng đếm trong khối GIẢ
+> ĐỊNH (khối đó chỉ in giả định của kết quả ĐẦU TIÊN, nên một sự thật theo
+> chuỗi mà chỉ nằm ở đó sẽ vô hình — đã sửa). Lời từ chối nay phân biệt "chưa
+> khai báo tương đương nào" với "quote này không nằm trong nhóm nào".
+>
+> **Đo được sau khi mở khoá:** 16 → **24 chuỗi** phát lại (thêm hyperliquid ×4
+> và kraken ×4). Paradex ×4 vẫn bị từ chối, nhưng vì lý do ĐÚNG và khác hẳn:
+> `model='continuous'`, không có mốc settle để đếm (quy tắc 6). Với bộ tham số
+> mới, 12 tháng: **hyperliquid BTC +5,44% và ETH +5,01% APR thực** — lần đầu dự
+> án có số nằm trong dải 5–15%, và vòng phí của hyperliquid rẻ nhất (0,2932%).
+> Cả hai đều là cặp bridged nên mang rủi ro USDT/USD chưa trừ. Chưa chạy lại
+> lưới rộng trên 24 chuỗi; báo cáo HTML hiện tại vẫn là của 16 chuỗi.
+>
 > **Nợ 3.4, làm SAU phán quyết 3.5:** `internal/notify` (Telegram trước,
 > Discord tuỳ chọn), throttle theo khoá cơ hội, token qua env/.env (godotenv có
 > sẵn), **không** chạm `internal/broker`, không bao giờ chặn đường dữ liệu.

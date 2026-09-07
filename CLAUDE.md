@@ -80,7 +80,15 @@ step 2.4 added the spot↔perp hedge mapping (`BuildHedgeMapping` in
 `Instrument` now carries VENUE-DECLARED `BaseAsset`/`QuoteAsset`, pairing is
 validated both ways against config's declarations, and anything unpairable is
 a named rejection — never a guess. USD-quoted perps (Kraken, Hyperliquid,
-Paradex) are refused against USDT spots by design.
+Paradex) were refused against USDT spots until 2026-09-07, when
+`hedge.quote_equivalents` in `config.yaml` made the equivalence DECLARABLE:
+the shipped file declares `[USD, USDT]`, which pairs those perps with a USDT
+spot and marks every such pair `QuoteBridged`. That is a RISK decision, not a
+venue fact — the position is delta-neutral in the coin and OPEN in USDT/USD,
+which nothing here deducts — so the label travels to the dashboard leg note,
+to each backtest series line and to its assumptions block. Declaring nothing
+restores the older, stricter behaviour, and a refusal now says WHICH case it
+is ("no quote equivalence declared" vs "these quotes are in no group").
 
 Step 2.5 collects funding from all 7 venues in real time: six over WebSocket
 (Bybit `tickers`, OKX `funding-rate`, Gate `futures.tickers`, Kraken `ticker`,
@@ -190,15 +198,22 @@ The same afternoon the sign-flip exit gained three GATES as parameters
 `exit_negative_*`; zero values are the 3.2 rule exactly, pinned by test, so
 the live 3.5 set did not move). Measured: BTC flips sign 200 times a year and
 the median negative episode costs 0.3 bps against a 30 bps round trip, yet
-the 3.2 rule leaves on ANY negative print. A 24 base-set × 64-gate × 16-series
-sweep (re-run after the jurisdiction fix below) found the gates halve the
-loss at the 3.3 setting (−87% → −42% summed over 16 series, still 1/16
+the 3.2 rule leaves on ANY negative print. A 64 base-set × 125-gate ×
+16-series sweep (v5, run from the committed `5510ee6` after the jurisdiction
+fix below; the earlier 24 × 64 run said the same) found the gates halve the
+loss at the 3.3 setting (−88% → −43% summed over 16 series, still 1/16
 positive) and, with the decay exit relaxed (floor 0, 12 periods), converge on
-hold-through: the best set sums +9.45% with 11/16 series positive at 1.5
-trades each, against hold-through's +10.29%, 12/16 — because on this corpus
-no negative episode in a year costs as much as one round trip, so the best
-gate is "do not leave on a sign flip" and the edge is in entry and cost, not
-exit. An exit rule still worth writing compares the EXPECTED cost of holding
+hold-through: 3,398 of 8,000 sets sum positive over 12 months but NONE
+reaches hold-through's +10.23% (12/16); the best sums +9.72% with 12/16
+positive at 1.7 trades each, and it beats hold-through only on series where
+hold-through is weak or negative (SOL, the short okx/gate corpora) — never on
+BTC/ETH at binance or bybit. The decisive axes are the decay exit's length
+and the cumulative-cost gate C; X and N barely move the result. The 6- and
+3-month windows let 50 and 1,096 sets beat hold-through by entering later
+than the window start, and none keeps that over 12 months — because on this
+corpus no negative episode in a year costs as much as one round trip, so the
+best gate is "do not leave on a sign flip" and the edge is in entry and cost,
+not exit. An exit rule still worth writing compares the EXPECTED cost of holding
 through a negative run with the round trip, and must beat hold-through, not
 match it; that is 3.2 work after the gate. The adversarial
 review of that sweep found the decay exit counting negative prints too, which
@@ -219,6 +234,21 @@ whatever order the candidates arrive in, and the note says a tie was broken.
 Tests that had borrowed "bybit is unverified" from the shipped config.yaml
 now state that scenario themselves (`markFeeUnverified` in
 `internal/scanner`, an explicit override in `cmd/scanner/hedges_test.go`).
+
+**On 2026-09-07 the user replaced the shipped `strategy:` block with the gate
+grid's best set** — entry 0.3 bps/8h held 6 settlements, hold floor 0 over 12
+periods, sign-flip gates X 2.0 / N 2 / C 0.25 — and `cmd/backtest`'s
+`baseParams` was moved with it (the sweep overrides every one of those axes,
+so the default grid is unchanged, pinned by test). The old set is
+`0.5 / 3 / 0.005 / 3` with gates `0/1/0`. **This does not move the running 3.5
+process**, which loaded its config once at start-up: the file no longer
+describes what that journal is producing, so the gate comparison must
+reconstruct the old set from `git show ba5ee31:config.yaml` exactly as it
+already does for the pre-verification fees. Restarting to pick the new set up
+would restart the 14-day clock. Measured with the new set over 12 months on
+24 series: hyperliquid BTC +5.44% and ETH +5.01% realized APR, the first
+figures this project has produced inside the 5–15% band — both on a
+quote-bridged pair, so both carry undeducted USDT/USD exposure.
 
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
@@ -399,6 +429,7 @@ re-research these; do verify before writing the integration.
 | **Hyperliquid rate limit** | `fundingHistory` costs weight 20 **plus 1 per 20 items returned**, against an aggregated 1200/minute per IP — a 500-row page is 45, so the budget is one page every 2.3s. The shared 200ms page delay is 11× over it and cost two whole series to HTTP 429 during the 2.6 acceptance run. Pace per venue, and back off in SECONDS for a 429: retrying inside the same exhausted minute just spends the attempts. |
 | **Units** | Funding interval arrives as hours (Binance), minutes (Bybit), and seconds (Gate) for the same concept. Normalize to seconds in the connector. |
 | **"Not listed"** | Per-symbol instrument endpoints answer "market not listed" in THREE shapes (measured 2026-09-03): Paradex → HTTP **404**; OKX → HTTP 200 + `code 51001`; Bybit linear → HTTP 200 + `retCode 10001` "symbol invalid" while Bybit **spot** → `retCode 0` + empty list. All must read as "absent" — treating any as an error lets one unsupported pair blank a venue's whole rule set (found live in step 2.4 when XLMUSDT killed the Paradex source). Every OTHER non-zero code stays a loud error. |
+| **Quote bridging** | Pairing a USD-quoted perp with a USDT spot is delta-neutral in the coin and OPEN in USDT/USD — a depeg moves the legs apart and NO figure in this project deducts it. It happens only when `hedge.quote_equivalents` declares it, and every pair it creates carries `QuoteBridged` so the label reaches the reader. Never quietly fold USD into USDT in a comparison, a fee, or a chart. |
 | **Assets** | Base/quote must come from what the venue DECLARES, never from slicing the symbol string. OKX swaps leave `baseCcy`/`quoteCcy` empty (spot-only fields — use `ctValCcy`/`settleCcy` for linear); Kraken names BTC "XBT" in symbols but declares `base: "BTC"`, so no alias table exists anywhere; Hyperliquid declares no quote (venue-wide documented "USD"). |
 | **Depth: bid order** | Kraken's REST order book returns its BIDS ASCENDING — `bids[0]` is a resting order at a price of **1**, and the best bid is the LAST element. Every other venue puts the best price first. It also has no limit parameter and returns the whole book (~40 KB). Sort unconditionally; never trust a documented order. |
 | **Depth: level ceilings** | Exceeding a venue's level limit LOSES THE WHOLE BOOK rather than shortening it: Gate answers HTTP 400 above 300, Paradex says `"Depth: must be no greater than 100."` above 100. And 100 levels is not enough — measured 2026-09-04, 7 of 9 venues do not reach even 0.1% of mid at 100 levels, so depth figures become a ranking of *who returns the most levels*. Ask each venue for its own maximum, and read `covers_0_1pct`/`covers_0_5pct` before comparing two venues' depth. |

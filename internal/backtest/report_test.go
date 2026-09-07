@@ -144,3 +144,35 @@ func TestWriteTradesCSV_OneRowPerTradeCarryingItsParams(t *testing.T) {
 		t.Errorf("holding_days = %q — the trade must carry its parameters", byName["holding_days"])
 	}
 }
+
+// The assumptions block prints ONE result's assumptions for a whole run, so a
+// bridged series two rows down would otherwise leave no trace. It must show on
+// that series' own summary AND be counted in the block that claims to list
+// every assumption.
+func TestReport_BridgedSeriesIsVisibleWhereverTheReaderLooks(t *testing.T) {
+	entries := discreteSeries("binance_futures", secPer8h, 2, 2, 2, 2, 2)
+	plain := Run(seriesOf(entries), fullWindow(entries), testParams())
+
+	bridgedSeries := seriesOf(entries)
+	bridgedSeries.PerpSource = "hyperliquid_futures"
+	bridgedSeries.QuoteBridged = true
+	bridgedSeries.SpotQuoteAsset, bridgedSeries.PerpQuoteAsset = "USDT", "USD"
+	bridged := Run(bridgedSeries, fullWindow(entries), testParams())
+
+	summary := strings.Join(bridged.SummaryLines(), "\n")
+	if !strings.Contains(summary, "QUOTE KHÁC NHAU") || !strings.Contains(summary, "USDT") {
+		t.Errorf("the bridged series' own summary must say so:\n%s", summary)
+	}
+	if s := strings.Join(plain.SummaryLines(), "\n"); strings.Contains(s, "QUOTE KHÁC NHAU") {
+		t.Errorf("a same-quote series must not be marked:\n%s", s)
+	}
+
+	// Plain first, so the block's own assumptions come from the unbridged run.
+	block := strings.Join(AssumptionLines([]Result{plain, bridged}), "\n")
+	if !strings.Contains(block, "hyperliquid_futures") || !strings.Contains(block, "1 chuỗi ghép chân spot KHÁC QUOTE") {
+		t.Errorf("the assumptions block must count the bridged series:\n%s", block)
+	}
+	if b := strings.Join(AssumptionLines([]Result{plain}), "\n"); strings.Contains(b, "KHÁC QUOTE") {
+		t.Errorf("no bridged series, no line:\n%s", b)
+	}
+}

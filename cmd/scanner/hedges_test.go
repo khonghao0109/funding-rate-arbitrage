@@ -159,7 +159,7 @@ func TestHedgeLegs_EveryConfiguredPerpGetsAnAnswer(t *testing.T) {
 		pairs = append(pairs, instruments.PairAssets{Symbol: symbol.Symbol, BaseAsset: symbol.Base})
 	}
 
-	legs := hedgeLegs(cfg, instruments.BuildHedgeMapping(insts, pairs, claims))
+	legs := hedgeLegs(cfg, instruments.BuildHedgeMapping(insts, pairs, claims, nil))
 
 	for _, source := range cfg.Sources {
 		if source.MarketType != "perp" {
@@ -177,6 +177,44 @@ func TestHedgeLegs_EveryConfiguredPerpGetsAnAnswer(t *testing.T) {
 			if leg.SpotSource == "" && leg.NoteVI == "" {
 				t.Errorf("%s/%s has no spot leg and no reason", symbol.Symbol, source.Source)
 			}
+		}
+	}
+}
+
+// A leg that only exists because config declared USD ≡ USDT is delta-neutral
+// in the coin and OPEN in the quote pair. Nothing in this project prices that,
+// so the dashboard note has to say it — a bridged leg shown as an ordinary
+// hedge is the one way this feature could mislead.
+func TestHedgeLegs_ABridgedLegCarriesTheQuoteWarning(t *testing.T) {
+	cfg := repoConfig(t)
+
+	claims := []instruments.SourceClaim{
+		{Source: "binance_spot", MarketType: "spot", QuoteAsset: "USDT", Tradable: true},
+		{Source: "hyperliquid_futures", MarketType: "perp", QuoteAsset: "USD", Tradable: true},
+	}
+	insts := []exchanges.Instrument{
+		{Symbol: "BTCUSDT", NativeSymbol: "BTCUSDT", Source: "binance_spot", MarketType: "spot",
+			BaseAsset: "BTC", QuoteAsset: "USDT", Status: exchanges.StatusTrading},
+		{Symbol: "BTCUSDT", NativeSymbol: "BTC", Source: "hyperliquid_futures", MarketType: "perp",
+			BaseAsset: "BTC", QuoteAsset: "USD", Status: exchanges.StatusTrading},
+	}
+	pairs := []instruments.PairAssets{{Symbol: "BTCUSDT", BaseAsset: "BTC"}}
+
+	// Without the declaration there is no leg at all, only a named refusal.
+	legs := hedgeLegs(cfg, instruments.BuildHedgeMapping(insts, pairs, claims, nil))
+	leg, found := legFor(legs, "BTCUSDT", "hyperliquid_futures")
+	if !found || leg.SpotSource != "" {
+		t.Fatalf("undeclared: want a refusal with no spot leg, got %+v", leg)
+	}
+
+	legs = hedgeLegs(cfg, instruments.BuildHedgeMapping(insts, pairs, claims, [][]string{{"USD", "USDT"}}))
+	leg, found = legFor(legs, "BTCUSDT", "hyperliquid_futures")
+	if !found || leg.SpotSource != "binance_spot" {
+		t.Fatalf("declared: want a binance_spot leg, got %+v", leg)
+	}
+	for _, want := range []string{"CHÂN SPOT KHÁC QUOTE", "USDT", "USD", "quote_equivalents", "CÒN MỞ"} {
+		if !strings.Contains(leg.NoteVI, want) {
+			t.Errorf("the note must contain %q: %s", want, leg.NoteVI)
 		}
 	}
 }

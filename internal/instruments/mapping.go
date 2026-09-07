@@ -21,8 +21,16 @@ import (
 //     match the base the venue declares, and the quote config.yaml claims for
 //     a source must match the quote the venue declares.
 //   - venue → config: each native market may be claimed by exactly ONE
-//     standard symbol, and every leg that finds no counterpart (Kraken's USD
-//     perp among USDT spots) is reported, not dropped.
+//     standard symbol, and every leg that finds no counterpart is reported,
+//     not dropped.
+//
+// Two legs pair when they venue-declare the same quote, or when config.yaml
+// DECLARES their two quotes equivalent (hedge.quote_equivalents — USD ≡ USDT
+// is what lets the USD-quoted perps of Kraken, Hyperliquid and Paradex hedge
+// against a USDT spot). That is still not a guess: the equivalence is an
+// operator's written decision, it is carried on the pair as QuoteBridged so
+// every figure derived from it can be labelled, and with nothing declared the
+// mapping behaves exactly as it did before — a differing quote is refused.
 //
 // A venue that does not list a symbol at all simply has no instrument here —
 // absence, not rejection, is how an unsupported venue self-excludes.
@@ -76,14 +84,63 @@ type SourceClaim struct {
 	Tradable   bool
 }
 
+// QuoteEquivalents is config.yaml's declaration of which quote assets may
+// hedge each other, as groups of asset names. It is deliberately a DECLARATION
+// and not a rule this package derives: whether USDT may stand in for USD is an
+// operator's risk decision (a depeg moves the two legs apart), so the code
+// refuses to invent it and only honours what is written down.
+//
+// Comparison is case-insensitive, by sameAsset. An asset may appear in at most
+// one group; internal/config refuses anything else at load.
+type QuoteEquivalents [][]string
+
+// quoteGroups indexes the declaration for lookup: upper-cased asset → group
+// number. Assets in no group are absent, which makes equivalentQuotes false
+// for them without a special case.
+func quoteGroups(equivalents QuoteEquivalents) map[string]int {
+	if len(equivalents) == 0 {
+		return nil
+	}
+	groups := make(map[string]int, len(equivalents)*2)
+	for i, group := range equivalents {
+		for _, asset := range group {
+			groups[strings.ToUpper(strings.TrimSpace(asset))] = i
+		}
+	}
+	return groups
+}
+
+// equivalentQuotes reports whether config declared these two quotes able to
+// hedge each other. Identical quotes never reach here — the caller checks
+// sameAsset first, so this answers only the cross-quote question.
+func equivalentQuotes(groups map[string]int, a, b string) bool {
+	if groups == nil {
+		return false
+	}
+	ga, oka := groups[strings.ToUpper(a)]
+	gb, okb := groups[strings.ToUpper(b)]
+	return oka && okb && ga == gb
+}
+
 // HedgePair is one validated spot↔perp combination: both legs venue-declare
-// the same base and the same quote, and both are trading today.
+// the same base, both are trading today, and their quotes either match or were
+// DECLARED equivalent in config.yaml.
 type HedgePair struct {
-	Symbol     string
-	BaseAsset  string
-	QuoteAsset string
-	Spot       exchanges.Instrument
-	Perp       exchanges.Instrument
+	Symbol    string
+	BaseAsset string
+	// QuoteAsset is the PERP leg's quote — the side the funding rate is
+	// denominated in. When the two legs' quotes differ it does not describe
+	// the spot leg; SpotQuoteAsset does, and QuoteBridged says they differ.
+	QuoteAsset     string
+	SpotQuoteAsset string
+	// QuoteBridged is true when the two legs' quotes are different assets
+	// joined only by a config declaration. Everything computed from such a
+	// pair carries USDT/USD (or whatever the pair of quotes is) exposure that
+	// no figure in this project deducts, so callers must LABEL it rather than
+	// present it as a plain delta-neutral hedge.
+	QuoteBridged bool
+	Spot         exchanges.Instrument
+	Perp         exchanges.Instrument
 }
 
 // Rejection is one instrument the mapping refused, and why. Refusals are
@@ -107,7 +164,8 @@ type HedgeMapping struct {
 // declarations and pairs the survivors. Output ordering is deterministic:
 // pairs by (symbol, spot source, perp source), rejections by (symbol,
 // source, reason).
-func BuildHedgeMapping(insts []exchanges.Instrument, pairs []PairAssets, claims []SourceClaim) HedgeMapping {
+func BuildHedgeMapping(insts []exchanges.Instrument, pairs []PairAssets, claims []SourceClaim, equivalents QuoteEquivalents) HedgeMapping {
+	groups := quoteGroups(equivalents)
 	baseBySymbol := make(map[string]string, len(pairs))
 	for _, p := range pairs {
 		baseBySymbol[p.Symbol] = p.BaseAsset
@@ -213,35 +271,39 @@ func BuildHedgeMapping(insts []exchanges.Instrument, pairs []PairAssets, claims 
 		paired := make(map[string]bool, len(valid))
 		for _, perp := range perps {
 			for _, spot := range spots {
-				if !sameAsset(spot.QuoteAsset, perp.QuoteAsset) {
+				bridged := !sameAsset(spot.QuoteAsset, perp.QuoteAsset)
+				if bridged && !equivalentQuotes(groups, spot.QuoteAsset, perp.QuoteAsset) {
 					continue
 				}
 				m.Pairs = append(m.Pairs, HedgePair{
-					Symbol:     symbol,
-					BaseAsset:  perp.BaseAsset,
-					QuoteAsset: perp.QuoteAsset,
-					Spot:       spot,
-					Perp:       perp,
+					Symbol:         symbol,
+					BaseAsset:      perp.BaseAsset,
+					QuoteAsset:     perp.QuoteAsset,
+					SpotQuoteAsset: spot.QuoteAsset,
+					QuoteBridged:   bridged,
+					Spot:           spot,
+					Perp:           perp,
 				})
 				paired[perp.Source] = true
 				paired[spot.Source] = true
 			}
 		}
 
-		// Both directions of "no counterpart" are reported: a USD-quoted
-		// perp among USDT spots would only hedge with added USD/USDT
-		// exposure, and pretending otherwise is exactly the guess this
-		// table exists to refuse.
+		// Both directions of "no counterpart" are reported. A USD-quoted perp
+		// among USDT spots hedges only with added USD/USDT exposure, so it
+		// pairs when — and ONLY when — config declared those two quotes
+		// equivalent; the message says which of the two cases this is, so a
+		// refusal never reads as "impossible" when it is really "not declared".
 		for _, perp := range perps {
 			if !paired[perp.Source] {
-				reject(perp, fmt.Sprintf("no spot market shares quote %s for %s (spot quotes: %s) — refused, not guessed",
-					perp.QuoteAsset, symbol, quoteList(spots)))
+				reject(perp, fmt.Sprintf("no spot market shares quote %s for %s (spot quotes: %s%s) — refused, not guessed",
+					perp.QuoteAsset, symbol, quoteList(spots), equivalentsNote(groups, perp.QuoteAsset)))
 			}
 		}
 		for _, spot := range spots {
 			if !paired[spot.Source] {
-				reject(spot, fmt.Sprintf("no perp market shares quote %s for %s (perp quotes: %s) — refused, not guessed",
-					spot.QuoteAsset, symbol, quoteList(perps)))
+				reject(spot, fmt.Sprintf("no perp market shares quote %s for %s (perp quotes: %s%s) — refused, not guessed",
+					spot.QuoteAsset, symbol, quoteList(perps), equivalentsNote(groups, spot.QuoteAsset)))
 			}
 		}
 	}
@@ -267,6 +329,28 @@ func BuildHedgeMapping(insts []exchanges.Instrument, pairs []PairAssets, claims 
 		return a.Reason < b.Reason
 	})
 	return m
+}
+
+// equivalentsNote explains, inside a refusal, whether config.yaml had anything
+// to say about this quote — the difference between "these quotes cannot be
+// hedged" and "nobody declared that they may be".
+func equivalentsNote(groups map[string]int, quote string) string {
+	if len(groups) == 0 {
+		return "; no quote equivalence declared in config"
+	}
+	g, ok := groups[strings.ToUpper(quote)]
+	if !ok {
+		return fmt.Sprintf("; %s is in no declared quote-equivalence group", strings.ToUpper(quote))
+	}
+	var peers []string
+	for asset, id := range groups {
+		if id == g && !sameAsset(asset, quote) {
+			peers = append(peers, asset)
+		}
+	}
+	sort.Strings(peers)
+	return fmt.Sprintf("; config declares %s equivalent to %s, and none of those is present either",
+		strings.ToUpper(quote), strings.Join(peers, ", "))
 }
 
 // quoteList names the distinct quotes present on one side, sorted — "none"
@@ -298,7 +382,13 @@ func (m HedgeMapping) LogLines() []string {
 		j := i
 		var combos []string
 		for ; j < len(m.Pairs) && m.Pairs[j].Symbol == m.Pairs[i].Symbol; j++ {
-			combos = append(combos, m.Pairs[j].Spot.Source+"×"+m.Pairs[j].Perp.Source)
+			combo := m.Pairs[j].Spot.Source + "×" + m.Pairs[j].Perp.Source
+			if m.Pairs[j].QuoteBridged {
+				// Never let a bridged pair read like a same-quote one in a log
+				// a human scans for what is actually hedgeable.
+				combo += fmt.Sprintf(" (%s↔%s, declared equivalent)", m.Pairs[j].SpotQuoteAsset, m.Pairs[j].QuoteAsset)
+			}
+			combos = append(combos, combo)
 		}
 		lines = append(lines, fmt.Sprintf("%s: %d hedge pairs — %s",
 			m.Pairs[i].Symbol, len(combos), strings.Join(combos, ", ")))

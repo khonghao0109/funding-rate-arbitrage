@@ -85,6 +85,13 @@ func (r Result) SummaryLines() []string {
 		fmt.Sprintf("  Lệnh            %d  ·  %d kỳ nắm giữ  ·  %.1f%% số kỳ funding DƯƠNG (thô — không phải 'có lãi')",
 			len(r.Trades), r.PeriodsInPosition, r.PositiveFundingPeriodShare*100),
 	}
+	if r.QuoteBridged {
+		lines = append(lines, fmt.Sprintf(
+			"  ⚠ QUOTE KHÁC NHAU: spot quote %s, perp quote %s — ghép được là do khai báo "+
+				"hedge.quote_equivalents, không phải do hai sàn cùng quote. Vị thế CÒN MỞ rủi ro %s/%s "+
+				"và không con số nào ở dòng trên trừ khoản đó.",
+			r.SpotQuoteAsset, r.PerpQuoteAsset, r.SpotQuoteAsset, r.PerpQuoteAsset))
+	}
 	if r.CoverageShort {
 		lines = append(lines, "  ⚠ ĐỘ PHỦ: "+r.CoverageNoteVI)
 	}
@@ -105,13 +112,30 @@ func (r Result) SummaryLines() []string {
 // shows.
 func AssumptionLines(results []Result) []string {
 	for _, r := range results {
-		if len(r.AssumptionsVI) > 0 {
-			lines := []string{"GIẢ ĐỊNH của lượt backtest này — đọc trước khi tin bất kỳ con số nào ở trên:"}
-			for _, a := range r.AssumptionsVI {
-				lines = append(lines, "  ! "+a)
-			}
-			return lines
+		if len(r.AssumptionsVI) == 0 {
+			continue
 		}
+		lines := []string{"GIẢ ĐỊNH của lượt backtest này — đọc trước khi tin bất kỳ con số nào ở trên:"}
+		for _, a := range r.AssumptionsVI {
+			lines = append(lines, "  ! "+a)
+		}
+		// This block prints ONE result's assumptions, so a per-series fact has
+		// to be summarized here too or the block would claim completeness it
+		// does not have. Only the count and the names — the detail is on each
+		// series' own ⚠ line.
+		var bridged []string
+		for _, other := range results {
+			if other.QuoteBridged {
+				bridged = append(bridged, other.Symbol+"/"+other.PerpSource)
+			}
+		}
+		if len(bridged) > 0 {
+			lines = append(lines, fmt.Sprintf(
+				"  ! %d chuỗi ghép chân spot KHÁC QUOTE theo khai báo hedge.quote_equivalents và "+
+					"còn mở rủi ro giữa hai quote (xem ⚠ trên từng chuỗi): %s.",
+				len(bridged), strings.Join(bridged, ", ")))
+		}
+		return lines
 	}
 	return nil
 }

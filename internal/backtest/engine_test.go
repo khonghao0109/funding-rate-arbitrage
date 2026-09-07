@@ -3,6 +3,7 @@ package backtest
 import (
 	"math"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -529,5 +530,40 @@ func TestRun_NegativeGateDefaultsProduceTheSameTradesAsZeroValues(t *testing.T) 
 		if a.OpenAtMs != b.OpenAtMs || a.CloseAtMs != b.CloseAtMs || a.Settlements != b.Settlements || a.FundingFrac != b.FundingFrac {
 			t.Errorf("trade %d differs: %+v vs %+v", i, a, b)
 		}
+	}
+}
+
+// A series paired only through a declared quote equivalence is delta-neutral
+// in the coin and OPEN in the two quotes. Nothing in this engine deducts that,
+// so the assumptions block must name it — and name it FIRST, because it
+// changes what the position is rather than how precisely it is priced.
+func TestRun_ABridgedSeriesNamesTheQuoteExposureFirst(t *testing.T) {
+	entries := discreteSeries("binance_futures", secPer8h, 2, 2, 2, 2, 2)
+	series := seriesOf(entries)
+	plain := Run(series, fullWindow(entries), testParams())
+	for _, a := range plain.AssumptionsVI {
+		if strings.Contains(a, "CHÂN SPOT KHÁC QUOTE") {
+			t.Fatalf("a same-quote series must not carry the bridge warning: %s", a)
+		}
+	}
+
+	series.QuoteBridged = true
+	series.SpotQuoteAsset, series.PerpQuoteAsset = "USDT", "USD"
+	got := Run(series, fullWindow(entries), testParams())
+	if len(got.AssumptionsVI) != len(plain.AssumptionsVI)+1 {
+		t.Fatalf("want exactly one added assumption, got %d vs %d", len(got.AssumptionsVI), len(plain.AssumptionsVI))
+	}
+	first := got.AssumptionsVI[0]
+	if !strings.Contains(first, "CHÂN SPOT KHÁC QUOTE") {
+		t.Fatalf("the bridge warning must come first, got %q", first)
+	}
+	for _, want := range []string{"USDT", "USD", "quote_equivalents", "CÒN MỞ"} {
+		if !strings.Contains(first, want) {
+			t.Errorf("the warning must contain %q: %s", want, first)
+		}
+	}
+	// The replay itself must be untouched by a label.
+	if got.TotalReturnFrac != plain.TotalReturnFrac || len(got.Trades) != len(plain.Trades) {
+		t.Errorf("labelling changed the replay: %+v vs %+v", got.TotalReturnFrac, plain.TotalReturnFrac)
 	}
 }

@@ -185,9 +185,17 @@ func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 	}
 	spotFor := map[string]string{} // symbol|perp → chosen spot
 	candidates := map[string][]string{}
+	// Whether a given (symbol, perp, spot) combination exists only because
+	// config declared the two quotes equivalent, keyed per COMBINATION: the
+	// chosen leg decides, not whichever pair happened to come first.
+	type quotePair struct{ spot, perp string }
+	bridged := map[string]quotePair{}
 	for _, pair := range mapping.Pairs {
 		k := key(pair.Symbol, pair.Perp.Source)
 		candidates[k] = append(candidates[k], pair.Spot.Source)
+		if pair.QuoteBridged {
+			bridged[k+"|"+pair.Spot.Source] = quotePair{pair.SpotQuoteAsset, pair.QuoteAsset}
+		}
 	}
 	for k, spots := range candidates {
 		spotFor[k], _ = cfg.CheapestVerifiedSpot(spots)
@@ -230,14 +238,18 @@ func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 			for _, row := range settled {
 				entries = append(entries, row.FundingHistoryEntry)
 			}
-			out = append(out, backtest.Series{
+			series := backtest.Series{
 				Symbol: symbol.Symbol, PerpSource: perp.Source, SpotSource: spotSource,
 				Settled:  entries,
 				SpotFee:  schedule(spot),
 				PerpFee:  schedule(perp),
 				SpotBook: books[key(symbol.Symbol, spotSource)],
 				PerpBook: books[key(symbol.Symbol, perp.Source)],
-			})
+			}
+			if q, ok := bridged[key(symbol.Symbol, perp.Source)+"|"+spotSource]; ok {
+				series.QuoteBridged, series.SpotQuoteAsset, series.PerpQuoteAsset = true, q.spot, q.perp
+			}
+			out = append(out, series)
 		}
 	}
 	return out, nil
@@ -268,7 +280,7 @@ func hedgeMapping(ctx context.Context, db *store.Store, cfg config.Config) (inst
 			QuoteAsset: s.QuoteAsset, Tradable: s.Tradable})
 	}
 	log.Printf("hedge mapping from instrument snapshot %s", day)
-	return instruments.BuildHedgeMapping(insts, pairs, claims), nil
+	return instruments.BuildHedgeMapping(insts, pairs, claims, cfg.Hedge.QuoteEquivalents), nil
 }
 
 func schedule(source config.Source) fees.Schedule {
@@ -317,10 +329,10 @@ func latestBooks(ctx context.Context, db *store.Store, cfg config.Config,
 // pins it to config.yaml's strategy block, so the two cannot drift apart.
 func baseParams(notional, holdDays float64) strategy.Params {
 	return strategy.Params{
-		MinRatePer8hBps: 0.5, PersistencePeriods: 3, MinNetAPRFrac: 0.02,
+		MinRatePer8hBps: 0.3, PersistencePeriods: 6, MinNetAPRFrac: 0.02,
 		NotionalQuote: notional, HoldingDays: holdDays,
-		ExitNetAPRFrac: 0.005, ExitPersistencePeriods: 3,
-		ExitNegativeMinBps: 0, ExitNegativePeriods: 1, ExitNegativeCumCostFrac: 0,
+		ExitNetAPRFrac: 0, ExitPersistencePeriods: 12,
+		ExitNegativeMinBps: 2.0, ExitNegativePeriods: 2, ExitNegativeCumCostFrac: 0.25,
 		MaxBasisPct: 1.0, MaxBasisWidenPct: 0.5,
 	}
 }

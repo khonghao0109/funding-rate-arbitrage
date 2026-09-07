@@ -56,9 +56,57 @@ type Config struct {
 	Scanner  Scanner  `yaml:"scanner"`
 	Storage  Storage  `yaml:"storage"`
 	Depth    Depth    `yaml:"depth"`
+	Hedge    Hedge    `yaml:"hedge"`
 	Strategy Strategy `yaml:"strategy"`
 	Symbols  []Symbol `yaml:"symbols"`
 	Sources  []Source `yaml:"sources"`
+}
+
+// Hedge is what the operator DECLARES about pairing a spot leg with a perp
+// leg. Today it holds one decision, and that decision is a risk decision, not
+// a fact about the venues: which quote assets may stand in for each other.
+//
+// instruments.BuildHedgeMapping refuses to pair legs whose venue-declared
+// quotes differ, because a USD-quoted perp against a USDT spot is delta-neutral
+// in the coin and OPEN in USDT/USD. That exposure is real (USDT has traded
+// several percent off par) and nothing in this project prices it. Writing the
+// equivalence here is how an operator takes it on knowingly; leaving the block
+// out keeps the older, stricter behaviour.
+type Hedge struct {
+	// QuoteEquivalents groups quote assets that may hedge each other, e.g.
+	// [[USD, USDT]]. Case-insensitive; an asset may appear in at most one
+	// group. Empty (or absent) means only identical quotes pair.
+	QuoteEquivalents [][]string `yaml:"quote_equivalents"`
+}
+
+// validate refuses a declaration that could not mean anything: a group needs
+// two distinct assets to be an equivalence at all, and an asset in two groups
+// would make "equivalent" non-transitive — USD≡USDT and USDT≡USDC would leave
+// USD and USDC related through USDT but not to each other, which is a rule
+// nobody could read off the file.
+func (h Hedge) validate() error {
+	seen := make(map[string]int, len(h.QuoteEquivalents)*2)
+	for i, group := range h.QuoteEquivalents {
+		if len(group) < 2 {
+			return fmt.Errorf("hedge.quote_equivalents[%d] lists %d asset(s); an equivalence needs at least 2", i, len(group))
+		}
+		inGroup := make(map[string]bool, len(group))
+		for _, asset := range group {
+			asset = strings.ToUpper(strings.TrimSpace(asset))
+			if asset == "" {
+				return fmt.Errorf("hedge.quote_equivalents[%d] has an empty asset name", i)
+			}
+			if inGroup[asset] {
+				return fmt.Errorf("hedge.quote_equivalents[%d] lists %s twice", i, asset)
+			}
+			if j, dup := seen[asset]; dup {
+				return fmt.Errorf("%s appears in hedge.quote_equivalents[%d] and [%d]; an asset belongs to at most one group", asset, j, i)
+			}
+			inGroup[asset] = true
+			seen[asset] = i
+		}
+	}
+	return nil
 }
 
 // Strategy is the live signal evaluator's tuning (step 3.5) — the same numbers
@@ -322,6 +370,14 @@ func (c *Config) applyDefaults() {
 	for i := range c.Symbols {
 		c.Symbols[i].Quote = strings.ToUpper(c.Symbols[i].Quote)
 	}
+	// Same reason as the source quotes above: the mapping compares assets
+	// case-insensitively, but every message printed from this declaration
+	// should read in the one casing the rest of the file uses.
+	for i := range c.Hedge.QuoteEquivalents {
+		for j := range c.Hedge.QuoteEquivalents[i] {
+			c.Hedge.QuoteEquivalents[i][j] = strings.ToUpper(strings.TrimSpace(c.Hedge.QuoteEquivalents[i][j]))
+		}
+	}
 }
 
 // storageDefaults are the periods used when the block names none. They are the
@@ -491,6 +547,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Strategy.validate(c.Depth); err != nil {
+		return err
+	}
+	if err := c.Hedge.validate(); err != nil {
 		return err
 	}
 

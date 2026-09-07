@@ -332,7 +332,7 @@ func startInstrumentRegistry(ctx context.Context, cfg config.Config, s *scanner.
 	}
 	var lastMapping instruments.HedgeMapping
 	go registry.Run(ctx, func() {
-		mapping := instruments.BuildHedgeMapping(registry.Snapshot(), pairs, claims)
+		mapping := instruments.BuildHedgeMapping(registry.Snapshot(), pairs, claims, cfg.Hedge.QuoteEquivalents)
 		// Pushed on EVERY refresh, including one that changed nothing: the log
 		// below is deduplicated for a human reading it, but the scanner's copy
 		// is state and must not depend on whether the last refresh happened to
