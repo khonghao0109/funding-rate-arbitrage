@@ -144,10 +144,43 @@ type Result struct {
 	// its return by a 6-month window halves its APR against Binance's and then
 	// ranks on that, which is the "a year against a quarter" comparison this
 	// package warns about, embodied in the number itself.
-	CoveredDays     float64
+	CoveredDays float64
+
+	// TotalReturnFrac and RealizedAPRFrac are fractions of NOTIONAL, which is
+	// the right denominator for "did this strategy make money" and the WRONG
+	// one for "does leverage help". Notional does not change when margin is
+	// switched on, so these two measure only what leverage COSTS — the extra
+	// round trips its liquidations force — and can never show what it buys.
+	// Reading a falling APR across a leverage sweep as "leverage is monotone
+	// bad" is reading the wrong denominator; that error was made here on
+	// 2026-09-07 and is what *OnCapitalFrac below exists to prevent.
 	TotalReturnFrac float64
 	RealizedAPRFrac float64
 	MaxDrawdownFrac float64
+
+	// CapitalPerNotional is what one unit of notional actually ties up.
+	//
+	// A delta-neutral funding position needs BOTH legs at full size, and the
+	// spot leg cannot be levered — buying N of coin costs N, and spot margin
+	// borrow is a cost this project excludes by name. So the capital is
+	// N (spot) + f·N (perp margin) = N·(1+f), and f is 1 when the margin
+	// model is off, because an unlevered short posts its full notional.
+	//
+	// The consequence is the whole answer to "should we use leverage here":
+	// the ceiling on capital efficiency is 2/(1+f), which tends to 2.00x as
+	// f→0. NOT 10x at 10x leverage. Levering one of two equal legs can at
+	// most halve the capital, whatever the leverage number says.
+	CapitalPerNotional float64
+
+	// TotalReturnOnCapitalFrac and RealizedAPROnCapitalFrac are the same two
+	// figures over CapitalPerNotional — the denominator a capital-allocation
+	// decision needs. They do NOT deduct the venue liquidation fee (roughly
+	// the maintenance margin left on the position, 0.30-0.50% of notional at
+	// the four verified venues), and they cannot price the window in which a
+	// liquidated position is naked long spot. Both are named in the
+	// assumptions block; neither is folded into a number here.
+	TotalReturnOnCapitalFrac float64
+	RealizedAPROnCapitalFrac float64
 
 	// RoundTripCostPct is the ONE cost every trade in this run was charged,
 	// and CostBookSampledAtMs is when the (older of the two) book it was
@@ -268,9 +301,17 @@ func assumptions(series Series, params strategy.Params) []string {
 				"tới giá thanh lý, và một cú thanh lý được phát hiện từ ĐỈNH nến 1h chứ không phải giá đóng — "+
 				"short chết ở cú nhọn, giá đóng bước qua nó. CHƯA mô hình hoá: funding đã thu vào tài khoản "+
 				"perp (sẽ đẩy giá thanh lý ra xa), cross-margin, nạp thêm ký quỹ, và cơ chế thanh lý từng "+
-				"phần kèm phí của sàn — nên mô hình này nổ SỚM hơn thực tế, là hướng an toàn. Số ghi ở lệnh "+
-				"bị thanh lý chỉ là vòng phí, chưa gồm phần ký quỹ mất.",
-			params.PerpMarginFrac*100, 1/params.PerpMarginFrac, params.MinLiquidationBufferPct))
+				"phần kèm phí của sàn — nên mô hình này nổ SỚM hơn thực tế, là hướng an toàn. Chi phí một cú "+
+				"thanh lý ghi ở đây là VÒNG PHÍ: phần ký quỹ perp mất KHÔNG trừ riêng vì thanh lý xảy ra khi "+
+				"giá tăng và chân spot lãi gần đúng bằng nó — trừ cả hai là đếm hai lần. Chưa gồm phí thanh "+
+				"lý của sàn (≈%.2f%% notional mỗi lần) và khoảng long spot TRẦN TRỤI từ lúc perp bị đóng tới "+
+				"lúc bán được spot, thứ không mô hình nào ở đây đo được. Mọi lợi nhuận báo cáo tính trên "+
+				"NOTIONAL, không phải trên vốn: notional không đổi khi bật đòn bẩy, nên nó đo cái GIÁ của "+
+				"đòn bẩy chứ không đo cái LỢI — chân spot vẫn phải mua đủ N, vốn là N·(1+%.2f), và trần của "+
+				"toàn bộ lợi ích vốn là %.2fx.",
+			params.PerpMarginFrac*100, 1/params.PerpMarginFrac, params.MinLiquidationBufferPct,
+			series.PerpMargin.MaintenanceMarginFrac*100, params.PerpMarginFrac,
+			2/(1+params.PerpMarginFrac)))
 		if !series.PerpMargin.Verified {
 			out = append(out, fmt.Sprintf(
 				"⚠ Biểu ký quỹ duy trì của %s CHƯA XÁC MINH: mô hình từ chối suy ra giá thanh lý, nên điều "+
@@ -507,8 +548,10 @@ func Run(series Series, window Window, params strategy.Params) Result {
 					}
 					trade.ExitReasonVI = fmt.Sprintf(
 						"THANH LÝ: đỉnh %.2f chạm giá thanh lý %.2f của chân perp (vào %.2f, ký quỹ %.1f%%, "+
-							"duy trì %.4f%%). Đây là MẤT VỐN — chi phí ghi ở đây chỉ là vòng phí, chưa gồm "+
-							"phần ký quỹ bị mất và phí thanh lý của sàn.",
+							"duy trì %.4f%%). Đây là MẤT HEDGE, không phải mất vốn: phải giá TĂNG mới thanh "+
+							"lý được, nên chân spot lãi gần đúng bằng phần ký quỹ perp mất và vị thế gộp vẫn "+
+							"phẳng ngay lúc đó. Chi phí ghi ở đây là vòng phí; chưa gồm phí thanh lý của sàn "+
+							"và khoảng long spot trần trụi cho tới khi bán được chân spot.",
 						high, state.LiquidationPriceQuote, position.PerpEntryPriceQuote,
 						params.PerpMarginFrac*100, series.PerpMargin.MaintenanceMarginFrac*100)
 					out.Trades = append(out.Trades, trade)
@@ -557,6 +600,14 @@ func Run(series Series, window Window, params strategy.Params) Result {
 	}
 
 	out.TotalReturnFrac = equity
+	// The perp leg posts its full notional when no margin model is configured;
+	// f=0 there would claim the short was free.
+	marginFrac := params.PerpMarginFrac
+	if marginFrac <= 0 {
+		marginFrac = 1
+	}
+	out.CapitalPerNotional = 1 + marginFrac
+	out.TotalReturnOnCapitalFrac = out.TotalReturnFrac / out.CapitalPerNotional
 	// Annualized over the span the corpus COVERED inside the window — first to
 	// last in-window settlement plus one interval, so a fully covered window
 	// reads as its full length — never over the window that was asked for.
@@ -564,6 +615,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 	out.CoveredDays = float64(coveredMs) / (msPerSecond * secPerDay)
 	if out.CoveredDays > 0 {
 		out.RealizedAPRFrac = out.TotalReturnFrac * daysPerYear / out.CoveredDays
+		out.RealizedAPROnCapitalFrac = out.RealizedAPRFrac / out.CapitalPerNotional
 	}
 	out.FundingReversals = signReversals(usable, window)
 	out.PeriodsInPosition = paidPeriods

@@ -2008,17 +2008,60 @@ Biểu chưa xác minh thì từ chối trả giá thanh lý, không mặc đị
 
 | đòn bẩy | thanh lý ở | tổng 16 chuỗi | lệnh/chuỗi | số lần thanh lý |
 |---|---|---|---|---|
-| tắt | — | **+9,54%** | 1,75 | 0 |
-| 2x | +49,3% | +9,20% | 1,81 | 2 |
-| 3x | +32,3% | +8,18% | 2,00 | 2 |
-| 5x | +19,4% | +6,88% | 2,19 | 4 |
-| 10x | +9,5% | −2,76% | 3,88 | **18** |
-| 20x | +4,5% | −19,28% | 6,75 | 21 |
+| tắt | — | **+9,49%** | 1,75 | 0 |
+| 2x | +49,3% | +9,16% | 1,81 | 2 |
+| 3x | +32,3% | +8,13% | 2,00 | 2 |
+| 5x | +19,4% | +6,83% | 2,19 | 4 |
+| 10x | +9,5% | −2,83% | 3,88 | **18** |
+| 20x | +4,5% | −19,35% | 6,75 | 21 |
 
-Đơn điệu — không có điểm tối ưu ở giữa. Và bảng này còn **nhẹ hơn** thực tế:
-đường equity chỉ trừ vòng phí khi bị thanh lý, chưa trừ phần ký quỹ mất (18 ×
-10% = 180% vốn một vị thế, không ghi ở đâu). Dùng đòn bẩy ở chân perp để "giải
-phóng vốn" là sai về mặt số học trên corpus này. Ship ở 0.
+**Bảng trên có mẫu số là NOTIONAL, và notional không đổi khi bật đòn bẩy** —
+nên nó đo được *cái giá* của đòn bẩy (các vòng phí do thanh lý ép ra) và không
+bao giờ đo được *cái lợi*. Lần đầu công bố, bảng này bị đọc là "đơn điệu, không
+có điểm tối ưu ở giữa"; đó là đọc sai mẫu số, và người dùng chỉ ra ngày
+2026-09-07.
+
+Lợi ích của đòn bẩy nằm ở **vốn**, và chân spot thì không đòn bẩy được: vẫn
+phải mua đủ N để hedge. Vốn = N + f·N, nên **trần của toàn bộ lợi ích là
+2,00× khi f→0** — không phải 10× ở đòn bẩy 10×. Quy về vốn, và trừ thêm phí
+thanh lý của sàn (≈ phần ký quỹ duy trì còn lại, 0,30–0,50% notional) mà đường
+equity chưa trừ:
+
+| Đòn bẩy | /notional | Vốn | /VỐN | Sau phí thanh lý | So với tắt | Trần lý thuyết |
+|---|---|---|---|---|---|---|
+| tắt | +9,49% | 2,00× | +4,74% | +4,74% | 1,00× | 1,00× |
+| 2x | +9,16% | 1,50× | +6,10% | **+5,57%** | **1,17×** | 1,33× |
+| 3x | +8,13% | 1,33× | +6,12% | +5,51% | 1,16× | 1,50× |
+| 5x | +6,83% | 1,20× | +5,69% | +4,44% | 0,94× | 1,67× |
+| 10x | −2,83% | 1,10× | −2,58% | −8,60% | âm | 1,82× |
+| 20x | −19,35% | 1,05× | −18,43% | −25,28% | âm | 1,90× |
+
+Toàn bộ phần thưởng là **+0,83 điểm ở 2x** — 1,17× trên một trần 1,33× — và nó
+đã âm từ 5x. Đổi lại: 0 → 2 → 4 → **18** → 21 lần thanh lý.
+
+**Phần ký quỹ mất khi bị thanh lý KHÔNG bị trừ, và đó là cố ý.** Một bản trước
+của mục này nói ngược lại ("18 × 10% = 180% vốn, không ghi ở đâu") và sai:
+short chỉ bị thanh lý khi giá **tăng**, nên đúng lúc đó chân spot đang lãi gần
+đúng bằng phần ký quỹ chân perp mất — chính xác là N(f−m)/(1+m) so với ký quỹ
+f·N. Vị thế gộp vẫn phẳng ngay tại giá thanh lý. Trừ ký quỹ mà không cộng lãi
+spot là đếm cùng một cú giá hai lần, và đó là lý do engine chỉ tính vòng phí.
+
+Cái thật sự mất là (a) phí thanh lý — đã ở cột "sau phí" — và (b) **hedge biến
+mất**: từ giây đó vị thế là long spot trần trụi cho tới khi bán được chân spot,
+và không mô hình nào ở đây đo được khoảng đó. Đó mới là lý do không dùng, chứ
+không phải bảng số.
+
+Ship ở 0. Muốn hiệu quả vốn thật thì để **cả hai chân cùng một sàn** dùng
+unified/portfolio margin — lãi spot bù lỗ perp trong cùng tài khoản, nên đạt
+gần trần 2× mà không thêm rủi ro thanh lý. Đó là quyết định **thực thi ở phase
+4**, không phải tham số chiến lược; hiện chỉ `binance_futures ← binance_spot`
+có cả hai chân cùng sàn, sáu cặp còn lại đều ghép chân spot ở binance.
+
+`Result` giờ mang `CapitalPerNotional`, `TotalReturnOnCapitalFrac` và
+`RealizedAPROnCapitalFrac`, và CSV có ba cột tương ứng, để lần đọc sau không
+lặp lại lỗi mẫu số. Bản tóm tắt in cả hai dòng, không thay dòng này bằng dòng
+kia: notional trả lời "chiến lược có lãi không", vốn trả lời "có nên dùng đòn
+bẩy không".
 
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.

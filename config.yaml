@@ -224,22 +224,48 @@ strategy:
   # +9,4%, 3x ở +32%, 1x ở +99%.
   #
   # ĐO ĐƯỢC 2026-09-07, 12 tháng, trên CÙNG 16 chuỗi mà lượt có đòn bẩy mở
-  # được (binance và hyperliquid bị từ chối vì biểu ký quỹ chưa xác minh):
+  # được (binance và hyperliquid bị từ chối vì biểu ký quỹ chưa xác minh).
   #
-  #   đòn bẩy   thanh lý ở   tổng 16 chuỗi   lệnh/chuỗi   số lần thanh lý
-  #   tắt       —            +9,54%          1,75         0
-  #   2x        +49,3%       +9,20%          1,81         2
-  #   3x        +32,3%       +8,18%          2,00         2
-  #   5x        +19,4%       +6,88%          2,19         4
-  #   10x       +9,5%        −2,76%          3,88         18
-  #   20x       +4,5%        −19,28%         6,75         21
+  # ĐỌC BẢNG CHO ĐÚNG — hai mẫu số, hai câu hỏi khác nhau:
+  #  · trên NOTIONAL trả lời "chiến lược có lãi không". Notional KHÔNG đổi khi
+  #    bật đòn bẩy, nên cột này đo được CÁI GIÁ của đòn bẩy (các vòng phí do
+  #    thanh lý ép ra) và KHÔNG BAO GIỜ đo được cái LỢI.
+  #  · trên VỐN trả lời "có nên dùng đòn bẩy không". Chân spot KHÔNG đòn bẩy
+  #    được — vẫn phải mua đủ N để hedge — nên vốn = N + f·N, và trần của toàn
+  #    bộ lợi ích là 2,00× khi f→0. Không phải 10× ở đòn bẩy 10×.
   #
-  # Đơn điệu: đòn bẩy càng cao lợi nhuận càng thấp, không có điểm tối ưu ở
-  # giữa. Và bảng này còn NHẸ hơn thực tế — đường equity chỉ trừ vòng phí khi
-  # bị thanh lý, chưa trừ phần ký quỹ mất: 18 lần × 10% notional = 180% vốn
-  # một vị thế, không ghi ở đâu cả.
-  # Kết luận: trên corpus này, dùng đòn bẩy ở chân perp để "giải phóng vốn"
-  # là sai về mặt số học. Giữ 0.
+  # Cột "sau phí" trừ thêm phí thanh lý của sàn (≈ phần ký quỹ duy trì còn lại,
+  # 0,30–0,50% notional tuỳ sàn) mà đường equity chưa trừ.
+  #
+  #   đòn bẩy  thanh lý ở  /notional   vốn   /VỐN   sau phí   vs tắt   trần   liq
+  #   tắt      —             +9,49%   2,00×  +4,74%  +4,74%   1,00×   1,00×    0
+  #   2x       +49,3%        +9,16%   1,50×  +6,10%  +5,57%   1,17×   1,33×    2
+  #   3x       +32,3%        +8,13%   1,33×  +6,12%  +5,51%   1,16×   1,50×    2
+  #   5x       +19,4%        +6,83%   1,20×  +5,69%  +4,44%   0,94×   1,67×    4
+  #   10x      +9,5%         −2,83%   1,10×  −2,58%  −8,60%     âm    1,82×   18
+  #   20x      +4,5%        −19,35%   1,05× −18,43% −25,28%     âm    1,90×   21
+  #
+  # Toàn bộ phần thưởng là +0,83 điểm ở 2x — 1,17× trên một trần 1,33× — và nó
+  # đã âm từ 5x. Đổi lại: 0 → 2 → 4 → 18 → 21 lần thanh lý.
+  #
+  # KHÔNG trừ phần ký quỹ mất khi bị thanh lý, và đó là CỐ Ý. Một bản trước của
+  # ghi chú này nói ngược lại ("18 × 10% = 180% vốn, không ghi ở đâu") và SAI:
+  # short chỉ bị thanh lý khi giá TĂNG, nên đúng lúc đó chân spot đang lãi gần
+  # đúng bằng phần ký quỹ chân perp mất — chính xác là N(f−m)/(1+m) so với ký
+  # quỹ f·N. Vị thế gộp vẫn phẳng. Trừ ký quỹ mà không cộng lãi spot là đếm
+  # cùng một cú giá hai lần.
+  # Cái THẬT SỰ mất là (a) phí thanh lý, đã ở cột "sau phí", và (b) HEDGE BIẾN
+  # MẤT — từ giây đó vị thế là long spot trần trụi cho tới khi bán được, và
+  # không con số nào ở đây đo khoảng đó.
+  #
+  # Kết luận: thưởng tối đa 1,17×, đổi bằng một rủi ro không đo được. Giữ 0.
+  # Muốn hiệu quả vốn thật thì để CẢ HAI CHÂN cùng một sàn dùng unified/
+  # portfolio margin — lãi spot bù lỗ perp trong cùng tài khoản, nên đạt gần
+  # trần 2× mà không thêm rủi ro thanh lý. Đó là quyết định THỰC THI ở phase 4,
+  # không phải tham số chiến lược, và hiện chỉ binance có cả hai chân cùng sàn.
+  #
+  # (Số ở đây đo lại 16:49 với sổ lệnh mới hơn bản 16:34; mọi ô lệch ≤0,07
+  # điểm — đúng độ nhạy "một phép đo sổ giữ cố định" mà CLAUDE.md đã ghi.)
   perp_margin_frac: 0
   min_liquidation_buffer_pct: 0
 

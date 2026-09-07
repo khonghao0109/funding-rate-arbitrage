@@ -33,6 +33,7 @@ var csvHeader = []string{
 	"round_trip_cost_pct", "cost_book_sampled_at_ms",
 	"settlements", "trades", "periods_in_position",
 	"total_return_frac", "realized_apr_frac", "max_drawdown_frac",
+	"capital_per_notional_frac", "total_return_on_capital_frac", "realized_apr_on_capital_frac",
 	"funding_reversals", "positive_funding_period_share", "dropped_special",
 	"basis_not_evaluable", "basis_evaluable", "entered_without_basis", "liquidations",
 	"perp_margin_frac", "min_liquidation_buffer_pct",
@@ -59,6 +60,7 @@ func WriteCSV(w io.Writer, results []Result) error {
 			f(r.RoundTripCostPct), strconv.FormatInt(r.CostBookSampledAtMs, 10),
 			strconv.Itoa(r.Settlements), strconv.Itoa(len(r.Trades)), strconv.Itoa(r.PeriodsInPosition),
 			f(r.TotalReturnFrac), f(r.RealizedAPRFrac), f(r.MaxDrawdownFrac),
+			f(r.CapitalPerNotional), f(r.TotalReturnOnCapitalFrac), f(r.RealizedAPROnCapitalFrac),
 			strconv.Itoa(r.FundingReversals), f(r.PositiveFundingPeriodShare), strconv.Itoa(r.DroppedSpecial),
 			strconv.Itoa(r.BasisNotEvaluable), strconv.Itoa(r.BasisEvaluable), strconv.Itoa(r.EnteredWithoutBasis),
 			strconv.Itoa(r.Liquidations),
@@ -87,6 +89,15 @@ func (r Result) SummaryLines() []string {
 			r.Symbol, r.PerpSource, r.SpotSource, windowDays, r.CoveredDays, r.Settlements, r.RoundTripCostPct),
 		fmt.Sprintf("  Tổng lợi nhuận  %+.4f%% trên notional  ·  APR thực %+.2f%% (annualize trên %.0f ngày ĐÃ PHỦ)",
 			r.TotalReturnFrac*100, r.RealizedAPRFrac*100, r.CoveredDays),
+		// The same figures over the capital both legs actually tie up. Reported
+		// beside the notional ones, never instead of them: notional answers "did
+		// the strategy make money", capital answers "was this the best use of the
+		// money", and a leverage comparison read off the notional line is reading
+		// a denominator that does not move when leverage does.
+		fmt.Sprintf("  Trên VỐN        %+.4f%%  ·  APR %+.2f%%  (vốn = %.2f× notional: chân spot KHÔNG "+
+			"đòn bẩy được, trần hiệu quả vốn là %.2f×)",
+			r.TotalReturnOnCapitalFrac*100, r.RealizedAPROnCapitalFrac*100,
+			r.CapitalPerNotional, 2/r.CapitalPerNotional),
 		fmt.Sprintf("  Max drawdown    %.4f%%  ·  funding đảo chiều %d lần",
 			r.MaxDrawdownFrac*100, r.FundingReversals),
 		fmt.Sprintf("  Lệnh            %d  ·  %d kỳ nắm giữ  ·  %.1f%% số kỳ funding DƯƠNG (thô — không phải 'có lãi')",

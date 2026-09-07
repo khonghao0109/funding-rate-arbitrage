@@ -1,6 +1,7 @@
 package backtest
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -79,8 +80,25 @@ func TestRun_LiquidationIsFoundInTheCANDLEHIGHNotTheClose(t *testing.T) {
 		t.Errorf("the trade does not say it was liquidated: %+v", got.Trades)
 	}
 	// A liquidation is not a chosen exit and must be countable apart from one.
-	if !strings.Contains(got.Trades[0].ExitReasonVI, "MẤT VỐN") {
-		t.Error("the reason must say this is a capital loss, not an ordinary exit")
+	//
+	// And it must name the RIGHT loss. This assertion first read "MẤT VỐN" — a
+	// capital loss — which is wrong and was corrected on 2026-09-07: a short is
+	// only liquidated when the price RISES, and at that same instant the spot
+	// leg holds an unrealized gain of very nearly the margin the perp leg lost
+	// (exactly N(f−m)/(1+m) against a margin of f·N). The combined position is
+	// still flat. Charging the margin as a loss would deduct it without
+	// crediting the spot side, i.e. count the same move twice — which is why
+	// the engine charges the round trip and nothing else.
+	//
+	// What is really gone is the HEDGE: from that instant the position is naked
+	// long spot until it can be sold, and no model here prices that window.
+	reason := got.Trades[0].ExitReasonVI
+	if !strings.Contains(reason, "MẤT HEDGE") {
+		t.Errorf("the reason must name the loss of the hedge, not an ordinary exit: %s", reason)
+	}
+	if strings.Contains(reason, "MẤT VỐN") {
+		t.Errorf("a liquidation is not a capital loss to the COMBINED position; "+
+			"the spot leg gained what the perp margin lost: %s", reason)
 	}
 }
 
@@ -105,7 +123,17 @@ func TestRun_MarginModelIsOffByDefault(t *testing.T) {
 func TestRun_AMarginRunNamesWhatItDoesNotModel(t *testing.T) {
 	series, window := marginSeries(t, nil)
 	got := Run(series, window, marginParams())
-	for _, want := range []string{"MÔ HÌNH KÝ QUỸ", "ĐỈNH nến", "CHƯA mô hình hoá", "funding đã thu"} {
+	// "NOTIONAL" and "trần" are load-bearing: every return this engine reports
+	// is a fraction of notional, and notional does not change when leverage is
+	// switched on — so the figures measure what leverage COSTS and can never
+	// measure what it buys. The benefit lives in the capital, where the spot
+	// leg is unleveraged and the same size, so the whole ceiling is 2.00x.
+	// A reader who takes the reported APR as the answer to "does leverage help"
+	// is reading the wrong denominator; the assumptions block has to say so.
+	for _, want := range []string{
+		"MÔ HÌNH KÝ QUỸ", "ĐỈNH nến", "CHƯA mô hình hoá", "funding đã thu",
+		"TRẦN TRỤI", "NOTIONAL", "trần",
+	} {
 		if !containsAny(got.AssumptionsVI, want) {
 			t.Errorf("the assumptions block is missing %q:\n%s", want, strings.Join(got.AssumptionsVI, "\n"))
 		}
@@ -135,5 +163,86 @@ func TestRun_ASpikeBeforeTheEntryDoesNotLiquidate(t *testing.T) {
 	got := Run(series, window, marginParams())
 	if got.Liquidations != 0 {
 		t.Errorf("a spike before the position existed liquidated it: %d", got.Liquidations)
+	}
+}
+
+// The denominator that answers "does leverage help".
+//
+// This test exists because the leverage sweep of 2026-09-07 was read off
+// TotalReturnFrac and concluded "leverage is monotone bad, no optimum in the
+// middle". That reading was wrong: notional is constant across a leverage
+// sweep, so those figures capture leverage's cost (the extra round trips its
+// liquidations force) and structurally cannot capture its benefit, which is
+// entirely in the capital.
+//
+// The capital is what pins the answer down. A delta-neutral position needs
+// BOTH legs at full size and the spot leg cannot be levered — buying N of coin
+// costs N — so capital is N·(1+f) and the whole ceiling is 2/(1+f), which
+// approaches 2.00x and never reaches 10x however high the leverage goes.
+func TestRun_CapitalDenominatorIsBothLegsNotJustThePerpMargin(t *testing.T) {
+	for _, tc := range []struct {
+		nameVI      string
+		marginFrac  float64
+		wantCapital float64
+		wantCeiling float64
+	}{
+		// Off is not "free": an unlevered short posts its full notional, so the
+		// position ties up 2N and the ceiling on improving that is 1.00x.
+		{"tắt", 0, 2.00, 1.00},
+		{"2x", 0.5, 1.50, 4.0 / 3.0},
+		{"10x", 0.1, 1.10, 2.0 / 1.1},
+		{"20x", 0.05, 1.05, 2.0 / 1.05},
+	} {
+		t.Run(tc.nameVI, func(t *testing.T) {
+			series, window := marginSeries(t, nil)
+			p := marginParams()
+			p.PerpMarginFrac = tc.marginFrac
+			got := Run(series, window, p)
+			if !got.OK {
+				t.Fatalf("Run: %s", got.ReasonVI)
+			}
+			if math.Abs(got.CapitalPerNotional-tc.wantCapital) > 1e-9 {
+				t.Errorf("CapitalPerNotional = %v, want %v — the spot leg is unlevered and the "+
+					"same size as the perp, so capital is N·(1+f), never f·N alone",
+					got.CapitalPerNotional, tc.wantCapital)
+			}
+			if ceiling := 2 / got.CapitalPerNotional; math.Abs(ceiling-tc.wantCeiling) > 1e-9 {
+				t.Errorf("capital-efficiency ceiling = %.4fx, want %.4fx", ceiling, tc.wantCeiling)
+			}
+			// The two denominators must not be confused for one another.
+			want := got.TotalReturnFrac / tc.wantCapital
+			if math.Abs(got.TotalReturnOnCapitalFrac-want) > 1e-12 {
+				t.Errorf("TotalReturnOnCapitalFrac = %v, want %v", got.TotalReturnOnCapitalFrac, want)
+			}
+			if got.RealizedAPRFrac != 0 &&
+				math.Abs(got.RealizedAPROnCapitalFrac-got.RealizedAPRFrac/tc.wantCapital) > 1e-12 {
+				t.Errorf("RealizedAPROnCapitalFrac = %v, want %v",
+					got.RealizedAPROnCapitalFrac, got.RealizedAPRFrac/tc.wantCapital)
+			}
+		})
+	}
+}
+
+// Twenty times the leverage does not buy twenty times the capital efficiency,
+// and the gap is not a detail — it is the reason the whole question has a
+// boring answer. One leg of two can at most be removed from the capital.
+func TestRun_LeverageCannotBuyMoreThanHalfTheCapitalBack(t *testing.T) {
+	series, window := marginSeries(t, nil)
+	base := marginParams()
+	base.PerpMarginFrac = 0
+	unlevered := Run(series, window, base)
+
+	for _, frac := range []float64{0.5, 0.2, 0.1, 0.05, 0.01} {
+		p := marginParams()
+		p.PerpMarginFrac = frac
+		got := Run(series, window, p)
+		if !got.OK {
+			t.Fatalf("Run at f=%v: %s", frac, got.ReasonVI)
+		}
+		if ratio := unlevered.CapitalPerNotional / got.CapitalPerNotional; ratio >= 2 {
+			t.Errorf("f=%v claims %.3fx capital efficiency; levering ONE of two equal legs "+
+				"cannot reach 2x, so the model has stopped charging for the spot leg",
+				frac, ratio)
+		}
 	}
 }

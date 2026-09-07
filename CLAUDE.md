@@ -710,13 +710,35 @@ phase 1.
   0.5% (≤$1M). **Binance is `verified: false` because its `leverageBracket`
   needs an API key**, and Hyperliquid's is derived per coin from `maxLeverage`
   rather than published — both are refused at entry rather than assumed free.
-  **Measured, and the result is one-way**: on the same 16 series over 12 months,
-  no leverage sums +9.54% with 0 liquidations, 3× +8.18% with 2, 10× −2.76%
-  with **18**, 20× −19.28% with 21. Monotone — there is no optimum in the
-  middle. And it FLATTERS leverage: the equity curve charges only the round trip
-  on a liquidation, not the posted margin (18 × 10% = 180% of a notional,
-  unrecorded). Using leverage on the perp leg to free capital is arithmetically
-  wrong on this corpus. Ships at 0.
+  **Measured on the same 16 series over 12 months, and READ WITH THE RIGHT
+  DENOMINATOR** — the first reading of this table got it wrong and the user
+  caught it. Per NOTIONAL: no leverage +9.49% / 0 liquidations, 2× +9.16% / 2,
+  3× +8.13% / 2, 5× +6.83% / 4, 10× −2.83% / **18**, 20× −19.35% / 21. That
+  looks monotone, but **notional does not change when leverage is switched on**,
+  so those figures measure only what leverage COSTS (the round trips its
+  liquidations force) and structurally cannot measure what it buys. The benefit
+  is in the CAPITAL, and **the spot leg cannot be levered** — hedging N still
+  costs N — so capital is N·(1+f) and **the whole ceiling is 2.00× as f→0, not
+  10× at 10×**. Per capital, after also charging the venue liquidation fee
+  (≈ the maintenance margin left, 0.30–0.50% of notional): off +4.74%, 2×
+  **+5.57%**, 3× +5.51%, 5× +4.44%, 10× −8.60%, 20× −25.28%. So the entire
+  prize is **+0.83pp at 2× (1.17× against a 1.17-to-1.33× ceiling)** and it is
+  negative by 5×, bought with 0 → 2 → 4 → 18 → 21 liquidations.
+  The lost margin is deliberately NOT charged, and the earlier claim that
+  omitting it "FLATTERS leverage by 180% of a notional" was **wrong**: a short
+  is only liquidated when the price RISES, so at that instant the spot leg holds
+  an unrealized gain of N(f−m)/(1+m) against a margin of f·N — the combined
+  position is still flat, and deducting the margin without crediting the spot
+  side counts one move twice. What is really lost is the venue's liquidation fee
+  and **the hedge itself**: naked long spot until it can be sold, which nothing
+  here prices. Ships at 0 — the reason is the unpriced window, not the table.
+  Real capital efficiency comes from putting BOTH legs on ONE venue under
+  unified/portfolio margin (the spot gain offsets the perp loss inside one
+  account, reaching near the 2× ceiling with no added liquidation risk); that is
+  a phase-4 EXECUTION decision, and only `binance_futures ← binance_spot` is
+  same-venue today. `backtest.Result` now carries `CapitalPerNotional`,
+  `TotalReturnOnCapitalFrac` and `RealizedAPROnCapitalFrac`, reported BESIDE the
+  notional figures and never instead of them.
 - ~~The basis exit cannot be evaluated in a backtest.~~ Fixed 2026-09-07 by
   `price_history`: hourly candles for all 8 tradable sources, backfilled 12
   months (`go run ./cmd/backfill -prices`). Unlike depth, candles CAN be
