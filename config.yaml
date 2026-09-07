@@ -118,6 +118,25 @@ depth:
 # `base` và `quote` được khai tường minh, không suy ra từ hậu tố chuỗi: suy ra
 # kiểu đó là cách "DOGEUSDT" trở thành base "DOG". Chúng dùng để dựng ký hiệu
 # riêng của từng sàn qua `symbol_format` bên dưới.
+# ─── Bước 3.5: bộ đánh giá tín hiệu SỐNG (chế độ chỉ-ghi-nhật-ký) ───────────
+# Cùng bộ tham số cmd/backtest dùng mặc định, để nhật ký tín hiệu sống và
+# backtest so được với nhau qua CÙNG cửa sổ. Không đặt lệnh: đây là vị thế
+# GIẤY, tiến trình không giữ credential. Mọi ngưỡng là BẮT BUỘC khi bật —
+# không có mặc định ngầm, vì một ngưỡng code tự điền là ngưỡng không ai chọn.
+strategy:
+  enabled: true
+  evaluate_every_min: 10      # funding settle nhanh nhất là 1h; 10 phút là dư
+  max_book_age_min: 120       # phải ≥ depth.refresh_every_min, nếu không mọi fill bị coi là cũ
+  min_rate_per_8h_bps: 0.5    # ngưỡng rate ĐÃ SETTLE, quy về 8h để so chéo sàn
+  persistence_periods: 3      # số mốc settle liên tiếp phải trên ngưỡng
+  min_net_apr_frac: 0.02      # APR RÒNG tối thiểu để vào (0.02 = 2%)
+  notional_quote: 50000       # vốn mỗi vị thế giấy — slippage tính theo đúng size này
+  holding_days: 30            # thời gian giữ dự kiến, để khấu hao chi phí vào/ra
+  exit_net_apr_frac: 0.005    # sàn giữ, thấp hơn sàn vào để không churn
+  exit_persistence_periods: 3 # thoát do suy giảm cần N mốc liên tiếp dưới sàn giữ
+  max_basis_pct: 1.0          # thoát nếu |perp − spot| vượt mức này
+  max_basis_widen_pct: 0.5    # thoát nếu basis dịch xa mức lúc vào hơn mức này
+
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }
   - { symbol: ETHUSDT, base: ETH, quote: USDT }

@@ -196,3 +196,40 @@ CREATE TABLE IF NOT EXISTS depth_snapshots (
 
 CREATE INDEX IF NOT EXISTS depth_snapshots_by_symbol
     ON depth_snapshots (symbol, sampled_at_ms);
+
+-- signal_journal is step 3.5's paper-trading record: one row per decision the
+-- LIVE signal path made, with the full reasoning it made it on.
+--
+-- It exists for one comparison. PLAN step 3.5 gates the project on the live
+-- path and the backtest agreeing over the same window, and that comparison
+-- needs both sides' decisions at the same instants with the same inputs
+-- visible. A journal of verdicts without reasons cannot say WHY two sides
+-- disagreed, which is the only thing the gate is for.
+--
+-- REPLACE on the key, unlike funding_history: re-evaluating one instant is a
+-- corrected reading of a moment, and a restart mid-window must not double
+-- count it.
+CREATE TABLE IF NOT EXISTS signal_journal (
+    evaluated_at_ms INTEGER NOT NULL,  -- the instant passed to EvaluateEntry/Exit
+    symbol          TEXT    NOT NULL,
+    perp_source     TEXT    NOT NULL,
+    spot_source     TEXT    NOT NULL,  -- '' when the perp has no hedge leg
+
+    action          TEXT    NOT NULL,  -- enter | skip | hold | exit
+    -- The figure the decision was made on. net_apr_ok 0 means NO number:
+    -- net_apr_frac is then 0 and must not be read as a rate of zero.
+    net_apr_frac    REAL    NOT NULL,
+    net_apr_ok      INTEGER NOT NULL,
+    cost_total_pct  REAL    NOT NULL,  -- the priced round trip, 0 when not OK
+
+    -- Every Check as JSON [{name, passed, detail_vi}], and the Params the
+    -- decision ran under. JSON rather than columns because the check list is
+    -- the strategy's to change, and a schema that mirrored it would need a
+    -- migration each time a condition is added.
+    checks_json     TEXT    NOT NULL,
+    params_json     TEXT    NOT NULL,
+
+    recorded_at_ms  INTEGER NOT NULL,  -- when this process wrote the row
+
+    PRIMARY KEY (evaluated_at_ms, symbol, perp_source)
+) WITHOUT ROWID;

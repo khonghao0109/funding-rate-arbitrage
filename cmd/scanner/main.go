@@ -88,6 +88,16 @@ func main() {
 		}()
 	})
 
+	// The live signal path (step 3.5): paper decisions into the signal journal,
+	// on the recorders' WaitGroup because it writes to the same store.
+	startSignals(ctx, cfg, s, db, func(job func()) {
+		recorders.Add(1)
+		go func() {
+			defer recorders.Done()
+			job()
+		}()
+	})
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.HandleWebSocket)
 	// Settled funding history for the chart (step 2.7). Read-only, and the only

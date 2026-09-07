@@ -48,12 +48,45 @@ var knownFundingPublishModes = map[string]bool{
 const marketTypePerp = "perp"
 
 type Config struct {
-	Server  Server   `yaml:"server"`
-	Scanner Scanner  `yaml:"scanner"`
-	Storage Storage  `yaml:"storage"`
-	Depth   Depth    `yaml:"depth"`
-	Symbols []Symbol `yaml:"symbols"`
-	Sources []Source `yaml:"sources"`
+	Server   Server   `yaml:"server"`
+	Scanner  Scanner  `yaml:"scanner"`
+	Storage  Storage  `yaml:"storage"`
+	Depth    Depth    `yaml:"depth"`
+	Strategy Strategy `yaml:"strategy"`
+	Symbols  []Symbol `yaml:"symbols"`
+	Sources  []Source `yaml:"sources"`
+}
+
+// Strategy is the live signal evaluator's tuning (step 3.5) — the same numbers
+// internal/strategy.Params carries, spelled out in YAML with their units.
+//
+// Every threshold is REQUIRED when the block is enabled and none of them has a
+// default: these are the exact parameters the step-3.5 gate compares against a
+// backtest, and a threshold quietly filled in by code would make the two runs
+// incomparable without anyone having chosen it. Only the two cadences default.
+type Strategy struct {
+	// Enabled false leaves the scanner exactly as before this step: nothing is
+	// evaluated and the signal journal stays empty.
+	Enabled bool `yaml:"enabled"`
+
+	// EvaluateEveryMin is how often the live path re-evaluates every hedgeable
+	// pair. Funding settles hourly at the fastest, so minutes is plenty.
+	EvaluateEveryMin int64 `yaml:"evaluate_every_min"`
+	// MaxBookAgeMin bounds how old a depth sample may be and still price a
+	// fill (strategy.RoundTripInput.MaxBookAge). The sweep runs hourly, so this
+	// must exceed depth.refresh_every_min or every fill is refused as stale.
+	MaxBookAgeMin int64 `yaml:"max_book_age_min"`
+
+	MinRatePer8hBps    float64 `yaml:"min_rate_per_8h_bps"`
+	PersistencePeriods int     `yaml:"persistence_periods"`
+	MinNetAPRFrac      float64 `yaml:"min_net_apr_frac"`
+	NotionalQuote      float64 `yaml:"notional_quote"`
+	HoldingDays        float64 `yaml:"holding_days"`
+
+	ExitNetAPRFrac         float64 `yaml:"exit_net_apr_frac"`
+	ExitPersistencePeriods int     `yaml:"exit_persistence_periods"`
+	MaxBasisPct            float64 `yaml:"max_basis_pct"`
+	MaxBasisWidenPct       float64 `yaml:"max_basis_widen_pct"`
 }
 
 // Depth configures the periodic order book sampling (step 2.7b).
@@ -261,6 +294,7 @@ func (c *Config) applyDefaults() {
 	}
 	c.Storage.applyDefaults()
 	c.Depth.applyDefaults()
+	c.Strategy.applyDefaults()
 	for i := range c.Sources {
 		if c.Sources[i].StaleAfterSec <= 0 {
 			c.Sources[i].StaleAfterSec = c.Scanner.DefaultStaleAfterSec
@@ -443,6 +477,9 @@ func (c Config) Validate() error {
 	if err := c.Storage.validate(); err != nil {
 		return err
 	}
+	if err := c.Strategy.validate(c.Depth); err != nil {
+		return err
+	}
 
 	seenSymbol := make(map[string]bool, len(c.Symbols))
 	for _, symbol := range c.Symbols {
@@ -579,6 +616,53 @@ func validateFee(source Source) error {
 	}
 	if fee.NoteVI == "" {
 		return fmt.Errorf("source %s has no verified fee and no note saying why", source.Source)
+	}
+	return nil
+}
+
+// The two strategy cadences that may default. Ten minutes re-evaluates well
+// inside the shortest settlement interval (1h); a book age of two hours covers
+// one missed hourly sweep without pricing fills on a book from yesterday.
+const (
+	defaultStrategyEvaluateEveryMin = 10
+	defaultStrategyMaxBookAgeMin    = 120
+)
+
+func (st *Strategy) applyDefaults() {
+	if st.EvaluateEveryMin <= 0 {
+		st.EvaluateEveryMin = defaultStrategyEvaluateEveryMin
+	}
+	if st.MaxBookAgeMin <= 0 {
+		st.MaxBookAgeMin = defaultStrategyMaxBookAgeMin
+	}
+}
+
+func (st Strategy) validate(d Depth) error {
+	if !st.Enabled {
+		return nil
+	}
+	switch {
+	case st.MinRatePer8hBps <= 0:
+		return fmt.Errorf("strategy.min_rate_per_8h_bps must be > 0 when the strategy is enabled")
+	case st.PersistencePeriods < 1:
+		return fmt.Errorf("strategy.persistence_periods must be >= 1, got %d", st.PersistencePeriods)
+	case st.MinNetAPRFrac <= 0:
+		return fmt.Errorf("strategy.min_net_apr_frac must be > 0 (a fraction: 0.05 = 5%%)")
+	case st.NotionalQuote <= 0:
+		return fmt.Errorf("strategy.notional_quote must be > 0 — slippage is a function of size")
+	case st.HoldingDays <= 0:
+		return fmt.Errorf("strategy.holding_days must be > 0 — the round trip is amortized over it")
+	case st.ExitNetAPRFrac >= st.MinNetAPRFrac:
+		return fmt.Errorf("strategy.exit_net_apr_frac (%g) must be below min_net_apr_frac (%g), "+
+			"or the position churns across the entry threshold paying commission each way",
+			st.ExitNetAPRFrac, st.MinNetAPRFrac)
+	case st.ExitPersistencePeriods < 0:
+		return fmt.Errorf("strategy.exit_persistence_periods must be >= 0, got %d", st.ExitPersistencePeriods)
+	case st.MaxBasisPct < 0 || st.MaxBasisWidenPct < 0:
+		return fmt.Errorf("strategy basis limits must be >= 0")
+	case d.Enabled && st.MaxBookAgeMin < d.RefreshEveryMin:
+		return fmt.Errorf("strategy.max_book_age_min (%d) is below depth.refresh_every_min (%d): every fill "+
+			"would be refused as stale before the next sweep", st.MaxBookAgeMin, d.RefreshEveryMin)
 	}
 	return nil
 }

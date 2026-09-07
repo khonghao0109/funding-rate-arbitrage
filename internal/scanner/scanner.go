@@ -383,6 +383,31 @@ func (s *Scanner) SetDepth(summaries []depth.Summary) {
 	}
 }
 
+// DepthSnapshot returns the newest book per symbol per source, sorted by symbol
+// then source.
+//
+// Written for the step-3.5 live signal path, which prices fills on the same
+// book the dashboard shows. Freshness is the caller's judgement, exactly as for
+// FundingSnapshot and PriceSnapshot: SampledAtMs travels with every summary and
+// strategy.RoundTripInput.MaxBookAge is where the limit is applied.
+func (s *Scanner) DepthSnapshot() []depth.Summary {
+	s.depthMutex.RLock()
+	out := make([]depth.Summary, 0, len(s.depthSummaries))
+	for _, bySource := range s.depthSummaries {
+		for _, summary := range bySource {
+			out = append(out, summary)
+		}
+	}
+	s.depthMutex.RUnlock()
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbol != out[j].Symbol {
+			return out[i].Symbol < out[j].Symbol
+		}
+		return out[i].Source < out[j].Source
+	})
+	return out
+}
+
 // depthMessage builds the current depth table.
 func (s *Scanner) depthMessage() wireDepth {
 	s.depthMutex.RLock()
@@ -449,6 +474,26 @@ func (s *Scanner) contractSizeCoin(symbol, source string) (float64, bool) {
 }
 
 // hedgeSnapshot copies the mapping for one message build.
+// Hedges returns the installed spot↔perp legs, refusals included, sorted by
+// symbol then perp source. The live signal path (step 3.5) reads it to know
+// which perps can be acted on and against which spot market; a refused leg is
+// returned as a refusal so the evaluator can say "no hedge" in the venue's own
+// words instead of silently skipping the pair.
+func (s *Scanner) Hedges() []HedgeLeg {
+	snapshot := s.hedgeSnapshot()
+	out := make([]HedgeLeg, 0, len(snapshot))
+	for _, leg := range snapshot {
+		out = append(out, leg)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Symbol != out[j].Symbol {
+			return out[i].Symbol < out[j].Symbol
+		}
+		return out[i].PerpSource < out[j].PerpSource
+	})
+	return out
+}
+
 func (s *Scanner) hedgeSnapshot() map[string]HedgeLeg {
 	s.hedgeMutex.RLock()
 	defer s.hedgeMutex.RUnlock()

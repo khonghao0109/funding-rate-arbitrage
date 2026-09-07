@@ -99,7 +99,7 @@
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
-| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 bước** | Tín hiệu có kiểm chứng lịch sử |
+| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 đang chạy** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Basis Trade | 4 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot hỗ trợ 2 chiến lược |
@@ -1637,16 +1637,97 @@ Sửa:
 > đi đúng index `funding_history_by_symbol` sẵn có; thêm một index không ai dùng
 > là nợ mới chứ không phải trả nợ cũ.
 
-#### Bước 3.4 — Alert ra ngoài
+#### Bước 3.4 — Alert ra ngoài ⏸ HOÃN — ghi nợ (2026-09-07)
 - Telegram bot (ưu tiên) / Discord webhook.
 - Nội dung alert: cặp, sàn, funding rate, APY ròng, mốc funding tiếp theo, vốn đề xuất.
 - Có throttle, tránh spam (tái sử dụng cơ chế `lastOpportunity` tại `main.go:141-152`).
 - **Nghiệm thu:** nhận được alert trên điện thoại, đúng và không lặp.
 
-#### Bước 3.5 — Cổng quyết định 🚦
+> **Hoãn theo quyết định của người dùng (2026-09-07), làm 3.5 trước.** Lý do
+> hợp lý về mặt kỹ thuật, ghi ra để không ai tưởng là quên: Bước 3.3 vừa kết
+> luận chiến lược **như đang tham số hoá là lỗ** (0/72 cấu hình có lãi), nên
+> một kênh alert hôm nay sẽ đẩy lên điện thoại những tín hiệu mà backtest đã
+> chứng minh không nên hành động. Cổng 3.5 là thứ quyết định tín hiệu nào đáng
+> báo; alert đi sau cổng. Trong lúc đó "chế độ chỉ-alert" của 3.5 được thay
+> bằng **chế độ chỉ-ghi-nhật-ký**: mọi quyết định sống vào bảng
+> `signal_journal` kèm đủ lý do, chính là thứ cổng 3.5 cần so với backtest —
+> alert Telegram không thêm thông tin nào cho phép so sánh đó.
+>
+> **Nợ 3.4, làm SAU phán quyết 3.5:** `internal/notify` (Telegram trước,
+> Discord tuỳ chọn), throttle theo khoá cơ hội, token qua env/.env (godotenv có
+> sẵn), **không** chạm `internal/broker`, không bao giờ chặn đường dữ liệu.
+> Nội dung alert lấy thẳng từ `Decision.LogLines()` — đã có đủ cặp/sàn/rate/APR
+> ròng có nhãn/vốn; thiếu duy nhất "mốc settle kế tiếp", lấy từ
+> `FundingData.NextFundingAtMs` của reading sống. Nghiệm thu giữ nguyên: nhận
+> alert thật trên điện thoại, đúng và không lặp.
+
+#### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.
 - **Nghiệm thu:** kết quả mô phỏng khớp với backtest trong sai số chấp nhận được. **Không khớp → quay lại Bước 3.2, không được sang GĐ 4.**
+
+> **Khởi động (2026-09-07).** Phần làm được trong một phiên là ba việc, phán
+> quyết là phiên sau (sớm nhất **2026-09-21 09:39**, đủ 14 ngày liên tục):
+>
+> **① Đường tín hiệu SỐNG, ghi nhật ký thay vì ghi tay.** `cmd/scanner` có
+> `startSignals`: mỗi `strategy.evaluate_every_min` (10 phút) nó dựng đúng
+> `strategy.Candidate` mà backtest dựng — lịch sử **đã settle** từ store (top-up
+> mỗi giờ), biểu phí từ config, sổ lệnh mới nhất từ scanner — cộng thứ backtest
+> **không bao giờ có**: giá spot/perp sống, nên `basis_widened` đánh giá được ở
+> đây và chỉ ở đây. Gọi `EvaluateEntry` khi trống, `EvaluateExit` khi đang giữ
+> vị thế **giấy** (không đặt lệnh, không credential). Mỗi quyết định → một hàng
+> `signal_journal` (schema **v4**) với `checks_json` đủ 6/4 điều kiện kèm số,
+> `params_json`, `net_apr_frac` + `net_apr_ok` (0 = KHÔNG có số, không phải
+> số 0), `cost_total_pct`. Vị thế giấy seed lại từ nhật ký khi restart (hàng
+> mới nhất từng market: enter/hold = còn mở), có test. Chân hedge chọn qua
+> **cùng** `instruments.BuildHedgeMapping` + `config.CheapestVerifiedSpot` mà
+> `cmd/backtest` dùng, nên hai bên so cùng vị thế. Tham số ở khối `strategy:`
+> trong `config.yaml` — **cùng bộ số** `cmd/backtest` chạy mặc định.
+>
+> **② Tick đầu tiên, đo thật (09:42:52, sau warmup 3 phút):** top-up kéo corpus
+> từ 2026-09-04 lên **2026-09-07 00:00** (+9 mốc/chuỗi binance); **28 hàng**
+> nhật ký = 4 cặp × 7 perp; mọi hàng đều `skip` và log in đủ lý do — BTC
+> binance: rate mới nhất 0,2792 bps/8h < ngưỡng 0,5, 0/3 mốc bền, APR ròng
+> **−0,61%** (thô 3,06%, vòng 0,3014% trên sổ SỐNG); ETH binance ròng +3,68%
+> nhưng rate chưa qua ngưỡng. 12 perp không có chân hedge/không xác minh phí
+> ghi `net_apr_ok=0`, `cost=0` — không phải số 0. Không đặt lệnh giấy nào —
+> đúng như backtest dự đoán ở tham số này.
+>
+> **③ Giao thức so sánh nhật-ký-sống ↔ backtest (phán quyết đọc cái này):**
+>
+> 1. **Cửa sổ:** `[started_at, verdict_at)` từ `.paper/started_at`, tối thiểu
+>    14 ngày, không hở. Nếu tiến trình chết giữa chừng (kiểm `.paper/scanner.pid`
+>    + khoảng trống trong `evaluated_at_ms`), cửa sổ tính lại từ lần lên cuối
+>    và phải đủ 14 ngày liên tục — không cộng dồn hai mảnh.
+> 2. **Cùng tham số:** `params_json` của MỌI hàng nhật ký phải bằng khối
+>    `strategy:` dùng để chạy `cmd/backtest`; khác một số là kết quả không so
+>    được, dừng.
+> 3. **Chạy backtest** trên đúng cửa sổ đó (`-months` không đủ mịn: thêm
+>    `-from/-to` — nợ tooling, ghi ở dưới) với cùng 4 chuỗi binance.
+> 4. **So theo quyết định, không so theo tiền:** với mỗi mốc settle backtest ra
+>    quyết định (enter/exit/skip/hold), lấy hàng nhật ký gần nhất SAU mốc đó
+>    (nhật ký tick 10 phút, settle 8h). Đếm: (a) khớp hành động; (b) lệch
+>    **giải thích được** bằng đúng một trong ba đầu vào khác nhau — *sổ lệnh*
+>    (sống vs cố định → `cost_total_pct` lệch → `net_apr` lệch),
+>    *basis* (`basis_widened` chỉ sống mới xét được), *lịch sử* (top-up đến
+>    muộn: `history_depth` khác); (c) lệch **không giải thích được**.
+> 5. **Ngưỡng ĐẠT:** (c) = **0** — một lệch không giải thích được là hai bản
+>    đã trôi, đúng thứ cổng sinh ra để bắt (Q8); và (a) ≥ **95%** trên các mốc
+>    `enter`/`exit` của 4 chuỗi binance. Về tiền: tổng `net_apr_frac` các hàng
+>    `enter` sống so với `RealizedAPRFrac` backtest chỉ được lệch trong phạm vi
+>    chênh `cost_total_pct` sống−cố định cộng dồn — lệch lớn hơn là (c).
+> 6. **Không đạt → quay lại 3.2, KHÔNG sang GĐ4.** Đạt → GĐ4 mở, và Bước 3.4
+>    (alert) làm ngay trước 4.1.
+>
+> **Vận hành:** tiến trình `cmd/scanner` build từ working tree bước này, cổng
+> **8085** (soak GĐ1 vẫn giữ 8082, không đụng), PID trong `.paper/scanner.pid`,
+> log ở đường dẫn trong `.paper/log_path`. Cùng `data/scanner.db` — nó vừa là
+> corpus vừa là nhật ký, và mỗi giờ nó bồi thêm depth thật, tức từ hôm nay
+> backtest tương lai bắt đầu có độ sâu lịch sử.
+>
+> **Nợ tooling cho phiên phán quyết:** `cmd/backtest -from/-to` theo ms; một
+> lệnh `cmd/backtest -compare-journal` in bảng (a)/(b)/(c) theo giao thức trên
+> thay vì so tay. Cả hai đọc-only, không đổi luật.
 
 ---
 
@@ -1989,7 +2070,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
-[  ] GĐ 3  Signal, Alert & Backtest      3/5 bước   ← ĐANG LÀM
+[  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY từ 2026-09-07 09:39, phán quyết ≥ 09-21   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Basis Trade                   0/4 bước

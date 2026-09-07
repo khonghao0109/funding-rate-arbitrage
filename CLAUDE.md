@@ -158,6 +158,20 @@ its "~10 days" came from. This is not a bug: the 5–15% band is for SELECTED
 opportunities, not for BTC/ETH held mechanically on taker fees. A backtest
 returning 5–15% at this configuration would be the suspicious result.
 
+**Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
+RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
+`.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
+mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
+every hedge leg every 10 minutes with the SAME `strategy.Candidate` the
+backtest builds — settled history from the store, fees from config, the newest
+measured books — plus live spot/perp prices, which is why the basis exit is
+evaluable here and nowhere else. Every decision lands in `signal_journal`
+(schema v4) with all its checks as JSON; paper positions reseed from it on
+restart. The `strategy:` block in `config.yaml` is the one parameter set both
+the live path and `cmd/backtest` run, and the comparison protocol for the gate
+is written in PLAN 3.5 — read it before delivering the verdict. **Do not
+restart that process casually**: the gate needs 14 UNBROKEN days.
+
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
 (venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),
@@ -372,7 +386,7 @@ internal/
                      ⚠️ the ONLY package allowed to say "net" (step 3.1)
   backtest/          historical replay — MUST call strategy, never re-grow a
                      rule (two AST tests enforce it)
-  notify/            Telegram and Discord alerts
+  notify/            Telegram and Discord alerts — step 3.4, DEFERRED behind 3.5
   broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS
   execution/         delta-neutral position open and close
   risk/              margin, kill switch, capital limits
@@ -428,6 +442,12 @@ go run ./cmd/backfill -months 6 -symbol BTCUSDT
 # SQLite, writes nothing back). Prints its assumptions with every report.
 go run ./cmd/backtest                        # 6 months, every hedgeable pair
 go run ./cmd/backtest -sweep -csv out.csv    # parameter sweep, parallel
+
+# Step 3.5's journal-only run: same binary, strategy: block enabled in
+# config.yaml. PORT picks the port (8082 belongs to the phase-1 soak).
+PORT=8085 go run ./cmd/scanner
+sqlite3 data/scanner.db "SELECT datetime(evaluated_at_ms/1000,'unixepoch'), symbol, perp_source, action FROM signal_journal ORDER BY 1 DESC LIMIT 28"
+
 
 # Re-measure what a stored price sample costs on disk before changing
 # storage.price_sample_every_sec — the row count is linear in it.
