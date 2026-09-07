@@ -193,6 +193,24 @@ later moved XRP's cost from 0.377% to 0.358% and its trade counts by up to
 The 3.3 parameter set stays as it is until the 3.5 gate has judged it.
 Bilingual VI/ZH report: `docs/reports/backtest-3.3-wide-2026-09-07.html`.
 
+**Re-measured on 2026-09-07 evening from `906ac42`, after 3.3b/3.3c** — the
+same grid plus the two axes the shipped set had moved to (`exit-persist 48`,
+`hold-days 90`), so the live configuration sits INSIDE the grid: 12,288 sets ×
+24 series × 3 windows. Over 12 months the shipped set sums **+27.56%** (17/24
+positive, 1.7 trades each) against **−526%** for the retired 3.3 set (73 trades
+each), and hold-through is **+29.73%** (18/24) which **0 of 12,288 sets reach**
+— the grid's best is +27.81%. The verdict does not move: the rule still does
+not beat buying and holding. Two things it did change. The basis exit is
+EVALUABLE for the first time (20/24 series report 0 unpriced settlements over
+67,121 of them; the residue is entirely Hyperliquid, whose candles stop at
+~208 days) and it **costs 2.94 points and 10 round trips a year, all of it on
+kraken** — measured by replaying the shipped set twice with only the basis
+thresholds changed, which is the isolation `cmd/backtest` cannot do in a sweep
+because `baseParams` hardcodes `MaxBasisPct`/`MaxBasisWidenPct`. And the
+leverage table gained the capital denominator (above). Report:
+`docs/reports/backtest-3.3b-3.3c-2026-09-07.html`; the generator and the three
+traps it records are in `tools/report/`.
+
 The same afternoon the sign-flip exit gained three GATES as parameters
 (`strategy.Params.ExitNegativeMinBps/Periods/CumCostFrac`, config keys
 `exit_negative_*`; zero values are the 3.2 rule exactly, pinned by test, so
@@ -501,6 +519,13 @@ internal/
                      holds the perp liquidation model strategy calls
 static/              vanilla JS dashboard
 docs/                PLAN.md, DATA-REQUIREMENTS.md, CONVENTIONS.md
+  reports/           built HTML reports, one per measurement run — a new file
+                     each time, never an overwrite: an older one is the record
+                     of what was known that day
+tools/report/        READ-ONLY Python that turns cmd/backtest's CSVs into those
+                     reports (rule 8's "Python reads SQLite to plot"): stdlib
+                     only, mode=ro, and it never recomputes a rule — every
+                     profit figure on a page traces to a column Go wrote
 config.yaml          pairs, venues, thresholds, fees, symbol mapping
 ```
 

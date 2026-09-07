@@ -2063,6 +2063,57 @@ lặp lại lỗi mẫu số. Bản tóm tắt in cả hai dòng, không thay d�
 kia: notional trả lời "chiến lược có lãi không", vốn trả lời "có nên dùng đòn
 bẩy không".
 
+#### Lượt đo lại sau 3.3b/3.3c ✅ (2026-09-07 tối, từ `906ac42`)
+
+Chạy lại **đúng lưới cũ cộng hai trục mà bộ đang ship đã chuyển sang**
+(`exit-persist 48`, `hold-days 90`), để cấu hình live nằm *trong* lưới thay vì
+được mô tả bằng một bộ chưa từng chạy: **12.288 bộ × 24 chuỗi × 3 cửa sổ** =
+344.064 lượt phát lại, 4,6 triệu lệnh. Báo cáo song ngữ:
+[docs/reports/backtest-3.3b-3.3c-2026-09-07.html](reports/backtest-3.3b-3.3c-2026-09-07.html).
+Bộ script dựng báo cáo nay nằm trong repo tại [tools/report/](../tools/report/),
+tham số hoá đầy đủ và **dựng lại được từng byte** (một lần chạy thứ hai chỉ khác
+mốc thời gian sinh file).
+
+**Phán quyết không đổi.** Trên 12 tháng:
+
+| | Tổng 24 chuỗi | Chuỗi dương | Lệnh/chuỗi |
+|---|---|---|---|
+| Bộ đang ship | **+27,56%** | 17/24 | 1,7 |
+| Bộ tốt nhất của lưới | +27,81% | 17/24 | 1,8 |
+| **Giữ suốt** | **+29,73%** | 18/24 | 1 |
+| Bộ 3.3 đã nghỉ | **−526,22%** | 0/24 | 73,3 |
+
+**0 trên 12.288 bộ** chạm tới giữ suốt. Luật vào/ra vẫn chưa chứng minh được là
+hơn mua rồi giữ — đó vẫn là mốc phải vượt, không phải "có lãi".
+
+**Hai thứ lượt này đo được mà lượt trước không.**
+
+① **Lối thoát basis lần đầu tiên chạy thật.** Suốt bước 3.3 nó báo "không đánh
+giá được" ở mọi mốc của mọi lượt, nên không lưới nào từng kiểm nó. Nay 20/24
+chuỗi báo 0 mốc thiếu giá, trên 67.121 mốc; phần còn thiếu **toàn bộ ở
+hyperliquid**, đúng giới hạn nến ~208 ngày đã ghi ở bảng bẫy — ở cửa sổ 6 và 3
+tháng thì 24/24 chuỗi đánh giá được trọn vẹn, xác nhận đúng biên đó. Sáu vị thế
+mở khi chưa có giá, tất cả cũng ở hyperliquid.
+
+② **Giá của luật đó: −2,94 điểm và +10 vòng phí một năm, toàn bộ trên kraken.**
+Đo bằng cách chạy bộ đang ship **hai lần**, chỉ khác ngưỡng basis (1,0%/0,5% so
+với 1000%): +30,50% với 31 lệnh khi tắt, +27,56% với 41 lệnh khi bật. 10 × 0,30%
+≈ 3,0 điểm, tức **toàn bộ chi phí là phí giao dịch**, không phải thời điểm thoát
+xấu. Phép đo này không làm được trong một lượt `-sweep`: `cmd/backtest` hardcode
+`MaxBasisPct`/`MaxBasisWidenPct` trong `baseParams` nên `-config` không với tới;
+chỉ đường chạy thường đọc chúng từ khối `strategy`. Cả 11 lần thoát đều rơi vào
+kraken — cặp **ghép khác quote** — nên một phần thứ nó đang canh là chênh
+USD/USDT chứ không phải basis coin. Đổi lại là chốt chặn khi trung tính delta
+đang vỡ, và corpus này không có cú vỡ nào để cho thấy nó cứu được gì: **giá đã
+biết, đổi lấy lợi ích chưa đo được**.
+
+Ba cái bẫy của chính bộ script dựng báo cáo được ghi trong
+[tools/report/README.md](../tools/report/README.md): `{series}` là placeholder
+đã đặt trước trong template (khối đòn bẩy đo 16 chuỗi nhưng hiện 24); thống kê
+"mỗi chuỗi một lần" phải lọc bộ đang ship trước khi cộng, nếu không 67.121 mốc
+thành 824 triệu; và `sorted()` trên một `set` cần khoá toàn phần, nếu không hai
+lần build cùng dữ liệu ra hai câu khác nhau.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.
