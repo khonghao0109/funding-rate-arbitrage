@@ -97,7 +97,7 @@
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
-| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | 🔄 **7/7 bước, còn phiên 72h** | Scanner đáng tin, có test, có phí |
+| **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **2/5 bước** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
@@ -446,9 +446,9 @@ func ConnectBinanceFutures(source string, symbols []Symbol, f Feeds)
 là 5s. Chạy liên tục 196 giây với 9 sàn: **không sàn nào rớt, không lần reconnect
 nào**, `uptime_sec` và `reconnect_count` chạy thật trên wire.
 
-🔶 **Vế "72h không can thiệp" CHƯA chạy** và không thể chạy trong một phiên làm
-việc. Không hạ chuẩn: nó vẫn là điều kiện thoát của Giai đoạn 1, ghi ở mục §1
-cuối GĐ. Cái đã kiểm được và có ý nghĩa cho một phiên dài:
+🔶 **Vế "72h không can thiệp" khi đó CHƯA chạy** và không thể chạy trong một
+phiên làm việc — đã chạy và ĐẠT, kết quả ghi ngay dưới mục này. Cái đã kiểm
+được trước khi chạy và có ý nghĩa cho một phiên dài:
 
 - Vế thứ hai của tiêu chí (`ctx` huỷ ≤5s) — **đã đạt, đo được, có test tự động**.
 - Ba cơ chế mà một phiên 72h phụ thuộc vào, mỗi cái có test đi kèm và đều được
@@ -461,6 +461,60 @@ cuối GĐ. Cái đã kiểm được và có ý nghĩa cho một phiên dài:
 Cái 196 giây **không** chứng minh được: rò rỉ bộ nhớ, trôi goroutine, hành vi khi
 sàn bảo trì, hoặc giới hạn thời gian sống của kết nối mà sàn áp (Binance có, và
 tài liệu về nó không đọc được từ đây).
+
+**Kết quả soak 72h (chạy 2026-09-03 14:03 → hạn 2026-09-06 14:03, phán quyết
+2026-09-07 09:10). ĐẠT.** Mã chạy là commit `4feea94` (Bước 1.6, build 13:54
+ngày 03/09 — trước mọi commit GĐ 2, nên đây là mã GĐ 1 thuần và không ghi
+SQLite). Một PID duy nhất (4253) sống suốt cửa sổ và vẫn chạy lúc phán quyết
+(91 giờ); watchdog ghi 182 mẫu cách nhau 30 phút, không sót mẫu nào; máy không
+ngủ lần nào (`pmset -g log`, `caffeinate -is -w` giữ).
+
+| Chỉ số | Đo được |
+|---|---|
+| RSS lúc 0h / 24h / 48h / 72h | 28,9 / 26,6 / 29,8 / 29,4 MB — min 25,5, max 35,4 (20:34 ngày 04/09, giữa đợt Binance chập chờn); trung bình 60 mẫu đầu 28,1 so với phần còn lại 28,9 → **không rò rỉ** |
+| fd / thread / socket sau 91h | 27 fd, 21 thread, 10 socket ESTABLISHED |
+| Rớt kết nối trong 72h (nối lại được hết) | paradex 117 · binance_futures 70 · hyperliquid 36 · kraken 21 · okx 11 · gate 6 · bybit_futures 5 · bybit_spot 4 · binance_spot 3 — **273 lần**, không lần nào không nối lại |
+| Trễ rớt → nối lại | 2–4 s ở mọi sàn; **60–61 s đúng 4 lần**, đều là backoff chạm trần sau chuỗi phiên ngắn hoặc dial lỗi liên tiếp (hyperliquid 16:29 ngày 05/09 leo 4→8→16→33→60 s) và giữ trần cho tới khi một phiên sống ≥120 s (`HealthySession`) — đúng thiết kế, không sàn nào bị quay số dồn dập |
+| `reconnect_count` trên wire so với log | Khớp từng sàn (128/76/37/15/10/7/6/5/3); phần chênh với số dòng `connection lost` (kraken 6, hyperliquid 7, okx 1) đúng bằng số lần dial thất bại — bad handshake, DNS timeout — nên hai cách đếm nói cùng một chuyện |
+| Trạng thái lúc 91h | 9/9 nguồn tradable `connected`, **36/36 chuỗi giá `live`**, tuổi 1–190 ms (hyperliquid ~3,3 s, paradex ≤1 s theo nhịp riêng của sàn) |
+
+Ba việc 196 giây không chứng minh được thì 72 giờ đã chứng minh:
+
+- **Rò rỉ bộ nhớ / trôi goroutine:** không có — và RSS đi ngang ở tầng broadcast
+  CHƯA throttle (binary này có trước 2.7a: đo 7.508 frame `spreads` trong 8 giây
+  tới một client, 938 frame/s).
+- **Sàn bảo trì:** Paradex đóng 21 lần với `1001 going away: shutting down`, dồn
+  vào 10h–14h và 17h ngày 04/09 (deploy phía sàn), xen 59 lần `1006` và 35 EOF
+  trần; tất cả nối lại trong ≤5 s trừ một lần chạm trần backoff.
+- **Giới hạn tuổi kết nối do sàn áp:** Hyperliquid đóng MỌI phiên bằng
+  `1000 Expired` sau ~2h47–2h53 (22 lần) — vòng đời dùng chung xử lý như một lần
+  rớt thường, không cần biết trước.
+
+Ngoài dự kiến nhưng có giá trị: **hai lần mất mạng cục bộ toàn phần** —
+04:41:09–14 ngày 06/09 cả 9 nguồn rớt trong 5 giây (`i/o timeout`,
+`connection reset`, `operation timed out`), 12:12 cùng ngày 8/9 nguồn — và một
+cụm 5 nguồn lúc 19:30:30 ngày 04/09; mọi nguồn nối lại trong ≤4 s. Read
+deadline 60 s là thứ bắt được các socket chết trong những đợt đó (13 dòng
+`i/o timeout` trên 7 nguồn). Binance rớt 47/70 lần trong khung 19h–22h ngày
+03/09 và lặp lại quanh 19:30 ngày 04/09 (cùng lúc với 4 sàn khác) — dấu hiệu
+môi trường mạng cục bộ hơn là sàn; hai ngày sau chỉ còn 2 và 7 lần.
+
+Giới hạn của phán quyết — ghi để không ai đọc "ĐẠT" thành nhiều hơn nó nói:
+
+- **Pyth vắng mặt suốt kỳ:** hermes trả `401 Unauthorized` từ lần dial đầu tiên
+  và ở mọi lần thử sau (≈1.700 lần, mỗi 60 s = trần backoff). Soak này chứng
+  minh 9 nguồn tradable, không chứng minh oracle; `oracle_deviation` chưa từng có
+  số trong kỳ.
+- Khoản nợ 🔴 ở Bước 1.6 (subscription bị sàn huỷ âm thầm) **không tái hiện**:
+  sau 91 giờ không chuỗi nào stale. Nhưng scanner không ghi log staleness, nên
+  chỉ đo được trạng thái cuối chứ không đo được "có lúc nào stale kéo dài
+  không" — nợ vẫn mở; 72 giờ không xảy ra không phải bằng chứng không thể xảy ra.
+- Vế `ctx` huỷ ≤5 s không đo lại ở cuối kỳ: tiến trình được để chạy tiếp sau
+  hạn. Dừng nó bằng SIGINT rồi đọc các dòng `stopped` trong `.soak/scanner.log`
+  sẽ cho số đo sau 91 giờ chạy — việc nhỏ, nên làm khi tắt.
+
+**Phán quyết: ĐẠT.** Tiêu chí "chạy 72h không can thiệp" thoả; GĐ 1 đóng
+2026-09-07.
 
 **Thiết kế: một vòng đời dùng chung thay chín bản sao.** Chín connector WebSocket
 trước đây mỗi cái tự dial, tự ngủ, tự thử lại — chín bản sao của cùng một vòng
@@ -690,7 +744,9 @@ Sửa:
   giờ bị dựng lại: scanner *phát hiện* được (suy luận từ im lặng hạ trạng thái
   xuống `disconnected`) nhưng **không hành động được**. Đúng dạng hỏng mà phiên
   72h sinh ra để loại trừ. Cách sửa cần watchdog dữ liệu trong connector, hoặc
-  giới hạn tuổi phiên rồi nối lại định kỳ.
+  giới hạn tuổi phiên rồi nối lại định kỳ. *Soak 72h (phán quyết 2026-09-07)
+  không tái hiện được nó — 36/36 chuỗi `live` sau 91 giờ — nhưng scanner không
+  ghi log staleness nên chỉ trạng thái cuối được đo; nợ vẫn mở.*
 - `framesRead` trong `shouldResetBackoff` đếm cả frame keepalive, nên trên ba sàn
   đó một phiên chỉ toàn pong vẫn đủ điều kiện reset backoff. Muốn phân biệt thì
   `Handle` phải báo lại nó có sinh ra dữ liệu thị trường hay không.
@@ -1766,7 +1822,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 
 ```
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
-[  ] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h chạy từ 2026-09-03 14:03, hạn 2026-09-06   ← ĐANG LÀM
+[✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      2/5 bước   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
@@ -1776,12 +1832,14 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
 
-**Việc tiếp theo cụ thể:** cả 7 bước của GĐ 1 đã xong, **còn đúng một việc để
-đóng giai đoạn: phiên chạy 72h không can thiệp** (vế còn lại của tiêu chí Bước
-1.5 — xem ghi chú ở đó). Trước khi chạy nên xử lý khoản nợ 🔴 ghi ở Bước 1.6:
-subscription bị sàn âm thầm huỷ hiện **không có gì buộc nối lại**, và đó đúng là
-dạng hỏng mà 72 giờ sinh ra để phát hiện — chạy mà không sửa thì nhiều khả năng
-chỉ chứng minh lại rằng nó tồn tại.
+**GĐ 1 đã đóng (2026-09-07).** Phiên 72h không can thiệp chạy trọn trên mã
+Bước 1.6 (`4feea94`): một PID suốt kỳ, RSS đi ngang, 273 lần rớt đều nối lại
+trong 2–4 s (4 lần chạm trần backoff 60 s đúng thiết kế), hai lần mất mạng cục
+bộ toàn phần đều hồi phục, 36/36 chuỗi `live` lúc 91 giờ — bảng đo ở Bước 1.5.
+Hai điều phán quyết KHÔNG nói: Pyth vắng mặt suốt kỳ (hermes 401), và khoản nợ
+🔴 Bước 1.6 (subscription bị huỷ âm thầm) chỉ là *không tái hiện* chứ chưa sửa.
+Tiến trình soak được để chạy tiếp sau hạn trên cổng 8082; tắt bằng SIGINT khi
+không cần nữa.
 
 **GĐ 2 đã xong cả 7 bước** (2026-09-04), chạy song song và không đụng tiến trình
 soak: funding realtime 7 sàn, instrument registry, ánh xạ spot↔perp, persistence
@@ -1803,5 +1861,4 @@ trên corpus thật: ngưỡng chặt cho **0 lệnh vào / 28 bỏ qua**; ngư�
 hai hàm trên (Q8), cộng khoản nợ index `funding_at_ms` khi đọc cửa sổ
 toàn-symbol.
 
-⚠️ GĐ 1 vẫn **chưa đóng**: còn phiên chạy 72h (hạn 2026-09-06) và một phiên khác
-ra phán quyết.
+✅ GĐ 1 **đã đóng** 2026-09-07 — phán quyết soak 72h ghi ở Bước 1.5.

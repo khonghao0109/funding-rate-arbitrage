@@ -29,7 +29,8 @@ strategy, not discovered an edge.
 
 ## Current phase
 
-**Phase 1 — Hardening.** 7 of 7 steps done; the 72h unattended run is still owed. Step 1.0 froze the WebSocket JSON
+**Phase 1 — Hardening: closed 2026-09-07.** 7 of 7 steps done and the 72h
+unattended run passed (measurements below and in PLAN step 1.5). Step 1.0 froze the WebSocket JSON
 contract for the whole phase — it is specified in
 [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) and **must not be reshaped** before
 phase 2: steps 1.1–1.3 fill data into fields that already exist. Step 1.1 added
@@ -53,15 +54,20 @@ Step 1.6 recorded real payloads from every venue into `exchanges/testdata/` and
 golden-tested each parser against them, taking `exchanges/` from 20.8% to 63.8%.
 It found that **every Binance trade was labelled a sell** — see the trap table.
 
-**The remaining phase-1 work is the 72h unattended run — now in progress**
-(started 2026-09-03 14:03, deadline 2026-09-06; PID in `.soak/scanner.pid`,
-port 8082 — do not touch it, and run anything else on another port). It was
-started with the step-1.6 defect still open: a subscription the venue silently
-drops is detected but never re-established, because the read deadline is
-refreshed by any frame and three venues answer keepalives with data frames.
-The run may therefore mostly re-demonstrate that hole; a separate session
-delivers the soak verdict and updates phase-1 status — no other session marks
-phase 1 done.
+**The 72h unattended run passed (verdict 2026-09-07).** It started 2026-09-03
+14:03 on commit `4feea94` — the step-1.6 code, built before any phase-2 commit,
+so it exercised phase-1 code only — and was still the same PID at 91h. Measured:
+RSS 28.9 → 29.4 MB at the 72h mark (min 25.5, max 35.4), 27 fds; 273 connection
+drops inside the window, every one reconnected in 2–4s except four 60s waits
+where the backoff had reached its cap after runs of dial failures, which is the
+design; two whole-network outages on 2026-09-06 (all nine sources within 5s)
+recovered in ≤4s; Hyperliquid expires every session after ~2h50 and Paradex
+deployed 21 times, both absorbed by the shared lifecycle; 36/36 series live at
+91h. Two caveats: Pyth answered 401 on every attempt, so the oracle was absent
+the whole run, and the step-1.6 silent-subscription defect simply did not occur
+— it stays open, unfixed. The soak process was left running past its deadline
+on port 8082 (`.soak/scanner.pid`); stop it with SIGINT when it is no longer
+wanted, and keep using another port while it lives.
 
 Phase 2 (Funding Rate Monitor) has started in parallel without touching the
 soak process: step 2.1 (`cmd/fundingcheck`) verified the funding fields of all
@@ -524,6 +530,8 @@ phase 1.
   spread, and how far the response reached. There is no level list anywhere, in
   memory or in the corpus. So `strategy.EstimateFill` reconstructs a piecewise
   linear cumulative curve through the points that exist and integrates along it.
+  The 72h soak did not trigger it — all 36 series were live at 91h — which is
+  absence over one run, not a fix.
   That assumes liquidity is spread evenly inside a window; real books are denser
   near the touch, so the estimate is **too expensive**, which is the safe
   direction. Anything wanting a sharper fill model has to store levels first —
