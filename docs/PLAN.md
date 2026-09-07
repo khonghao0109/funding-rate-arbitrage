@@ -1924,6 +1924,102 @@ Sửa:
 > `FundingData.NextFundingAtMs` của reading sống. Nghiệm thu giữ nguyên: nhận
 > alert thật trên điện thoại, đúng và không lặp.
 
+#### Bước 3.3b — Lịch sử giá + lối thoát basis ✅ (2026-09-07)
+
+Cho tới bước này `internal/backtest` **không truyền giá nào**, nên điều kiện
+basis của `EvaluateExit` báo "không đánh giá được" ở MỌI mốc settle của MỌI
+lượt chạy. Lối thoát duy nhất canh việc *delta-neutral bị vỡ* chưa từng được
+kiểm tra suốt cả bước 3.3, và không lượt quét tham số nào phát hiện ra điều đó.
+
+Nến giải được vì — khác depth — nó **lấy lại được**: sàn không công bố sổ lệnh
+hôm thứ Ba tuần trước, nhưng sàn nào cũng giữ OHLC. Bảng mới `price_history`
+(schema v5), 8 nguồn giao dịch được, `go run ./cmd/backfill -prices`.
+
+Là bảng RIÊNG chứ không phải thêm cột vào `price_snapshots`: bảng kia giữ đỉnh
+sổ lệnh scanner thấy trực tiếp (mid, best bid, best ask, khối lượng đang chờ);
+một cây nến không có thứ nào trong đó. Nó cũng có **số retention riêng** — dùng
+chung mốc 90 ngày của price_snapshots sẽ âm thầm xoá 9 tháng của một corpus vừa
+backfill về đúng cho lối thoát này.
+
+Giá dùng tại một mốc settle là **nến ĐÃ ĐÓNG gần nhất** tại hoặc trước mốc đó,
+không phải nến đang chứa mốc — giá đóng của nến ấy nằm ở TƯƠNG LAI so với quyết
+định, đúng cái lỗi một backtest không được phép mắc. Giá vì thế cũ tối đa 1 giờ,
+và khối giả định nói ra điều đó. Chân nào không có nến trong 2 chu kỳ vẫn báo
+`NotEvaluated`: một khoảng trống là lỗ hổng dữ liệu, không phải một mức giá.
+
+**Đo sau khi backfill, 24 chuỗi, 12 tháng:** 18 chuỗi có `basis_not_evaluable`
+= 0 (trước đó cả 24 đều khác 0). Phần dư là hyperliquid — funding tới 365 ngày
+còn nến chỉ tới 208. Mười một lần thoát basis nổ, **tất cả trên kraken, tất cả
+trên cặp ghép khác quote** — nên khối giả định nay nói rõ: trên chuỗi bridged,
+basis đo được là basis theo coin **CỘNG** chênh USD/USDT, và lối thoát ở đó một
+phần đang canh đúng rủi ro quote chưa ai trừ.
+
+Sáu sàn, sáu kiểu phân trang, ba cái là bẫy — tìm bằng đo, không bằng đoán:
+Bybit neo trang vào `end` chứ không phải `start` (đi tới theo `start` sẽ xin
+lại đúng trang mới nhất mãi mãi; lượt đầu báo 42 ngày trên yêu cầu 365 ngày và
+đọc y như một giới hạn lưu trữ của sàn); `after` của OKX là **cận trên loại
+trừ**, và endpoint `candles` thường không trả gì quá ~300 ngày trong khi
+`history-candles` với tới 400+; payload Hyperliquid mang **cả `t` lẫn `T`** nên
+fallback không phân biệt hoa thường của `encoding/json` để `T` đè lên `t` —
+mọi nến lệch 1 ms trước giờ, mọi phép join chéo sàn không khớp, basis của sàn
+đó rỗng trong im lặng. Đây đúng là lỗi `m`/`M` của Binance aggTrade trong bảng
+bẫy, mắc lần thứ hai ở package thứ hai.
+
+Đo thêm: Gate đóng dấu giây ở CẢ hai chiều, Kraken nhận giây và trả mili-giây;
+trần trang 1500 / 1000 / 1000 / 300 / 2000 / 2000 / ~5000; tầm với của
+Hyperliquid ~208 giờ-nến-năm, báo bằng MẢNG RỖNG chứ không phải lỗi — cùng hình
+dạng với retention funding của OKX, nay nằm trong `store.PriceCoverage`.
+
+#### Bước 3.3c — Mô hình ký quỹ chân perp ✅ (2026-09-07)
+
+Vị thế trung tính về COIN, chân perp thì không: khoản lãi chân spot nằm ở tài
+khoản khác, thường ở sàn khác, và ký quỹ không chuyển qua lại. Một đợt tăng giá
+có thể thanh lý chân short trong khi vị thế gộp vẫn đứng yên.
+
+`internal/risk` định giá chân short — giá thanh lý = giá vào × (1+ký quỹ) /
+(1+duy trì), và nó KHÔNG dịch theo thị trường. `internal/strategy` thêm hai
+điều kiện quanh nó:
+
+- `margin_known`, một **từ chối ở lối VÀO**. Không mở một vị thế short đòn bẩy
+  mà không nói được giá thanh lý. Vị trí này là toàn bộ vấn đề: nếu chỉ có điều
+  kiện ở lối RA, một sàn không có biểu ký quỹ xác minh sẽ bị mở rồi đóng ngay ở
+  mốc kế tiếp, mãi mãi. Đo trước khi có check này: **46 lệnh mỗi chuỗi và
+  −322%** trên 24 chuỗi, so với 1,7 lệnh và +27,6% khi tắt mô hình — chiến lược
+  không đổi gì, chỉ là 4 chuỗi Binance và 4 chuỗi Hyperliquid đang nhảy vòng.
+- `margin_thin`, một lối thoát **RỦI RO**. `MinHoldRecoveredCostFrac` chỉ quản
+  các lối thoát vì LỢI SUẤT và không bao giờ chặn nó.
+
+Backtest phát hiện thanh lý thật từ **ĐỈNH nến** giữa hai mốc settle, không phải
+giá đóng: short chết ở cú nhọn và giá đóng theo giờ bước qua nó. Quét từ mốc
+TRƯỚC chứ không phải từ lúc mở, nếu không là O(n²) trên các sàn 8.760 mốc —
+đúng lỗi `UsableSettled` đã mắc. `Liquidations` đếm riêng khỏi `Trades`: bị
+đóng cưỡng bức không phải một lần thoát do chiến lược chọn.
+
+Biểu ký quỹ duy trì nằm trong `config.yaml` theo từng nguồn, cùng khuôn và cùng
+kỷ luật với biểu phí, đọc từ endpoint **CÔNG KHAI** của sàn ngày 2026-09-07:
+bybit 0,33% (trần bậc 300k), okx 0,4%, gate 0,3% (500k), kraken 0,5% (1M, từ
+`PF_XBTUSD.marginLevels`). Binance là `verified: false` vì
+`/fapi/v1/leverageBracket` đòi API key mà dự án chưa giữ tới phase 4; của
+Hyperliquid là SUY RA theo từng coin từ `maxLeverage` chứ không phải trường sàn
+công bố, nên 0,0125 với BTC và 0,025 với SOL — một giá trị duy nhất đã sai.
+Biểu chưa xác minh thì từ chối trả giá thanh lý, không mặc định về 0.
+
+**Đo được, và kết quả một chiều.** Cùng 16 chuỗi, 12 tháng, chỉ đổi đòn bẩy:
+
+| đòn bẩy | thanh lý ở | tổng 16 chuỗi | lệnh/chuỗi | số lần thanh lý |
+|---|---|---|---|---|
+| tắt | — | **+9,54%** | 1,75 | 0 |
+| 2x | +49,3% | +9,20% | 1,81 | 2 |
+| 3x | +32,3% | +8,18% | 2,00 | 2 |
+| 5x | +19,4% | +6,88% | 2,19 | 4 |
+| 10x | +9,5% | −2,76% | 3,88 | **18** |
+| 20x | +4,5% | −19,28% | 6,75 | 21 |
+
+Đơn điệu — không có điểm tối ưu ở giữa. Và bảng này còn **nhẹ hơn** thực tế:
+đường equity chỉ trừ vòng phí khi bị thanh lý, chưa trừ phần ký quỹ mất (18 ×
+10% = 180% vốn một vị thế, không ghi ở đâu). Dùng đòn bẩy ở chân perp để "giải
+phóng vốn" là sai về mặt số học trên corpus này. Ship ở 0.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.

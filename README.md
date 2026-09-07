@@ -75,6 +75,8 @@ Liệt kê thẳng để không ai hiểu nhầm về năng lực hiện tại:
 | Chưa có | Hệ quả |
 |---|---|
 | **Số ròng trên màn hình** | Bước 3.1 đã có máy tính APR ròng trong `internal/strategy` (trừ phí taker 4 lượt **và** slippage đo từ sổ lệnh cho đúng size dự kiến), nhưng **chưa message nào đẩy nó lên dashboard** — wire vẫn ghi `funding_basis.model: "gross"`, và nhãn đó đang nói đúng cái đang gửi. Lên wire ở Bước 3.2/3.4 |
+| **Lịch sử giá (nến 1h)** | `cmd/backfill -prices` nạp nến của **cả 8 nguồn giao dịch được** vào `price_history`. Khác depth, nến **lấy lại được**, nên đây là thứ làm lối thoát basis đánh giá được trong backtest. Giá dùng là nến **đã đóng** gần nhất — không bao giờ là nến chứa mốc quyết định, vì giá đóng của nó nằm ở tương lai. Tầm với không đều: 5 sàn đủ 365 ngày, **Hyperliquid ~208 ngày** và báo bằng mảng rỗng |
+| **Mô hình ký quỹ chân perp** | `internal/risk` tính giá thanh lý của chân short từ biểu ký quỹ duy trì **công khai** của sàn. Đo được: dùng đòn bẩy làm lợi nhuận GIẢM đơn điệu (tắt +9,54% / 3x +8,18% / 10x −2,76% với **18 lần thanh lý** trên 16 chuỗi 12 tháng), nên ship ở **0** |
 | **Độ sâu sổ lệnh lịch sử** | `depth_snapshots` mới có **1 mẫu/nguồn/cặp**; scanner chạy tới đâu lấp tới đó, nhưng độ sâu **không backfill được**, nên backtest (3.3) phải nêu slippage thành tham số chứ không đọc được sổ quá khứ |
 | **Chiến lược CHƯA có lãi** | Backtest 6 tháng (Bước 3.3) chạy 72 cấu hình có giao dịch: **0 cấu hình có lãi**. Tín hiệu chọn đúng hướng (98,7% số kỳ funding dương) nhưng phí taker vòng 0,3010% lớn hơn thứ funding trả trong quãng giữ — hoà vốn cần ~39 ngày, các lệnh lỗ giữ 1,7–12 ngày. Chưa thử: khớp maker, sàn quãng-giữ tối thiểu, cặp funding cao hơn. Sweep rộng 2026-09-07 (6.048 bộ × 16 chuỗi × 3 cửa sổ, phí 4 sàn perp đã xác minh) xác nhận: 12 tháng 0 lượt có lãi ở 15/16 chuỗi, lượt dương duy nhất là 1 lệnh XRP/okx +0,028% trên corpus 96 ngày; vùng dương ở 6/3 tháng (BTC/binance, 2–5 lệnh) lỗ hết trên 12 tháng; giữ suốt cửa sổ và trả một vòng lại thắng mọi bộ tham số trên BTC/ETH ở cả bốn sàn. Thử ba cổng cho lối thoát đảo dấu (sâu / dài / đắt, mặc định = luật cũ; lưới 64 bộ nền × 125 biến thể × 16 chuỗi chạy từ commit đã lên): giảm nửa khoản lỗ ở bộ 3.3, và khi nới cả lối thoát suy giảm thì 3.398/8.000 bộ có tổng dương nhưng 0 bộ đạt giữ suốt trên 12 tháng (tốt nhất +9,72%, 12/16 chuỗi dương, so với giữ suốt +10,23%) — tức gần như không thoát; lợi thế còn lại ở lúc vào và ở 30 bps chi phí vòng. Báo cáo song ngữ Việt–Trung: `docs/reports/backtest-3.3-wide-2026-09-07.html`. Từ 2026-09-07 khối `strategy:` dùng bộ tốt nhất của lưới cổng (0,3 / bền 6 / sàn giữ 0 / 12 kỳ / X 2,0 / N 2 / C 0,25) và `hedge.quote_equivalents: [[USD, USDT]]` mở khoá 8 chuỗi perp quote USD (16 → 24 chuỗi): hyperliquid BTC +5,44% và ETH +5,01% APR thực trên 12 tháng — số đầu tiên trong dải 5–15%, nhưng là cặp KHÁC QUOTE nên còn mở rủi ro USDT/USD chưa trừ ở bất kỳ đâu. Lưới rộng 4.096 bộ × 24 chuỗi × 3 cửa sổ: bộ shipped +14,86% (14/24 chuỗi dương) so với −533% của bộ 3.3 cũ (73 lệnh/chuỗi vì nó thoát ở mọi mốc âm, mà nhịp 1h có gấp 8 lần), nhưng **giữ suốt cửa sổ vẫn thắng: +29,63% và 0/4.096 bộ chạm tới**. |
 | **Alert Telegram/Discord** | Bước 3.4 **hoãn** sau cổng 3.5 (quyết định 2026-09-07): backtest vừa kết luận chiến lược hiện tại lỗ, nên chưa có gì đáng đẩy lên điện thoại. Thay vào đó Bước 3.5 chạy **chế độ chỉ-ghi-nhật-ký**: mọi quyết định sống vào `signal_journal` kèm đủ lý do, phán quyết cổng sớm nhất 2026-09-21 |
@@ -224,6 +226,7 @@ Nạp kho lịch sử funding cho backtest (chạy một lần, vài phút, mở
 ```bash
 go run ./cmd/backfill                      # 12 tháng, mọi cặp trong config
 go run ./cmd/backfill -months 6 -symbol BTCUSDT
+go run ./cmd/backfill -prices              # nến 1h cả hai chân, cho lối thoát basis
 ```
 
 Chạy lại lúc nào cũng an toàn: mỗi dòng khoá theo (sàn, cặp, mốc settle) nên
@@ -263,7 +266,8 @@ không còn hardcode ở Go hay JavaScript.
 │   ├── instruments/           # registry, ánh xạ spot↔perp, sizing delta-neutral
 │   ├── fees/                  # bảng phí giao dịch
 │   ├── history/               # REST sàn → store (dùng chung scanner & backfill)
-│   ├── store/                 # SQLite: funding_history, price_snapshots, instrument_snapshots
+│   ├── store/                 # SQLite: funding_history, price_history,
+│   │                          #   price_snapshots, instrument_snapshots, depth_snapshots
 │   ├── strategy/              # APR, tín hiệu vào/ra
 │   ├── backtest/              # replay lịch sử
 │   ├── notify/                # Telegram, Discord
