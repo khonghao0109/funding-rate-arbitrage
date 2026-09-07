@@ -32,6 +32,11 @@ ap.add_argument("--out", action="append", required=True, help="output path (repe
 ap.add_argument("--commit", required=True, help="the commit the sweep binary was built from")
 ap.add_argument("--gates", default="2.0,2,1.0",
                 help="config.yaml exit_negative_min_bps,periods,cum_cost_frac — the row the gate table always shows")
+# The <title> tag names the page before its JS runs, and it is what a gallery
+# or a browser tab shows. Each report is a different measurement run, so each
+# needs its own name — two pages called the same thing cannot be told apart in
+# a list of them.
+ap.add_argument("--title", help="static <title>; defaults to the template's")
 args = ap.parse_args()
 
 data = json.load(open(args.json, encoding="utf-8"))
@@ -373,6 +378,8 @@ now = datetime.datetime.now().astimezone()
 META = {"generated_at": now.strftime("%Y-%m-%d %H:%M %z")}
 
 tpl = open(args.template, encoding="utf-8").read()
+if args.title:
+    tpl = re.sub(r"<title>.*?</title>", f"<title>{args.title}</title>", tpl, count=1)
 out = (tpl.replace("/*__DATA__*/", json.dumps(data, ensure_ascii=False, separators=(",", ":")))
           .replace("/*__EVAL__*/", json.dumps(EVAL, ensure_ascii=False))
           .replace("/*__META__*/", json.dumps(META, ensure_ascii=False))

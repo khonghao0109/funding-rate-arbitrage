@@ -58,8 +58,13 @@ python3 tools/report/iso.py --on $S/p-with.csv --off $S/p-without.csv --out $S/i
 
 python3 tools/report/build.py --json $S/wide.json --leverage $S/leverage.json \
   --isolation $S/isolation.json --commit $(git rev-parse --short HEAD) --gates 2.0,2,1.0 \
+  --title "Phán quyết backtest <bước>" \
   --out docs/reports/backtest-<mô-tả>-<ngày>.html
 ```
+
+`--title` đặt thẻ `<title>` tĩnh. **Mỗi báo cáo phải có tên riêng**: đó là tên
+hiện trên tab trình duyệt và trong danh sách, và hai trang cùng tên thì không
+phân biệt được trang nào là lượt đo nào.
 
 `--leverage` và `--isolation` đều tuỳ chọn; thiếu thì mục tương ứng biến mất
 thay vì hiện số rỗng.
