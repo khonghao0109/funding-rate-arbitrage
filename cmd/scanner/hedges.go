@@ -1,8 +1,6 @@
 package main
 
 import (
-	"fmt"
-
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/instruments"
 	"futures-arbitrage-scanner/internal/scanner"
@@ -61,44 +59,11 @@ func hedgeLegs(cfg config.Config, mapping instruments.HedgeMapping) []scanner.He
 	return legs
 }
 
-// chooseSpotLeg picks which valid spot market the dashboard proposes.
-//
-// Cheapest VERIFIED taker fee wins, because the only number derived from this
-// choice is a fee-based breakeven and an unverified schedule produces no number
-// at all. With none verified the first candidate stands, in mapping order, and
-// the breakeven stays null either way.
-//
-// The choice is stated in the note whenever there was one to make. A single
-// candidate needs no explanation; several do, or the reader has no way to know
-// the figure beside it belongs to one particular pair of venues.
+// chooseSpotLeg is config.CheapestVerifiedSpot — kept as a name here so the
+// call site reads as what it decides, but the RULE lives in one place, because
+// cmd/backtest must pick the same leg (step 3.5 compares the two).
 func chooseSpotLeg(cfg config.Config, candidates []string) (source, noteVI string) {
-	if len(candidates) == 0 {
-		return "", ""
-	}
-	best := candidates[0]
-	bestFee, bestVerified := takerFee(cfg, best)
-	for _, candidate := range candidates[1:] {
-		fee, verified := takerFee(cfg, candidate)
-		switch {
-		case verified && !bestVerified:
-		case verified == bestVerified && fee < bestFee:
-		default:
-			continue
-		}
-		best, bestFee, bestVerified = candidate, fee, verified
-	}
-	if len(candidates) == 1 {
-		return best, ""
-	}
-	return best, fmt.Sprintf("Chọn %s trong %d chân spot ghép được (phí taker thấp nhất đã xác minh).",
-		best, len(candidates))
-}
-
-func takerFee(cfg config.Config, source string) (bps float64, verified bool) {
-	if s, ok := cfg.SourceByName(source); ok {
-		return s.Fee.TakerBps, s.Fee.Verified
-	}
-	return 0, false
+	return cfg.CheapestVerifiedSpot(candidates)
 }
 
 func isPerpSource(cfg config.Config, source string) bool {

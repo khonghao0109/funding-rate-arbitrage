@@ -13,9 +13,9 @@
 // longer distinguishes "the strategy is wrong" from "the two implementations
 // drifted" — and the gate stops being worth running.
 //
-// Parameter sweeps run as parallel goroutines. Results are written to the
-// store; plotting and ad-hoc exploration happen outside this process, reading
-// what it wrote.
+// Parameter sweeps run as parallel goroutines. Results are written as CSV
+// with the assumptions in every row; plotting and ad-hoc exploration happen
+// outside this process, reading what it wrote.
 //
 // Two correctness rules that separate a useful backtest from a misleading one:
 //

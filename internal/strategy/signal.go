@@ -72,6 +72,14 @@ type Check struct {
 	Name     string
 	Passed   bool
 	DetailVI string
+
+	// NotEvaluated marks a check that could not be judged at all — a dependency
+	// failed (no hedge leg, so nothing to price) or an input was absent (no
+	// prices, so no basis). Distinct from Passed=false: "not tested" and
+	// "tested and failed" must never read alike, and a consumer counting how
+	// often a condition went untested (internal/backtest) reads THIS flag, not
+	// the wording of DetailVI.
+	NotEvaluated bool
 }
 
 // Candidate is one perp, its hedge leg, and everything needed to judge them.
@@ -259,7 +267,7 @@ type Params struct {
 func EvaluateEntry(at time.Time, c Candidate, p Params) Decision {
 	d := Decision{At: at, Symbol: c.Symbol, PerpSource: c.PerpSource, SpotSource: c.SpotSource, Action: ActionSkip}
 
-	usable, droppedSpecial := usableSettled(c.Settled)
+	usable, droppedSpecial := UsableSettled(c.Settled)
 	hedge := checkHedgeLeg(c)
 
 	// The cost is only priced when there IS a hedge leg. Without one there is
@@ -318,7 +326,7 @@ func EvaluateEntry(at time.Time, c Candidate, p Params) Decision {
 func EvaluateExit(at time.Time, pos Position, c Candidate, p Params) Decision {
 	d := Decision{At: at, Symbol: pos.Symbol, PerpSource: pos.PerpSource, SpotSource: c.SpotSource, Action: ActionHold}
 
-	usable, _ := usableSettled(c.Settled)
+	usable, _ := UsableSettled(c.Settled)
 	newest, haveNewest := newestOf(usable)
 
 	hedgeGone := exitHedgeGone(c)
@@ -361,14 +369,13 @@ func EvaluateExit(at time.Time, pos Position, c Candidate, p Params) Decision {
 
 func checkHedgeLeg(c Candidate) Check {
 	if c.SpotSource != "" {
-		return Check{"hedge_leg", true, fmt.Sprintf("Chân hedge: spot %s.", c.SpotSource)}
+		return Check{Name: "hedge_leg", Passed: true, DetailVI: fmt.Sprintf("Chân hedge: spot %s.", c.SpotSource)}
 	}
 	note := c.HedgeNoteVI
 	if note == "" {
 		note = "bảng ghép spot↔perp không có chân nào cho perp này."
 	}
-	return Check{"hedge_leg", false,
-		fmt.Sprintf("KHÔNG mở được vị thế: perp %s không có chân spot để hedge — %s", c.PerpSource, note)}
+	return Check{Name: "hedge_leg", Passed: false, DetailVI: fmt.Sprintf("KHÔNG mở được vị thế: perp %s không có chân spot để hedge — %s", c.PerpSource, note)}
 }
 
 func checkHistoryDepth(usable []exchanges.FundingHistoryEntry, droppedSpecial int, p Params) Check {
@@ -376,15 +383,15 @@ func checkHistoryDepth(usable []exchanges.FundingHistoryEntry, droppedSpecial in
 	if droppedSpecial > 0 {
 		detail += fmt.Sprintf(" (Đã loại %d mốc rateType=Special — cổ tức, không phải chế độ funding.)", droppedSpecial)
 	}
-	return Check{"history_depth", p.PersistencePeriods > 0 && len(usable) >= p.PersistencePeriods, detail}
+	return Check{Name: "history_depth", Passed: p.PersistencePeriods > 0 && len(usable) >= p.PersistencePeriods, DetailVI: detail}
 }
 
 func checkRateThreshold(newest exchanges.FundingHistoryEntry, have bool, p Params) Check {
 	if !have {
-		return Check{"rate_threshold", false, "Không có mốc settle nào để so ngưỡng."}
+		return Check{Name: "rate_threshold", Passed: false, DetailVI: "Không có mốc settle nào để so ngưỡng."}
 	}
 	bps := newest.RatePer8hFrac * bpsPerUnit
-	return Check{"rate_threshold", bps >= p.MinRatePer8hBps, fmt.Sprintf(
+	return Check{Name: "rate_threshold", Passed: bps >= p.MinRatePer8hBps, DetailVI: fmt.Sprintf(
 		"Mốc settle mới nhất %.4f bps/8h so với ngưỡng %.4f bps/8h (chu kỳ thật %ds).",
 		bps, p.MinRatePer8hBps, newest.IntervalSec)}
 }
@@ -397,10 +404,10 @@ func checkRateThreshold(newest exchanges.FundingHistoryEntry, have bool, p Param
 // this strategy is least able to hold through.
 func checkPersistence(usable []exchanges.FundingHistoryEntry, p Params) Check {
 	if p.PersistencePeriods <= 0 {
-		return Check{"persistence", false, "PersistencePeriods không dương — tham số sai."}
+		return Check{Name: "persistence", Passed: false, DetailVI: "PersistencePeriods không dương — tham số sai."}
 	}
 	if len(usable) < p.PersistencePeriods {
-		return Check{"persistence", false, fmt.Sprintf(
+		return Check{Name: "persistence", Passed: false, DetailVI: fmt.Sprintf(
 			"Chỉ có %d mốc, không đủ %d để kết luận độ bền.", len(usable), p.PersistencePeriods)}
 	}
 	window := usable[len(usable)-p.PersistencePeriods:]
@@ -415,7 +422,7 @@ func checkPersistence(usable []exchanges.FundingHistoryEntry, p Params) Check {
 			held++
 		}
 	}
-	return Check{"persistence", held == len(window), fmt.Sprintf(
+	return Check{Name: "persistence", Passed: held == len(window), DetailVI: fmt.Sprintf(
 		"%d/%d mốc gần nhất trên ngưỡng %.4f bps/8h; mốc thấp nhất trong cửa sổ %.4f bps/8h.",
 		held, len(window), p.MinRatePer8hBps, worstBps)}
 }
@@ -429,10 +436,10 @@ const notEvaluatedVI = "Chưa đánh giá — không có chân hedge nên không
 
 func checkLiquidity(cost RoundTrip, p Params, hedged bool) Check {
 	if !hedged {
-		return Check{"liquidity", false, notEvaluatedVI}
+		return Check{Name: "liquidity", DetailVI: notEvaluatedVI, NotEvaluated: true}
 	}
 	if !cost.OK {
-		return Check{"liquidity", false, fmt.Sprintf(
+		return Check{Name: "liquidity", Passed: false, DetailVI: fmt.Sprintf(
 			"Không định giá được vòng vào/ra ở vốn %.0f: %s", p.NotionalQuote, cost.ReasonVI)}
 	}
 	detail := fmt.Sprintf("Cả 4 lượt khớp nằm trong sổ đo được ở vốn %.0f; slippage %.4f%%, phí %.4f%%.",
@@ -440,17 +447,17 @@ func checkLiquidity(cost RoundTrip, p Params, hedged bool) Check {
 	if cost.DepthIsLowerBound {
 		detail += " ⚠ Có lượt ăn quá mức sàn công bố → chi phí là cận TRÊN."
 	}
-	return Check{"liquidity", true, detail}
+	return Check{Name: "liquidity", Passed: true, DetailVI: detail}
 }
 
 func checkNetAPR(net NetAPRResult, p Params, hedged bool) Check {
 	if !hedged {
-		return Check{"net_apr", false, notEvaluatedVI}
+		return Check{Name: "net_apr", DetailVI: notEvaluatedVI, NotEvaluated: true}
 	}
 	if !net.OK {
-		return Check{"net_apr", false, "Không có APR ròng: " + net.ReasonVI}
+		return Check{Name: "net_apr", Passed: false, DetailVI: "Không có APR ròng: " + net.ReasonVI}
 	}
-	return Check{"net_apr", net.NetAPRFrac >= p.MinNetAPRFrac, fmt.Sprintf(
+	return Check{Name: "net_apr", Passed: net.NetAPRFrac >= p.MinNetAPRFrac, DetailVI: fmt.Sprintf(
 		"APR RÒNG %.2f%% so với sàn tối thiểu %.2f%% (thô %.2f%%, đã trừ phí và slippage).",
 		net.NetAPRFrac*pctPerUnit, p.MinNetAPRFrac*pctPerUnit, net.GrossAPRFrac*pctPerUnit)}
 }
@@ -459,26 +466,25 @@ func checkNetAPR(net NetAPRResult, p Params, hedged bool) Check {
 
 func exitHedgeGone(c Candidate) Check {
 	if c.SpotSource != "" {
-		return Check{"hedge_gone", false, fmt.Sprintf("Chân hedge còn nguyên: spot %s.", c.SpotSource)}
+		return Check{Name: "hedge_gone", Passed: false, DetailVI: fmt.Sprintf("Chân hedge còn nguyên: spot %s.", c.SpotSource)}
 	}
 	note := c.HedgeNoteVI
 	if note == "" {
 		note = "không rõ lý do."
 	}
-	return Check{"hedge_gone", true,
-		"THOÁT: chân spot không còn ghép được nên vị thế hết delta-neutral — " + note}
+	return Check{Name: "hedge_gone", Passed: true, DetailVI: "THOÁT: chân spot không còn ghép được nên vị thế hết delta-neutral — " + note}
 }
 
 func exitFundingNegative(newest exchanges.FundingHistoryEntry, have bool) Check {
 	if !have {
-		return Check{"funding_negative", false, "Chưa có mốc settle mới để xét dấu."}
+		return Check{Name: "funding_negative", Passed: false, DetailVI: "Chưa có mốc settle mới để xét dấu."}
 	}
 	bps := newest.RatePer8hFrac * bpsPerUnit
 	if bps < 0 {
-		return Check{"funding_negative", true, fmt.Sprintf(
+		return Check{Name: "funding_negative", Passed: true, DetailVI: fmt.Sprintf(
 			"THOÁT: funding đã đảo dấu, mốc mới nhất %.4f bps/8h — vị thế đang TRẢ chứ không thu.", bps)}
 	}
-	return Check{"funding_negative", false, fmt.Sprintf("Funding còn dương: %.4f bps/8h.", bps)}
+	return Check{Name: "funding_negative", Passed: false, DetailVI: fmt.Sprintf("Funding còn dương: %.4f bps/8h.", bps)}
 }
 
 // exitNetAPRFloor closes a position whose net APR has stayed under the floor
@@ -494,10 +500,10 @@ func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost 
 	if hedgeAlreadyGone {
 		// The hedge check has already fired and closes the position. Firing
 		// again here would report two independent causes for one event.
-		return Check{"net_apr_floor", false, notEvaluatedVI}
+		return Check{Name: "net_apr_floor", DetailVI: notEvaluatedVI, NotEvaluated: true}
 	}
 	if !net.OK {
-		return Check{"net_apr_floor", true, "THOÁT: không còn tính được APR ròng — " + net.ReasonVI}
+		return Check{Name: "net_apr_floor", Passed: true, DetailVI: "THOÁT: không còn tính được APR ròng — " + net.ReasonVI}
 	}
 
 	window := p.ExitPersistencePeriods
@@ -551,7 +557,7 @@ func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost 
 		// No evidence either way. The newest-reading check above already exits
 		// when the CURRENT figure cannot be computed, so staying silent here
 		// avoids reporting a second cause for that same one.
-		return Check{"net_apr_floor", false, fmt.Sprintf(
+		return Check{Name: "net_apr_floor", Passed: false, DetailVI: fmt.Sprintf(
 			"Không định giá được mốc nào trong %d mốc gần nhất — không kết luận suy giảm từ cửa sổ này.",
 			len(recent))}
 	}
@@ -561,12 +567,12 @@ func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost 
 			skipped = fmt.Sprintf(" (%d/%d mốc không định giá được, đã loại khỏi phép đếm)",
 				len(recent)-priced, len(recent))
 		}
-		return Check{"net_apr_floor", true, fmt.Sprintf(
+		return Check{Name: "net_apr_floor", Passed: true, DetailVI: fmt.Sprintf(
 			"THOÁT: cả %d mốc settle định giá được gần nhất đều cho APR ròng dưới ngưỡng giữ %.2f%% "+
 				"(thấp nhất %.2f%%, cao nhất %.2f%%)%s — chế độ funding đã tàn, không phải một mốc lỗi nhịp.",
 			priced, p.ExitNetAPRFrac*pctPerUnit, worstFrac*pctPerUnit, bestFrac*pctPerUnit, skipped)}
 	}
-	return Check{"net_apr_floor", false, fmt.Sprintf(
+	return Check{Name: "net_apr_floor", Passed: false, DetailVI: fmt.Sprintf(
 		"%d/%d mốc định giá được gần nhất dưới ngưỡng giữ %.2f%% (mới nhất %.2f%%) — chưa đủ bền để đóng vị thế.",
 		under, priced, p.ExitNetAPRFrac*pctPerUnit, net.NetAPRFrac*pctPerUnit)}
 }
@@ -580,21 +586,21 @@ func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost 
 // the position is worth anything.
 func exitBasisWidened(pos Position, c Candidate, p Params) Check {
 	if !isPositiveFinite(c.SpotPriceQuote) || !isPositiveFinite(c.PerpPriceQuote) {
-		return Check{"basis_widened", false, "Chưa đo được basis: thiếu giá một trong hai chân."}
+		return Check{Name: "basis_widened", DetailVI: "Chưa đo được basis: thiếu giá một trong hai chân.", NotEvaluated: true}
 	}
 	basisPct := (c.PerpPriceQuote - c.SpotPriceQuote) / c.SpotPriceQuote * pctPerUnit
 	movedPct := basisPct - pos.EntryBasisPct
 
 	if abs(basisPct) > p.MaxBasisPct {
-		return Check{"basis_widened", true, fmt.Sprintf(
+		return Check{Name: "basis_widened", Passed: true, DetailVI: fmt.Sprintf(
 			"THOÁT: basis %.4f%% vượt trần %.4f%%.", basisPct, p.MaxBasisPct)}
 	}
 	if abs(movedPct) > p.MaxBasisWidenPct {
-		return Check{"basis_widened", true, fmt.Sprintf(
+		return Check{Name: "basis_widened", Passed: true, DetailVI: fmt.Sprintf(
 			"THOÁT: basis đã dịch %.4f điểm %% so với lúc vào (%.4f%% → %.4f%%), quá hạn %.4f.",
 			movedPct, pos.EntryBasisPct, basisPct, p.MaxBasisWidenPct)}
 	}
-	return Check{"basis_widened", false, fmt.Sprintf(
+	return Check{Name: "basis_widened", Passed: false, DetailVI: fmt.Sprintf(
 		"Basis %.4f%% (vào lệnh %.4f%%), trong cả trần %.4f%% lẫn biên dịch %.4f.",
 		basisPct, pos.EntryBasisPct, p.MaxBasisPct, p.MaxBasisWidenPct)}
 }
@@ -609,7 +615,15 @@ func exitBasisWidened(pos Position, c Candidate, p Params) Check {
 // cannot forget to. A row with a non-positive interval is refused for the same
 // reason exchanges.DeriveFundingRates refuses one: everything downstream
 // divides by it.
-func usableSettled(entries []exchanges.FundingHistoryEntry) (usable []exchanges.FundingHistoryEntry, droppedSpecial int) {
+// UsableSettled drops the settlements no rule may be built on, and reports how
+// many were dropped for being dividend-driven.
+//
+// Exported because internal/backtest must apply the SAME filter the signal
+// layer applies. What counts as a usable settlement is a strategy rule, not a
+// reader's convenience: a backtest that accrued a Binance "Special" rate the
+// signal never saw would diverge from production for a reason step 3.5 could
+// not diagnose (doc.go, PLAN Q8).
+func UsableSettled(entries []exchanges.FundingHistoryEntry) (usable []exchanges.FundingHistoryEntry, droppedSpecial int) {
 	for _, entry := range entries {
 		if entry.RateType == "Special" {
 			droppedSpecial++

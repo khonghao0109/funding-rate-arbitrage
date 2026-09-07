@@ -429,3 +429,35 @@ func TestEvaluateExit_DecayWindowReportsRealRatesWhenOneCannotBePriced(t *testin
 			"the min/max seed was skipped along with the unpriceable period:\n  %s", detail)
 	}
 }
+
+// A check that could not be judged says so with a FLAG, not with the wording
+// of its sentence. internal/backtest counts these; matching a Vietnamese prefix
+// would make that count vanish the day the sentence is reworded.
+func TestChecks_FlagNotEvaluatedInsteadOfEncodingItInProse(t *testing.T) {
+	// Exit: no prices at all → basis cannot be judged.
+	c := goodCandidate()
+	c.SpotPriceQuote, c.PerpPriceQuote = 0, 0
+	exit := EvaluateExit(evalAt, openPosition(), c, entryParams())
+	var basis Check
+	for _, ch := range exit.Checks {
+		if ch.Name == "basis_widened" {
+			basis = ch
+		}
+	}
+	if !basis.NotEvaluated || basis.Passed {
+		t.Errorf("basis with no prices must be NotEvaluated and not fired: %+v", basis)
+	}
+
+	// Entry: no hedge leg → liquidity and net_apr are not evaluated, not failed-for-a-second-reason.
+	c = goodCandidate()
+	c.SpotSource, c.HedgeNoteVI = "", "no spot shares quote USD"
+	entry := EvaluateEntry(evalAt, c, entryParams())
+	for _, ch := range entry.Checks {
+		if (ch.Name == "liquidity" || ch.Name == "net_apr") && !ch.NotEvaluated {
+			t.Errorf("%s must be flagged NotEvaluated when there is no hedge leg: %+v", ch.Name, ch)
+		}
+		if ch.Name == "hedge_leg" && ch.NotEvaluated {
+			t.Error("the hedge check itself WAS evaluated (and failed); it must not carry the flag")
+		}
+	}
+}

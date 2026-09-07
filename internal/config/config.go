@@ -582,3 +582,43 @@ func validateFee(source Source) error {
 	}
 	return nil
 }
+
+// CheapestVerifiedSpot picks which of several valid spot legs a perp is hedged
+// against, and explains the choice when there was one to make.
+//
+// This is THE rule, used by cmd/scanner (the dashboard's hedge column and the
+// live signal path) and by cmd/backtest alike. Step 3.5 compares the two
+// paths' positions, and if each command chose its own leg the comparison would
+// be between different trades. Cheapest VERIFIED taker fee wins, because the
+// only number derived from the choice is fee-based and an unverified schedule
+// produces no number at all; with none verified the first candidate stands, in
+// the mapping's deterministic order.
+func (c Config) CheapestVerifiedSpot(candidates []string) (source, noteVI string) {
+	if len(candidates) == 0 {
+		return "", ""
+	}
+	best := candidates[0]
+	bestFee, bestVerified := c.takerFee(best)
+	for _, candidate := range candidates[1:] {
+		fee, verified := c.takerFee(candidate)
+		switch {
+		case verified && !bestVerified:
+		case verified == bestVerified && fee < bestFee:
+		default:
+			continue
+		}
+		best, bestFee, bestVerified = candidate, fee, verified
+	}
+	if len(candidates) == 1 {
+		return best, ""
+	}
+	return best, fmt.Sprintf("Chọn %s trong %d chân spot ghép được (phí taker thấp nhất đã xác minh).",
+		best, len(candidates))
+}
+
+func (c Config) takerFee(source string) (bps float64, verified bool) {
+	if s, ok := c.SourceByName(source); ok {
+		return s.Fee.TakerBps, s.Fee.Verified
+	}
+	return 0, false
+}

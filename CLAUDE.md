@@ -142,6 +142,22 @@ funding SIGN FLIP still exits immediately — that is money leaving every
 settlement. Measured on the real corpus: strict thresholds give 0 entries / 28
 skips; loose ones give 4 entries at 5.71–6.97% net APR, inside the 5–15% band.
 
+Step 3.3 built `internal/backtest` + `cmd/backtest`, which call the step-3.2
+functions rather than reimplementing them — two AST tests enforce that, one
+requiring the four calls and one forbidding any locally declared rule name.
+**Its verdict is that the strategy as parameterized LOSES money**: 6 months, 16
+series × 24 parameter sets, of which 288 are REFUSED BY NAME (unverified fee
+schedules — no cost, no replay, never "0 trades at 0 cost"), 96 run, 72 trade,
+and **0 are profitable**. The signal
+picks the right regime — 98.7% of held periods had positive funding — but the
+0.3010% taker round trip exceeds what funding pays over the holds the exit rule
+produces. Measured on the corpus: BTC funding averaged 0.002573%/8h, so break
+even is 117 settlements = **39 days**, while the losing trades held 1.7–12 days.
+PLAN §7.4's worked example assumed 0.01%/8h — 3.9× optimistic — which is where
+its "~10 days" came from. This is not a bug: the 5–15% band is for SELECTED
+opportunities, not for BTC/ETH held mechanically on taker fees. A backtest
+returning 5–15% at this configuration would be the suspicious result.
+
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
 (venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),
@@ -354,7 +370,8 @@ internal/
   store/             SQLite persistence
   strategy/          net APR, slippage from depth, entry and exit signals
                      ⚠️ the ONLY package allowed to say "net" (step 3.1)
-  backtest/          historical replay
+  backtest/          historical replay — MUST call strategy, never re-grow a
+                     rule (two AST tests enforce it)
   notify/            Telegram and Discord alerts
   broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS
   execution/         delta-neutral position open and close
@@ -406,6 +423,11 @@ go run ./cmd/fundingcheck  # live re-check of the funding-field survey (network)
 # minutes). Safe to re-run: a second pass over the same window inserts nothing.
 go run ./cmd/backfill                 # 12 months, every configured pair
 go run ./cmd/backfill -months 6 -symbol BTCUSDT
+
+# Replay the production entry/exit rules over the stored corpus (offline: reads
+# SQLite, writes nothing back). Prints its assumptions with every report.
+go run ./cmd/backtest                        # 6 months, every hedgeable pair
+go run ./cmd/backtest -sweep -csv out.csv    # parameter sweep, parallel
 
 # Re-measure what a stored price sample costs on disk before changing
 # storage.price_sample_every_sec — the row count is linear in it.
@@ -510,6 +532,8 @@ phase 1.
   keepalives with ordinary data frames, so a socket that stays open with a dead
   subscription looks healthy to the connector forever. The scanner notices
   (silence downgrades the state) but cannot act. Found in review at step 1.6.
+  The 72h soak did not trigger it — all 36 series were live at 91h — which is
+  absence over one run, not a fix.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new
@@ -530,8 +554,6 @@ phase 1.
   spread, and how far the response reached. There is no level list anywhere, in
   memory or in the corpus. So `strategy.EstimateFill` reconstructs a piecewise
   linear cumulative curve through the points that exist and integrates along it.
-  The 72h soak did not trigger it — all 36 series were live at 91h — which is
-  absence over one run, not a fix.
   That assumes liquidity is spread evenly inside a window; real books are denser
   near the touch, so the estimate is **too expensive**, which is the safe
   direction. Anything wanting a sharper fill model has to store levels first —

@@ -99,7 +99,7 @@
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
-| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **2/5 bước** | Tín hiệu có kiểm chứng lịch sử |
+| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 bước** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Basis Trade | 4 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot hỗ trợ 2 chiến lược |
@@ -1464,13 +1464,178 @@ Sửa:
 > nạp từ `config.yaml`; hiện là tham số hàm, do caller dựng. Bước 3.3 quét tham
 > số nên sẽ chốt hình dạng trước, rồi mới đưa vào YAML.
 
-#### Bước 3.3 — Backtest engine
+#### Bước 3.3 — Backtest engine ✅ (2026-09-04)
 - **Viết bằng Go, import trực tiếp `internal/strategy`** — không viết lại luật vào/ra (quyết định Q8, §7.1). Backtest và production phải chạy cùng một đoạn code, nếu không thì Bước 3.5 mất giá trị chẩn đoán.
 - Chạy lại logic tín hiệu trên dữ liệu lịch sử của Bước 2.4.
 - Funding là **sự kiện rời rạc**: đếm số mốc settle đã đi qua, không nhân APY với thời gian nắm giữ. Lọc `rateType = Special`.
 - Báo cáo: tổng lợi nhuận, APR thực tế, max drawdown, số lần đảo chiều funding, tỉ lệ chu kỳ có lãi. Ghi ra SQLite/CSV để phân tích ngoài.
 - Quét tham số chạy song song bằng goroutine.
 - **Nghiệm thu:** có báo cáo backtest 6 tháng cho ít nhất 2 cặp; engine dùng đúng hàm tín hiệu mà production sẽ dùng (kiểm bằng cách đọc import).
+
+> ⚠️ **Đối chiếu hiện trạng trước khi làm (P1, 2026-09-04) — PLAN đã sai giả
+> định ở đây, sửa trước khi code.** Câu "chạy lại logic tín hiệu trên dữ liệu
+> lịch sử" ngầm hiểu là mọi đầu vào của tín hiệu đều có lịch sử. Đo thật trên
+> `data/scanner.db`:
+>
+> | Bảng | Có gì | Dùng được cho cửa sổ 6 tháng? |
+> |---|---|---|
+> | `funding_history` | 90.083 mốc, tới **365 ngày** | ✅ đây là lịch sử THẬT duy nhất |
+> | `depth_snapshots` | **1 mốc** (2026-09-04 06:12:35), 36 hàng | ❌ không có |
+> | `price_snapshots` | **2 giờ 12 phút** (cùng ngày) | ❌ không có |
+> | `instrument_snapshots` | **1 ngày** | ❌ không có |
+>
+> Độ sâu **không backfill được** (sổ lệnh biến mất ngay khi nó đổi), nên đây
+> không phải thiếu sót tạm thời mà là ranh giới vĩnh viễn của mọi backtest chạy
+> trước hôm nay. Ba hệ quả bắt buộc, engine phải nói ra chứ không được giấu:
+>
+> ① **Slippage và phí là THAM SỐ ĐƯỢC NÊU, không phải đo từ quá khứ.** Engine
+> lấy sổ lệnh đo được hôm nay, giữ CỐ ĐỊNH suốt cửa sổ, và báo cáo phải ghi
+> rõ điều đó. Sổ hôm nay không đại diện cho sổ lúc thị trường căng — mà lúc
+> căng chính là lúc funding đảo chiều và vị thế phải thoát ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh) mục 2).
+>
+> ② **Điều kiện thoát `basis_widened` KHÔNG đánh giá được** trong backtest: nó
+> cần giá spot và perp cùng thời điểm trong quá khứ, mà `price_snapshots` chỉ
+> có hôm nay. Engine truyền giá 0 để `EvaluateExit` trả đúng câu "Chưa đo được
+> basis: thiếu giá một trong hai chân" thay vì bịa một con số — và báo cáo
+> phải đếm riêng số lần điều kiện này không đánh giá được.
+>
+> ③ **Chuỗi `model='continuous'` (Paradex) bị TỪ CHỐI, không phải đếm.** Hàng
+> của nó là MẪU chỉ số funding theo giờ, không phải mốc settle; đếm như settle
+> ghi khống 8.760 kỳ/năm. Engine đếm settle nên nó từ chối chuỗi continuous
+> bằng một câu có tên, thay vì hỗ trợ nửa vời.
+>
+> Nói cách khác: backtest này kiểm chứng **đường funding thật** với **giả định
+> chi phí được nêu rõ**. Nó không phải, và trên dữ liệu hiện có không thể là,
+> một mô phỏng khớp lệnh.
+
+> **Kết quả 3.3 (2026-09-04).** `internal/backtest` — `Run` phát lại một chuỗi,
+> `Sweep` quét song song (8 worker có trần, thứ tự đầu ra **tất định** vì một
+> sweep không diff được thì chạy sweep để làm gì), `WriteCSV` + `SummaryLines`.
+> Cộng `cmd/backtest`. Engine **gọi thẳng** `strategy.EvaluateEntry`,
+> `EvaluateExit`, `RoundTripCost` và `UsableSettled` — `usableSettled` được
+> export ở bước này chính vì backtest không được có bản lọc "Special" riêng.
+> Có **hai test hợp đồng** parse AST của chính package: một cái đòi engine phải
+> import strategy và gọi đủ bốn hàm, một cái cấm engine khai báo hàm mang tên
+> luật tín hiệu (`checkPersistence`, `checkNetAPR`, …). Đó là cách kiểm
+> "đọc import" mà tiêu chí nghiệm thu yêu cầu, làm bằng máy thay vì bằng mắt.
+>
+> ---
+>
+> ### ⛔ Phán quyết của backtest: chiến lược NHƯ ĐANG THAM SỐ HOÁ là LỖ
+>
+> **Nghiệm thu: 6 tháng, 16 chuỗi × 24 bộ tham số = 384 lượt.** Sau review:
+> **288 lượt bị TỪ CHỐI CÓ TÊN** (12 chuỗi bybit/okx/gate mang `verified:
+> false` — engine không định giá được vòng vào/ra thì không phát lại, thay vì
+> "giao dịch 0 lệnh ở phí 0" như bản đầu), **96 lượt chạy thật** trên 4 chuỗi
+> `binance_futures ← binance_spot`, trong đó **72 lượt có giao dịch. Số lượt có
+> lãi: 0.** (Chạy lại 2026-09-07; corpus mới nhất vẫn 2026-09-04 vì chưa tiến
+> trình nào có storage chạy từ hôm đó — nên `CoverageShort` báo đúng là thiếu 3
+> ngày ở MỌI chuỗi, và cửa sổ phủ thật là 181 ngày.)
+>
+> | Cặp / cấu hình | Lệnh | APR thực | Tổng | Max DD | % kỳ funding dương |
+> |---|---|---|---|---|---|
+> | BTC 0,80/6/3 (tốt nhất) | 2 | **−0,04%** | −0,022% | 0,317% | 98,9% |
+> | BTC 0,50/3/3 (mặc định) | 5 | −0,07% | −0,033% | 0,399% | 98,7% |
+> | ETH 0,50/3/3 | 11 | −5,37% | −2,661% | 2,669% | 94,4% |
+> | XRP 0,30/2/1 | 32 | −21,57% | −10,9% | 10,697% | ~81% |
+> | SOL 0,30/2/1 (tệ nhất) | 40 | **−25,18%** | −12,488% | 12,488% | 82,3% |
+>
+> (APR "thực" annualize trên **số ngày corpus ĐÃ PHỦ**, không trên cửa sổ hỏi
+> — OKX có 3 tháng thì chia cho 3 tháng; drawdown tính CẢ lần đóng cưỡng bức ở
+> cuối cửa sổ, nên ETH lên 2,669% thay vì 2,412% ở bản trước review; cột "% kỳ
+> funding dương" là số THÔ về chế độ, không phải "kỳ có lãi", và tên trường nay
+> là `PositiveFundingPeriodShare` để không ai đọc nhầm.)
+>
+> **Tín hiệu chọn ĐÚNG HƯỚNG mà vẫn lỗ**: 98,7% số kỳ nắm giữ có funding dương.
+> Vấn đề không nằm ở việc chọn sai chế độ funding, mà ở chỗ **chi phí vòng
+> 0,3010% lớn hơn thứ funding trả được trong quãng nắm giữ mà luật thoát sinh
+> ra**. Càng nới ngưỡng càng nhiều lệnh, càng nhiều lệnh càng lỗ — quan hệ đơn
+> điệu, không có điểm tối ưu nào ở giữa.
+>
+> **Số học, kiểm chứng độc lập thẳng trên corpus:**
+>
+> ```
+> funding BTC binance trung bình 6 tháng : 0,002573 % / 8h
+> chi phí vòng (4 lượt taker)            : 0,3010   %
+> → hoà vốn sau 117 mốc settle           = 39,0 ngày
+> ```
+>
+> Đối chiếu lệnh thật trong lượt chạy: hai lệnh **có lãi** giữ **79 và 80 kỳ**
+> (26–27 ngày, sát điểm hoà vốn); mọi lệnh **lỗ** giữ 5–36 kỳ (1,7–12 ngày),
+> đều **dưới** điểm hoà vốn.
+>
+> **[§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh) đã tính đúng phép tính nhưng sai đầu
+> vào.** Ví dụ ở đó dùng funding 0,01%/8h và ra "hoà vốn sau ~10 ngày". Funding
+> BTC thật trong cửa sổ chỉ **0,0026%/8h — thấp hơn 3,9 lần** — nên điểm hoà
+> vốn dài ra đúng 3,9 lần thành **~39 ngày**. Không phải §7.4 sai lập luận; là
+> con số minh hoạ lạc quan hơn thực tế gần bốn lần, và toàn bộ kết luận "chi phí
+> không giết giao dịch" phụ thuộc vào con số đó.
+>
+> **Ba đường thoát khỏi kết luận này, chưa cái nào được thử** — ghi ra để Bước
+> 3.5 có cái mà kiểm, không phải để bào chữa:
+> ① **Khớp maker thay vì taker.** Biểu phí maker của cùng bốn sàn là 2,0/1,5/
+> 2,0/0,3 bps so với taker 5,0/4,5/5,0/4,5 — vòng maker rẻ hơn khoảng **2,5
+> lần**, kéo hoà vốn từ ~39 xuống ~16 ngày. Nhưng maker không đảm bảo khớp, và
+> `internal/strategy` hiện **chỉ mô hình taker**.
+> ② **Sàn tối thiểu cho quãng giữ**, tức không vào nếu chưa đủ số kỳ để hoà vốn.
+> Hiện `EvaluateEntry` không có điều kiện đó.
+> ③ **Cặp funding cao hơn.** Bốn cặp đang quét là những cặp thanh khoản nhất, tức
+> là những cặp funding thấp nhất. Đây đúng là chỗ [§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)
+> mục 3 nói cơ hội thật nằm ở alt sổ mỏng — mà lúc đó cổng thanh khoản của Bước
+> 3.1 mới là thứ quyết định.
+>
+> ⚠️ **Đây không phải bug.** Kỳ vọng 5–15%/năm mà CLAUDE.md ghi là cho **cơ hội
+> được chọn**, không phải cho BTC/ETH nắm giữ máy móc trên phí taker. Một
+> backtest ra 5–15% ở cấu hình này mới là thứ đáng nghi.
+>
+> ---
+>
+> **Ba cái bẫy corpus, đã chặn tại engine:**
+> ① Chuỗi `model='continuous'` (Paradex) bị **TỪ CHỐI có tên**, không đếm —
+> hàng của nó là mẫu chỉ số theo giờ, đếm như settle là ghi khống 8.760 kỳ/năm.
+> ② `rate_type='Special'` lọc qua `strategy.UsableSettled`, tức **cùng một bộ
+> lọc** tín hiệu dùng, không phải bản sao.
+> ③ Độ phủ được **báo cáo chứ không cắt âm thầm**, với dung sai **một chu kỳ**
+> ở mỗi đầu: bản đầu so `newest < ToMs−1` nên cờ bật ở 384/384 dòng (cửa sổ
+> "tới bây giờ" luôn cách mốc settle mới nhất vài giờ) và không phân biệt nổi
+> OKX 3 tháng với Binance 6 tháng — đúng việc duy nhất nó sinh ra để làm.
+> Review bắt được; nay cờ chỉ bật khi corpus thật sự thiếu quá một chu kỳ.
+>
+> **Điều kiện thoát `basis_widened` KHÔNG được kiểm lần nào**: 234 lượt đánh giá
+> thoát trên BTC đều không xét được nó vì thiếu giá lịch sử. Con số đó in ra
+> cùng mọi báo cáo, để không ai đọc kết quả này rồi tưởng điều kiện đó đã qua thử.
+>
+> **Review đối kháng (2026-09-07): REQUEST CHANGES, đã vá hết trong cùng bước.**
+> Lõi kế toán được xác nhận đúng (mở ở mốc i thì hưởng từ i+1; mốc đóng là mốc
+> có rate kích hoạt thoát; phí tính đúng một lần kể cả đóng cưỡng bức; Special
+> không lọt vào cả tín hiệu lẫn cộng dồn; continuous bị từ chối trong `Run`), và
+> **phán quyết 0/72 được reviewer tái lập độc lập** bằng SQL trên corpus (116
+> mốc ≈ 38,7 ngày hoà vốn — khớp 117/39 ở trên trong sai số làm tròn). Mười một
+> lỗi rìa, tất cả có test ghim: ① đóng cưỡng bức không vào drawdown; ② mốc đóng
+> cưỡng bức lấy hàng cuối chuỗi thay vì mốc cuối TRONG cửa sổ; ③ `CoverageShort`
+> bật ở mọi dòng (trên); ④ APR annualize trên cửa sổ hỏi thay vì span đã phủ;
+> ⑤ chuỗi không định giá được phí trả `OK=true, 0 lệnh` — 288/384 dòng sweep đọc
+> y như "chiến lược không tìm thấy gì"; ⑥ sort "tốt nhất" đặt 0-lệnh (APR 0)
+> trên mọi lượt lỗ; ⑦ CSV thiếu chi phí vòng và giả định — đúng artifact bị tách
+> khỏi ngữ cảnh; ⑧ `ProfitablePeriodShare` là số thô mang chữ "lãi";
+> ⑨ `spotLegFor` trong `cmd/backtest` là bản thứ hai của luật chọn chân hedge,
+> khác `cmd/scanner` — cổng 3.5 sẽ so hai vị thế khác chân; nay cả hai đi qua
+> `instruments.BuildHedgeMapping` trên `instrument_snapshots` +
+> `config.CheapestVerifiedSpot` (một luật, hai caller); ⑩ đếm `basis_widened`
+> không đánh giá được bằng cách so prefix một câu tiếng Việt — nay
+> `strategy.Check` có cờ `NotEvaluated` kiểu bool; ⑪ hai test AST chỉ là
+> tripwire trên TÊN — thêm test hành vi phát lại từng bước qua
+> `EvaluateEntry`/`EvaluateExit` và đòi danh sách lệnh **giống hệt** `Run`.
+>
+> **Nợ ghi nhận.** ① `internal/strategy` chỉ mô hình **taker**; muốn thử đường
+> thoát ① ở trên thì phải thêm mô hình maker (fill không chắc chắn) — việc của
+> GĐ4/GĐ5, không phải 3.3. ② Chưa có điều kiện "quãng giữ tối thiểu để hoà vốn"
+> trong `EvaluateEntry`; nó thuộc 3.2 và nên thêm SAU khi 3.5 xác nhận backtest
+> khớp mô phỏng tay, không phải trước. ③ Kết quả ghi ra **CSV**, chưa ghi vào
+> SQLite — PLAN cho phép "SQLite/CSV" và CSV đủ cho phân tích ngoài ở GĐ8.
+> ④ Nợ index `funding_at_ms` **không phải trả**: engine đọc theo từng symbol nên
+> đi đúng index `funding_history_by_symbol` sẵn có; thêm một index không ai dùng
+> là nợ mới chứ không phải trả nợ cũ.
 
 #### Bước 3.4 — Alert ra ngoài
 - Telegram bot (ưu tiên) / Discord webhook.
@@ -1824,7 +1989,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
-[  ] GĐ 3  Signal, Alert & Backtest      2/5 bước   ← ĐANG LÀM
+[  ] GĐ 3  Signal, Alert & Backtest      3/5 bước   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Basis Trade                   0/4 bước
