@@ -102,6 +102,15 @@
             position: relative;
             display: flex;
             flex-direction: column;
+            /* A grid item's automatic minimum size is its content size, so a
+               funding table taller or wider than the viewport grew this cell
+               past the 100vh/1fr track instead of scrolling inside
+               .funding-scroll and .funding-*-wrap — and body{overflow:hidden}
+               then cut the rest off with no scrollbar anywhere. Zero minimums
+               keep the cell at the track size so the inner overflow rules do
+               their job. */
+            min-width: 0;
+            min-height: 0;
         }
 
 
@@ -694,7 +703,11 @@
 
         .funding-chart {
             height: 320px;
-            padding: 8px;
+            /* Spacing as MARGIN, not padding: app.js sizes the chart from
+               clientWidth/clientHeight, which include padding, so an 8px
+               padding made a 320px canvas overflow a 304px content box and
+               paint over the coverage line below it. */
+            margin: 8px;
         }
 
         .funding-coverage {
