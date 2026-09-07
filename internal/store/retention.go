@@ -8,7 +8,7 @@ import (
 
 // Retention is how long each series is kept, in days.
 //
-// The two numbers come from PLAN.md 2.6 and describe different things. Funding
+// The first two numbers come from PLAN.md 2.6 and describe different things. Funding
 // is the backtest corpus and a year of it is the point of collecting any;
 // price samples are a diagnostic series with a row count linear in the sampling
 // period, and three months of them at 5s is already ~56 million rows.
@@ -28,13 +28,27 @@ type Retention struct {
 	// small enough to keep long, and unlike funding it can NEVER be re-fetched,
 	// because a venue does not publish the book it had last Tuesday.
 	DepthDays int
+
+	// PriceHistoryDays keeps the hourly CANDLES, and it is deliberately a
+	// separate number from PriceDays.
+	//
+	// The two tables sound alike and are nothing alike. price_snapshots is a
+	// 5-second diagnostic series pruned at 90 days because it costs 133 bytes
+	// a row and grows to gigabytes; price_history is the backtest's basis
+	// corpus at one row per market per HOUR — 4 pairs x 8 sources x 8,760
+	// hours is 280k rows for a whole year. Sharing PriceDays would have the
+	// 90-day snapshot policy silently delete nine months of a corpus that was
+	// backfilled for the basis exit, which is the precise shape of failure the
+	// keep-everything default exists to prevent.
+	PriceHistoryDays int
 }
 
 // PruneResult is what one pruning pass removed.
 type PruneResult struct {
-	FundingRows int64
-	PriceRows   int64
-	DepthRows   int64
+	FundingRows      int64
+	PriceRows        int64
+	DepthRows        int64
+	PriceHistoryRows int64
 }
 
 // Prune deletes rows older than the policy allows.
@@ -71,6 +85,14 @@ func (s *Store) Prune(ctx context.Context, policy Retention) (PruneResult, error
 			return result, err
 		}
 		result.DepthRows = removed
+	}
+	if policy.PriceHistoryDays > 0 {
+		cutoffMs := now.AddDate(0, 0, -policy.PriceHistoryDays).UnixMilli()
+		removed, err := s.deleteOlderThan(ctx, "price_history", "open_time_ms", cutoffMs)
+		if err != nil {
+			return result, err
+		}
+		result.PriceHistoryRows = removed
 	}
 	return result, nil
 }

@@ -68,9 +68,10 @@ func startStore(ctx context.Context, cfg config.Config, s *scanner.Scanner,
 	})
 	start(func() {
 		prune(ctx, db, time.Duration(cfg.Storage.PruneEveryHours)*time.Hour, store.Retention{
-			FundingDays: cfg.Storage.RetainFundingDays,
-			PriceDays:   cfg.Storage.RetainPriceDays,
-			DepthDays:   cfg.Depth.RetainDays,
+			FundingDays:      cfg.Storage.RetainFundingDays,
+			PriceDays:        cfg.Storage.RetainPriceDays,
+			DepthDays:        cfg.Depth.RetainDays,
+			PriceHistoryDays: cfg.Storage.RetainPriceHistoryDays,
 		})
 	})
 	return db

@@ -80,6 +80,27 @@ func InstrumentFetchers() map[string]exchanges.InstrumentFetchFunc {
 	}
 }
 
+// PriceHistoryFetchers maps connector names to their hourly-candle fetcher.
+//
+// EIGHT entries, spot as well as perp, because the thing these feed is a
+// BASIS: perp-over-spot at a past instant needs both legs, and a table with
+// only the perp side would make the exit condition it exists for permanently
+// unevaluable. Paradex has no entry — it never replays, its funding is a
+// continuous index with no settlements to price against — and Pyth has none
+// because an oracle has no traded candle.
+func PriceHistoryFetchers() map[string]exchanges.PriceHistoryFetchFunc {
+	return map[string]exchanges.PriceHistoryFetchFunc{
+		"binance_futures":     binance.FetchFuturesPriceHistory,
+		"binance_spot":        binance.FetchSpotPriceHistory,
+		"bybit_futures":       bybit.FetchFuturesPriceHistory,
+		"bybit_spot":          bybit.FetchSpotPriceHistory,
+		"okx_futures":         okx.FetchPriceHistory,
+		"gate_futures":        gate.FetchPriceHistory,
+		"kraken_futures":      kraken.FetchPriceHistory,
+		"hyperliquid_futures": hyperliquid.FetchPriceHistory,
+	}
+}
+
 // FundingHistoryFetchers maps connector names to their history fetcher. Only
 // perpetual sources appear: a spot market has no funding, and an oracle has
 // neither.

@@ -39,10 +39,14 @@ import (
 //     market is exactly when funding turns and a position has to leave
 //     (docs/PLAN.md §7.4 item 2). Result.AssumptionsVI carries this to every
 //     reader.
-//   - The basis exit cannot be evaluated at all, because it needs a spot and a
-//     perp price at the same past instant. The engine passes no prices, so the
-//     check reports its own inability instead of being fed an invented number,
-//     and Result.BasisNotEvaluable counts how often that happened.
+//   - The basis exit IS evaluable since step 3.3b, from stored hourly candles
+//     (Series.SpotCandles / PerpCandles). Candles, unlike depth, can be
+//     backfilled. The price used is the newest candle to have FULLY CLOSED at
+//     or before the settlement — never the one containing it, whose close is
+//     stamped up to an hour in the future — so it is at most one interval old.
+//     Where a leg has no candle within two intervals the check still reports
+//     its own inability rather than being fed an invented number, and
+//     Result.BasisNotEvaluable counts how often that happened.
 //
 // A reader who wants a fill simulation needs stored order book LEVELS first,
 // and that decision can only ever apply forward.
@@ -81,6 +85,18 @@ type Series struct {
 	// whole window — see the header.
 	SpotBook depth.Summary
 	PerpBook depth.Summary
+
+	// SpotCandles and PerpCandles are hourly closes for the two legs
+	// (store.PriceHistory, step 3.3b). They are what makes the basis exit
+	// evaluable in hindsight: unlike depth, candles CAN be backfilled, so a
+	// past instant really does have a spot and a perp price.
+	//
+	// Both may be empty, and then the basis check reports "not evaluable" at
+	// every settlement exactly as it did before this existed — a series whose
+	// prices were never collected must not silently be replayed as one whose
+	// basis never moved. Result.BasisNotEvaluable counts it either way.
+	SpotCandles []exchanges.PriceCandle
+	PerpCandles []exchanges.PriceCandle
 }
 
 // Window is the closed-open replay range.
@@ -152,6 +168,19 @@ type Result struct {
 	// would imply the condition had been tested.
 	BasisNotEvaluable int
 
+	// BasisEvaluable counts settlements where BOTH legs had a usable close, so
+	// a reader can tell "the rule was tested and never fired" from "there were
+	// no prices to test it with". The two counters are not complements:
+	// BasisNotEvaluable is per EXIT evaluation and this is per settlement,
+	// including the ones the position was flat for.
+	BasisEvaluable int
+
+	// EnteredWithoutBasis counts positions opened at a settlement where one leg
+	// had no price, so EntryBasisPct is 0 rather than measured. Such a position
+	// cannot exit on basis DRIFT honestly, and the number says how many there
+	// were instead of letting a 0 pass for a measurement.
+	EnteredWithoutBasis int
+
 	// CoverageShort marks a window the corpus does not fill. Three venues cap
 	// their published history (OKX ~3 months, Gate 180 days, Paradex none), so
 	// comparing two venues over "the same" window can silently compare a year
@@ -173,6 +202,36 @@ type Result struct {
 }
 
 // assumptions is what every result must carry, in words.
+// basisAssumptionVI says what the basis condition was actually able to do in
+// this run — which changed at step 3.3b and must not read the same either way.
+//
+// A series with no candles replays exactly as it did before the table existed,
+// and a reader comparing two runs has to be able to tell those apart: "the rule
+// never fired" and "the rule was never tested" are the same output and
+// different facts.
+func basisAssumptionVI(series Series) string {
+	if len(series.SpotCandles) == 0 || len(series.PerpCandles) == 0 {
+		return "Điều kiện thoát theo basis KHÔNG đánh giá được: chuỗi này chưa có nến giá cho cả hai chân " +
+			"(price_history). Chạy `go run ./cmd/backfill -prices` rồi phát lại. Xem BasisNotEvaluable."
+	}
+	note := "Điều kiện thoát theo basis ĐƯỢC đánh giá từ nến 1h đã lưu (price_history). Giá dùng là nến " +
+		"ĐÃ ĐÓNG gần nhất tại hoặc trước mốc settle — không phải nến đang chứa mốc đó, vì giá đóng của nến " +
+		"ấy nằm ở TƯƠNG LAI so với quyết định — nên nó cũ tối đa 1 giờ. Chân nào không có nến trong 2 chu kỳ " +
+		"thì mốc đó vẫn báo không đánh giá được. Xem BasisEvaluable / BasisNotEvaluable."
+	if series.QuoteBridged {
+		// On a bridged series the "basis" is not purely a coin basis: one leg
+		// is priced in USD and the other in USDT, so the number the exit rule
+		// tests is the coin basis PLUS the quote spread. That is arguably the
+		// right thing to exit on — the quote exposure is real and undeducted —
+		// but a reader comparing this series' basis exits against an unbridged
+		// one is comparing two different measurements.
+		note += fmt.Sprintf(" LƯU Ý chuỗi khác quote: basis đo được ở đây là basis theo coin CỘNG chênh "+
+			"%s/%s, nên lối thoát basis trên chuỗi này một phần đang canh đúng rủi ro quote chưa ai trừ.",
+			series.PerpQuoteAsset, series.SpotQuoteAsset)
+	}
+	return note
+}
+
 func assumptions(series Series, params strategy.Params) []string {
 	out := []string{
 		fmt.Sprintf("Chi phí vào/ra định giá trên MỘT phép đo sổ lệnh (%s / %s), giữ CỐ ĐỊNH suốt cửa sổ — "+
@@ -180,8 +239,7 @@ func assumptions(series Series, params strategy.Params) []string {
 			series.SpotSource, series.PerpSource),
 		"Sổ lệnh hôm nay không đại diện cho sổ lúc thị trường căng — mà đó đúng là lúc funding đảo chiều " +
 			"và vị thế phải thoát (PLAN §7.4 mục 2). Chi phí thoát thực tế cao hơn con số này.",
-		"Điều kiện thoát theo basis KHÔNG đánh giá được: cần giá spot và perp cùng một thời điểm quá khứ, " +
-			"mà price_snapshots chỉ có vài giờ. Xem BasisNotEvaluable.",
+		basisAssumptionVI(series),
 		fmt.Sprintf("Giả định giữ %.0f ngày để khấu hao chi phí, vốn %.0f mỗi vị thế, không tái đầu tư lãi.",
 			params.HoldingDays, params.NotionalQuote),
 		"Quyết định chạy trên mốc ĐÃ SETTLE, nên khi funding đảo dấu vị thế luôn TRẢ mốc âm đầu tiên rồi mới " +
@@ -302,6 +360,9 @@ func Run(series Series, window Window, params strategy.Params) Result {
 		firstInWindowMs, lastInWindowMs int64
 	)
 
+	spotPrices := newPriceSeries(series.SpotCandles)
+	perpPrices := newPriceSeries(series.PerpCandles)
+
 	for i, entry := range usable {
 		if !inWindow(entry.SettledAtMs) {
 			continue
@@ -332,13 +393,24 @@ func Run(series Series, window Window, params strategy.Params) Result {
 			}
 		}
 
+		// The two legs' prices as of THIS settlement, from the newest candle
+		// that had already closed. Absent on either side leaves both at 0,
+		// which is what strategy reads as "not evaluable" — a one-legged
+		// basis is not a basis.
+		spotQuote, haveSpot := spotPrices.closeAt(entry.SettledAtMs)
+		perpQuote, havePerp := perpPrices.closeAt(entry.SettledAtMs)
+		if !haveSpot || !havePerp {
+			spotQuote, perpQuote = 0, 0
+		} else {
+			out.BasisEvaluable++
+		}
+
 		candidate := strategy.Candidate{
 			Symbol: series.Symbol, PerpSource: series.PerpSource, SpotSource: series.SpotSource,
 			Settled: usable[:i+1],
 			SpotFee: series.SpotFee, PerpFee: series.PerpFee,
 			SpotBook: series.SpotBook, PerpBook: series.PerpBook,
-			// No prices: there is no historical spot/perp pair to read, and an
-			// invented one would make the basis exit look tested.
+			SpotPriceQuote: spotQuote, PerpPriceQuote: perpQuote,
 		}
 
 		if !open {
@@ -347,6 +419,20 @@ func Run(series Series, window Window, params strategy.Params) Result {
 				position = strategy.Position{
 					Symbol: series.Symbol, PerpSource: series.PerpSource, SpotSource: series.SpotSource,
 					OpenedAtMs: entry.SettledAtMs, NotionalQuote: params.NotionalQuote,
+				}
+				// The basis the position was OPENED at, which the exit rule
+				// measures movement against. Left at 0 when either leg had no
+				// price: a zero entry basis with a real current one would read
+				// as a move of the whole current basis, inventing a drift the
+				// position never had. exitBasisWidened refuses to evaluate
+				// whenever a price is missing, so a position opened blind can
+				// only exit on basis once BOTH legs are priced again — and its
+				// entry basis is then honestly unknown, which the assumptions
+				// block says.
+				if haveSpot && havePerp {
+					position.EntryBasisPct = basisPct(spotQuote, perpQuote)
+				} else {
+					out.EnteredWithoutBasis++
 				}
 				trade = Trade{OpenAtMs: entry.SettledAtMs}
 			}

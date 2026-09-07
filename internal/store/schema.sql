@@ -105,6 +105,59 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 CREATE INDEX IF NOT EXISTS price_snapshots_by_symbol
     ON price_snapshots (symbol, sampled_at_ms);
 
+-- price_history is hourly traded candles, and it is NOT price_snapshots.
+--
+-- price_snapshots holds the top of book as the scanner saw it live: a mid, a
+-- best bid, a best ask, and the sizes resting on them. A candle has none of
+-- that — an open, a high, a low, a close, and no book at all. Writing a close
+-- into a column named best_bid_quote would put one measurement under a name
+-- that promises a different one, which is the failure CONVENTIONS §1 exists to
+-- prevent, so the two live in separate tables with separate names.
+--
+-- What it is FOR: the phase-3 basis exit needs perp-over-spot at a past
+-- instant, and until this table existed that condition reported "not
+-- evaluable" for every settlement of every backtest. Unlike depth, candles CAN
+-- be backfilled — every venue keeps them — which is the whole reason the basis
+-- rule is testable in hindsight while the slippage model is not.
+--
+-- Hourly and only hourly: funding settles hourly at the fastest (Hyperliquid,
+-- Kraken), so an hourly candle gives every settlement on every venue a price
+-- at or before it, and a finer grid would multiply the corpus without changing
+-- a decision.
+--
+-- Depth is NOT uniform and must not be assumed to be. Measured 2026-09-07:
+-- Hyperliquid answers an EMPTY ARRAY beyond about 208 days of hourly candles,
+-- while Binance, Bybit, OKX, Gate and Kraken all reach a full year. Read the
+-- coverage before comparing two sources.
+CREATE TABLE IF NOT EXISTS price_history (
+    source          TEXT    NOT NULL,
+    symbol          TEXT    NOT NULL,
+    -- The START of the interval, as the venue stamps it, stored VERBATIM. It is
+    -- part of the key, so a re-fetch of the same window updates rather than
+    -- duplicating -- the same rule funding_history.funding_at_ms follows.
+    open_time_ms    INTEGER NOT NULL,
+    interval_sec    INTEGER NOT NULL,
+
+    -- Prices are in the SOURCE's own quote asset, which is why a USD-quoted
+    -- perp and a USDT-quoted spot are never compared without saying so.
+    open_price_quote  REAL NOT NULL,
+    high_price_quote  REAL NOT NULL,
+    low_price_quote   REAL NOT NULL,
+    close_price_quote REAL NOT NULL,
+
+    -- 0 means NOT KNOWN, never "no volume": OKX and Gate publish this in
+    -- contracts and converting it needs the instrument registry, which the
+    -- venue packages do not have.
+    base_volume_coin  REAL NOT NULL,
+
+    recorded_at_ms  INTEGER NOT NULL,
+
+    PRIMARY KEY (source, symbol, open_time_ms)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS price_history_by_symbol
+    ON price_history (symbol, open_time_ms);
+
 -- instrument_snapshots is one day's trading rules per market.
 --
 -- Versioned by day on purpose: when a venue changes a stepSize or a contract

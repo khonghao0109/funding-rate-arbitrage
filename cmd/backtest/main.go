@@ -212,6 +212,11 @@ func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 		}
 	}
 
+	// Candles are read ONCE per (symbol, source) and shared by every series
+	// that uses them: binance_spot is the spot leg of most series here, and
+	// re-reading its 8,760 rows per perp would be six identical queries.
+	candles := candleCache{db: db, ctx: ctx, window: window, byKey: map[string][]exchanges.PriceCandle{}}
+
 	var out []backtest.Series
 	for _, symbol := range cfg.Symbols {
 		if only != "" && symbol.Symbol != only {
@@ -242,6 +247,14 @@ func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 			for _, row := range settled {
 				entries = append(entries, row.FundingHistoryEntry)
 			}
+			spotCandles, err := candles.get(symbol.Symbol, spotSource)
+			if err != nil {
+				return nil, err
+			}
+			perpCandles, err := candles.get(symbol.Symbol, perp.Source)
+			if err != nil {
+				return nil, err
+			}
 			series := backtest.Series{
 				Symbol: symbol.Symbol, PerpSource: perp.Source, SpotSource: spotSource,
 				Settled:  entries,
@@ -249,6 +262,12 @@ func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 				PerpFee:  schedule(perp),
 				SpotBook: books[key(symbol.Symbol, spotSource)],
 				PerpBook: books[key(symbol.Symbol, perp.Source)],
+				// Empty is a legitimate answer and is NOT filled in with
+				// anything: a series whose candles were never collected must
+				// replay with the basis unevaluable, exactly as before step
+				// 3.3b, rather than as one whose basis never moved.
+				SpotCandles: spotCandles,
+				PerpCandles: perpCandles,
 			}
 			if q, ok := bridged[key(symbol.Symbol, perp.Source)+"|"+spotSource]; ok {
 				series.QuoteBridged, series.SpotQuoteAsset, series.PerpQuoteAsset = true, q.spot, q.perp
@@ -258,6 +277,44 @@ func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 	}
 	return out, nil
 }
+
+// candleCache reads price_history once per (symbol, source).
+//
+// A sweep builds its series once and replays them thousands of times, so this
+// is not about the sweep — it is about the 24 series sharing four spot legs,
+// where the naive loop reads binance_spot's year of candles six times per
+// symbol.
+type candleCache struct {
+	ctx    context.Context
+	db     *store.Store
+	window backtest.Window
+	byKey  map[string][]exchanges.PriceCandle
+}
+
+func (c candleCache) get(symbol, source string) ([]exchanges.PriceCandle, error) {
+	k := key(symbol, source)
+	if got, ok := c.byKey[k]; ok {
+		return got, nil
+	}
+	// The window is widened backwards by one interval so a settlement AT
+	// window.FromMs still has a candle that closed before it. Without the
+	// slack the first settlement of every run is unpriced, which reads as a
+	// missing series rather than as an off-by-one.
+	fromMs := c.window.FromMs - exchanges.PriceCandleIntervalSec*msPerSecondBT*maxCandleLookback
+	got, err := c.db.PriceHistory(c.ctx, source, symbol, fromMs, c.window.ToMs)
+	if err != nil {
+		return nil, fmt.Errorf("price history for %s/%s: %w", symbol, source, err)
+	}
+	c.byKey[k] = got
+	return got, nil
+}
+
+// maxCandleLookback is how many intervals before the window the candle read
+// starts, matching the staleness allowance internal/backtest applies.
+const (
+	maxCandleLookback = 2
+	msPerSecondBT     = 1000
+)
 
 // hedgeMapping rebuilds the step-2.4 mapping from the NEWEST stored instrument
 // snapshot — the same function, over the same declarations, cmd/scanner runs

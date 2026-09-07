@@ -55,6 +55,7 @@ func run() int {
 	onlySource := flag.String("source", "", "collect only this source (default: every configured source)")
 	dbPath := flag.String("db", "", "database file (default: storage.path from the config)")
 	check := flag.Int("check", 0, "read back the last N days instead of collecting; opens no socket")
+	prices := flag.Bool("prices", false, "collect hourly PRICE candles (price_history) instead of funding rates")
 	flag.Parse()
 
 	if *months < 1 {
@@ -95,6 +96,10 @@ func run() int {
 		// backtest will use, rather than through SQL typed at a prompt — the
 		// point is that the READER works, not that the rows exist.
 		return reportWindow(ctx, db, *only, *check)
+	}
+
+	if *prices {
+		return backfillPrices(ctx, db, cfg, *only, *onlySource, *months, path)
 	}
 
 	collector := history.New(db, jobsFrom(cfg, *only, *onlySource), venues.FundingHistoryFetchers())
@@ -140,6 +145,78 @@ func run() int {
 	// cmd/fundingcheck has.
 	if failed := failedSeries(results); failed > 0 {
 		log.Printf("backfill: %d series failed and are NOT filled; re-run to complete them", failed)
+		return 1
+	}
+	return 0
+}
+
+// backfillPrices fills price_history, the hourly candles the phase-3 basis exit
+// reads. It is a separate path from the funding backfill and not a flag on one
+// shared loop: the fetchers, the window type, the table and the set of sources
+// all differ — the SPOT sources are collected here and never there, because a
+// basis needs both legs.
+func backfillPrices(ctx context.Context, db *store.Store, cfg config.Config, only, onlySource string, months int, path string) int {
+	collector := history.NewPrices(db, jobsFrom(cfg, only, onlySource), venues.PriceHistoryFetchers())
+	if len(collector.Jobs()) == 0 {
+		log.Printf("nothing to collect: no configured source has a price history fetcher for symbol %q source %q",
+			only, onlySource)
+		return 1
+	}
+
+	now := time.Now()
+	window := exchanges.PriceWindow{
+		StartMs: now.AddDate(0, -months, 0).UnixMilli(),
+		EndMs:   now.UnixMilli(),
+	}
+	log.Printf("price backfill: %s → %s into %s",
+		time.UnixMilli(window.StartMs).UTC().Format(time.DateOnly),
+		time.UnixMilli(window.EndMs).UTC().Format(time.DateOnly), path)
+
+	results := collector.Collect(ctx, window)
+	failed := 0
+	for _, result := range results {
+		switch {
+		case result.Err != nil:
+			failed++
+			log.Printf("price backfill %s/%s: %v", result.Source, result.Symbol, result.Err)
+		case result.Fetched == 0:
+			log.Printf("price backfill %-20s %-8s no candles in the window", result.Source, result.Symbol)
+		default:
+			reach := "full"
+			if !result.ReachedRequestedStart() {
+				// NOT a failure. Hyperliquid's hourly candles reach about 208
+				// days and it says so with an empty array — the fact a
+				// backtest has to see rather than infer from a short series.
+				reach = fmt.Sprintf("SHORT by %.0fd",
+					float64(result.OldestOpenMs-window.StartMs)/float64(24*3600*1000))
+			}
+			log.Printf("price backfill %-20s %-8s %6d fetched, %6d new, %s → %s (%s)",
+				result.Source, result.Symbol, result.Fetched, result.Inserted,
+				time.UnixMilli(result.OldestOpenMs).UTC().Format(time.DateOnly),
+				time.UnixMilli(result.NewestOpenMs).UTC().Format(time.DateOnly), reach)
+		}
+	}
+
+	if ctx.Err() != nil {
+		log.Printf("price backfill: interrupted with series unattempted; what was written is intact — re-run to complete")
+		return 1
+	}
+
+	coverage, err := db.PriceCoverage(ctx, only)
+	if err != nil {
+		log.Printf("price coverage: %v", err)
+		return 1
+	}
+	for _, c := range coverage {
+		log.Printf("price coverage %-20s %-8s %6d candles  %s → %s  (%.0f days)",
+			c.Source, c.Symbol, c.Candles,
+			time.UnixMilli(c.FirstOpenMs).UTC().Format(time.DateOnly),
+			time.UnixMilli(c.LastOpenMs).UTC().Format(time.DateOnly),
+			float64(c.LastOpenMs-c.FirstOpenMs)/float64(24*3600*1000))
+	}
+
+	if failed > 0 {
+		log.Printf("price backfill: %d series failed and are NOT filled; re-run to complete them", failed)
 		return 1
 	}
 	return 0

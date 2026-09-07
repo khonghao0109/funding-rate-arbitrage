@@ -34,7 +34,8 @@ var csvHeader = []string{
 	"settlements", "trades", "periods_in_position",
 	"total_return_frac", "realized_apr_frac", "max_drawdown_frac",
 	"funding_reversals", "positive_funding_period_share", "dropped_special",
-	"basis_not_evaluable", "coverage_short", "ok", "reason_vi", "assumptions_vi",
+	"basis_not_evaluable", "basis_evaluable", "entered_without_basis",
+	"coverage_short", "ok", "reason_vi", "assumptions_vi",
 }
 
 // WriteCSV writes a header and one row per result.
@@ -58,7 +59,8 @@ func WriteCSV(w io.Writer, results []Result) error {
 			strconv.Itoa(r.Settlements), strconv.Itoa(len(r.Trades)), strconv.Itoa(r.PeriodsInPosition),
 			f(r.TotalReturnFrac), f(r.RealizedAPRFrac), f(r.MaxDrawdownFrac),
 			strconv.Itoa(r.FundingReversals), f(r.PositiveFundingPeriodShare), strconv.Itoa(r.DroppedSpecial),
-			strconv.Itoa(r.BasisNotEvaluable), strconv.FormatBool(r.CoverageShort),
+			strconv.Itoa(r.BasisNotEvaluable), strconv.Itoa(r.BasisEvaluable), strconv.Itoa(r.EnteredWithoutBasis),
+			strconv.FormatBool(r.CoverageShort),
 			strconv.FormatBool(r.OK), r.ReasonVI, strings.Join(r.AssumptionsVI, " | "),
 		}
 		if err := out.Write(row); err != nil {

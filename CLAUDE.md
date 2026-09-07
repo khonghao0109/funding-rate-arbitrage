@@ -435,6 +435,9 @@ re-research these; do verify before writing the integration.
 | **Binance** | The `@markPrice@1s` stream delivers NOTHING to this environment — measured 2026-09-04, one socket carried 4,782 bookTicker frames and zero markPriceUpdate frames in 45s after the server acknowledged both subscriptions. Funding comes from REST `premiumIndex`, queried per symbol (the unfiltered form is 199 KB for ~780 entries and costs request weight 10 against 1). See DATA-REQUIREMENTS §3.4⑦. |
 | **Binance** | The aggTrade payload carries both `m` (buyer is maker) and `M` (deprecated, always true). Go's `encoding/json` prefers an exact tag match but **falls back to a case-insensitive one**, so declaring only `m` let `M` overwrite it and every trade came out a sell. Declare BOTH members of every case-colliding key pair, including the one you do not use — leaving it out is not "ignore it", it is "let it overwrite the other". |
 | **History depth** | The three venues that cannot answer a 12-month request, measured 2026-09-04: **OKX** keeps ~3 months and answers beyond it with an EMPTY array and `code "0"` (not an error); **Gate** refuses outright — `from time exceeds 180-day limit` — so the fetcher clamps to 179 days rather than sending a request it knows will fail; **Paradex** has no settlements at all, only a 5-second sample of a cumulative funding index. Never assume the corpus is as deep as it was asked for; read the coverage. |
+| **Candle depth** | Hourly candles are NOT uniformly deep either, measured 2026-09-07: Binance, Bybit, OKX, Gate and Kraken all answer a full year, **Hyperliquid reaches ~208 days and signals the boundary with an EMPTY ARRAY**, not an error — the same shape as OKX's funding retention. Read `store.PriceCoverage` before comparing two sources' basis. |
+| **Candle paging** | Six venues, six idioms, and three of them are traps. **Bybit anchors its page on `end`, not `start`**, so a window wider than one page must be walked BACKWARDS — walking `start` forward re-requests the newest page forever and reports 42 days of a 365-day request as a venue retention limit (measured here on the first run). **OKX's `after` is an EXCLUSIVE UPPER bound**, and its plain `candles` endpoint returns nothing past ~300 days while `history-candles` reaches 400+. **Gate stamps candles in SECONDS** — request and response both — while every other venue uses ms, and **Kraken takes seconds in and answers in milliseconds**. Page caps measured: 1500 / 1000 / 1000 / 300 / 2000 / 2000 / ~5000. |
+| **Hyperliquid `t`/`T`** | The candle payload carries BOTH `t` (open ms) and `T` (close ms), so Go's case-insensitive JSON fallback let `T` overwrite `t` and every candle came out stamped 1 ms **before** the hour — every cross-venue join found nothing and the venue's basis was silently empty. Same defect as the Binance aggTrade `m`/`M` row below, hit a second time in a second package. Declare BOTH members of a case-colliding pair, including the one you do not use. |
 | **History interval** | No venue publishes an interval beside a historical rate — Paradex is the lone exception. Annotating a 12-month backfill with today's interval is a **2× error over months** on symbols Binance moved from 8h to 4h. `interval_sec` is the series' MEASURED modal spacing and every row also keeps `gap_prev_sec`, the real distance to the previous settlement. Two cadences with real weight is a different thing from a few missed settlements and is reported separately (`CadenceLooksMixed`, 10% threshold — Kraken's year has 6 outages in 8,771 gaps = 0.07%). |
 | **History stamps** | Settlement stamps are stored VERBATIM. Gate's land 1–3 seconds past the hour, Hyperliquid's carry tens of milliseconds of jitter. Rounding them to a boundary invents a timestamp the venue never published, and the next fetch then misses the primary key and inserts the same settlement again. |
 | **Funding cadence** | How often a venue REPUBLISHES funding is not how often it settles, and it is not the price cadence either. Measured over 44 minutes (DATA-REQUIREMENTS §10): kraken/hyperliquid 1s, gate 4s, binance 16s, okx 67s, paradex 71s — and **Bybit 2,639s and still climbing**, because step 2.5 made it publish only when a funding field really changes. So funding freshness needs its OWN per-venue threshold, and for a venue in that mode age proves nothing: the detectors are `source_status` plus "the settlement this reading names has already passed". Paradex is the warning about measurement windows — 18s after four minutes, 71s after forty-four. |
@@ -474,10 +477,10 @@ exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credent
                      hyperliquid, paradex, pyth): connector, funding, depth,
                      instruments, funding history — and its own testdata/ with
                      the real recordings its golden tests replay
-  venues/            the four registry tables (Connectors, DepthFetchers,
-                     InstrumentFetchers, FundingHistoryFetchers) — the ONE
-                     package that imports every venue, and where the
-                     cross-venue REST capture tests live
+  venues/            the five registry tables (Connectors, DepthFetchers,
+                     InstrumentFetchers, FundingHistoryFetchers,
+                     PriceHistoryFetchers) — the ONE package that imports every
+                     venue, and where the cross-venue REST capture tests live
   exchangestest/     shared test harness: recorder, capture tool, and the
                      contract checkers every venue's recording must pass
 internal/
@@ -542,6 +545,10 @@ go run ./cmd/fundingcheck  # live re-check of the funding-field survey (network)
 # minutes). Safe to re-run: a second pass over the same window inserts nothing.
 go run ./cmd/backfill                 # 12 months, every configured pair
 go run ./cmd/backfill -months 6 -symbol BTCUSDT
+
+# Fill price_history — hourly candles for both legs, which is what makes the
+# basis exit evaluable in a replay. 8 sources x 4 pairs x 8,760 hours; ~5 min.
+go run ./cmd/backfill -prices -months 12
 
 # Replay the production entry/exit rules over the stored corpus (offline: reads
 # SQLite, writes nothing back). Prints its assumptions with every report.
@@ -692,6 +699,19 @@ phase 1.
   near the touch, so the estimate is **too expensive**, which is the safe
   direction. Anything wanting a sharper fill model has to store levels first —
   and depth cannot be backfilled, so that decision only ever applies forward.
+- ~~The basis exit cannot be evaluated in a backtest.~~ Fixed 2026-09-07 by
+  `price_history`: hourly candles for all 8 tradable sources, backfilled 12
+  months (`go run ./cmd/backfill -prices`). Unlike depth, candles CAN be
+  refetched, which is why this one was fixable and slippage is not. The price
+  used at a settlement is the newest candle to have **fully closed** at or
+  before it — never the candle containing it, whose close is stamped up to an
+  hour in the future — so it is at most one interval stale, and a leg with no
+  candle within two intervals still reports `NotEvaluated`. Measured: 18 of 24
+  series now report `basis_not_evaluable: 0`; the six hyperliquid/kraken ones
+  keep a residue where funding reaches 365 days and candles 208. **On the 8
+  quote-bridged series the measured basis is the coin basis PLUS the USD/USDT
+  spread**, which is stated in the assumptions block — the exit there is partly
+  watching the bridging risk nothing deducts.
 - **`depth_snapshots` holds one sample per source/pair** (2026-09-04), left over
   from the step-2.7b acceptance sweep. The live scanner fills it going forward,
   but there is **no historical depth**, so a backtest cannot model slippage from

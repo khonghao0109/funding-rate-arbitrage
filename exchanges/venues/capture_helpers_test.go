@@ -15,7 +15,7 @@ import (
 func fixturePath(t *testing.T, name string) string {
 	t.Helper()
 	rest := name
-	for _, prefix := range []string{"instruments_", "depth_", "funding_history_", "funding_"} {
+	for _, prefix := range []string{"instruments_", "depth_", "funding_history_", "funding_", "price_history_"} {
 		if strings.HasPrefix(name, prefix) {
 			rest = strings.TrimPrefix(name, prefix)
 			break

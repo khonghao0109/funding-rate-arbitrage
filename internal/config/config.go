@@ -219,6 +219,15 @@ type Storage struct {
 	// their published history at 90-180 days).
 	RetainFundingDays int `yaml:"retain_funding_days"`
 	RetainPriceDays   int `yaml:"retain_price_days"`
+
+	// RetainPriceHistoryDays keeps the hourly CANDLES (price_history), and is
+	// separate from RetainPriceDays for the reason written on
+	// store.Retention: the two tables have row counts three orders of
+	// magnitude apart and one of them is a backtest corpus. Defaults to the
+	// funding retention, because the two are collected for the same replay
+	// and a basis series shorter than its funding series makes the basis exit
+	// unevaluable exactly where the funding data still exists.
+	RetainPriceHistoryDays int `yaml:"retain_price_history_days"`
 }
 
 // Symbol is one tradable pair. Base and Quote are declared rather than parsed
@@ -447,6 +456,9 @@ func (s *Storage) applyDefaults() {
 	if s.RetainFundingDays == 0 && s.RetainPriceDays == 0 {
 		s.RetainFundingDays, s.RetainPriceDays = defaultRetainFundingDays, defaultRetainPriceDays
 	}
+	if s.RetainPriceHistoryDays == 0 {
+		s.RetainPriceHistoryDays = s.RetainFundingDays
+	}
 }
 
 // depthDefaults: hourly is the slow end of PLAN §7.4's 1-4 hours and still 24
@@ -518,6 +530,9 @@ func (s Storage) validate() error {
 		return fmt.Errorf("storage.instrument_snapshot_every_hours is %d", s.InstrumentSnapshotEveryHours)
 	case s.PruneEveryHours < 1:
 		return fmt.Errorf("storage.prune_every_hours is %d", s.PruneEveryHours)
+	case s.RetainPriceHistoryDays < 0:
+		return fmt.Errorf("storage.retain_price_history_days cannot be negative (%d); 0 means keep everything",
+			s.RetainPriceHistoryDays)
 	case s.RetainFundingDays < 0 || s.RetainPriceDays < 0:
 		return fmt.Errorf("storage retention cannot be negative (funding %d, price %d); 0 means keep everything",
 			s.RetainFundingDays, s.RetainPriceDays)
