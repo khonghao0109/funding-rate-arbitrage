@@ -48,6 +48,7 @@ func main() {
 	exitNegBps := flag.String("exit-neg-bps", defaultExitNegBps, "-sweep axis: sign-flip exit needs the newest settled rate <= -X bps/8h (0 = any negative)")
 	exitNegPeriods := flag.String("exit-neg-periods", defaultExitNegPeriods, "-sweep axis: sign-flip exit needs N consecutive negative settlements")
 	exitNegCum := flag.String("exit-neg-cum", defaultExitNegCum, "-sweep axis: sign-flip exit needs the run's paid funding >= C x round-trip cost (0 = no gate)")
+	minHold := flag.String("min-hold", defaultMinHold, "-sweep axis: YIELD exits are blocked until the position has collected M x its round-trip cost (0 = off; risk exits are never blocked)")
 	tradesCSVPath := flag.String("trades-csv", "", "also write one row per trade to this CSV file")
 	top := flag.Int("top", 0, "with -sweep, print only the best N rows (0 = all)")
 	flag.Parse()
@@ -55,6 +56,9 @@ func main() {
 	spec, err := parseGridSpec(*minRateBps, *persist, *minNetAPR, *exitNetAPR, *exitPersist, *notional, *holdDays)
 	if err != nil {
 		log.Fatalf("grid: %v", err)
+	}
+	if spec, err = spec.withMinHold(*minHold); err != nil {
+		log.Fatal(err)
 	}
 	if spec, err = spec.withNegativeGates(*exitNegBps, *exitNegPeriods, *exitNegCum); err != nil {
 		log.Fatalf("grid: %v", err)
@@ -104,7 +108,7 @@ func main() {
 		if len(spec.NotionalQuote) != 1 || len(spec.HoldingDays) != 1 {
 			log.Fatalf("-notional and -hold-days take a list only with -sweep")
 		}
-		if sweepOnlyFlagsTouched(*minRateBps, *persist, *minNetAPR, *exitNetAPR, *exitPersist, *exitNegBps, *exitNegPeriods, *exitNegCum, *top) {
+		if sweepOnlyFlagsTouched(*minRateBps, *persist, *minNetAPR, *exitNetAPR, *exitPersist, *exitNegBps, *exitNegPeriods, *exitNegCum, *minHold, *top) {
 			log.Fatalf("-min-rate-bps, -persist, -min-net-apr, -exit-net-apr, -exit-persist, -exit-neg-* and -top " +
 				"apply only with -sweep; a plain run uses the step-3.3 base parameters")
 		}

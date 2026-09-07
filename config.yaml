@@ -193,6 +193,25 @@ strategy:
   # thống — SOL·binance 3,21×, SOL·bybit 3,11×, SOL·hyperliquid 2,80×,
   # SOL·kraken 2,02×, XRP·bybit 1,59× — và đó đúng là nơi cổng này nổ.
   exit_negative_cum_cost_frac: 1.0 # funding âm tích luỹ của đợt ≥ C × chi phí vòng
+  # Cổng giữ tối thiểu (thêm 2026-09-07): chặn HAI lối thoát vì LỢI SUẤT —
+  # đảo dấu và suy giảm — cho tới khi vị thế hoàn lại M lần chi phí vào/ra
+  # bằng chính funding nó đã thu. Lối thoát vì RỦI RO (mất chân hedge, basis
+  # vượt hạn, không còn định giá được) KHÔNG bao giờ bị chặn. 0 là TẮT, và
+  # tắt là đúng luật trước khi khoá này tồn tại.
+  # Là PHÂN SỐ của chi phí vòng chứ không phải số mốc: 98 mốc là 33 ngày ở
+  # nhịp 8h của Binance nhưng 4 ngày ở nhịp 1h của Hyperliquid, nên một con
+  # số mốc duy nhất sẽ là 24 luật khác nhau trên 24 chuỗi.
+  # Đo trên lưới v8 (2026-09-07, 1.152 bộ × 24 chuỗi × 12 tháng, so từng cặp
+  # cùng bộ nền chỉ khác giá trị cổng này): bật lên cải thiện 239/288 bộ nền,
+  # trung bình +105 điểm ở M=1,0 và giảm 14,6 lệnh mỗi chuỗi. Nhưng toàn bộ
+  # phần cải thiện đó nằm ở các bộ có luật thoát NHẠY: nhóm X=0 C=0 lỗ khoảng
+  # −380 điểm khi không có cổng và được kéo về gần 0 khi có. Trên chính bộ
+  # đang ship (X=2 C=1, decay 48 kỳ) trung bình là −0,56 điểm — ba cổng kia đã
+  # tắt gần hết hai lối thoát rồi nên không còn gì để chặn. Bộ tốt nhất cả lưới
+  # vẫn là M=0 (+30,68%), bộ tốt nhất có cổng là M=2,0 (+30,27%).
+  # Kết luận: đây là BẢO HIỂM cho một luật thoát đặt sai, không phải nguồn lợi
+  # nhuận. Giữ 0 ở bộ hiện tại; bật khi thử một luật thoát nhạy hơn.
+  min_hold_recovered_cost_frac: 0
 
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }

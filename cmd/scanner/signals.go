@@ -231,8 +231,9 @@ func journalRecord(d strategy.Decision, p strategy.Params) store.SignalRecord {
 		"max_book_age_min": p.MaxBookAge.Minutes(), "exit_net_apr_frac": p.ExitNetAPRFrac,
 		"exit_persistence_periods": p.ExitPersistencePeriods,
 		"exit_negative_min_bps":    p.ExitNegativeMinBps, "exit_negative_periods": p.EffectiveExitNegativePeriods(),
-		"exit_negative_cum_cost_frac": p.ExitNegativeCumCostFrac,
-		"max_basis_pct":               p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
+		"exit_negative_cum_cost_frac":  p.ExitNegativeCumCostFrac,
+		"min_hold_recovered_cost_frac": p.MinHoldRecoveredCostFrac,
+		"max_basis_pct":                p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
 	})
 	rec := store.SignalRecord{
 		EvaluatedAtMs: d.At.UnixMilli(), Symbol: d.Symbol, PerpSource: d.PerpSource, SpotSource: d.SpotSource,

@@ -189,6 +189,18 @@ func assumptions(series Series, params strategy.Params) []string {
 		"Đường equity ghi nhận toàn bộ chi phí vòng lúc ĐÓNG; trong lúc giữ nó là số thô của một khoản chắc " +
 			"chắn phải trả. Lệnh vào ở mốc cuối cửa sổ bị đóng cưỡng bức với 0 kỳ funding và trọn phí — cố ý, thận trọng.",
 	}
+	if params.MinHoldRecoveredCostFrac > 0 {
+		// A floor that holds a position through a signal is a change to what
+		// the run MEANS, not a tuning detail: some of the held periods below
+		// were held against the rule's own verdict, and a reader comparing
+		// this run with an ungated one has to know that before comparing
+		// trade counts.
+		out = append(out, fmt.Sprintf(
+			"CỔNG GIỮ TỐI THIỂU %.2f× chi phí vòng: hai lối thoát vì LỢI SUẤT (đảo dấu, suy giảm) bị chặn "+
+				"cho tới khi vị thế hoàn lại chừng đó chi phí vào/ra. Lối thoát vì RỦI RO (mất chân hedge, "+
+				"basis vượt hạn, không định giá được) KHÔNG bị chặn. Nên một phần số kỳ giữ dưới đây là giữ "+
+				"NGƯỢC lại phán quyết của chính luật.", params.MinHoldRecoveredCostFrac))
+	}
 	if series.QuoteBridged {
 		// Named FIRST for a bridged series: it is the one assumption that
 		// changes what the position IS, not just how precisely it is priced.

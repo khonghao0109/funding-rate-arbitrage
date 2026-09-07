@@ -283,6 +283,39 @@ type Params struct {
 	// A continuous-model series (Paradex) has samples, not settlements, so the
 	// N and C gates are not evaluable there and the 3.2 rule applies.
 	ExitNegativeCumCostFrac float64
+	// --- minimum hold (added 2026-09-07) ---
+	// MinHoldRecoveredCostFrac blocks the two YIELD exits — the sign flip and
+	// the decay — until the funding THIS position has collected reaches that
+	// fraction of its round-trip cost. 0 is off, and off is the rule exactly
+	// as it stood before this field existed (pinned by test).
+	//
+	// It is a fraction of the round trip rather than a count of settlements on
+	// purpose. A count means eight different things across this project's
+	// venues: 98 settlements is 33 days at Binance's 8h cadence and 4 days at
+	// Hyperliquid's hourly one, so one swept value would be one rule on paper
+	// and 24 rules in the results (CLAUDE.md rules 3 and 4). A fraction of the
+	// cost is the same statement everywhere: do not pay to leave until you
+	// have earned back what leaving costs.
+	//
+	// Measured on the 12-month corpus, which is what the floor is FOR: the
+	// median trade in the wide sweep held 0.67 days (sign flip) and 2.17 days
+	// (decay), collected 13 and 27 settlements, and lost 0.30% and 0.27% — the
+	// exits fire long before funding covers the round trip, and the trades
+	// that made money were the ones the rules never closed.
+	//
+	// JURISDICTION, and it is the whole design. The floor covers exits about
+	// YIELD and never exits about RISK. A vanished hedge leg, a basis blown
+	// through its limit, and losing the ability to price the position at all
+	// are not judgements about whether holding pays — they are statements that
+	// the position is no longer the position that was opened — so they close
+	// it whatever the floor says. A floor that could pin a naked short open
+	// would be a worse bug than the churn it was written to stop.
+	//
+	// It fails SAFE: with no priced round trip there is no denominator, and
+	// the floor steps aside rather than blocking every exit on a venue whose
+	// book cannot be read. Same direction as ExitNegativeCumCostFrac.
+	MinHoldRecoveredCostFrac float64
+
 	// MaxBasisPct is the absolute perp-over-spot difference beyond which the
 	// position is closed regardless of funding; MaxBasisWidenPct is how far it
 	// may move from where it was opened.
@@ -395,10 +428,11 @@ func EvaluateExit(at time.Time, pos Position, c Candidate, p Params) Decision {
 		})
 	}
 
+	floor := minHoldFloor(pos, usable, d.Cost, p)
 	d.Checks = []Check{
 		hedgeGone,
-		exitFundingNegative(usable, d.Cost, p),
-		exitNetAPRFloor(pos, usable, d.Cost, d.NetAPR, p, hedgeGone.Passed),
+		exitFundingNegative(usable, d.Cost, p, floor),
+		exitNetAPRFloor(pos, usable, d.Cost, d.NetAPR, p, hedgeGone.Passed, floor),
 		exitBasisWidened(pos, c, p),
 	}
 
@@ -510,6 +544,63 @@ func checkNetAPR(net NetAPRResult, p Params, hedged bool) Check {
 
 // --- exit conditions ---
 
+// holdFloor is the minimum-hold gate's verdict for one evaluation: whether a
+// yield exit is blocked, and the sentence that says so.
+//
+// Computed ONCE per evaluation in EvaluateExit and handed to both yield
+// checks, so the two can never disagree about what this position has
+// collected.
+type holdFloor struct {
+	blocks bool
+	// noteVI is appended to a blocked exit's detail. Empty when the floor is
+	// off or was cleared, so an unblocked check reads exactly as before.
+	noteVI string
+}
+
+// minHoldFloor measures what this position has earned back against what
+// leaving it costs.
+//
+// Only settlements the position was open FOR count — strictly after
+// OpenedAtMs, which is the same arithmetic internal/backtest's equity curve
+// uses, so the gate and the curve can never disagree about the same trade
+// (CLAUDE.md rule 6: the payment is collected because the position existed at
+// the stamp, not because time passed).
+func minHoldFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost RoundTrip, p Params) holdFloor {
+	if p.MinHoldRecoveredCostFrac <= 0 {
+		return holdFloor{}
+	}
+	if !cost.OK {
+		// No denominator. Step aside rather than pin the position open for a
+		// reason unrelated to whether holding is wise.
+		return holdFloor{}
+	}
+	newest, have := newestOf(usable)
+	if have && newest.Model == exchanges.FundingContinuous {
+		// Samples of a funding index, not payments: there is nothing this
+		// position can be said to have COLLECTED. The gate is not evaluable,
+		// so it does not block.
+		return holdFloor{}
+	}
+
+	collectedFrac, settlements := 0.0, 0
+	for _, entry := range usable {
+		if entry.SettledAtMs <= pos.OpenedAtMs {
+			continue
+		}
+		collectedFrac += entry.RatePerIntervalFrac
+		settlements++
+	}
+	needFrac := p.MinHoldRecoveredCostFrac * cost.TotalPct / pctPerUnit
+	if collectedFrac >= needFrac {
+		return holdFloor{}
+	}
+	return holdFloor{blocks: true, noteVI: fmt.Sprintf(
+		" GIỮ vì cổng giữ tối thiểu: vị thế mới hoàn %.4f%% notional qua %d mốc, cần %.4f%% "+
+			"(= %.2f × chi phí vòng %.4f%%) — rời bây giờ là trả nốt phí ra cho phần chi phí vào chưa hoàn.",
+		collectedFrac*pctPerUnit, settlements, needFrac*pctPerUnit,
+		p.MinHoldRecoveredCostFrac, cost.TotalPct)}
+}
+
 func exitHedgeGone(c Candidate) Check {
 	if c.SpotSource != "" {
 		return Check{Name: "hedge_gone", Passed: false, DetailVI: fmt.Sprintf("Chân hedge còn nguyên: spot %s.", c.SpotSource)}
@@ -529,7 +620,7 @@ func exitHedgeGone(c Candidate) Check {
 // The run it measures is the CURRENT one — consecutive negative settlements
 // ending at the newest — because the question is "how much is this episode
 // costing", not "how much has funding ever cost".
-func exitFundingNegative(usable []exchanges.FundingHistoryEntry, cost RoundTrip, p Params) Check {
+func exitFundingNegative(usable []exchanges.FundingHistoryEntry, cost RoundTrip, p Params, floor holdFloor) Check {
 	newest, have := newestOf(usable)
 	if !have {
 		return Check{Name: "funding_negative", Passed: false, DetailVI: "Chưa có mốc settle mới để xét dấu."}
@@ -553,6 +644,8 @@ func exitFundingNegative(usable []exchanges.FundingHistoryEntry, cost RoundTrip,
 			"THOÁT: funding đã đảo dấu, mốc mới nhất %.4f bps/8h — vị thế đang TRẢ chứ không thu. "+
 				"Chuỗi %s là MẪU liên tục, không có mốc settle để đếm đợt hay cộng chi phí: cổng N/C không xét được, áp dụng luật 3.2.",
 			bps, newest.Source)}
+		// The continuous model reaches here only when the floor could not be
+		// evaluated either, so there is nothing to consult.
 	}
 	deepEnough := bps <= -p.ExitNegativeMinBps
 	longEnough := run >= needPeriods
@@ -570,6 +663,11 @@ func exitFundingNegative(usable []exchanges.FundingHistoryEntry, cost RoundTrip,
 	gates := fmt.Sprintf("Mốc mới nhất %.4f bps/8h (cổng ≤ −%.4f), %d mốc âm liên tiếp (cổng ≥ %d).%s",
 		bps, p.ExitNegativeMinBps, run, needPeriods, costGate)
 	if deepEnough && longEnough && expensiveEnough {
+		if floor.blocks {
+			return Check{Name: "funding_negative", Passed: false, DetailVI: fmt.Sprintf(
+				"Funding đã đảo dấu và qua hết cổng thoát (mốc mới nhất %.4f bps/8h). %s%s",
+				bps, gates, floor.noteVI)}
+		}
 		return Check{Name: "funding_negative", Passed: true, DetailVI: fmt.Sprintf(
 			"THOÁT: funding đã đảo dấu, mốc mới nhất %.4f bps/8h — vị thế đang TRẢ chứ không thu. %s", bps, gates)}
 	}
@@ -584,7 +682,7 @@ func exitFundingNegative(usable []exchanges.FundingHistoryEntry, cost RoundTrip,
 // OWN rate through the same NetAPR the entry uses, so decay is judged by the
 // same arithmetic that admitted the position.
 func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost RoundTrip,
-	net NetAPRResult, p Params, hedgeAlreadyGone bool) Check {
+	net NetAPRResult, p Params, hedgeAlreadyGone bool, floor holdFloor) Check {
 
 	if hedgeAlreadyGone {
 		// The hedge check has already fired and closes the position. Firing
@@ -671,6 +769,13 @@ func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost 
 		if priced < len(recent) {
 			skipped = fmt.Sprintf(" (%d/%d mốc không định giá được, đã loại khỏi phép đếm)",
 				len(recent)-priced, len(recent))
+		}
+		if floor.blocks {
+			return Check{Name: "net_apr_floor", Passed: false, DetailVI: fmt.Sprintf(
+				"Cả %d mốc settle định giá được gần nhất đều cho APR ròng dưới ngưỡng giữ %.2f%% "+
+					"(thấp nhất %.2f%%, cao nhất %.2f%%)%s.%s",
+				priced, p.ExitNetAPRFrac*pctPerUnit, worstFrac*pctPerUnit, bestFrac*pctPerUnit,
+				skipped, floor.noteVI)}
 		}
 		return Check{Name: "net_apr_floor", Passed: true, DetailVI: fmt.Sprintf(
 			"THOÁT: cả %d mốc settle định giá được gần nhất đều cho APR ròng dưới ngưỡng giữ %.2f%% "+

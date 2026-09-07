@@ -152,13 +152,13 @@ func TestPlainRun_ChecksItsAxesAndRefusesSweepOnlyFlags(t *testing.T) {
 	if err := spec.check(); err == nil {
 		t.Error("-hold-days 0 must be refused by name before the engine sees it")
 	}
-	if sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, 0) {
+	if sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 0) {
 		t.Error("defaults must not count as touched")
 	}
-	if !sweepOnlyFlagsTouched("1.2", defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, 0) {
+	if !sweepOnlyFlagsTouched("1.2", defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 0) {
 		t.Error("-min-rate-bps 1.2 without -sweep must be refused, not silently ignored")
 	}
-	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, 40) {
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 40) {
 		t.Error("-top without -sweep must be refused")
 	}
 }
@@ -188,7 +188,7 @@ func TestGrid_NegativeGatesDefaultToTheOldRuleAndMultiplyWhenSet(t *testing.T) {
 	if err != nil || dropped != 0 || len(grid) != 24*8 {
 		t.Errorf("with gates: %d sets, %d dropped, %v — want 192", len(grid), dropped, err)
 	}
-	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, "0.5", defaultExitNegPeriods, defaultExitNegCum, 0) {
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, "0.5", defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, 0) {
 		t.Error("-exit-neg-bps without -sweep must be refused, not ignored")
 	}
 	for _, bad := range [][3]string{{"-0.5", "1", "0"}, {"0", "0", "0"}, {"0", "1", "-1"}} {
@@ -230,5 +230,42 @@ func TestBaseParams_MatchesTheShippedStrategyBlock(t *testing.T) {
 	}
 	if plain.MaxBookAge != 0 {
 		t.Error("the replay must not carry a book-age limit: its one book is stale by construction")
+	}
+}
+
+// The minimum-hold floor is one more axis, and left alone it is off — so the
+// default grid stays the step-3.3 grid and every archived sweep still replays.
+func TestGrid_MinHoldDefaultsToOffAndMultipliesWhenSet(t *testing.T) {
+	spec, err := parseGridSpec(defaultMinRateBps, defaultPersist, defaultMinNetAPR,
+		defaultExitNetAPR, defaultExitPersist, defaultNotional, defaultHoldDays)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	grid, _, err := spec.params()
+	if err != nil || len(grid) != 24 {
+		t.Fatalf("defaults: %d sets, %v", len(grid), err)
+	}
+	for _, p := range grid {
+		if p.MinHoldRecoveredCostFrac != 0 {
+			t.Fatalf("the floor must default to off: %+v", p)
+		}
+	}
+
+	withFloor, err := spec.withMinHold("0,0.5,1")
+	if err != nil {
+		t.Fatalf("min-hold: %v", err)
+	}
+	grid, dropped, err := withFloor.params()
+	if err != nil || dropped != 0 || len(grid) != 24*3 {
+		t.Errorf("with the floor: %d sets, %d dropped, %v — want 72", len(grid), dropped, err)
+	}
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
+		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, "1", 0) {
+		t.Error("-min-hold without -sweep must be refused, not ignored")
+	}
+	if bad, err := spec.withMinHold("-1"); err == nil {
+		if _, _, err := bad.params(); err == nil {
+			t.Error("a negative floor is not a fraction of anything and must be refused")
+		}
 	}
 }

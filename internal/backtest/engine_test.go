@@ -567,3 +567,33 @@ func TestRun_ABridgedSeriesNamesTheQuoteExposureFirst(t *testing.T) {
 		t.Errorf("labelling changed the replay: %+v vs %+v", got.TotalReturnFrac, plain.TotalReturnFrac)
 	}
 }
+
+// A run whose yield exits were gated is not comparable with an ungated one on
+// trade count alone, so the block has to say the gate was on.
+func TestRun_AMinHoldFloorIsNamedInTheAssumptions(t *testing.T) {
+	entries := discreteSeries("binance_futures", secPer8h, 2, 2, 2, 2, 2, 2, -3, -3)
+	series, window := seriesOf(entries), fullWindow(entries)
+
+	p := testParams()
+	if got := Run(series, window, p); containsAny(got.AssumptionsVI, "CỔNG GIỮ TỐI THIỂU") {
+		t.Errorf("an ungated run must not claim a floor:\n%s", strings.Join(got.AssumptionsVI, "\n"))
+	}
+
+	p.MinHoldRecoveredCostFrac = 1.0
+	got := Run(series, window, p)
+	if !containsAny(got.AssumptionsVI, "CỔNG GIỮ TỐI THIỂU") {
+		t.Fatalf("a gated run must name the floor:\n%s", strings.Join(got.AssumptionsVI, "\n"))
+	}
+	if !containsAny(got.AssumptionsVI, "RỦI RO") {
+		t.Error("the block must say which exits are NOT blocked, or the floor reads as 'never exits'")
+	}
+}
+
+func containsAny(lines []string, want string) bool {
+	for _, line := range lines {
+		if strings.Contains(line, want) {
+			return true
+		}
+	}
+	return false
+}

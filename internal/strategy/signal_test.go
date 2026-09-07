@@ -894,3 +894,211 @@ func sameEntries(a, b []exchanges.FundingHistoryEntry) bool {
 	}
 	return true
 }
+
+// --- minimum hold: the yield exits wait until the round trip is earned back ---
+
+// The whole point of the gate. Funding has turned and cleared all three
+// sign-flip gates, but the position has collected almost nothing back: leaving
+// now realizes the entry cost AND pays the exit cost, to escape an episode
+// that on this corpus costs a fraction of either.
+func TestEvaluateExit_MinHoldHoldsAYieldExitUntilTheRoundTripIsEarnedBack(t *testing.T) {
+	pos := openPosition()
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 0.2, 0.1, -3.0, -4.0)
+	p := entryParams()
+	p.ExitNegativeMinBps, p.ExitNegativePeriods, p.ExitNegativeCumCostFrac = 0, 1, 0
+
+	// Without the floor the sign flip closes the position.
+	if got := EvaluateExit(evalAt, pos, c, p); got.Action != ActionExit {
+		t.Fatalf("precondition: the ungated rule must exit here:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+
+	p.MinHoldRecoveredCostFrac = 1.0
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionHold {
+		t.Fatalf("a position that has not earned back its round trip must not leave for a yield reason:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+	if !hasFailedCheck(got, "funding_negative") {
+		t.Errorf("the blocked exit must still be reported as a check:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	// The reader must be able to tell "the condition did not happen" from
+	// "the condition happened and the floor held the position anyway".
+	detail := detailOf(got, "funding_negative")
+	for _, want := range []string{"đảo dấu", "hoàn", "cổng giữ tối thiểu"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the blocked exit must say WHY it was blocked, missing %q: %s", want, detail)
+		}
+	}
+}
+
+// The decay exit is a yield exit too, and the floor covers it for the same
+// reason: a decayed regime that has not yet repaid the entry cost is worse to
+// leave than to hold.
+func TestEvaluateExit_MinHoldAlsoHoldsTheDecayExit(t *testing.T) {
+	pos := openPosition()
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 0.05, 0.04, 0.03, 0.02)
+	p := entryParams()
+
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "net_apr_floor") {
+		t.Fatalf("precondition: the ungated rule must decay-exit here:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+
+	p.MinHoldRecoveredCostFrac = 1.0
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionHold {
+		t.Fatalf("the decay exit must respect the floor:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	if !strings.Contains(detailOf(got, "net_apr_floor"), "cổng giữ tối thiểu") {
+		t.Errorf("the blocked decay exit must name the floor: %s", detailOf(got, "net_apr_floor"))
+	}
+}
+
+// The floor is about YIELD, never about RISK. A hedge leg that has vanished
+// means the position is no longer delta-neutral, and no amount of unrecovered
+// cost is a reason to sit in a naked short.
+func TestEvaluateExit_MinHoldNeverBlocksARiskExit(t *testing.T) {
+	p := entryParams()
+	p.MinHoldRecoveredCostFrac = 100 // a floor nothing could ever clear
+
+	t.Run("hedge leg gone", func(t *testing.T) {
+		c := goodCandidate()
+		c.SpotSource, c.HedgeNoteVI = "", "Spot market bị huỷ niêm yết."
+		got := EvaluateExit(evalAt, openPosition(), c, p)
+		if got.Action != ActionExit || !hasTriggeredCheck(got, "hedge_gone") {
+			t.Errorf("a vanished hedge leg must close whatever the floor says:\n%s",
+				strings.Join(got.LogLines(), "\n"))
+		}
+	})
+
+	t.Run("basis blown out", func(t *testing.T) {
+		c := goodCandidate()
+		c.PerpPriceQuote = c.SpotPriceQuote * 1.02
+		got := EvaluateExit(evalAt, openPosition(), c, p)
+		if got.Action != ActionExit || !hasTriggeredCheck(got, "basis_widened") {
+			t.Errorf("a 2%% basis must close whatever the floor says:\n%s",
+				strings.Join(got.LogLines(), "\n"))
+		}
+	})
+
+	t.Run("net APR no longer computable", func(t *testing.T) {
+		c := goodCandidate()
+		c.PerpFee.Verified = false // no verified schedule -> no net figure at all
+		got := EvaluateExit(evalAt, openPosition(), c, p)
+		if got.Action != ActionExit {
+			t.Errorf("losing the ability to price the position is not a yield judgement:\n%s",
+				strings.Join(got.LogLines(), "\n"))
+		}
+	})
+}
+
+// Once the position HAS earned the round trip back, the floor is silent and
+// the rule is the rule again.
+func TestEvaluateExit_MinHoldStopsBlockingOnceTheCostIsRecovered(t *testing.T) {
+	pos := openPosition()
+	c := goodCandidate()
+	// Six fat settlements at 40 bps/8h = 2.4% collected against a ~0.3% round
+	// trip, then the sign flip.
+	c.Settled = settled("binance_futures", 28800, 40, 40, 40, 40, 40, 40, -3.0)
+	p := entryParams()
+	p.ExitNegativeMinBps, p.ExitNegativePeriods, p.ExitNegativeCumCostFrac = 0, 1, 0
+	p.MinHoldRecoveredCostFrac = 1.0
+
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionExit || !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("the floor has been cleared; the sign flip must close the position:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// Only settlements the position was actually open for count. Rule 6: a
+// payment is collected because the position existed at the stamp.
+func TestEvaluateExit_MinHoldCountsOnlyWhatThisPositionCollected(t *testing.T) {
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 40, 40, 40, 40, 40, 40, -3.0)
+	p := entryParams()
+	p.ExitNegativeMinBps, p.ExitNegativePeriods, p.ExitNegativeCumCostFrac = 0, 1, 0
+	p.MinHoldRecoveredCostFrac = 1.0
+
+	// Opened AFTER the six fat settlements: they belong to whoever held then,
+	// not to this position.
+	pos := openPosition()
+	pos.OpenedAtMs = c.Settled[len(c.Settled)-2].SettledAtMs
+
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionHold {
+		t.Fatalf("funding paid before this position opened must not clear its floor:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// Zero is off, and off must be the rule byte for byte — the 3.5 journal and
+// every archived sweep were produced without this field.
+func TestEvaluateExit_MinHoldZeroChangesNothing(t *testing.T) {
+	cases := []struct {
+		name   string
+		rates  []float64
+		mutate func(*Candidate)
+	}{
+		{"sign flip", []float64{1.0, 0.5, -0.2, -0.8}, nil},
+		{"decay", []float64{0.05, 0.04, 0.03, 0.02}, nil},
+		{"healthy", []float64{1.0, 1.1, 1.2, 1.0, 1.1, 1.3}, nil},
+		{"basis", nil, func(c *Candidate) { c.PerpPriceQuote = c.SpotPriceQuote * 1.02 }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := goodCandidate()
+			if tc.rates != nil {
+				c.Settled = settled("binance_futures", 28800, tc.rates...)
+			}
+			if tc.mutate != nil {
+				tc.mutate(&c)
+			}
+			p := entryParams()
+			want := EvaluateExit(evalAt, openPosition(), c, p)
+			p.MinHoldRecoveredCostFrac = 0
+			got := EvaluateExit(evalAt, openPosition(), c, p)
+			if got.Action != want.Action {
+				t.Fatalf("action %s != %s with the floor at zero", got.Action, want.Action)
+			}
+			for i := range want.Checks {
+				if got.Checks[i] != want.Checks[i] {
+					t.Errorf("check %q changed with the floor at zero:\n got  %+v\n want %+v",
+						want.Checks[i].Name, got.Checks[i], want.Checks[i])
+				}
+			}
+		})
+	}
+}
+
+// An unpriceable round trip leaves the floor with no denominator. It must fail
+// SAFE — the same direction ExitNegativeCumCostFrac takes — because a floor
+// that blocks every exit on a venue whose book cannot be read would pin a
+// position open for the one reason least related to whether holding is wise.
+func TestEvaluateExit_MinHoldFailsSafeWhenTheRoundTripCannotBePriced(t *testing.T) {
+	pos := openPosition()
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 0.2, 0.1, -3.0, -4.0)
+	c.SpotBook.BidDepthWithinTightQuote = 0 // no book -> no priced fill
+	c.SpotBook.BidDepthWithinWideQuote = 0
+	c.SpotBook.BestBidQuote = 0
+	p := entryParams()
+	p.ExitNegativeMinBps, p.ExitNegativePeriods, p.ExitNegativeCumCostFrac = 0, 1, 0
+	p.MinHoldRecoveredCostFrac = 1.0
+
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionExit {
+		t.Fatalf("with no round trip to recover, the floor must not hold the position:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func detailOf(d Decision, name string) string {
+	for _, check := range d.Checks {
+		if check.Name == name {
+			return check.DetailVI
+		}
+	}
+	return ""
+}

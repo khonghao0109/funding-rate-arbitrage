@@ -26,6 +26,9 @@ const (
 	defaultExitNegBps     = "0"
 	defaultExitNegPeriods = "1"
 	defaultExitNegCum     = "0"
+	// Minimum hold (strategy.Params.MinHoldRecoveredCostFrac): 0 is off, and
+	// off is the rule as it stood before the axis existed.
+	defaultMinHold = "0"
 )
 
 // gridSpec is every axis of a sweep, named as strategy.Params names them.
@@ -41,6 +44,8 @@ type gridSpec struct {
 	ExitNegativeMinBps      []float64
 	ExitNegativePeriods     []int
 	ExitNegativeCumCostFrac []float64
+
+	MinHoldRecoveredCostFrac []float64
 }
 
 func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hold string) (gridSpec, error) {
@@ -69,7 +74,18 @@ func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hol
 	}
 	// Gates default to the 3.2 rule until withNegativeGates says otherwise.
 	spec.ExitNegativeMinBps, spec.ExitNegativePeriods, spec.ExitNegativeCumCostFrac = []float64{0}, []int{1}, []float64{0}
+	// The minimum-hold floor defaults to off for the same reason.
+	spec.MinHoldRecoveredCostFrac = []float64{0}
 	return spec, nil
+}
+
+// withMinHold sets the minimum-hold axis from its flag.
+func (g gridSpec) withMinHold(minHold string) (gridSpec, error) {
+	var err error
+	if g.MinHoldRecoveredCostFrac, err = parseFloatList(minHold); err != nil {
+		return g, fmt.Errorf("-min-hold: %w", err)
+	}
+	return g, nil
 }
 
 // withNegativeGates sets the three sign-flip axes from their flags.
@@ -108,7 +124,8 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 				for _, exitNet := range g.ExitNetAPRFrac {
 					if exitNet >= minNet {
 						dropped += len(g.MinRatePer8hBps) * len(g.PersistencePeriods) * len(g.ExitPersistencePeriods) *
-							len(g.ExitNegativeMinBps) * len(g.ExitNegativePeriods) * len(g.ExitNegativeCumCostFrac)
+							len(g.ExitNegativeMinBps) * len(g.ExitNegativePeriods) * len(g.ExitNegativeCumCostFrac) *
+							len(g.MinHoldRecoveredCostFrac)
 						continue
 					}
 					for _, minBps := range g.MinRatePer8hBps {
@@ -117,16 +134,19 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 								for _, negBps := range g.ExitNegativeMinBps {
 									for _, negPeriods := range g.ExitNegativePeriods {
 										for _, negCum := range g.ExitNegativeCumCostFrac {
-											p := baseParams(notional, hold)
-											p.MinRatePer8hBps = minBps
-											p.PersistencePeriods = periods
-											p.MinNetAPRFrac = minNet
-											p.ExitNetAPRFrac = exitNet
-											p.ExitPersistencePeriods = exitPeriods
-											p.ExitNegativeMinBps = negBps
-											p.ExitNegativePeriods = negPeriods
-											p.ExitNegativeCumCostFrac = negCum
-											grid = append(grid, p)
+											for _, minHold := range g.MinHoldRecoveredCostFrac {
+												p := baseParams(notional, hold)
+												p.MinRatePer8hBps = minBps
+												p.PersistencePeriods = periods
+												p.MinNetAPRFrac = minNet
+												p.ExitNetAPRFrac = exitNet
+												p.ExitPersistencePeriods = exitPeriods
+												p.ExitNegativeMinBps = negBps
+												p.ExitNegativePeriods = negPeriods
+												p.ExitNegativeCumCostFrac = negCum
+												p.MinHoldRecoveredCostFrac = minHold
+												grid = append(grid, p)
+											}
 										}
 									}
 								}
@@ -197,6 +217,11 @@ func (g gridSpec) check() error {
 			return fmt.Errorf("-exit-neg-cum %g: a fraction of the round trip cannot be negative", v)
 		}
 	}
+	for _, v := range g.MinHoldRecoveredCostFrac {
+		if v < 0 {
+			return fmt.Errorf("-min-hold %g: a fraction of the round trip cannot be negative", v)
+		}
+	}
 	return nil
 }
 
@@ -234,8 +259,9 @@ func parseIntList(s string) ([]int, error) {
 
 // sweepOnlyFlagsTouched reports whether a flag only -sweep reads was given a
 // non-default value, so a plain run can refuse it instead of ignoring it.
-func sweepOnlyFlagsTouched(minRate, persist, minNet, exitNet, exitPersist, negBps, negPeriods, negCum string, top int) bool {
+func sweepOnlyFlagsTouched(minRate, persist, minNet, exitNet, exitPersist, negBps, negPeriods, negCum, minHold string, top int) bool {
 	return minRate != defaultMinRateBps || persist != defaultPersist || minNet != defaultMinNetAPR ||
 		exitNet != defaultExitNetAPR || exitPersist != defaultExitPersist ||
-		negBps != defaultExitNegBps || negPeriods != defaultExitNegPeriods || negCum != defaultExitNegCum || top != 0
+		negBps != defaultExitNegBps || negPeriods != defaultExitNegPeriods || negCum != defaultExitNegCum ||
+		minHold != defaultMinHold || top != 0
 }

@@ -146,8 +146,16 @@ type Strategy struct {
 	ExitNegativeMinBps      float64 `yaml:"exit_negative_min_bps"`
 	ExitNegativePeriods     int     `yaml:"exit_negative_periods"`
 	ExitNegativeCumCostFrac float64 `yaml:"exit_negative_cum_cost_frac"`
-	MaxBasisPct             float64 `yaml:"max_basis_pct"`
-	MaxBasisWidenPct        float64 `yaml:"max_basis_widen_pct"`
+
+	// MinHoldRecoveredCostFrac blocks the two YIELD exits until the position
+	// has collected this fraction of its round-trip cost back. OPTIONAL, and 0
+	// is off — the rule exactly as it stood before the key existed, which is
+	// what the running 3.5 journal loaded. Risk exits are never blocked; the
+	// jurisdiction is written on strategy.Params.
+	MinHoldRecoveredCostFrac float64 `yaml:"min_hold_recovered_cost_frac"`
+
+	MaxBasisPct      float64 `yaml:"max_basis_pct"`
+	MaxBasisWidenPct float64 `yaml:"max_basis_widen_pct"`
 }
 
 // Depth configures the periodic order book sampling (step 2.7b).
@@ -738,6 +746,8 @@ func (st Strategy) validate(d Depth) error {
 		return fmt.Errorf("strategy.exit_negative_periods must be >= 0, got %d", st.ExitNegativePeriods)
 	case st.ExitNegativeCumCostFrac < 0:
 		return fmt.Errorf("strategy.exit_negative_cum_cost_frac must be >= 0 (a fraction of the round trip), got %g", st.ExitNegativeCumCostFrac)
+	case st.MinHoldRecoveredCostFrac < 0:
+		return fmt.Errorf("strategy.min_hold_recovered_cost_frac must be >= 0 (a fraction of the round trip), got %g", st.MinHoldRecoveredCostFrac)
 	case d.Enabled && st.MaxBookAgeMin < d.RefreshEveryMin:
 		return fmt.Errorf("strategy.max_book_age_min (%d) is below depth.refresh_every_min (%d): every fill "+
 			"would be refused as stale before the next sweep", st.MaxBookAgeMin, d.RefreshEveryMin)
@@ -757,8 +767,9 @@ func (st Strategy) StrategyParams() strategy.Params {
 		MaxBookAge:     time.Duration(st.MaxBookAgeMin) * time.Minute,
 		ExitNetAPRFrac: st.ExitNetAPRFrac, ExitPersistencePeriods: st.ExitPersistencePeriods,
 		ExitNegativeMinBps: st.ExitNegativeMinBps, ExitNegativePeriods: st.ExitNegativePeriods,
-		ExitNegativeCumCostFrac: st.ExitNegativeCumCostFrac,
-		MaxBasisPct:             st.MaxBasisPct, MaxBasisWidenPct: st.MaxBasisWidenPct,
+		ExitNegativeCumCostFrac:  st.ExitNegativeCumCostFrac,
+		MinHoldRecoveredCostFrac: st.MinHoldRecoveredCostFrac,
+		MaxBasisPct:              st.MaxBasisPct, MaxBasisWidenPct: st.MaxBasisWidenPct,
 	}
 }
 
