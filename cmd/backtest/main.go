@@ -331,8 +331,8 @@ func baseParams(notional, holdDays float64) strategy.Params {
 	return strategy.Params{
 		MinRatePer8hBps: 0.3, PersistencePeriods: 6, MinNetAPRFrac: 0.02,
 		NotionalQuote: notional, HoldingDays: holdDays,
-		ExitNetAPRFrac: 0, ExitPersistencePeriods: 12,
-		ExitNegativeMinBps: 2.0, ExitNegativePeriods: 2, ExitNegativeCumCostFrac: 0.25,
+		ExitNetAPRFrac: 0, ExitPersistencePeriods: 48,
+		ExitNegativeMinBps: 2.0, ExitNegativePeriods: 2, ExitNegativeCumCostFrac: 1.0,
 		MaxBasisPct: 1.0, MaxBasisWidenPct: 0.5,
 	}
 }

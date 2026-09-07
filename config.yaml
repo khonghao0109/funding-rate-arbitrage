@@ -142,20 +142,37 @@ strategy:
   enabled: true
   evaluate_every_min: 10      # funding settle nhanh nhất là 1h; 10 phút là dư
   max_book_age_min: 120       # phải ≥ depth.refresh_every_min, nếu không mọi fill bị coi là cũ
-  # Bộ ngưỡng TỐT NHẤT của lưới cổng 8.000 bộ × 16 chuỗi × 12 tháng
-  # (2026-09-07, xem docs/reports/backtest-3.3-wide-2026-09-07.html): tổng
-  # +9,72% trên 16 chuỗi, 12/16 chuỗi dương, 1,7 lệnh mỗi chuỗi — thay cho bộ
-  # 3.3 cũ (0,5 / 3 / 0,005 / 3) vốn cho −87,78% và 0/16. Đọc thành lời: vào
-  # CHẬM mà chắc, rồi gần như KHÔNG thoát. Lưu ý nó vẫn chưa vượt mốc chuẩn
-  # "giữ suốt cửa sổ, trả một vòng phí" (+10,23%) — đây là bộ tốt nhất trong
-  # họ luật hiện có, không phải bằng chứng rằng luật này đáng chạy thật.
+  # Ba ngưỡng thoát đổi theo lưới v7 (2026-09-07, 432 bộ × 24 chuỗi × 12
+  # tháng, xem docs/reports/backtest-3.3-wide-2026-09-07.html). Lối VÀO giữ
+  # nguyên 0,3/6. Đo trên đúng bộ này: tổng +30,17% trên 24 chuỗi, 18/24
+  # chuỗi dương, 1,29 lệnh mỗi chuỗi, sụt vốn tối đa 2,81% — so với +14,82%,
+  # 14/24, 4,00 lệnh, 4,06% của bộ trước đó. Đây là bộ ĐẦU TIÊN của dự án
+  # vượt mốc chuẩn "giữ suốt cửa sổ, trả một vòng phí" (+29,56%) trên cửa sổ
+  # 365 ngày; 72/432 bộ của lưới vượt được, so với 0/4096 của lưới v6.
+  # Đọc bảng từng chuỗi trước khi mừng: 20/24 chuỗi chỉ có ĐÚNG 1 lệnh và
+  # 18/24 nằm trong 0,10 điểm của giữ suốt, còn phần chênh dương đến từ các
+  # chuỗi mà giữ suốt LỖ (SOL·binance +0,98). Nên đây là "giữ suốt cộng một
+  # cái cắt lỗ chạy được", không phải một luật kiếm thêm lợi suất. Bộ tốt
+  # nhất cả lưới là 0,5/3 với ba ngưỡng thoát y hệt (+30,35%); chênh 0,18
+  # điểm không đủ để đổi lối vào mà tiến trình 3.5 đang chạy.
   min_rate_per_8h_bps: 0.3    # ngưỡng rate ĐÃ SETTLE, quy về 8h để so chéo sàn
   persistence_periods: 6      # số mốc settle liên tiếp phải trên ngưỡng
   min_net_apr_frac: 0.02      # APR RÒNG tối thiểu để vào (0.02 = 2%)
   notional_quote: 50000       # vốn mỗi vị thế giấy — slippage tính theo đúng size này
-  holding_days: 30            # thời gian giữ dự kiến, để khấu hao chi phí vào/ra
+  # holding_days KHÔNG chỉ là một chú thích: NetAPR khấu hao TRỌN chi phí vòng
+  # vào đúng con số này (apr.go), nên nó đặt luôn ngưỡng thật của lối vào và
+  # của lối thoát suy giảm. Đo được: ở 30 ngày (90 mốc 8h) một mốc phải đạt
+  # 0,335 bps/8h thì APR ròng mới ≥ 0 — mà trung bình cả năm của BTC·binance
+  # là 0,306 bps/8h, tức mốc TRUNG BÌNH bị chấm là "đang suy giảm" và lối
+  # thoát nổ. Ở 90 ngày (270 mốc) ngưỡng đó tụt còn 0,112 bps/8h. Chỉ đổi
+  # dòng này 30 → 90, giữ nguyên mọi thứ khác: tổng 24 chuỗi +14,82% → +26,58%,
+  # lệnh 4,00 → 2,42, sụt vốn tối đa 4,06% → 2,86%. 180 ngày chỉ thêm +0,3
+  # điểm nên 90 là điểm gãy. Con số này cũng khớp thực tế hơn: hoà vốn đo
+  # được là 17–18 ngày (hyperliquid BTC/ETH), 33–45 ngày (binance/bybit/
+  # kraken), 60–200 ngày trên các chuỗi yếu.
+  holding_days: 90            # thời gian giữ dự kiến, để khấu hao chi phí vào/ra
   exit_net_apr_frac: 0        # sàn giữ 0: không thoát vì APR dự phóng tụt
-  exit_persistence_periods: 12 # thoát do suy giảm cần N mốc liên tiếp dưới sàn giữ
+  exit_persistence_periods: 48 # thoát do suy giảm cần N mốc liên tiếp dưới sàn giữ (12 → 48: trung vị lưới 27,02% → 28,87%)
   max_basis_pct: 1.0          # thoát nếu |perp − spot| vượt mức này
   max_basis_widen_pct: 0.5    # thoát nếu basis dịch xa mức lúc vào hơn mức này
   # Cổng thoát khi funding đảo dấu (thêm 2026-09-07 sau khi đo: đợt âm trên
@@ -169,7 +186,13 @@ strategy:
   # (review 2026-09-07).
   exit_negative_min_bps: 2.0       # mốc mới nhất phải ≤ −X bps/8h; đo được: mốc âm sâu nhất của năm là −1,52 nên thực tế là "không thoát vì đảo dấu"
   exit_negative_periods: 2         # N mốc liên tiếp gần nhất đều âm
-  exit_negative_cum_cost_frac: 0.25 # funding âm tích luỹ của đợt ≥ C × chi phí vòng (đợt đắt nhất của năm 9,1 bps so với 30 bps vòng)
+  # C = 1,0 đọc thành: chỉ rời khi ở lại ĐÃ tốn bằng đúng một vòng phí. Đo
+  # trên 24 chuỗi, 12 tháng: đợt âm TỆ NHẤT cả năm vẫn rẻ hơn một vòng trên
+  # 19/24 chuỗi (trung vị 0,49×), đợt âm trung vị chỉ tốn 0,0005–0,011% so
+  # với vòng 0,30–0,43%. Năm chuỗi vượt 1,0 đều là chuỗi funding âm có hệ
+  # thống — SOL·binance 3,21×, SOL·bybit 3,11×, SOL·hyperliquid 2,80×,
+  # SOL·kraken 2,02×, XRP·bybit 1,59× — và đó đúng là nơi cổng này nổ.
+  exit_negative_cum_cost_frac: 1.0 # funding âm tích luỹ của đợt ≥ C × chi phí vòng
 
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }
