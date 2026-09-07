@@ -138,8 +138,10 @@ inventing a second cause; and the decay exit requires the net APR to stay under
 the floor for N consecutive settlements, because a single-print rule closes on a
 one-period dip and pays a round trip in each direction to do it (measured on
 binance BTCUSDT Aug 2026: 0.79 → 0.51 → 0.23 → 0.20 → 0.83 → 1.00 bps/8h). A
-funding SIGN FLIP still exits immediately — that is money leaving every
-settlement. Measured on the real corpus: strict thresholds give 0 entries / 28
+funding SIGN FLIP exits immediately by default — that is money leaving every
+settlement — and since 2026-09-07 can be gated (`ExitNegative*`, 0/1/0 = the
+default; negative prints are that exit's alone, the decay exit counts only
+non-negative settlements). Measured on the real corpus: strict thresholds give 0 entries / 28
 skips; loose ones give 4 entries at 5.71–6.97% net APR, inside the 5–15% band.
 
 Step 3.3 built `internal/backtest` + `cmd/backtest`, which call the step-3.2
@@ -158,12 +160,72 @@ its "~10 days" came from. This is not a bug: the 5–15% band is for SELECTED
 opportunities, not for BTC/ETH held mechanically on taker fees. A backtest
 returning 5–15% at this configuration would be the suspicious result.
 
+A wider sweep on 2026-09-07 (6,048 parameter sets × 16 series × 12/6/3-month
+windows, through the list-valued grid flags `cmd/backtest` now takes — the
+defaults reproduce the step-3.3 grid exactly, pinned by test) confirmed the
+verdict and sharpened it. Run first with the fees of that morning (12 series
+refused by name, 4 binance series replayed: 12 months → 0 of 8,928 traded
+runs profitable), then again after the user verified bybit/okx/gate fees the
+same afternoon (0 refused, all 16 replayed): 12 months → **0 profitable runs
+on 15 of 16 series**, and the 78 "profitable" runs left are one XRP/okx trade
+of +0.028% on a corpus that covers 96 days. The 6- and 3-month windows show a
+positive region (BTC/binance, 2–5 trades, best +0.72%) and every set in it
+loses over 12 months — the Jul–Aug 2026 regime, not a parameter. Facts to
+carry forward: entry thresholds ≥1.2 bps/8h never trigger on BTC/ETH/SOL
+because the corpus maximum there is exactly 1.0 bps/8h (XRP reaches 3.0, and
+loses); holding through the window on one round trip beats every rule on
+BTC/ETH at all four venues (binance +3.05% / +2.18% net over 12 months,
+bybit +2.54% / +2.24%, against −3.71% / −6.00% and −8.83% / −7.44% for the
+3.3 set) — the exit-and-re-enter rule pays 0.30% per sign flip (BTC flips
+200 times a year at binance, 288 at bybit), and two spot fills are 20 of
+those 30 bps; the three newly priced venues are not cheaper (0.316–0.326%
+per round trip at 50k). Measured side effect: re-sampling the book two hours
+later moved XRP's cost from 0.377% to 0.358% and its trade counts by up to
+±50 per run, so "one book held fixed" is a real sensitivity on thin pairs.
+The 3.3 parameter set stays as it is until the 3.5 gate has judged it.
+Bilingual VI/ZH report: `docs/reports/backtest-3.3-wide-2026-09-07.html`.
+
+The same afternoon the sign-flip exit gained three GATES as parameters
+(`strategy.Params.ExitNegativeMinBps/Periods/CumCostFrac`, config keys
+`exit_negative_*`; zero values are the 3.2 rule exactly, pinned by test, so
+the live 3.5 set did not move). Measured: BTC flips sign 200 times a year and
+the median negative episode costs 0.3 bps against a 30 bps round trip, yet
+the 3.2 rule leaves on ANY negative print. A 24 base-set × 64-gate × 16-series
+sweep (re-run after the jurisdiction fix below) found the gates halve the
+loss at the 3.3 setting (−87% → −42% summed over 16 series, still 1/16
+positive) and, with the decay exit relaxed (floor 0, 12 periods), converge on
+hold-through: the best set sums +9.45% with 11/16 series positive at 1.5
+trades each, against hold-through's +10.29%, 12/16 — because on this corpus
+no negative episode in a year costs as much as one round trip, so the best
+gate is "do not leave on a sign flip" and the edge is in entry and cost, not
+exit. An exit rule still worth writing compares the EXPECTED cost of holding
+through a negative run with the round trip, and must beat hold-through, not
+match it; that is 3.2 work after the gate. The adversarial
+review of that sweep found the decay exit counting negative prints too, which
+made `ExitPersistencePeriods` a hard ceiling on every gate (half the grid was
+degenerate, exits merely relabelled); the two exits now have disjoint
+jurisdictions and the sweep was re-run. The same review made
+`config.Strategy.StrategyParams()` the ONE config→Params mapping for both
+`cmd/scanner` and `cmd/backtest`, with a test pinning the sweep base to the
+shipped block.
+
+Verifying bybit_spot at the same 10 bps as binance_spot exposed a latent
+defect the same day: `config.CheapestVerifiedSpot` kept the FIRST candidate on
+a fee tie, and the candidate order came from whoever called it — the hedge
+mapping in `cmd/scanner`, a loop in `cmd/backtest` — so the two commands the
+3.5 gate compares could have chosen different spot legs for the same perp. A
+tie now resolves by CONFIG order (binance_spot is listed before bybit_spot),
+whatever order the candidates arrive in, and the note says a tie was broken.
+Tests that had borrowed "bybit is unverified" from the shipped config.yaml
+now state that scenario themselves (`markFeeUnverified` in
+`internal/scanner`, an explicit override in `cmd/scanner/hedges_test.go`).
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
 mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
 every hedge leg every 10 minutes with the SAME `strategy.Candidate` the
-backtest builds — settled history from the store, fees from config, the newest
+backtest builds — settled history from the store, fees from config (loaded ONCE at start-up: the 3.5 process still holds the pre-verification fees of `ba5ee31`, see PLAN 3.5 ③), the newest
 measured books — plus live spot/perp prices, which is why the basis exit is
 evaluable here and nowhere else. Every decision lands in `signal_journal`
 (schema v4) with all its checks as JSON; paper positions reseed from it on
@@ -442,6 +504,10 @@ go run ./cmd/backfill -months 6 -symbol BTCUSDT
 # SQLite, writes nothing back). Prints its assumptions with every report.
 go run ./cmd/backtest                        # 6 months, every hedgeable pair
 go run ./cmd/backtest -sweep -csv out.csv    # parameter sweep, parallel
+go run ./cmd/backtest -sweep -months 12 -min-rate-bps 0.3,0.5,0.8,1.2,2,3,5 \
+  -persist 1,2,3,6 -min-net-apr 0.02,0.05 -exit-net-apr 0,0.0025,0.005 \
+  -exit-persist 1,3,6,12 -notional 20000,50000,200000 -hold-days 14,30,60 \
+  -csv wide.csv -trades-csv trades.csv -top 40   # the 6,048-set grid of 2026-09-07
 
 # Step 3.5's journal-only run: same binary, strategy: block enabled in
 # config.yaml. PORT picks the port (8082 belongs to the phase-1 soak).
@@ -503,10 +569,15 @@ phase 1.
 - ~~No fee model anywhere.~~ Step 1.3 added `internal/fees/`. It is **commission
   only**: a taker fill on all four legs of opening and closing a two-venue
   position. Call the output **"after trading fees", never "net profit"** —
-  slippage needs book depth and funding is phase 2. Only **5 of 9** venues have a
-  verified schedule; the rest carry `fee_verified: false`, which means *not
-  looked up*, not *free* (Paradex really does charge retail 0%), and any pair
-  touching one publishes `spread_after_fees_pct: null`.
+  slippage needs book depth and funding is phase 2. As of 2026-09-07 **8 of 9** sources carry a
+  verified schedule — bybit, okx, gate and bybit_spot were read from the
+  venues' own pages by the user that day (the fetches time out or demand a
+  login from this environment); only the oracle stays unverified, because it
+  has no fee. Every verified figure is the venue's PUBLIC DEFAULT tier
+  (Binance "Regular User", Kraken tier 1, Hyperliquid tier 0, Bybit/OKX/Gate
+  VIP 0), never an account's real tier. `fee_verified: false` still means
+  *not looked up*, not *free* (Paradex really does charge retail 0%), and any
+  pair touching one publishes `spread_after_fees_pct: null`.
 - Measured on live data: a round trip costs about **0.19%** while cross-venue
   spreads on the majors run a few thousandths of a percent, so **every alert the
   scanner currently raises is negative after fees**. The alert threshold still
@@ -527,7 +598,7 @@ phase 1.
   `symbols × 5/s` — measured 20.0/s and 65 KB/s afterwards. Alerts are not
   queued. Still open, and now the dominant cost: the server ships every symbol
   to every client (PLAN §7.3 item 2), so 50 symbols would be 250 msg/s.
-- 417 test functions (`grep -r '^func Test' --include='*_test.go'`, most
+- 483 test functions (`grep -r '^func Test' --include='*_test.go'`, re-measured 2026-09-07; most
   table-driven so the case count is far higher; earlier docs quoted a "211
   tests" figure whose counting method did not survive — this one is stated so
   it can be re-measured): `internal/strategy` 35 (96.7%),

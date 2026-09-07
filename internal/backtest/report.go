@@ -27,6 +27,7 @@ var csvHeader = []string{
 	"window_from_ms", "window_to_ms", "window_days", "covered_days",
 	"min_rate_per_8h_bps", "persistence_periods", "min_net_apr_frac",
 	"exit_net_apr_frac", "exit_persistence_periods",
+	"exit_negative_min_bps", "exit_negative_periods", "exit_negative_cum_cost_frac",
 	"notional_quote", "holding_days",
 	"round_trip_cost_pct", "cost_book_sampled_at_ms",
 	"settlements", "trades", "periods_in_position",
@@ -49,6 +50,7 @@ func WriteCSV(w io.Writer, results []Result) error {
 			f(windowDays), f(r.CoveredDays),
 			f(r.Params.MinRatePer8hBps), strconv.Itoa(r.Params.PersistencePeriods), f(r.Params.MinNetAPRFrac),
 			f(r.Params.ExitNetAPRFrac), strconv.Itoa(r.Params.ExitPersistencePeriods),
+			f(r.Params.ExitNegativeMinBps), strconv.Itoa(r.Params.EffectiveExitNegativePeriods()), f(r.Params.ExitNegativeCumCostFrac),
 			f(r.Params.NotionalQuote), f(r.Params.HoldingDays),
 			f(r.RoundTripCostPct), strconv.FormatInt(r.CostBookSampledAtMs, 10),
 			strconv.Itoa(r.Settlements), strconv.Itoa(len(r.Trades)), strconv.Itoa(r.PeriodsInPosition),
@@ -112,4 +114,51 @@ func AssumptionLines(results []Result) []string {
 		}
 	}
 	return nil
+}
+
+// tradesCSVHeader names one row per trade. Each row carries the parameters
+// that produced it: a trade detached from its sweep line still has to say
+// which rule set it belongs to, or a hold-length distribution drawn from the
+// file mixes every set in the grid and calls the mixture "the strategy".
+var tradesCSVHeader = []string{
+	"symbol", "perp_source", "spot_source",
+	"min_rate_per_8h_bps", "persistence_periods", "min_net_apr_frac",
+	"exit_net_apr_frac", "exit_persistence_periods",
+	"exit_negative_min_bps", "exit_negative_periods", "exit_negative_cum_cost_frac",
+	"notional_quote", "holding_days",
+	"open_at_ms", "close_at_ms", "held_days", "settlements",
+	"funding_frac", "cost_frac", "net_frac", "exit_reason_vi",
+}
+
+// WriteTradesCSV writes a header and one row per trade of every run that
+// replayed. A refused run contributes nothing — it traded nothing — and the
+// per-run CSV is where its refusal is recorded by name.
+func WriteTradesCSV(w io.Writer, results []Result) error {
+	out := csv.NewWriter(w)
+	if err := out.Write(tradesCSVHeader); err != nil {
+		return fmt.Errorf("backtest: write trades csv header: %w", err)
+	}
+	for _, r := range results {
+		if !r.OK {
+			continue
+		}
+		for _, t := range r.Trades {
+			heldDays := float64(t.CloseAtMs-t.OpenAtMs) / (msPerSecond * secPerDay)
+			row := []string{
+				r.Symbol, r.PerpSource, r.SpotSource,
+				f(r.Params.MinRatePer8hBps), strconv.Itoa(r.Params.PersistencePeriods), f(r.Params.MinNetAPRFrac),
+				f(r.Params.ExitNetAPRFrac), strconv.Itoa(r.Params.ExitPersistencePeriods),
+				f(r.Params.ExitNegativeMinBps), strconv.Itoa(r.Params.EffectiveExitNegativePeriods()), f(r.Params.ExitNegativeCumCostFrac),
+				f(r.Params.NotionalQuote), f(r.Params.HoldingDays),
+				strconv.FormatInt(t.OpenAtMs, 10), strconv.FormatInt(t.CloseAtMs, 10),
+				f(heldDays), strconv.Itoa(t.Settlements),
+				f(t.FundingFrac), f(t.CostFrac), f(t.NetFrac), t.ExitReasonVI,
+			}
+			if err := out.Write(row); err != nil {
+				return fmt.Errorf("backtest: write trades csv row: %w", err)
+			}
+		}
+	}
+	out.Flush()
+	return out.Error()
 }

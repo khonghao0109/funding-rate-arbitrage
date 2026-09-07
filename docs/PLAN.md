@@ -307,7 +307,7 @@ Dashboard kiểm bằng jsdom nạp `index.html` + `app.js` thật với payload
 | paradex_futures | **0,3 bps** | 4,5 bps | Tài liệu Paradex, bậc Pro (đầu cao thang taker) |
 | bybit_futures / bybit_spot | — | — | Trang biểu phí không phản hồi |
 | okx_futures | — | — | 404 / chỉ có metadata, bảng thật đòi đăng nhập |
-| gate_futures | — | — | ⚠️ Gate có công bố 0,0200%/0,0500% nhưng **ghi rõ là cho "USDT-M TradFi Perpetuals"** (cổ phiếu, kim loại, chỉ số, forex) — không phải perp crypto. Dùng nó là đúng bảng, sai thị trường |
+| gate_futures | 2,0 | 5,0 | ~~Đọc nhầm ở 1.3 là bảng "USDT-M TradFi Perpetuals"~~ — sửa 2026-09-07: thông báo 36485 (2024-05-09) là **USDT-M Perpetual Futures** và ghi rõ áp dụng không phân biệt thị trường; VIP0 maker 0,020% / taker 0,0500%. Đã hơn 2 năm, đối chiếu gate.com/fee khi đăng nhập được |
 
 `fee_verified: false` **không phải miễn phí**. Cặp nào có một sàn chưa xác minh thì `spread_after_fees_pct` là `null`, và dashboard đánh dấu ô đó còn là số thô. Paradex tính 0% cho tài khoản Retail nên `0` là một mức phí có thật — đó chính là lý do phải có cờ riêng thay vì đọc số `0`.
 
@@ -1637,21 +1637,161 @@ Sửa:
 > đi đúng index `funding_history_by_symbol` sẵn có; thêm một index không ai dùng
 > là nợ mới chứ không phải trả nợ cũ.
 
-#### Bước 3.4 — Alert ra ngoài ⏸ HOÃN — ghi nợ (2026-09-07)
-- Telegram bot (ưu tiên) / Discord webhook.
-- Nội dung alert: cặp, sàn, funding rate, APY ròng, mốc funding tiếp theo, vốn đề xuất.
-- Có throttle, tránh spam (tái sử dụng cơ chế `lastOpportunity` tại `main.go:141-152`).
-- **Nghiệm thu:** nhận được alert trên điện thoại, đúng và không lặp.
+> **Sweep rộng để kiểm chứng (2026-09-07 sáng, sau khi 3.3 đóng, theo yêu cầu — lượt này chạy với phí bybit/okx/gate CHƯA xác minh; lượt chiều 16 chuỗi ở khối kế tiếp).**
+> `cmd/backtest` nhận cờ lưới dạng danh sách (`-min-rate-bps`, `-persist`,
+> `-min-net-apr`, `-exit-net-apr`, `-exit-persist`, `-notional`, `-hold-days`)
+> cùng `-trades-csv` (một dòng mỗi lệnh, mang theo bộ tham số sinh ra nó) và
+> `-top`; **mặc định tái tạo đúng lưới 24 bộ của 3.3** — test ghim thứ tự, và
+> CSV trước/sau khi đổi mã giống nhau từng ô. Tổ hợp có sàn thoát ≥ sàn vào bị
+> bỏ và ĐẾM (config.yaml cũng từ chối nạp chúng), không chạy lặng lẽ. Lượt
+> chạy: 7 × 4 × 2 × 3 × 4 × 3 × 3 = **6.048 bộ × 16 chuỗi × 3 cửa sổ (12/6/3
+> tháng)**, 72.576 lượt mỗi cửa sổ TỪ CHỐI có tên (biểu phí chưa xác minh),
+> 24.192 chạy. Báo cáo song ngữ Việt–Trung, có giả định và số học hoà vốn kèm
+> mọi con số: [docs/reports/backtest-3.3-wide-2026-09-07.html](reports/backtest-3.3-wide-2026-09-07.html).
+>
+> Đo được: ① **12 tháng: 8.928 lượt có giao dịch, 0 có lãi ròng**, tốt nhất
+> −0,139% (ETH, 1 lệnh) — kết luận 3.3 đứng vững dưới lưới rộng gấp 252 lần.
+> ② 6 và 3 tháng có vùng dương: 734 (9,1%) và 1.197 (14,8%) lượt, TOÀN BTC,
+> 2–5 lệnh mỗi lượt, tốt nhất +0,594% và +0,719%; nhưng **cả 734 bộ dương ở cả
+> hai cửa sổ ngắn đều LỖ trên 12 tháng** (trung vị −2,0%, tốt nhất −0,49%) —
+> đó là chế độ funding tháng 7–8/2026 (BTC 0,61–0,67 bps/8h, 99–100% mốc
+> dương), không phải tham số được khám phá. ③ Ngưỡng vào ≥1,2 bps/8h **không
+> bao giờ khớp**: mốc cao nhất của BTC/ETH/SOL trong 1.095 mốc là đúng 1,0
+> bps/8h (dải 5–15%/năm của chiến lược tương đương 0,46–1,37 bps/8h; BTC trung
+> bình 0,31). ④ **Giữ suốt cửa sổ và trả đúng một vòng thắng mọi bộ tham số**
+> trên BTC (+3,35% thô → +3,05% ròng/12 tháng) và ETH (+2,49% → +2,18%), trong
+> khi bộ 3.3 cho −3,72% (21 lệnh) và −6,03% (25 lệnh): luật thoát-rồi-vào-lại
+> trả 0,30% cho mỗi lần funding đảo dấu (BTC đảo dấu 200 lần trong 12 tháng, 88 lần trong 6 tháng), và đó là
+> toàn bộ khoản lỗ. XRP/SOL giữ suốt cũng lỗ (funding 0,03 / −0,16 bps/8h).
+> ⑤ Hai lệnh spot chiếm 20 trong 30 bps của vòng; notional 20k → 200k gần như
+> không đổi chi phí trên BTC/ETH (0,3007% → 0,3053%), XRP thì có (0,339% →
+> 0,519%). ⑥ 260.616 lệnh của cả lưới 12 tháng: 1,3% ròng dương, giữ trung vị
+> 1,3 ngày / 4 mốc, 74,5% đóng vì đảo dấu.
+>
+> **Hệ quả, không phải hành động:** bộ tham số 3.3 đang chạy ở 3.5 **giữ
+> nguyên** — cổng 3.5 so nhật ký sống với đúng bộ đó. Đổi luật thoát (không lật
+> vị thế ở mỗi lần đảo dấu), chân spot rẻ hơn hoặc maker ở chân perp, biểu phí
+> đã xác minh cho bybit/okx/gate (xong cùng ngày — khối dưới), chân spot USD cho hyperliquid/kraken (BTC
+> hyperliquid trung bình 0,55 bps/8h, gấp 1,8 lần binance) — tất cả là việc
+> của 3.2/GĐ4 SAU cổng 3.5, và phải backtest lại bằng đúng lưới này trước khi
+> tin. Sổ lệnh định giá vẫn là MỘT phép đo (2026-09-07 02:41 UTC) giữ cố định,
+> và điều kiện thoát basis vẫn chưa được kiểm lần nào.
 
-> **Hoãn theo quyết định của người dùng (2026-09-07), làm 3.5 trước.** Lý do
-> hợp lý về mặt kỹ thuật, ghi ra để không ai tưởng là quên: Bước 3.3 vừa kết
-> luận chiến lược **như đang tham số hoá là lỗ** (0/72 cấu hình có lãi), nên
-> một kênh alert hôm nay sẽ đẩy lên điện thoại những tín hiệu mà backtest đã
-> chứng minh không nên hành động. Cổng 3.5 là thứ quyết định tín hiệu nào đáng
-> báo; alert đi sau cổng. Trong lúc đó "chế độ chỉ-alert" của 3.5 được thay
-> bằng **chế độ chỉ-ghi-nhật-ký**: mọi quyết định sống vào bảng
-> `signal_journal` kèm đủ lý do, chính là thứ cổng 3.5 cần so với backtest —
-> alert Telegram không thêm thông tin nào cho phép so sánh đó.
+> **Biểu phí xác minh xong (2026-09-07, chiều).** Người dùng đọc trực tiếp tài
+> liệu của sàn (từ môi trường này Bybit hết giờ, OKX đòi đăng nhập, Gate hiện
+> "Log in to view") và cấp bốn khối `fee` cho bybit_futures (maker 2,0 / taker
+> 5,5 bps, Help Center cập nhật 2026-09-02), okx_futures (2,0 / 5,0, trang
+> learn của OKX), gate_futures (2,0 / 5,0, thông báo 36485 ngày 2024-05-09 —
+> **note cũ sai**: thông báo đó là USDT-M Perpetual Futures và ghi rõ áp dụng
+> không phân biệt thị trường, không phải TradFi) và bybit_spot (10,0 / 10,0).
+> Tất cả là **bậc mặc định công khai**, đúng chuẩn của năm nguồn đã xác minh
+> trước đó (Binance Regular, Kraken bậc 1, Hyperliquid bậc 0); bậc thật của
+> một tài khoản là chuyện khác và nếu cần thì là một trường riêng, không nhét
+> vào cờ `verified`. Còn đúng một nguồn `verified: false`: Pyth, vì oracle
+> không có phí. Vòng vào/ra đo lại: bybit 0,3111%, okx 0,3011%, gate 0,3014%
+> so với binance 0,3010% — 12 chuỗi mới **không có lợi thế phí**, chỉ khác
+> funding và độ sâu; chân spot vẫn là binance_spot 10 bps ở cả 16 chuỗi.
+>
+> Việc xác minh lộ một lỗi ngủ: `config.CheapestVerifiedSpot` hoà phí thì giữ
+> ứng viên ĐỨNG TRƯỚC trong danh sách, mà danh sách đến từ thứ tự lặp của
+> caller (`cmd/scanner` từ ánh xạ hedge, `cmd/backtest` từ vòng lặp riêng) —
+> bybit_spot vừa thành 10 bps đã xác minh là hai lệnh có thể chọn hai chân
+> khác nhau cho cùng một perp, đúng thứ cổng 3.5 cấm. Nay hoà phí lấy theo
+> **thứ tự trong config** (test ghim cả hai chiều thứ tự ứng viên) và note nói
+> rõ đã hoà. Năm test trong `internal/scanner` và một trong `cmd/scanner` từng
+> mượn "bybit chưa xác minh" từ config.yaml nay tự nêu kịch bản
+> (`markFeeUnverified`).
+>
+> **Lưới rộng chạy lại với 16 chuỗi (2026-09-07 11:31–11:55, cùng cờ, sổ đo
+> 04:41 UTC):** 96.768 lượt mỗi cửa sổ, **0 từ chối**, cột `spot_source` =
+> binance_spot ở 100% dòng (binary sweep build 10:02 chưa có tie-break mới,
+> nhưng ánh xạ sắp theo chữ cái nên binance đứng trước — kiểm tra, không giả
+> định). ① **12 tháng: 33.192 lượt có giao dịch, 78 dương — tất cả là
+> XRP/okx +0,028% với 1 lệnh trên corpus okx 96 ngày**; 15 chuỗi còn lại 0
+> dương; tốt nhất binance −0,139%, bybit −0,082%, gate −0,257%; trung vị
+> −3,90%. ② 6 tháng: 842 dương (734 BTC/binance 3–5 lệnh, 108 XRP/okx 1
+> lệnh); 3 tháng: 1.305 (1.197 + 108). Cả 842 bộ dương ở hai cửa sổ ngắn: trên
+> 12 tháng BTC/binance lỗ hết (trung vị −1,80%), XRP/okx giữ +0,028% chỉ vì
+> corpus không dài hơn 96 ngày. ③ Vòng @50k trung vị: binance 0,316%, okx
+> 0,316%, gate 0,322%, bybit 0,326% — ba sàn mới không rẻ hơn. ④ Giữ suốt
+> thắng mọi bộ ở BTC/ETH trên cả bốn sàn: bybit +2,54% / +2,24% ròng, okx
+> +0,82% / +0,43% (96 ngày), gate +0,57% / +0,56% (182 ngày), trong khi bộ
+> 3.3 ở bybit −8,83% (32 lệnh) / −7,44% (27 lệnh); BTC đảo dấu 288 lần/năm ở
+> bybit. ⑤ 829.062 lệnh của lưới 12 tháng: 0,8% ròng dương, giữ trung vị 1,0
+> ngày, 78,1% đóng vì đảo dấu. ⑥ Đo phụ: sổ 04:41 thay 02:41 UTC đổi chi phí
+> XRP @50k 0,377% → 0,358% và số lệnh tới ±50 mỗi lượt (BTC/ETH ±0,0004%) —
+> giả định "một sổ giữ cố định" nhạy với cặp mỏng. **Kết luận 3.3 không đổi
+> khi mở 12 chuỗi.** Bốn chuỗi binance cho cùng số với lượt sáng (sai khác chỉ
+> từ sổ đo lại). Báo cáo song ngữ dựng lại từ lượt này, cùng đường dẫn.
+
+> **Thí nghiệm luật thoát đảo dấu (2026-09-07 chiều, việc của 3.2 làm TRƯỚC
+> cổng dưới dạng THAM SỐ, không đổi luật đang chạy).** Đo được trên binance 12
+> tháng: BTC đổi dấu 200 lần, đợt âm trung vị 1 mốc và −0,29 bps/8h, giữ xuyên
+> một đợt tốn trung vị 0,3 bps (phân vị 90% 2,7; tệ nhất 9,1) — không đợt nào
+> trong 100 đợt tốn hơn một vòng 30,1 bps, trong khi luật 3.2 thoát ở BẤT KỲ
+> mốc âm nào (37% lệnh thoát vì một mốc âm dưới 0,05 bps) rồi trả vòng nữa để
+> vào lại; đó là 78% số lệnh của lưới. Thêm ba cổng vào `strategy.Params` và
+> `config.yaml` (`exit_negative_min_bps` X, `exit_negative_periods` N,
+> `exit_negative_cum_cost_frac` C; ghép AND; **0 / 1 / 0 = luật cũ**, test ghim
+> kể cả với cost không định giá được; cổng C coi như đạt khi không định giá
+> được vòng — cùng chiều an toàn với lối thoát suy giảm). Tiến trình 3.5 không
+> nạp lại config nên không đổi; lưới 24 bộ mặc định cho CSV giống hệt (384/384).
+> Lưới cổng: 24 bộ nền (ngưỡng 0,3/0,5/0,8 × bền 1/3 × sàn giữ 0/0,5% × kỳ
+> thoát 3/12, 50k, 30 ngày) × 64 biến thể (X 0/0,25/0,5/1,0 × N 1/2/3/6 × C
+> 0/0,25/0,5/1,0) × 16 chuỗi × 3 cửa sổ, 6 phút.
+>
+> Kết quả 12 tháng (lượt v4, sau sửa thẩm quyền), tổng ròng của danh mục đều
+> notional 16 chuỗi: ① Giữ nguyên bộ 3.3 (lối suy giảm 3 kỳ dưới sàn 0,5%):
+> −87,17% (0/16 dương, 19,1 lệnh/chuỗi) → cổng tốt nhất X 1,0 / N 1 / C 0,25:
+> **−41,92% (1/16, 11,1 lệnh)** — lỗ giảm một nửa, chưa đổi dấu; các biến thể
+> C ≥ 0,5 cho −42,0%, tức trên corpus này C ≥ 0,5 và X = 1,0 đều là "không
+> thoát vì đảo dấu" (đợt đắt nhất 9,1 bps < 15 bps; mốc sâu nhất −1,52). ② Nới
+> cả lối thoát suy giảm (sàn giữ 0%, 12 kỳ): bộ tốt nhất toàn lưới cổng (ngưỡng
+> 0,8 / bền 1 / X 1,0 / N 2 / C 1,0) cho **tổng +9,45%, 11/16 chuỗi dương, 1,5
+> lệnh mỗi chuỗi** — BTC·binance +3,03% so với giữ suốt +3,05%, ETH·binance
+> +2,17% so với +2,18%, BTC·bybit +2,21% so với +2,54%; giữ suốt toàn danh mục
+> **+10,29%, 12/16**. Cửa sổ 6 tháng: +4,90% (11/16) so với +5,70%; 3 tháng:
+> +6,39% (15/16) so với +5,55% — vượt giữ suốt vì vào muộn hơn đầu cửa sổ. ③
+> Số kết cục phân biệt được trong 64 biến thể ở P = 3: 9 (lượt v3: trung vị 7),
+> ở P = 12: 15. **Đọc đúng:** bộ tốt nhất không thoát khôn hơn, nó gần như
+> KHÔNG THOÁT và hội tụ về giữ suốt; lợi thế còn lại nằm ở lúc vào và ở 30 bps
+> chi phí vòng, không ở lối thoát. (Lượt v3 trước khi sửa thẩm quyền cho bộ tốt
+> nhất −0,97%, 8/16 — con số của luật lỗi, giữ lại để đối chiếu.)
+>
+> **Review đối kháng của lưới cổng (2026-09-07, 14 agent): 10 phát hiện, xác
+> nhận 10.** Nặng nhất: lối thoát suy giảm đếm cả mốc âm, mà mốc âm nào cũng
+> dưới sàn giữ ≥ 0, nên `exit_persistence_periods` là **trần cứng của cả ba
+> cổng** — vị thế đóng ở mốc âm thứ P dù cổng chưa qua, mang nhãn "suy giảm":
+> ở P = 3, 36/64 biến thể cổng trùng nhau từng dòng và 61/64 bị chặn trước ít
+> nhất một đợt; "% đóng vì đảo dấu" giảm chỉ vì nhãn dịch. Sửa thành luật thẩm
+> quyền: **lối thoát suy giảm chỉ đếm mốc KHÔNG âm** (cửa sổ = P mốc không âm
+> gần nhất), mốc âm thuộc về cổng — với 0/1/0 hai cách đếm cho cùng kết quả vì
+> mốc âm mới nhất bắn lối đảo dấu trước và mốc âm trước-khi-vào không bao giờ
+> lấp đầy cửa sổ (mốc vào đã qua sàn vào); lưới 24 bộ mặc định tái lập giống
+> hệt sau sửa. Cũng theo review: test ở chu kỳ 1h (cổng X so per-8h, cổng C
+> cộng per-interval), biên đúng −0,5, nhánh không định giá được không đè cổng
+> khác, 0 ≡ 1 ≡ khoá vắng (`EffectiveExitNegativePeriods`, ghi vào cả journal
+> lẫn CSV), đợt âm nhìn xuyên mốc Special, chuỗi liên tục quay về luật 3.2 và
+> nói rõ; `cmd/backtest` lượt thường nay lấy tham số từ khối `strategy:` qua
+> `config.Strategy.StrategyParams()` — cùng một hàm với `cmd/scanner` — và test
+> ghim `baseParams` == khối đó, nên câu "một bộ tham số cho cả hai" đúng bằng
+> máy. Lưới cổng được chạy lại sau sửa (v4) — số liệu dưới đây là của lượt đó.
+> **Lưới chính không đổi, ĐO được:** binary trước và sau sửa chạy nối tiếp trên
+> cùng lưới 6.048 bộ × 4 chuỗi BTC 12 tháng với cùng một sổ (dấu thời gian sổ
+> trùng): 24.192/24.192 dòng giống hệt về số lệnh, kỳ giữ, lợi nhuận và chi
+> phí. (Phép so đầu với lượt v2 lệch 8.640 dòng chỉ vì sổ được đo lại giữa hai
+> lượt — nhiễu của "một sổ giữ cố định", không phải của luật.)
+>
+> **Kết luận cho 3.2 sau cổng:** trên corpus này không đợt âm nào trong năm
+> đắt bằng một vòng, nên "không thoát vì đảo dấu" (C ≈ 1,0) cộng lối suy giảm
+> dài (12 kỳ) là gần tối ưu và chỉ BẰNG giữ suốt; luật thoát đáng viết tiếp là
+> so CHI PHÍ GIỮ XUYÊN KỲ VỌNG (rate âm × độ dài đợt) với chi phí một vòng, có
+> quãng giữ tối thiểu để hoà vốn (nợ ② ở 3.3), và phải chứng minh nó THẮNG giữ
+> suốt trên 12 tháng ở 16 chuỗi — nếu không thì luật ít tham số hơn (giữ suốt)
+> thắng. Báo cáo song ngữ gộp cả hai lưới (mục "Thử luật thoát") cùng đường dẫn
+> cũ. Ghi chú cho cổng 3.5 bước 2: `params_json` của tiến trình đang chạy có 10
+> khoá; một tiến trình lên lại từ working tree ghi 13 khoá (thêm ba cổng =
+> 0/1/0) — cùng tham số, khác số khoá, so theo khoá chung.
 >
 > **Nợ 3.4, làm SAU phán quyết 3.5:** `internal/notify` (Telegram trước,
 > Discord tuỳ chọn), throttle theo khoá cơ hội, token qua env/.env (godotenv có
@@ -1718,6 +1858,28 @@ Sửa:
 >    chênh `cost_total_pct` sống−cố định cộng dồn — lệch lớn hơn là (c).
 > 6. **Không đạt → quay lại 3.2, KHÔNG sang GĐ4.** Đạt → GĐ4 mở, và Bước 3.4
 >    (alert) làm ngay trước 4.1.
+>
+> **Đầu vào lệch thứ tư — biểu phí lúc khởi động (ghi 2026-09-07, sau khi
+> xác minh phí):** tiến trình nhật ký nạp `config.yaml` đúng MỘT lần lúc lên
+> (09:39:52, khối `fee` của commit `ba5ee31`: bybit_futures / okx_futures /
+> gate_futures / bybit_spot `verified: false`) và không bao giờ nạp lại; từ
+> 11:29 cùng ngày file trên đĩa đã xác minh cả bốn, và `cmd/backtest` đọc file
+> lúc chạy. `params_json` chỉ mang tham số chiến lược nên bước 2 KHÔNG bắt
+> được lệch này bằng máy. Hệ quả: 12 chuỗi phi-binance nằm ngoài (a)/(b)/(c)
+> theo cấu trúc (nhật ký chỉ có thể `skip` "chưa xác minh biểu phí" ở đó, đo
+> được: 156/364 hàng đầu tiên), nên backtest phục vụ phán quyết chạy hoặc chỉ
+> trên 4 chuỗi binance (bước 3 đã ghi) hoặc với `git show ba5ee31:config.yaml`.
+> Nếu tiến trình chết và lên lại từ working tree, nửa sau cửa sổ sẽ chạy biểu
+> phí mới — cửa sổ tính lại từ lần lên cuối (bước 1) và phải ghi kèm trạng
+> thái phí. Nợ tooling: ghi `fee_verified` và taker bps của hai chân vào
+> `params_json` (hoặc cột riêng) để bước 2 bắt được lệch phí bằng máy.
+>
+> **Đầu vào lệch thứ năm — ba khoá `exit_negative_*` (ghi 2026-09-07 chiều):**
+> khoá VẮNG ≡ 0 ≡ `exit_negative_periods: 1` ≡ luật 3.2 (code ép < 1 thành 1
+> và ghi giá trị HIỆU LỰC ra journal/CSV). Nhật ký của tiến trình đang chạy có
+> 10 khoá; một tiến trình lên lại từ working tree ghi 13 khoá (thêm 0 / 1 / 0).
+> Bước 2 so theo GIÁ TRỊ HIỆU LỰC của các khoá chung, không so số khoá; nếu
+> lên lại thì ghi kèm trạng thái ba cổng như đã ghi trạng thái phí.
 >
 > **Vận hành:** tiến trình `cmd/scanner` build từ working tree bước này, cổng
 > **8085** (soak GĐ1 vẫn giữ 8082, không đụng), PID trong `.paper/scanner.pid`,

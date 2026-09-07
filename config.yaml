@@ -136,6 +136,19 @@ strategy:
   exit_persistence_periods: 3 # thoát do suy giảm cần N mốc liên tiếp dưới sàn giữ
   max_basis_pct: 1.0          # thoát nếu |perp − spot| vượt mức này
   max_basis_widen_pct: 0.5    # thoát nếu basis dịch xa mức lúc vào hơn mức này
+  # Cổng thoát khi funding đảo dấu (thêm 2026-09-07 sau khi đo: đợt âm trên
+  # BTC/ETH binance trung vị 1 mốc và 0,3 bps, còn mỗi lần thoát-rồi-vào-lại
+  # trả 30 bps). Ba giá trị dưới đây TÁI TẠO ĐÚNG luật 3.2 — thoát ở bất kỳ
+  # mốc âm nào — nên bộ tham số của cổng 3.5 không đổi, và tiến trình 3.5
+  # đang chạy cũng không nạp lại file này. Ba cổng ghép theo AND. Giá trị khác
+  # 0/1/0 là ĐỔI LUẬT: chỉ sau cổng 3.5, và phải qua đúng lưới backtest 3.3.
+  # Thẩm quyền: mốc ÂM chỉ do lối thoát đảo dấu (ba cổng này) xét; lối thoát
+  # suy giảm (exit_net_apr_frac / exit_persistence_periods) chỉ đếm các mốc
+  # KHÔNG âm — nếu không, exit_persistence_periods là trần cứng của cả ba cổng
+  # (review 2026-09-07). Với 0/1/0 hai cách đếm cho cùng kết quả (test ghim).
+  exit_negative_min_bps: 0        # mốc mới nhất phải ≤ −X bps/8h; 0 = bất kỳ mốc âm nào
+  exit_negative_periods: 1        # N mốc liên tiếp gần nhất đều âm; 1 = chỉ mốc mới nhất
+  exit_negative_cum_cost_frac: 0  # funding âm tích luỹ của đợt ≥ C × chi phí vòng; 0 = không xét
 
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }
@@ -310,7 +323,7 @@ sources:
       maker_bps: 2.0
       taker_bps: 5.0
       verified: true
-      doc_url: https://www.gate.com/announcements/article/36485/announcement-on-adjustment-to-usdt-m-perpetual-futures-fees
+      doc_url: https://www.okx.com/en-us/learn/what-is-okx-perpetual-futures
       note_vi: >-
         Perpetual swap, bậc thấp nhất: maker 0,02% · taker 0,05%. Trang learn
         của chính OKX, đọc 2026-09-07. Bảng phí đầy đủ vẫn đòi đăng nhập —
@@ -335,7 +348,7 @@ sources:
       maker_bps: 2.0
       taker_bps: 5.0
       verified: true
-      doc_url: https://www.okx.com/en-us/learn/what-is-okx-perpetual-futures
+      doc_url: https://www.gate.com/announcements/article/36485/announcement-on-adjustment-to-usdt-m-perpetual-futures-fees
       note_vi: >-
         USDT-M Perpetual Futures, VIP0: maker 0,020% · taker 0,0500%. Thông báo
         chính thức của Gate, đề ngày 2024-05-09, đọc 2026-09-07. Thông báo nói

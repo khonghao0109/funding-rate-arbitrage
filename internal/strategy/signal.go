@@ -245,13 +245,59 @@ type Params struct {
 	// trip in each direction to do it.
 	//
 	// This does NOT slow the sign-flip exit: funding turning negative is money
-	// leaving on every settlement (risk R1) and fires on the newest reading.
+	// leaving on every settlement (risk R1) and fires on the newest reading —
+	// unless the ExitNegative* gates below are set.
 	ExitPersistencePeriods int
+
+	// --- sign-flip exit gates (added 2026-09-07) ---
+	// The zero values reproduce the rule exactly as step 3.2 wrote it: close on
+	// the first settled negative rate, whatever its size. Measured on the
+	// 12-month binance corpus that day, that rule closed 78% of every trade in
+	// the parameter sweep, while the negative episode it fled cost a median
+	// 0.3 bps (90th percentile 2.7, worst 9.1) against a 30 bps round trip —
+	// no episode in a year cost more than the exit did (PLAN 3.3). The gates
+	// let a sweep ask how deep, how long or how expensive a negative regime
+	// has to be before leaving beats staying. They combine with AND: every
+	// configured gate has to agree before the position closes.
+	//
+	// ExitNegativeMinBps: the newest settled rate must be at or below
+	// −ExitNegativeMinBps bps/8h. 0 = any negative print.
+	ExitNegativeMinBps float64
+	// ExitNegativePeriods: the last N settled rates must all be negative. 0
+	// and 1 both mean the newest alone.
+	ExitNegativePeriods int
+	// ExitNegativeCumCostFrac: the funding PAID over the current negative run
+	// (consecutive negative settlements ending at the newest, as a fraction of
+	// notional) must reach this fraction of the round-trip cost. 0 = no such
+	// gate. When the round trip cannot be priced the gate counts as met — the
+	// same fail-safe direction the decay exit takes.
+	//
+	// JURISDICTION. Negative prints belong to this exit and its gates ONLY.
+	// The decay exit (ExitNetAPRFrac / ExitPersistencePeriods) judges the
+	// last ExitPersistencePeriods NON-negative settlements; it never counts a
+	// negative one. Before 2026-09-07 it did, and since every negative print
+	// is under any non-negative floor, ExitPersistencePeriods was a hard
+	// ceiling on all three gates: the position closed at the P-th negative
+	// print whatever the gates said, labelled "decay" — found by the review
+	// of the gate sweep, where half the grid was degenerate for that reason.
+	// A continuous-model series (Paradex) has samples, not settlements, so the
+	// N and C gates are not evaluable there and the 3.2 rule applies.
+	ExitNegativeCumCostFrac float64
 	// MaxBasisPct is the absolute perp-over-spot difference beyond which the
 	// position is closed regardless of funding; MaxBasisWidenPct is how far it
 	// may move from where it was opened.
 	MaxBasisPct      float64
 	MaxBasisWidenPct float64
+}
+
+// EffectiveExitNegativePeriods is the gate as the rule reads it: 0 and 1 both
+// mean the newest print alone. Journals and CSVs write THIS, so an absent
+// key, a zero and a one are the same rule in every artifact.
+func (p Params) EffectiveExitNegativePeriods() int {
+	if p.ExitNegativePeriods < 1 {
+		return 1
+	}
+	return p.ExitNegativePeriods
 }
 
 // EvaluateEntry decides whether to open a position, and reports every condition.
@@ -351,7 +397,7 @@ func EvaluateExit(at time.Time, pos Position, c Candidate, p Params) Decision {
 
 	d.Checks = []Check{
 		hedgeGone,
-		exitFundingNegative(newest, haveNewest),
+		exitFundingNegative(usable, d.Cost, p),
 		exitNetAPRFloor(pos, usable, d.Cost, d.NetAPR, p, hedgeGone.Passed),
 		exitBasisWidened(pos, c, p),
 	}
@@ -475,16 +521,59 @@ func exitHedgeGone(c Candidate) Check {
 	return Check{Name: "hedge_gone", Passed: true, DetailVI: "THOÁT: chân spot không còn ghép được nên vị thế hết delta-neutral — " + note}
 }
 
-func exitFundingNegative(newest exchanges.FundingHistoryEntry, have bool) Check {
+// exitFundingNegative closes a position once funding has turned against it:
+// as step 3.2 wrote it, on the first settled negative print; with the
+// ExitNegative* gates set, only once the negative regime is deep, long or
+// expensive enough (all configured gates, AND) that leaving beats paying it.
+//
+// The run it measures is the CURRENT one — consecutive negative settlements
+// ending at the newest — because the question is "how much is this episode
+// costing", not "how much has funding ever cost".
+func exitFundingNegative(usable []exchanges.FundingHistoryEntry, cost RoundTrip, p Params) Check {
+	newest, have := newestOf(usable)
 	if !have {
 		return Check{Name: "funding_negative", Passed: false, DetailVI: "Chưa có mốc settle mới để xét dấu."}
 	}
 	bps := newest.RatePer8hFrac * bpsPerUnit
-	if bps < 0 {
-		return Check{Name: "funding_negative", Passed: true, DetailVI: fmt.Sprintf(
-			"THOÁT: funding đã đảo dấu, mốc mới nhất %.4f bps/8h — vị thế đang TRẢ chứ không thu.", bps)}
+	if bps >= 0 {
+		return Check{Name: "funding_negative", Passed: false, DetailVI: fmt.Sprintf("Funding còn dương: %.4f bps/8h.", bps)}
 	}
-	return Check{Name: "funding_negative", Passed: false, DetailVI: fmt.Sprintf("Funding còn dương: %.4f bps/8h.", bps)}
+
+	run, paidFrac := 0, 0.0
+	for i := len(usable) - 1; i >= 0 && usable[i].RatePer8hFrac < 0; i-- {
+		run++
+		paidFrac += -usable[i].RatePerIntervalFrac
+	}
+	needPeriods := p.EffectiveExitNegativePeriods()
+	if newest.Model == exchanges.FundingContinuous && (needPeriods > 1 || p.ExitNegativeCumCostFrac > 0) {
+		// Samples of a funding index, not settlements: nothing to count and
+		// nothing paid per row. The gates cannot be evaluated, so the 3.2 rule
+		// applies — and says so.
+		return Check{Name: "funding_negative", Passed: true, DetailVI: fmt.Sprintf(
+			"THOÁT: funding đã đảo dấu, mốc mới nhất %.4f bps/8h — vị thế đang TRẢ chứ không thu. "+
+				"Chuỗi %s là MẪU liên tục, không có mốc settle để đếm đợt hay cộng chi phí: cổng N/C không xét được, áp dụng luật 3.2.",
+			bps, newest.Source)}
+	}
+	deepEnough := bps <= -p.ExitNegativeMinBps
+	longEnough := run >= needPeriods
+	expensiveEnough, costGate := true, ""
+	if p.ExitNegativeCumCostFrac > 0 {
+		if !cost.OK {
+			costGate = " Không định giá được vòng vào/ra nên cổng chi phí coi như đạt — thoát cho an toàn."
+		} else {
+			needFrac := p.ExitNegativeCumCostFrac * cost.TotalPct / 100
+			expensiveEnough = paidFrac >= needFrac
+			costGate = fmt.Sprintf(" Đợt âm đã trả %.4f%% notional so với cổng %.4f%% (= %.2f × vòng %.4f%%).",
+				paidFrac*100, needFrac*100, p.ExitNegativeCumCostFrac, cost.TotalPct)
+		}
+	}
+	gates := fmt.Sprintf("Mốc mới nhất %.4f bps/8h (cổng ≤ −%.4f), %d mốc âm liên tiếp (cổng ≥ %d).%s",
+		bps, p.ExitNegativeMinBps, run, needPeriods, costGate)
+	if deepEnough && longEnough && expensiveEnough {
+		return Check{Name: "funding_negative", Passed: true, DetailVI: fmt.Sprintf(
+			"THOÁT: funding đã đảo dấu, mốc mới nhất %.4f bps/8h — vị thế đang TRẢ chứ không thu. %s", bps, gates)}
+	}
+	return Check{Name: "funding_negative", Passed: false, DetailVI: "Funding âm nhưng chưa qua cổng thoát: " + gates}
 }
 
 // exitNetAPRFloor closes a position whose net APR has stayed under the floor
@@ -510,11 +599,27 @@ func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost 
 	if window < 1 {
 		window = 1
 	}
-	if len(usable) < window {
-		window = len(usable)
-	}
 
-	recent := usable[len(usable)-window:]
+	// The window is the last `window` NON-negative settlements (see the
+	// JURISDICTION note on Params): a negative print is the sign-flip exit's
+	// to judge, through its gates. Under the 3.2 gates the newest negative
+	// print fires that exit first, and a pre-entry negative never completes
+	// an all-under window because the entry print itself cleared
+	// MinNetAPRFrac — so this changes nothing for the live 3.3 set, and the
+	// 24-set grid replays identically (pinned in cmd/backtest).
+	recent := make([]exchanges.FundingHistoryEntry, 0, window)
+	skippedNegative := 0
+	for i := len(usable) - 1; i >= 0 && len(recent) < window; i-- {
+		if usable[i].RatePer8hFrac < 0 {
+			skippedNegative++
+			continue
+		}
+		recent = append(recent, usable[i])
+	}
+	negNote := ""
+	if skippedNegative > 0 {
+		negNote = fmt.Sprintf(" (bỏ qua %d mốc âm — thuộc lối thoát đảo dấu và cổng của nó)", skippedNegative)
+	}
 	// priced counts the settlements this window could actually value, and it is
 	// what `under` is compared against — NOT len(recent).
 	//
@@ -558,11 +663,11 @@ func exitNetAPRFloor(pos Position, usable []exchanges.FundingHistoryEntry, cost 
 		// when the CURRENT figure cannot be computed, so staying silent here
 		// avoids reporting a second cause for that same one.
 		return Check{Name: "net_apr_floor", Passed: false, DetailVI: fmt.Sprintf(
-			"Không định giá được mốc nào trong %d mốc gần nhất — không kết luận suy giảm từ cửa sổ này.",
-			len(recent))}
+			"Không định giá được mốc nào trong %d mốc không âm gần nhất — không kết luận suy giảm từ cửa sổ này.%s",
+			len(recent), negNote)}
 	}
 	if under == priced {
-		skipped := ""
+		skipped := negNote
 		if priced < len(recent) {
 			skipped = fmt.Sprintf(" (%d/%d mốc không định giá được, đã loại khỏi phép đếm)",
 				len(recent)-priced, len(recent))

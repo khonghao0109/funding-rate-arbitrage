@@ -461,3 +461,297 @@ func TestChecks_FlagNotEvaluatedInsteadOfEncodingItInProse(t *testing.T) {
 		}
 	}
 }
+
+// The zero-valued gates ARE the step-3.2 rule: any settled negative print
+// closes the position, however small. The 3.5 gate runs on this and must not
+// move when the gates are added.
+func TestEvaluateExit_ZeroGatesReproduceTheFirstNegativePrintRule(t *testing.T) {
+	pos := openPosition()
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, 0.5, -0.0001)
+	p := entryParams()
+	p.ExitPersistencePeriods = 50 // keep the decay exit out of the way
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionExit || !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("a −0.0001 bps print must close the position under zero gates:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func TestEvaluateExit_MinBpsGateIgnoresAShallowNegativePrint(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 50
+	p.ExitNegativeMinBps = 0.5
+
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, 0.5, -0.3)
+	if got := EvaluateExit(evalAt, pos, c, p); got.Action != ActionHold || hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("−0.3 bps is above the −0.5 gate and must be held through:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	c.Settled = settled("binance_futures", 28800, 1.0, 0.5, -0.6)
+	if got := EvaluateExit(evalAt, pos, c, p); got.Action != ActionExit || !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("−0.6 bps clears the −0.5 gate and must close:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func TestEvaluateExit_PeriodsGateNeedsConsecutiveNegatives(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 50
+	p.ExitNegativePeriods = 3
+
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3, -0.3)
+	if got := EvaluateExit(evalAt, pos, c, p); hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("two negatives are not three:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3, -0.3, -0.3)
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("three consecutive negatives must close:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	// A positive print inside the window resets the run: the rule counts the
+	// CURRENT episode, not any three negatives in the last N.
+	c.Settled = settled("binance_futures", 28800, -0.3, -0.3, 0.2, -0.3)
+	if got := EvaluateExit(evalAt, pos, c, p); hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("a run broken by a positive print is a run of one:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func TestEvaluateExit_CumulativeGateComparesWhatWasPaidToTheRoundTrip(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 100
+	p.ExitNegativeCumCostFrac = 0.5
+
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, -1.0)
+	probe := EvaluateExit(evalAt, pos, c, p)
+	if !probe.Cost.OK {
+		t.Fatalf("fixture must price the round trip: %s", probe.Cost.ReasonVI)
+	}
+	// −1.0 bps/8h at an 8h cadence pays 0.0001 of notional per settlement.
+	need := int(math.Ceil(0.5 * probe.Cost.TotalPct / 100 / 0.0001))
+	if need < 2 || need > 60 {
+		t.Fatalf("fixture cost %.4f%% gives an unhelpful run length %d", probe.Cost.TotalPct, need)
+	}
+	rates := func(n int) []float64 {
+		out := []float64{1.0}
+		for i := 0; i < n; i++ {
+			out = append(out, -1.0)
+		}
+		return out
+	}
+	c.Settled = settled("binance_futures", 28800, rates(need-1)...)
+	if got := EvaluateExit(evalAt, pos, c, p); hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("%d negatives have paid less than half a round trip and must be held:\n%s", need-1, strings.Join(got.LogLines(), "\n"))
+	}
+	c.Settled = settled("binance_futures", 28800, rates(need)...)
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("%d negatives reach half a round trip and must close:\n%s", need, strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func TestEvaluateExit_CumulativeGateFailsSafeWhenTheRoundTripCannotBePriced(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 100
+	p.ExitNegativeCumCostFrac = 0.5
+	c := goodCandidate()
+	c.SpotBook = depth.Summary{} // no book: unpriceable
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.1)
+
+	got := EvaluateExit(evalAt, pos, c, p)
+	if !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("with no price for the round trip the cost gate must not hold the position:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	if !strings.Contains(strings.Join(got.LogLines(), "\n"), "coi như đạt") {
+		t.Error("the check must say the gate was assumed, not measured")
+	}
+}
+
+func TestEvaluateExit_GatesCombineWithAnd(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 50
+	p.ExitNegativeMinBps = 0.5
+	p.ExitNegativePeriods = 2
+
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.6, -0.3) // long enough, newest too shallow
+	if got := EvaluateExit(evalAt, pos, c, p); hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("depth gate fails on −0.3, so no exit:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3, -0.6) // both gates met
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("both gates met, must close:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// Jurisdiction: with a gate set, a run of shallow negatives is the gate's to
+// judge — the decay exit must not close the position at the P-th negative
+// print under the wrong label, which is what made the gates a no-op.
+func TestEvaluateExit_DecayExitDoesNotCountNegativePrints(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 3
+	p.ExitNegativeMinBps = 0.5
+
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.1, -0.1, -0.1)
+	got := EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionHold {
+		t.Fatalf("three −0.1 prints are above the −0.5 gate and must be held through, not closed as decay:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+	// Weak POSITIVE prints between negatives are still decay.
+	c.Settled = settled("binance_futures", 28800, 1.0, 0.05, -0.1, 0.04, -0.1, 0.03)
+	got = EvaluateExit(evalAt, pos, c, p)
+	if got.Action != ActionExit || !hasTriggeredCheck(got, "net_apr_floor") {
+		t.Fatalf("three weak positives under the floor are decay whatever sits between them:\n%s",
+			strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func TestEvaluateExit_GatesReadPer8hForDepthAndPerIntervalForCost(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 100
+
+	// Depth gate compares the per-8h figure: −0.6 bps/8h at an hourly cadence
+	// is −0.075 bps per settlement, and must still clear a −0.5 gate.
+	p.ExitNegativeMinBps = 0.5
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 3600, 1.0, -0.6)
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("−0.6 bps/8h at 1h must clear a −0.5 bps/8h gate:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.5) // exactly on the gate
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("exactly −0.5 is at the gate and must close:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+
+	// Cost gate sums what was PAID per settlement: at 1h, −1.0 bps/8h pays
+	// 1/8 of what it pays at 8h, so the same run length pays 8× less.
+	p.ExitNegativeMinBps = 0
+	p.ExitNegativeCumCostFrac = 0.5
+	probe := EvaluateExit(evalAt, pos, c, p)
+	need8h := int(math.Ceil(0.5 * probe.Cost.TotalPct / 100 / 0.0001))
+	run := func(interval int64, n int) []exchanges.FundingHistoryEntry {
+		rates := []float64{1.0}
+		for i := 0; i < n; i++ {
+			rates = append(rates, -1.0)
+		}
+		return settled("binance_futures", interval, rates...)
+	}
+	c.Settled = run(3600, need8h+1)
+	if got := EvaluateExit(evalAt, pos, c, p); hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("%d hourly prints of −1.0 bps/8h pay an eighth of the 8h run and must not reach the gate:\n%s",
+			need8h+1, strings.Join(got.LogLines(), "\n"))
+	}
+	c.Settled = run(3600, 8*need8h+1)
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("%d hourly prints pay the 8h amount and must close:\n%s", 8*need8h+1, strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func TestEvaluateExit_UnpricedRoundTripDoesNotOverrideTheOtherGates(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 100
+	p.ExitNegativeMinBps = 0.5
+	p.ExitNegativeCumCostFrac = 0.5
+	c := goodCandidate()
+	c.SpotBook = depth.Summary{} // unpriceable round trip
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3)
+
+	got := EvaluateExit(evalAt, pos, c, p) // Action is exit anyway: the decay exit cannot price the newest figure
+	if hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("−0.3 fails the depth gate; an unpriced cost may only waive the COST gate:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	if !strings.Contains(strings.Join(got.LogLines(), "\n"), "chưa qua cổng thoát") {
+		t.Error("the check must say the gates were not met")
+	}
+	p.ExitNegativeCumCostFrac = 0
+	p.ExitNegativeMinBps = 0.5
+	got = EvaluateExit(evalAt, pos, c, p)
+	if strings.Contains(strings.Join(got.LogLines(), "\n"), "coi như đạt") {
+		t.Error("with no cost gate configured nothing is 'assumed met'")
+	}
+	p.ExitNegativeMinBps, p.ExitNegativeCumCostFrac, p.ExitNegativePeriods = 0, 0.5, 3
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3, -0.3)
+	if got := EvaluateExit(evalAt, pos, c, p); hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("two negatives are not three, whatever the cost gate assumes:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+// 0 (zero value), 1 (config.yaml) and an absent key are one rule: the newest
+// print alone, exactly as step 3.2 wrote it.
+func TestEvaluateExit_PeriodsGateZeroAndOneAreTheSameRule(t *testing.T) {
+	pos := openPosition()
+	for _, rates := range [][]float64{{1.0, -0.1}, {1.0, -0.3, 0.2}, {-0.3, -0.3, -0.3}, {0.5}, {1.0, -0.0001}} {
+		c := goodCandidate()
+		c.Settled = settled("binance_futures", 28800, rates...)
+		p0, p1 := entryParams(), entryParams()
+		p0.ExitPersistencePeriods, p1.ExitPersistencePeriods = 100, 100
+		p1.ExitNegativePeriods = 1
+		fired0 := hasTriggeredCheck(EvaluateExit(evalAt, pos, c, p0), "funding_negative")
+		fired1 := hasTriggeredCheck(EvaluateExit(evalAt, pos, c, p1), "funding_negative")
+		want := rates[len(rates)-1] < 0
+		if fired0 != want || fired1 != want {
+			t.Errorf("rates %v: zero-value fired=%v, periods=1 fired=%v, want %v (newest < 0)", rates, fired0, fired1, want)
+		}
+	}
+	if (Params{}).EffectiveExitNegativePeriods() != 1 || (Params{ExitNegativePeriods: 3}).EffectiveExitNegativePeriods() != 3 {
+		t.Error("EffectiveExitNegativePeriods must map 0 to 1 and leave others alone")
+	}
+}
+
+func TestEvaluateExit_NegativeRunSeesThroughASpecialPrint(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 100
+	p.ExitNegativePeriods = 2
+
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3, 5.0, -0.3)
+	c.Settled[2].RateType = "Special" // a dividend print between two negatives
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("the run is two usable negatives; a Special print does not break it:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	// A Special NEGATIVE print is not paid funding of the regime either.
+	p.ExitNegativePeriods, p.ExitNegativeCumCostFrac = 1, 0.5
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3, -5.0, -0.3)
+	c.Settled[2].RateType = "Special"
+	got := EvaluateExit(evalAt, pos, c, p)
+	// Two usable −0.3 bps/8h prints at an 8h cadence pay 2 × 0.003% = 0.0060%
+	// of notional; the Special −5.0 would have added 0.05%.
+	if !strings.Contains(strings.Join(got.LogLines(), "\n"), "Đợt âm đã trả 0.0060%") {
+		t.Errorf("paid funding must sum the two usable −0.3 bps prints (0.0060%%), not the Special −5.0:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	// Newest raw print Special and positive: the newest USABLE print decides.
+	p.ExitNegativeCumCostFrac = 0
+	c.Settled = settled("binance_futures", 28800, 1.0, -0.3, -0.3, 5.0)
+	c.Settled[3].RateType = "Special"
+	if got := EvaluateExit(evalAt, pos, c, p); !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("a Special newest print must not hide the negative regime:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+}
+
+func TestEvaluateExit_ContinuousSeriesFallsBackToTheOldRuleAndSaysSo(t *testing.T) {
+	pos := openPosition()
+	p := entryParams()
+	p.ExitPersistencePeriods = 100
+	p.ExitNegativePeriods = 3
+	c := goodCandidate()
+	c.Settled = settled("paradex_futures", 3600, 1.0, -0.3)
+	for i := range c.Settled {
+		c.Settled[i].Model = exchanges.FundingContinuous
+	}
+	got := EvaluateExit(evalAt, pos, c, p)
+	if !hasTriggeredCheck(got, "funding_negative") {
+		t.Fatalf("samples cannot be counted, so the 3.2 rule applies and the newest negative closes:\n%s", strings.Join(got.LogLines(), "\n"))
+	}
+	if !strings.Contains(strings.Join(got.LogLines(), "\n"), "MẪU liên tục") {
+		t.Error("the check must say the gates were not evaluable on a continuous series")
+	}
+}

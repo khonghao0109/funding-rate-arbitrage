@@ -17,6 +17,9 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
+
+	"futures-arbitrage-scanner/internal/strategy"
 
 	"gopkg.in/yaml.v3"
 )
@@ -86,8 +89,17 @@ type Strategy struct {
 
 	ExitNetAPRFrac         float64 `yaml:"exit_net_apr_frac"`
 	ExitPersistencePeriods int     `yaml:"exit_persistence_periods"`
-	MaxBasisPct            float64 `yaml:"max_basis_pct"`
-	MaxBasisWidenPct       float64 `yaml:"max_basis_widen_pct"`
+
+	// Sign-flip exit gates (strategy.Params.ExitNegative*). OPTIONAL, and the
+	// zero values are the rule as step 3.2 wrote it — close on any settled
+	// negative print — so a config written before 2026-09-07 (the one the 3.5
+	// process loaded) still means exactly what it meant. A non-zero value is a
+	// rule change and belongs after the 3.5 gate.
+	ExitNegativeMinBps      float64 `yaml:"exit_negative_min_bps"`
+	ExitNegativePeriods     int     `yaml:"exit_negative_periods"`
+	ExitNegativeCumCostFrac float64 `yaml:"exit_negative_cum_cost_frac"`
+	MaxBasisPct             float64 `yaml:"max_basis_pct"`
+	MaxBasisWidenPct        float64 `yaml:"max_basis_widen_pct"`
 }
 
 // Depth configures the periodic order book sampling (step 2.7b).
@@ -661,11 +673,34 @@ func (st Strategy) validate(d Depth) error {
 		return fmt.Errorf("strategy.exit_persistence_periods must be >= 0, got %d", st.ExitPersistencePeriods)
 	case st.MaxBasisPct < 0 || st.MaxBasisWidenPct < 0:
 		return fmt.Errorf("strategy basis limits must be >= 0")
+	case st.ExitNegativeMinBps < 0:
+		return fmt.Errorf("strategy.exit_negative_min_bps must be >= 0 (a depth below zero), got %g", st.ExitNegativeMinBps)
+	case st.ExitNegativePeriods < 0:
+		return fmt.Errorf("strategy.exit_negative_periods must be >= 0, got %d", st.ExitNegativePeriods)
+	case st.ExitNegativeCumCostFrac < 0:
+		return fmt.Errorf("strategy.exit_negative_cum_cost_frac must be >= 0 (a fraction of the round trip), got %g", st.ExitNegativeCumCostFrac)
 	case d.Enabled && st.MaxBookAgeMin < d.RefreshEveryMin:
 		return fmt.Errorf("strategy.max_book_age_min (%d) is below depth.refresh_every_min (%d): every fill "+
 			"would be refused as stale before the next sweep", st.MaxBookAgeMin, d.RefreshEveryMin)
 	}
 	return nil
+}
+
+// StrategyParams is the strategy.Params this block means — the ONE mapping
+// from config to rule parameters. cmd/scanner's live journal and
+// cmd/backtest's plain run both go through it, so the step-3.5 gate compares
+// two runs of the same numbers by construction rather than by coincidence
+// (found by review 2026-09-07: cmd/backtest carried a hand-written copy).
+func (st Strategy) StrategyParams() strategy.Params {
+	return strategy.Params{
+		MinRatePer8hBps: st.MinRatePer8hBps, PersistencePeriods: st.PersistencePeriods,
+		MinNetAPRFrac: st.MinNetAPRFrac, NotionalQuote: st.NotionalQuote, HoldingDays: st.HoldingDays,
+		MaxBookAge:     time.Duration(st.MaxBookAgeMin) * time.Minute,
+		ExitNetAPRFrac: st.ExitNetAPRFrac, ExitPersistencePeriods: st.ExitPersistencePeriods,
+		ExitNegativeMinBps: st.ExitNegativeMinBps, ExitNegativePeriods: st.ExitNegativePeriods,
+		ExitNegativeCumCostFrac: st.ExitNegativeCumCostFrac,
+		MaxBasisPct:             st.MaxBasisPct, MaxBasisWidenPct: st.MaxBasisWidenPct,
+	}
 }
 
 // CheapestVerifiedSpot picks which of several valid spot legs a perp is hedged

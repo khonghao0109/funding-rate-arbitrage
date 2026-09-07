@@ -4,6 +4,9 @@
 //	go run ./cmd/backtest                          # 6 months, every hedgeable pair
 //	go run ./cmd/backtest -months 12 -symbol BTCUSDT
 //	go run ./cmd/backtest -sweep -csv out.csv      # parameter sweep to CSV
+//	go run ./cmd/backtest -sweep -months 12 -min-rate-bps 0.5,1,2,5 \
+//	    -exit-net-apr 0,0.005 -notional 20000,200000 -hold-days 14,60 \
+//	    -csv wide.csv -trades-csv trades.csv -top 40    # a wider grid
 //
 // It reads the SQLite corpus and writes nothing back to it. What it can and
 // cannot model is stated by the run itself: depth cannot be backfilled, so the
@@ -35,9 +38,27 @@ func main() {
 	only := flag.String("symbol", "", "replay one symbol only")
 	sweep := flag.Bool("sweep", false, "sweep the entry threshold and persistence grid")
 	csvPath := flag.String("csv", "", "also write the results to this CSV file")
-	notional := flag.Float64("notional", 50000, "position size in the quote asset")
-	holdDays := flag.Float64("hold-days", 30, "expected holding period, for amortizing the round trip")
+	notional := flag.String("notional", defaultNotional, "position size in the quote asset (a list only with -sweep)")
+	holdDays := flag.String("hold-days", defaultHoldDays, "expected holding period in days, for amortizing the round trip (a list only with -sweep)")
+	minRateBps := flag.String("min-rate-bps", defaultMinRateBps, "-sweep axis: entry threshold, bps per 8h")
+	persist := flag.String("persist", defaultPersist, "-sweep axis: settled periods the rate must persist before entry")
+	minNetAPR := flag.String("min-net-apr", defaultMinNetAPR, "-sweep axis: entry floor on projected net APR, fraction")
+	exitNetAPR := flag.String("exit-net-apr", defaultExitNetAPR, "-sweep axis: decay-exit floor on net APR, fraction (must stay below the entry floor)")
+	exitPersist := flag.String("exit-persist", defaultExitPersist, "-sweep axis: consecutive settled periods under the floor before the decay exit")
+	exitNegBps := flag.String("exit-neg-bps", defaultExitNegBps, "-sweep axis: sign-flip exit needs the newest settled rate <= -X bps/8h (0 = any negative)")
+	exitNegPeriods := flag.String("exit-neg-periods", defaultExitNegPeriods, "-sweep axis: sign-flip exit needs N consecutive negative settlements")
+	exitNegCum := flag.String("exit-neg-cum", defaultExitNegCum, "-sweep axis: sign-flip exit needs the run's paid funding >= C x round-trip cost (0 = no gate)")
+	tradesCSVPath := flag.String("trades-csv", "", "also write one row per trade to this CSV file")
+	top := flag.Int("top", 0, "with -sweep, print only the best N rows (0 = all)")
 	flag.Parse()
+
+	spec, err := parseGridSpec(*minRateBps, *persist, *minNetAPR, *exitNetAPR, *exitPersist, *notional, *holdDays)
+	if err != nil {
+		log.Fatalf("grid: %v", err)
+	}
+	if spec, err = spec.withNegativeGates(*exitNegBps, *exitNegPeriods, *exitNegCum); err != nil {
+		log.Fatalf("grid: %v", err)
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -65,18 +86,43 @@ func main() {
 			"(a series with an unverified fee schedule is built, then refused BY NAME inside Run)")
 	}
 
-	grid := []strategy.Params{baseParams(*notional, *holdDays)}
+	var grid []strategy.Params
+	dropped := 0
 	if *sweep {
-		grid = sweepGrid(*notional, *holdDays)
+		grid, dropped, err = spec.params()
+		if err != nil {
+			log.Fatalf("grid: %v", err)
+		}
+	} else {
+		// A plain run still validates what it uses — a zero hold would make
+		// NetAPR refuse every settlement and the run would print "0 trades"
+		// as if the strategy had found nothing — and refuses the flags it
+		// would otherwise ignore, for the same reason.
+		if err := spec.check(); err != nil {
+			log.Fatalf("grid: %v", err)
+		}
+		if len(spec.NotionalQuote) != 1 || len(spec.HoldingDays) != 1 {
+			log.Fatalf("-notional and -hold-days take a list only with -sweep")
+		}
+		if sweepOnlyFlagsTouched(*minRateBps, *persist, *minNetAPR, *exitNetAPR, *exitPersist, *exitNegBps, *exitNegPeriods, *exitNegCum, *top) {
+			log.Fatalf("-min-rate-bps, -persist, -min-net-apr, -exit-net-apr, -exit-persist, -exit-neg-* and -top " +
+				"apply only with -sweep; a plain run uses the step-3.3 base parameters")
+		}
+		grid = []strategy.Params{plainParams(cfg, spec.NotionalQuote[0], spec.HoldingDays[0],
+			*notional != defaultNotional, *holdDays != defaultHoldDays)}
 	}
 
 	results := backtest.Sweep(series, window, grid)
 
-	fmt.Printf("BACKTEST %d tháng · %s → %s · %d chuỗi × %d bộ tham số\n\n",
+	fmt.Printf("BACKTEST %d tháng · %s → %s · %d chuỗi × %d bộ tham số\n",
 		*months, stamp(window.FromMs), stamp(window.ToMs), len(series), len(grid))
+	if dropped > 0 {
+		fmt.Printf("(bỏ %d tổ hợp có sàn thoát ≥ sàn vào — config.yaml cũng từ chối nạp chúng)\n", dropped)
+	}
+	fmt.Println()
 
 	if *sweep {
-		printSweep(results)
+		printSweep(results, *top)
 	} else {
 		for _, r := range results {
 			for _, line := range r.SummaryLines() {
@@ -99,6 +145,21 @@ func main() {
 			log.Fatalf("write csv: %v", err)
 		}
 		fmt.Printf("\nĐã ghi %d dòng vào %s\n", len(results), *csvPath)
+	}
+	if *tradesCSVPath != "" {
+		file, err := os.Create(*tradesCSVPath)
+		if err != nil {
+			log.Fatalf("create trades csv: %v", err)
+		}
+		defer file.Close()
+		if err := backtest.WriteTradesCSV(file, results); err != nil {
+			log.Fatalf("write trades csv: %v", err)
+		}
+		trades := 0
+		for _, r := range results {
+			trades += len(r.Trades)
+		}
+		fmt.Printf("Đã ghi %d lệnh vào %s\n", trades, *tradesCSVPath)
 	}
 }
 
@@ -252,48 +313,67 @@ func latestBooks(ctx context.Context, db *store.Store, cfg config.Config,
 	return out, nil
 }
 
+// baseParams is the step-3.3 base every sweep axis is varied around. A test
+// pins it to config.yaml's strategy block, so the two cannot drift apart.
 func baseParams(notional, holdDays float64) strategy.Params {
 	return strategy.Params{
 		MinRatePer8hBps: 0.5, PersistencePeriods: 3, MinNetAPRFrac: 0.02,
 		NotionalQuote: notional, HoldingDays: holdDays,
 		ExitNetAPRFrac: 0.005, ExitPersistencePeriods: 3,
+		ExitNegativeMinBps: 0, ExitNegativePeriods: 1, ExitNegativeCumCostFrac: 0,
 		MaxBasisPct: 1.0, MaxBasisWidenPct: 0.5,
 	}
 }
 
-func sweepGrid(notional, holdDays float64) []strategy.Params {
-	var grid []strategy.Params
-	for _, minBps := range []float64{0.3, 0.5, 0.8, 1.2} {
-		for _, periods := range []int{2, 3, 6} {
-			for _, exitPeriods := range []int{1, 3} {
-				p := baseParams(notional, holdDays)
-				p.MinRatePer8hBps = minBps
-				p.PersistencePeriods = periods
-				p.ExitPersistencePeriods = exitPeriods
-				grid = append(grid, p)
-			}
-		}
+// plainParams is the parameter set of a plain (non -sweep) run: the config's
+// strategy block when it is enabled — through the same StrategyParams the
+// live journal uses, so the 3.5 gate compares like with like — and the
+// step-3.3 base otherwise. -notional / -hold-days override only when given.
+// MaxBookAge is zeroed: the replay prices every historical instant on one
+// measured book, which is stale by construction.
+func plainParams(cfg config.Config, notional, holdDays float64, notionalGiven, holdGiven bool) strategy.Params {
+	if !cfg.Strategy.Enabled {
+		return baseParams(notional, holdDays)
 	}
-	return grid
+	p := cfg.Strategy.StrategyParams()
+	p.MaxBookAge = 0
+	if notionalGiven {
+		p.NotionalQuote = notional
+	}
+	if holdGiven {
+		p.HoldingDays = holdDays
+	}
+	return p
 }
 
-func printSweep(results []backtest.Result) {
+func printSweep(results []backtest.Result, top int) {
 	// Sorted on a COPY: the CSV written afterwards keeps series-major order,
 	// so plain and -sweep runs produce diffable files.
 	results = append([]backtest.Result(nil), results...)
 	backtest.SortByRealizedAPR(results)
-	fmt.Printf("%-8s %-20s %6s %5s %5s %7s %7s %8s %6s\n",
-		"cặp", "perp", "ngưỡng", "bền", "thoát", "APR", "tổng", "drawdown", "lệnh")
+	fmt.Printf("%-8s %-20s %6s %5s %5s %6s %5s %4s %5s %7s %5s %7s %7s %8s %6s\n",
+		"cặp", "perp", "ngưỡng", "bền", "thoát", "sàn-ra", "âm≥", "âmN", "âmC", "vốn", "giữ", "APR", "tổng", "drawdown", "lệnh")
 	refused := map[string]string{}
+	shown, ran := 0, 0
 	for _, r := range results {
 		if !r.OK {
 			refused[r.Symbol+"/"+r.PerpSource] = r.ReasonVI
 			continue
 		}
-		fmt.Printf("%-8s %-20s %6.2f %5d %5d %+6.2f%% %+6.3f%% %7.3f%% %6d\n",
+		ran++
+		if top > 0 && shown >= top {
+			continue
+		}
+		shown++
+		fmt.Printf("%-8s %-20s %6.2f %5d %5d %5.2f%% %5.2f %4d %5.2f %6.0fk %5.0f %+6.2f%% %+6.3f%% %7.3f%% %6d\n",
 			r.Symbol, r.PerpSource, r.Params.MinRatePer8hBps, r.Params.PersistencePeriods,
-			r.Params.ExitPersistencePeriods, r.RealizedAPRFrac*100, r.TotalReturnFrac*100,
+			r.Params.ExitPersistencePeriods, r.Params.ExitNetAPRFrac*100,
+			r.Params.ExitNegativeMinBps, r.Params.ExitNegativePeriods, r.Params.ExitNegativeCumCostFrac,
+			r.Params.NotionalQuote/1000, r.Params.HoldingDays, r.RealizedAPRFrac*100, r.TotalReturnFrac*100,
 			r.MaxDrawdownFrac*100, len(r.Trades))
+	}
+	if shown < ran {
+		fmt.Printf("(hiển thị %d/%d lượt chạy tốt nhất — toàn bộ nằm trong CSV)\n", shown, ran)
 	}
 	if len(refused) > 0 {
 		fmt.Printf("\nTỪ CHỐI (không phát lại, không phải 'không có lệnh'):\n")

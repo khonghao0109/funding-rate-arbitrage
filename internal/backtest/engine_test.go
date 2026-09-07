@@ -508,3 +508,26 @@ func TestRun_MatchesAStepByStepReplayThroughTheProductionRules(t *testing.T) {
 		}
 	}
 }
+
+// The 3.2 gates (0 / 1 / 0) and the zero-valued Params are one rule: the
+// replay must produce the same trades either way. This is the machine
+// evidence behind "the 3.5 parameter set did not move".
+func TestRun_NegativeGateDefaultsProduceTheSameTradesAsZeroValues(t *testing.T) {
+	entries := discreteSeries("binance_futures", secPer8h, 2, 2, 2, 2, 2, -1, 2, 2, 2, 2, 2, -1, 2)
+	zero := Run(seriesOf(entries), fullWindow(entries), testParams())
+	gated := testParams()
+	gated.ExitNegativeMinBps, gated.ExitNegativePeriods, gated.ExitNegativeCumCostFrac = 0, 1, 0
+	withDefaults := Run(seriesOf(entries), fullWindow(entries), gated)
+	if len(zero.Trades) == 0 {
+		t.Fatal("fixture must trade")
+	}
+	if len(zero.Trades) != len(withDefaults.Trades) {
+		t.Fatalf("zero values: %d trades, 0/1/0: %d trades", len(zero.Trades), len(withDefaults.Trades))
+	}
+	for i := range zero.Trades {
+		a, b := zero.Trades[i], withDefaults.Trades[i]
+		if a.OpenAtMs != b.OpenAtMs || a.CloseAtMs != b.CloseAtMs || a.Settlements != b.Settlements || a.FundingFrac != b.FundingFrac {
+			t.Errorf("trade %d differs: %+v vs %+v", i, a, b)
+		}
+	}
+}

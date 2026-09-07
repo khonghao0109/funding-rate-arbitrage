@@ -211,15 +211,7 @@ func schedule(cfg config.Config, source string) fees.Schedule {
 
 func key(symbol, source string) string { return symbol + "|" + source }
 
-func paramsFrom(st config.Strategy) strategy.Params {
-	return strategy.Params{
-		MinRatePer8hBps: st.MinRatePer8hBps, PersistencePeriods: st.PersistencePeriods,
-		MinNetAPRFrac: st.MinNetAPRFrac, NotionalQuote: st.NotionalQuote, HoldingDays: st.HoldingDays,
-		MaxBookAge:     time.Duration(st.MaxBookAgeMin) * time.Minute,
-		ExitNetAPRFrac: st.ExitNetAPRFrac, ExitPersistencePeriods: st.ExitPersistencePeriods,
-		MaxBasisPct: st.MaxBasisPct, MaxBasisWidenPct: st.MaxBasisWidenPct,
-	}
-}
+func paramsFrom(st config.Strategy) strategy.Params { return st.StrategyParams() }
 
 // journalRecord flattens a decision for the store, reasoning included.
 func journalRecord(d strategy.Decision, p strategy.Params) store.SignalRecord {
@@ -238,7 +230,9 @@ func journalRecord(d strategy.Decision, p strategy.Params) store.SignalRecord {
 		"min_net_apr_frac": p.MinNetAPRFrac, "notional_quote": p.NotionalQuote, "holding_days": p.HoldingDays,
 		"max_book_age_min": p.MaxBookAge.Minutes(), "exit_net_apr_frac": p.ExitNetAPRFrac,
 		"exit_persistence_periods": p.ExitPersistencePeriods,
-		"max_basis_pct":            p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
+		"exit_negative_min_bps":    p.ExitNegativeMinBps, "exit_negative_periods": p.EffectiveExitNegativePeriods(),
+		"exit_negative_cum_cost_frac": p.ExitNegativeCumCostFrac,
+		"max_basis_pct":               p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
 	})
 	rec := store.SignalRecord{
 		EvaluatedAtMs: d.At.UnixMilli(), Symbol: d.Symbol, PerpSource: d.PerpSource, SpotSource: d.SpotSource,

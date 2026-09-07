@@ -124,3 +124,41 @@ strategy:
 		})
 	}
 }
+
+// The sign-flip gates are optional and their zero values are the pre-2026-09-07
+// rule, so the config the 3.5 process loaded still parses to the same
+// parameters; anything below zero is meaningless and refused.
+func TestStrategy_SignFlipGatesAreOptionalAndNeverNegative(t *testing.T) {
+	base := `
+strategy:
+  enabled: true
+  min_rate_per_8h_bps: 0.5
+  persistence_periods: 3
+  min_net_apr_frac: 0.02
+  notional_quote: 50000
+  holding_days: 30
+  exit_net_apr_frac: 0.005
+  exit_persistence_periods: 3
+  max_basis_pct: 1.0
+  max_basis_widen_pct: 0.5
+`
+	cfg, err := loadStrategyFixture(t, base)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if st := cfg.Strategy; st.ExitNegativeMinBps != 0 || st.ExitNegativePeriods != 0 || st.ExitNegativeCumCostFrac != 0 {
+		t.Errorf("absent gates must be zero, got %+v", st)
+	}
+	cfg, err = loadStrategyFixture(t, base+"  exit_negative_min_bps: 0.5\n  exit_negative_periods: 3\n  exit_negative_cum_cost_frac: 0.25\n")
+	if err != nil {
+		t.Fatalf("load with gates: %v", err)
+	}
+	if st := cfg.Strategy; st.ExitNegativeMinBps != 0.5 || st.ExitNegativePeriods != 3 || st.ExitNegativeCumCostFrac != 0.25 {
+		t.Errorf("gates not carried: %+v", st)
+	}
+	for _, bad := range []string{"  exit_negative_min_bps: -0.1\n", "  exit_negative_periods: -1\n", "  exit_negative_cum_cost_frac: -0.5\n"} {
+		if _, err := loadStrategyFixture(t, base+bad); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+}
