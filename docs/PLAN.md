@@ -2076,15 +2076,60 @@ mốc thời gian sinh file).
 
 **Phán quyết không đổi.** Trên 12 tháng:
 
-| | Tổng 24 chuỗi | Chuỗi dương | Lệnh/chuỗi |
-|---|---|---|---|
-| Bộ đang ship | **+27,56%** | 17/24 | 1,7 |
-| Bộ tốt nhất của lưới | +27,81% | 17/24 | 1,8 |
-| **Giữ suốt** | **+29,73%** | 18/24 | 1 |
-| Bộ 3.3 đã nghỉ | **−526,22%** | 0/24 | 73,3 |
+| | TB/chuỗi trên VỐN | Tổng 24 chuỗi | Chuỗi dương | Lệnh/chuỗi |
+|---|---|---|---|---|
+| Bộ đang ship | **+0,57%** | +27,56% | 17/24 | 1,7 |
+| Bộ tốt nhất của lưới | +0,58% | +27,81% | 17/24 | 1,8 |
+| **Giữ suốt** | **+0,62%** | +29,73% | 18/24 | 1 |
+| Bộ 3.3 đã nghỉ | **−10,96%** | −526,22% | 0/24 | 73,3 |
 
-**0 trên 12.288 bộ** chạm tới giữ suốt. Luật vào/ra vẫn chưa chứng minh được là
-hơn mua rồi giữ — đó vẫn là mốc phải vượt, không phải "có lãi".
+**ĐỌC ĐÚNG MẪU SỐ.** Cột "Tổng 24 chuỗi" là phép CỘNG, mỗi chuỗi tính trên đủ
+notional riêng — nó chỉ dùng để xếp hạng 12.288 bộ trên cùng mặt bằng, không
+phải lợi nhuận của bất kỳ danh mục nào. Người dùng chỉ ra điều này ngày
+2026-09-08 sau khi con số +27,56% bị trích như một suất sinh lời. Cột đầu là
+con số dùng để đánh giá: chia cho 24 chuỗi rồi chia tiếp cho vốn (2× notional,
+vì chân spot không đòn bẩy được). Xếp hạng theo hai cột cho thứ tự **y hệt** —
+trung bình là phép biến đổi đơn điệu của tổng khi mọi bộ phủ cùng 24 chuỗi —
+nên chuyển sang trung bình không mất gì.
+
+Hai phán quyết chứ không phải một: **0 trên 12.288 bộ** chạm tới giữ suốt, VÀ
+mọi con số trên trang đều thấp hơn dải mục tiêu 5–15% khoảng một bậc độ lớn.
+
+Còn hai điều làm con số tổng dễ gây hiểu nhầm hơn nữa. **24 chuỗi là 4 coin ×
+6 sàn**, nên sáu dòng BTC là sáu cách biểu diễn *cùng một* giao dịch: danh mục
+thật là 4 vị thế, và cỡ mẫu để đánh giá là 4 chứ không phải 24. Cố định một
+sàn cho cả bốn coin cho **+0,50%** trên vốn (binance) hoặc +0,48% (bybit);
+chọn sàn tốt nhất từng coin cho +1,84% nhưng đó là **hậu nghiệm**. Và **60%
+của +27,56% đến từ 8 chuỗi ghép khác quote** (hyperliquid + kraken = +16,52%;
+16 chuỗi cùng quote USDT chỉ +11,04%), tức phần lớn con số mang rủi ro
+USDT/USD mà không chỗ nào trừ.
+
+#### Dải 5–15% chưa từng đạt được, một lần nào
+
+Quét lại **36 file kết quả** còn lưu của mọi lượt backtest — khoảng **2,1 triệu
+lượt phát lại có giao dịch**, từ lượt 6 tháng đầu tiên tới lưới 12.288 bộ:
+
+| | Cao nhất |
+|---|---|
+| Trên notional | +6,90% |
+| **Trên VỐN** | **+3,45%** |
+| Số lượt đạt ≥5% trên vốn | **0** |
+
+Kỷ lục là BTC/hyperliquid, **1 lệnh, cửa sổ 3 tháng**, cặp ghép khác quote nên
+chưa trừ rủi ro USDT/USD; trên cửa sổ 12 tháng kỷ lục tụt còn +2,98%.
+
+Những chỗ tài liệu từng nói "đã vào dải 5–15%" đều **sai vì mẫu số**:
+"hyperliquid BTC +5,44% APR thực" là trên notional → +2,72% trên vốn. Con số
+7,40% của bước 3.1 còn hai lớp: trên notional, VÀ là `NetAPR` **dự phóng** với
+mọi sàn được gán cùng một mức funding để so chi phí — không phải kết quả phát
+lại.
+
+Đây không phải thất bại của việc dò tham số. Ba lưới liên tiếp (4.096 → 6.048 →
+12.288 bộ) dừng ở cùng một trần, và trần đó do **corpus** đặt: BTC/binance trả
+trung bình 0,306 bps/8h cả năm ≈ 0,55%/năm trên vốn *trước* một vòng phí 0,30%
+notional. Muốn chạm dải thì phải đổi thứ khác — cặp funding cao hơn, khớp maker
+(bỏ 20 trong 30 bps), hoặc hai chân trên một sàn để vốn về gần N thay vì 2N —
+mỗi hướng là một bước riêng, chưa đo cái nào.
 
 **Hai thứ lượt này đo được mà lượt trước không.**
 

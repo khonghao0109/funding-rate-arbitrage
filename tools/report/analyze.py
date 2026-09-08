@@ -382,6 +382,16 @@ def window_summary(runs, trades_path, db):
              "series_fully_evaluable": len({(r["symbol"], r["perp_source"]) for r in basis_runs
                                             if r["basis_not_evaluable"] == 0}),
              "series": len({(r["symbol"], r["perp_source"]) for r in basis_runs})}
+    # The denominator every summed figure has to be divided by before it can be
+    # read as a return. A set's "sum" adds 24 series each measured on its OWN
+    # full notional, so it is a ranking device and nothing else; the mean is the
+    # same number for ranking (a monotone transform, since every complete set
+    # covers the same series) and is the one that can be compared against a
+    # target APR. Capital is what both legs tie up — the spot leg cannot be
+    # levered — so it is N*(1+f), reported here so the page never guesses it.
+    caps = collections.Counter(r.get("capital_per_notional_frac", 2.0) for r in ok)
+    capital = {"per_notional": caps.most_common(1)[0][0] if caps else 2.0,
+               "unique": len(caps) == 1, "series": len(series_out)}
     ht_sum = sum(x["corpus"]["hold_through_net_pct"] for x in series_out)
     set_stats = {"n": len(best_sets), "positive": sum(1 for b in best_sets if b["sum_return_pct"] > 0),
                  "at_or_above_hold_through": sum(1 for b in best_sets if b["sum_return_pct"] >= ht_sum),
@@ -418,7 +428,7 @@ def window_summary(runs, trades_path, db):
         "axes": axes,
         "signflip": signflip,
         "best_sets": best_sets, "current_set": current_set, "prev_set": prev_set,
-        "morning_set": morning_set, "set_stats": set_stats, "basis": basis,
+        "morning_set": morning_set, "set_stats": set_stats, "basis": basis, "capital": capital,
         "apr_stats": {"min": min(apr_vals) if apr_vals else None, "max": max(apr_vals) if apr_vals else None,
                       "median": med(apr_vals)},
         "return_stats": {"min": min(ret_vals) if ret_vals else None, "max": max(ret_vals) if ret_vals else None,

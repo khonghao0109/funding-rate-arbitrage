@@ -116,6 +116,8 @@ pre{margin:0;background:var(--surface);border:1px solid var(--rule);border-radiu
 .answer .who small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:.1rem}
 .answer .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.05rem;text-align:right}
 .answer .v.sub{font-size:.9rem;color:var(--muted)}
+.answer .v small{display:block;font-size:.72rem;font-weight:400;color:var(--muted);margin-top:.15rem;letter-spacing:.01em}
+.answer .row{grid-template-columns:1fr 9.5rem 6rem 6rem}
 .gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.1rem 2rem;margin:0}
 .gloss>div{display:grid;gap:.15rem;align-content:start}
 .gloss dt{font-weight:600;font-size:.9rem;margin:0}
@@ -259,9 +261,9 @@ vi: {
   verdict_eyebrow:"Kết luận · bước 3.3 mở rộng",
   headline_none:"Không lượt chạy nào sinh lãi ròng: 0 trên {traded} lượt có giao dịch",
   headline_some:"Chỉ {profitable} trên {traded} lượt có giao dịch sinh lãi ròng, tốt nhất {best}",
-  verdict_sub:"Cửa sổ {from} → {to} ({days} ngày). {sets} bộ tham số × {series} chuỗi = {total} lượt phát lại, chạy bằng đúng đoạn mã luật vào/ra mà bản chạy thật dùng, không phải bản chép lại. Lãi ròng tốt nhất {best}; trung vị {median}.",
-  fig_total:"Lượt phát lại", fig_refused:"Từ chối có tên", fig_ran:"Đã chạy", fig_traded:"Có giao dịch", fig_profit:"Có lãi ròng", fig_best:"Ròng tốt nhất", fig_median:"Ròng trung vị",
-  net_note:"“Ròng” ở đây = sau phí taker của bốn lệnh (mua spot + bán perp lúc vào, bán spot + mua perp lúc ra) VÀ trượt giá ước từ sổ lệnh đo được cho đúng cỡ lệnh. Chưa trừ, có tên: phí vay/margin spot, trôi basis giữa vào và ra, sổ lệnh LÚC THOÁT, phí chuyển tiền, rủi ro thanh lý. Mọi con số là % trên notional.",
+  verdict_sub:"Cửa sổ {from} → {to} ({days} ngày). {sets} bộ tham số × {series} chuỗi = {total} lượt phát lại, chạy bằng đúng đoạn mã luật vào/ra mà bản chạy thật dùng, không phải bản chép lại. Lãi ròng tốt nhất {best} trên VỐN ({bestnot} nếu tính trên notional); trung vị {median}. Mọi con số dưới đây tính trên vốn = {cap}× notional, vì một vị thế trung tính delta phải bỏ đủ tiền cho CẢ HAI chân và chân spot không đòn bẩy được.",
+  fig_total:"Lượt phát lại", fig_refused:"Từ chối có tên", fig_ran:"Đã chạy", fig_traded:"Có giao dịch", fig_profit:"Có lãi ròng", fig_best:"Ròng tốt nhất /vốn", fig_median:"Ròng trung vị /vốn",
+  net_note:"“Ròng” ở đây = sau phí taker của bốn lệnh (mua spot + bán perp lúc vào, bán spot + mua perp lúc ra) VÀ trượt giá ước từ sổ lệnh đo được cho đúng cỡ lệnh. Chưa trừ, có tên: phí vay/margin spot, trôi basis giữa vào và ra, sổ lệnh LÚC THOÁT, phí chuyển tiền, rủi ro thanh lý. Mẫu số là VỐN, không phải notional — dải mục tiêu của dự án (5–15%/năm) cũng nói trên vốn, nên hai con số so thẳng được.",
   legend_loss:"lỗ ròng", legend_gain:"lãi ròng", legend_why:"— không dùng đỏ/xanh vì quy ước tăng/giảm của VN và Trung Quốc ngược nhau",
   ax_min_rate_per_8h_bps:"Ngưỡng vào (bps / 8h)", ax_persistence_periods:"Số kỳ funding phải bền trước khi vào", ax_min_net_apr_frac:"Sàn APR ròng để vào", ax_exit_net_apr_frac:"Sàn APR ròng để giữ", ax_exit_persistence_periods:"Số kỳ liên tiếp dưới sàn mới thoát", ax_notional_quote:"Notional (USDT)", ax_holding_days:"Kỳ giữ giả định để khấu hao (ngày)",
   ax_exit_negative_min_bps:"Cổng thoát đảo dấu: mốc mới nhất ≤ −X bps/8h", ax_exit_negative_periods:"Cổng thoát đảo dấu: N mốc âm liên tiếp", ax_exit_negative_cum_cost_frac:"Cổng thoát đảo dấu: funding âm đã trả ≥ C × vòng",
@@ -271,7 +273,7 @@ vi: {
   sf_facts:"Toàn lưới cổng: {sets} bộ tham số, {pos} bộ có TỔNG {series} chuỗi dương, {ge} bộ đạt hoặc vượt giữ suốt; bộ tốt nhất {max}. Luật 3.2 thuần (0 / 1 / 0) trên mọi bộ nền: {p32} lượt có lãi. Trục quyết định không phải X hay N: lối thoát suy giảm {ep_lo} kỳ → {p_lo} lượt có lãi, {ep_hi} kỳ → {p_hi}; cổng C = 0 → {c0}, C ≥ {c_next} → {c1}. Đọc cùng mục “Từng trục” ở trên: nó vẽ đúng hai trục ấy.",
   sf_series_title:"Từng chuỗi: bộ tốt nhất của lưới cổng so với giữ suốt", sf_series_caption:"“Bộ vượt giữ suốt” đếm trong {sets} bộ của lưới cổng, trên cùng cửa sổ. Ở các chuỗi giữ suốt mạnh (BTC/ETH tại binance và bybit) gần như không bộ nào vượt; luật chỉ thắng ở chuỗi mà giữ suốt yếu hoặc âm — tức nó tránh được đoạn xấu, không tạo thêm funding.",
   sfs_ht:"Giữ suốt (cửa sổ cổng)", sfs_best:"Bộ tốt nhất lưới cổng", sfs_trades:"Lệnh", sfs_beat:"Bộ vượt giữ suốt", sf_current:"luật hiện tại",
-  bs_title:"Bộ tham số tốt nhất theo TỔNG {series} chuỗi", bs_caption:"Xếp theo tổng lợi nhuận ròng của danh mục đều notional gồm mọi chuỗi phát lại được — một bộ tham số phải tốt trên cả {series} chuỗi cùng lúc, không phải trên chuỗi may mắn nhất. Dòng đậm là bộ đang chạy trong khối strategy của config.yaml.", bs_params:"Tham số (ngưỡng / bền / sàn vào / sàn giữ / kỳ thoát / X / N / C / vốn / giữ)", bs_sum:"Tổng {series} chuỗi", bs_med:"Trung vị", bs_prof:"Chuỗi dương", bs_trades:"Lệnh TB", bs_ht:"Giữ suốt (một vòng): tổng {sum}, trung vị {med}, {prof}/{series} dương — mốc chuẩn mọi bộ phải vượt.",
+  bs_title:"Bộ tham số tốt nhất theo TỔNG {series} chuỗi", bs_caption:"Xếp theo tổng lợi nhuận ròng của danh mục đều notional gồm mọi chuỗi phát lại được — một bộ tham số phải tốt trên cả {series} chuỗi cùng lúc, không phải trên chuỗi may mắn nhất. Dòng đậm là bộ đang chạy trong khối strategy của config.yaml.", bs_params:"Tham số (ngưỡng / bền / sàn vào / sàn giữ / kỳ thoát / X / N / C / vốn / giữ)", bs_sum:"TB/chuỗi trên VỐN · và tổng", bs_med:"Trung vị", bs_prof:"Chuỗi dương", bs_trades:"Lệnh TB", bs_ht:"Giữ suốt (một vòng): {cap} mỗi chuỗi trên vốn — cộng dồn {sum}, trung vị mỗi chuỗi {med}, {prof}/{series} dương. Đây là mốc chuẩn mọi bộ phải vượt, và bản thân nó cũng dưới dải 5–15%.",
   sf_best_title:"Bộ tham số tốt nhất của lưới cổng ({base} bộ nền × {gates} biến thể cổng)",
   dist_return:"Tổng lợi nhuận ròng trên notional (%)", hist_y:"lượt chạy",
   axes_eyebrow:"Từng trục", axes_title:"Cố định một tham số, nhìn phần còn lại", axes_caption:"Cột = trung vị tổng lợi nhuận ròng của các lượt có giao dịch tại giá trị đó; nhãn trên cột = tỉ lệ lượt có lãi và số lệnh trung bình. Nếu một trục không đổi được dấu, vấn đề không nằm ở trục đó.",
@@ -313,13 +315,14 @@ vi: {
   excluded:["Phí vay hoặc margin của chân spot","Trôi basis giữa lúc vào và lúc ra","Sổ lệnh tại thời điểm THOÁT (chỉ đo sổ hôm nay)","Phí chuyển tiền giữa ví/sàn","Rủi ro thanh lý chân perp khi giá chạy mạnh"],
   nav:{answer:"Trả lời nhanh",glossary:"Thuật ngữ",eval:"Đánh giá",series:"Từng chuỗi",basis:"Lối thoát basis",capital:"Vốn & đòn bẩy",axes:"Từng trục",signflip:"Luật thoát",trades:"Từng lệnh",top:"Xếp hạng",assumptions:"Giả định"},
   ans_eyebrow:"Trả lời nhanh", ans_title:"Đang lỗ lãi thế nào, và bộ ngưỡng nào tốt nhất",
-  ans_caption:"Ba dòng dưới đây là toàn bộ câu trả lời; phần còn lại của trang là bằng chứng cho chúng. Cả ba chạy trên CÙNG một lưới, cùng cửa sổ, cùng sổ lệnh, nên so trực tiếp được. “Tổng {series} chuỗi” là cộng lợi nhuận ròng của {series} chuỗi, MỖI chuỗi tính trên đủ vốn của nó — thước đo để xếp hạng các bộ tham số trên cùng mặt bằng, không phải lợi nhuận của một danh mục. Chia đều vốn cho {series} chuỗi thì lấy số đó chia {series}, và câu ngay dưới bảng đã ghi sẵn con số trung bình ấy.",
-  ans_who:"Cách chạy", ans_sum:"Tổng {series} chuỗi", ans_prof:"Chuỗi có lãi", ans_trades:"Lệnh / chuỗi",
+  ans_caption:"Ba dòng dưới đây là toàn bộ câu trả lời; phần còn lại của trang là bằng chứng cho chúng. Cả ba chạy trên CÙNG một lưới, cùng cửa sổ, cùng sổ lệnh, nên so trực tiếp được. Con số LỚN là thứ dùng để đánh giá lời lỗ: trung bình mỗi chuỗi, tính trên VỐN thật sự phải bỏ ra — chân spot không đòn bẩy được nên vốn là 2× notional. Dòng nhỏ bên dưới là phép CỘNG của {series} chuỗi, mỗi chuỗi trên đủ notional riêng: nó chỉ dùng để xếp hạng các bộ tham số trên cùng mặt bằng, và KHÔNG phải lợi nhuận của bất kỳ danh mục nào. Xếp hạng theo hai con số cho thứ tự y hệt, vì mọi bộ đều phủ đúng {series} chuỗi ấy.",
+  ans_who:"Cách chạy", ans_sum:"TB mỗi chuỗi, trên VỐN", ans_prof:"Chuỗi có lãi", ans_trades:"Lệnh / chuỗi",
+  ans_sum_note:"cộng {series} chuỗi: {sum}",
   ans_current:"Luật đang chạy live", ans_current_sub:"Đúng khối strategy: trong config.yaml — luật mà bước 3.5 đang ghi nhật ký",
-  ans_best:"Bộ ngưỡng tốt nhất", ans_best_sub:"Tốt nhất trong {n} bộ tham số, xếp theo tổng {series} chuỗi",
+  ans_best:"Bộ ngưỡng tốt nhất", ans_best_sub:"Tốt nhất trong {n} bộ tham số — xếp theo tổng, thứ tự y hệt xếp theo trung bình",
   ans_ht:"Không dùng luật nào", ans_ht_sub:"Vào một lần ở đầu cửa sổ, giữ tới cuối, trả đúng một vòng phí",
-  ans_read_below:"Đọc thẳng: luật đang chạy cho {cur} cộng dồn, trung bình {curavg} mỗi chuỗi, {curprof} chuỗi có lãi, với {curtrades} lần vào ra mỗi chuỗi — mỗi lần trả một vòng phí. Bộ ngưỡng tốt nhất của lưới đạt {best} ({bestavg} mỗi chuỗi), vẫn KHÔNG bằng {ht} ({htavg} mỗi chuỗi) của cách đơn giản nhất: vào một lần rồi giữ tới cuối. Nói cách khác, trên cửa sổ này luật vào/ra vẫn chưa mua được gì so với việc không dùng luật thoát.",
-  ans_read_above:"Đọc thẳng: luật đang chạy cho {cur} cộng dồn, trung bình {curavg} mỗi chuỗi, {curprof} chuỗi có lãi, với {curtrades} lần vào ra mỗi chuỗi — mỗi lần trả một vòng phí. Bộ ngưỡng tốt nhất đạt {best} ({bestavg} mỗi chuỗi), nhỉnh hơn {ht} ({htavg} mỗi chuỗi) của cách vào một lần rồi giữ — phần hơn đến từ việc vào MUỘN hơn đầu cửa sổ, và không bộ nào giữ được lợi thế đó khi kéo dài ra 12 tháng.",
+  ans_read_below:"Đọc thẳng: luật đang chạy cho {cur} mỗi chuỗi trên vốn ({cursum} cộng dồn), {curprof} chuỗi có lãi, với {curtrades} lần vào ra mỗi chuỗi — mỗi lần trả một vòng phí. Bộ ngưỡng tốt nhất của lưới đạt {best}, vẫn KHÔNG bằng {ht} của cách đơn giản nhất: vào một lần rồi giữ tới cuối. Hai điều phải đọc cùng lúc: luật vào/ra chưa mua được gì so với việc không dùng luật thoát, VÀ cả ba con số đều nằm rất xa dải 5–15%/năm mà dự án nhắm tới — thắng hay thua mốc chuẩn đều không đổi được điều đó.",
+  ans_read_above:"Đọc thẳng: luật đang chạy cho {cur} mỗi chuỗi trên vốn ({cursum} cộng dồn), {curprof} chuỗi có lãi, với {curtrades} lần vào ra mỗi chuỗi — mỗi lần trả một vòng phí. Bộ ngưỡng tốt nhất đạt {best}, nhỉnh hơn {ht} của cách vào một lần rồi giữ — phần hơn đến từ việc vào MUỘN hơn đầu cửa sổ, và không bộ nào giữ được lợi thế đó khi kéo dài ra 12 tháng. Cả ba con số vẫn nằm rất xa dải 5–15%/năm mà dự án nhắm tới.",
   ans_best_title:"Bộ ngưỡng tốt nhất, viết đầy đủ",
   ans_best_words:"Đọc thành lời: vào khi rate đã settle vượt {rate} bps/8h và giữ mức đó {persist} mốc liên tiếp; sau khi vào thì gần như không thoát — sàn giữ {floor}, phải {exitp} mốc liên tiếp dưới sàn mới đóng, và cổng đảo dấu đặt ở X {x} bps / N {n} mốc / C {c} × vòng phí. Kết quả là {trades} lệnh mỗi chuỗi trong cả cửa sổ.",
   gloss_eyebrow:"Thuật ngữ", gloss_title:"Mười hai chữ cần hiểu trước khi đọc các bảng",
@@ -348,9 +351,9 @@ zh: {
   verdict_eyebrow:"结论 · 第3.3步扩展扫描",
   headline_none:"没有任何一次回放实现净盈利：{traded} 次有交易的回放中 0 次",
   headline_some:"{traded} 次有交易的回放中仅 {profitable} 次净盈利，最好的一次也只有 {best}",
-  verdict_sub:"窗口 {from} → {to}（{days} 天）。{sets} 组参数 × {series} 个序列 = {total} 次回放，使用与实盘完全相同的入场/出场规则代码，而不是另写一份。最佳净收益 {best}；中位数 {median}。",
-  fig_total:"回放次数", fig_refused:"按名拒绝", fig_ran:"已运行", fig_traded:"有交易", fig_profit:"净盈利", fig_best:"最佳净收益", fig_median:"净收益中位数",
-  net_note:"此处的“净”= 扣除四笔吃单手续费（入场买现货+卖永续，退出卖现货+买永续）以及按实测订单簿、按实际下单规模估算的滑点。尚未扣除（逐项列明）：现货借贷/保证金成本、进出场之间的基差漂移、退出时刻的订单簿、转账费用、强平风险。所有数字均为相对名义本金的百分比。",
+  verdict_sub:"窗口 {from} → {to}（{days} 天）。{sets} 组参数 × {series} 个序列 = {total} 次回放，使用与实盘完全相同的入场/出场规则代码，而不是另写一份。最佳净收益按资本为 {best}（按名义本金则是 {bestnot}）；中位数 {median}。下面所有数字都以资本 = {cap}× 名义本金为分母，因为一个 delta 中性仓位必须为两条腿都出满资金，而现货腿无法加杠杆。",
+  fig_total:"回放次数", fig_refused:"按名拒绝", fig_ran:"已运行", fig_traded:"有交易", fig_profit:"净盈利", fig_best:"最佳净收益/资本", fig_median:"净收益中位数/资本",
+  net_note:"此处的“净”= 扣除四笔吃单手续费（入场买现货+卖永续，退出卖现货+买永续）以及按实测订单簿、按实际下单规模估算的滑点。尚未扣除（逐项列明）：现货借贷/保证金成本、进出场之间的基差漂移、退出时刻的订单簿、转账费用、强平风险。分母是资本而不是名义本金 — 本项目的目标区间（5–15% 年化）同样是按资本计的，因此两者可以直接比较。",
   legend_loss:"净亏损", legend_gain:"净盈利", legend_why:"— 不使用红/绿，因为越南与中国的涨跌配色相反",
   ax_min_rate_per_8h_bps:"入场阈值（bps / 8h）", ax_persistence_periods:"入场前费率需持续的期数", ax_min_net_apr_frac:"入场净年化下限", ax_exit_net_apr_frac:"持仓净年化下限", ax_exit_persistence_periods:"连续低于下限多少期才退出", ax_notional_quote:"名义本金（USDT）", ax_holding_days:"用于摊销成本的假设持仓天数",
   ax_exit_negative_min_bps:"变号退出闸门：最新一期 ≤ −X bps/8h", ax_exit_negative_periods:"变号退出闸门：连续 N 期为负", ax_exit_negative_cum_cost_frac:"变号退出闸门：已付负费率 ≥ C × 往返成本",
@@ -360,7 +363,7 @@ zh: {
   sf_facts:"整个闸门网格：{sets} 组参数，{pos} 组的 {series} 序列合计为正，{ge} 组达到或超过全程持有；最佳 {max}。纯 3.2 规则（0 / 1 / 0）在所有基础参数组上：{p32} 的回放盈利。决定性的维度不是 X 或 N：衰减退出 {ep_lo} 期 → {p_lo} 盈利，{ep_hi} 期 → {p_hi}；闸门 C = 0 → {c0}，C ≥ {c_next} → {c1}。请与上方“单维度”一节对照阅读：那里画的正是这两个维度。",
   sf_series_title:"逐序列：闸门网格最佳参数组对比全程持有", sf_series_caption:"“胜过全程持有的组数”在闸门网格的 {sets} 组中、同一窗口内统计。在全程持有强的序列（binance 与 bybit 的 BTC/ETH）几乎没有参数组胜出；规则只在全程持有弱或为负的序列上获胜 — 即它避开了糟糕的区段，并没有创造更多资金费率。",
   sfs_ht:"全程持有（闸门窗口）", sfs_best:"闸门网格最佳", sfs_trades:"笔数", sfs_beat:"胜过全程持有的组数", sf_current:"当前规则",
-  bs_title:"按 {series} 个序列合计排序的最佳参数组", bs_caption:"按所有可回放序列的等本金组合总净收益排序 — 一组参数必须同时在 {series} 个序列上都好，而不是在最幸运的序列上好。加粗行是 config.yaml strategy 区块中正在使用的参数组。", bs_params:"参数（阈值 / 持续 / 入场下限 / 持仓下限 / 退出期数 / X / N / C / 本金 / 持仓）", bs_sum:"{series} 序列合计", bs_med:"中位数", bs_prof:"正序列数", bs_trades:"平均笔数", bs_ht:"全程持有（一次往返）：合计 {sum}，中位数 {med}，{prof}/{series} 为正 — 任何参数组都必须超过的基准。",
+  bs_title:"按 {series} 个序列合计排序的最佳参数组", bs_caption:"按所有可回放序列的等本金组合总净收益排序 — 一组参数必须同时在 {series} 个序列上都好，而不是在最幸运的序列上好。加粗行是 config.yaml strategy 区块中正在使用的参数组。", bs_params:"参数（阈值 / 持续 / 入场下限 / 持仓下限 / 退出期数 / X / N / C / 本金 / 持仓）", bs_sum:"每序列按资本 · 及合计", bs_med:"中位数", bs_prof:"正序列数", bs_trades:"平均笔数", bs_ht:"全程持有（一次往返）：按资本每序列 {cap} — 累计 {sum}，每序列中位数 {med}，{prof}/{series} 为正。这是任何参数组都必须超过的基准，而它本身也低于 5–15% 区间。",
   sf_best_title:"闸门网格（{base} 个基础参数组 × {gates} 种闸门变体）的最佳参数组",
   dist_return:"相对名义本金的总净收益（%）", hist_y:"回放次数",
   axes_eyebrow:"逐维度", axes_title:"固定一个参数，看其余的表现", axes_caption:"柱 = 该取值下有交易回放的总净收益中位数；柱上标签 = 盈利占比与平均交易笔数。若某个维度无法改变符号，问题就不在这个维度。",
@@ -402,13 +405,14 @@ zh: {
   excluded:["现货腿的借贷或保证金成本","进出场之间的基差漂移","退出时刻的订单簿（只测了今天的簿）","钱包/交易所之间的转账费","价格剧烈波动时永续腿的强平风险"],
   nav:{answer:"快速答案",glossary:"术语",eval:"结果评估",series:"逐序列",basis:"基差退出",capital:"资本与杠杆",axes:"单维度",signflip:"退出规则",trades:"逐笔交易",top:"排行",assumptions:"假设"},
   ans_eyebrow:"快速答案", ans_title:"目前是盈还是亏，哪一组阈值最好",
-  ans_caption:"下面三行就是全部答案，页面其余部分是它们的证据。三行跑在同一个网格、同一个窗口、同一份订单簿上，因此可以直接比较。“{series} 序列合计”是 {series} 个序列净收益的加总，每个序列都按其满仓本金计算 — 这是把各参数组放在同一尺度上排名的指标，不是某个组合的收益率。若把资金平均分给 {series} 个序列，就用这个数除以 {series}，表格下方那句话已经给出该平均值。",
-  ans_who:"做法", ans_sum:"{series} 序列合计", ans_prof:"盈利序列", ans_trades:"每序列笔数",
+  ans_caption:"下面三行就是全部答案，页面其余部分是它们的证据。三行跑在同一个网格、同一个窗口、同一份订单簿上，因此可以直接比较。大号数字才是判断盈亏的依据：每个序列的平均值，并且以真正占用的资本为分母 — 现货腿无法加杠杆，因此资本是名义本金的 2 倍。下面那行小字是 {series} 个序列的加总，每个序列各按其满仓名义本金计算：它只用于把各参数组放在同一尺度上排名，不是任何组合的收益率。按这两个数排名的先后完全相同，因为每一组参数都覆盖同样的 {series} 个序列。",
+  ans_who:"做法", ans_sum:"每序列平均，按资本", ans_prof:"盈利序列", ans_trades:"每序列笔数",
+  ans_sum_note:"{series} 序列合计：{sum}",
   ans_current:"实盘正在跑的规则", ans_current_sub:"即 config.yaml 中的 strategy: 区块 — 第 3.5 步正在记录日志的那套规则",
-  ans_best:"最佳阈值组", ans_best_sub:"{n} 组参数中最好的一组，按 {series} 序列合计排序",
+  ans_best:"最佳阈值组", ans_best_sub:"{n} 组参数中最好的一组 — 按合计排序，与按平均值排序的先后完全相同",
   ans_ht:"完全不用规则", ans_ht_sub:"窗口开头入场一次，一直持有到结尾，只付一次往返成本",
-  ans_read_below:"直接结论：正在跑的规则累计 {cur}，每个序列平均 {curavg}，{curprof} 个序列盈利，每个序列进出 {curtrades} 次 — 每次都要付一次往返成本。网格中最佳阈值组为 {best}（每序列 {bestavg}），仍然比不过最简单的做法 — 入场一次并持有到底 — 的 {ht}（每序列 {htavg}）。换句话说，在这个窗口上进出场规则相对“不设退出规则”还没有买到任何东西。",
-  ans_read_above:"直接结论：正在跑的规则累计 {cur}，每个序列平均 {curavg}，{curprof} 个序列盈利，每个序列进出 {curtrades} 次 — 每次都要付一次往返成本。最佳阈值组达到 {best}（每序列 {bestavg}），略高于入场一次然后持有的 {ht}（每序列 {htavg}）— 多出来的部分来自比窗口开头更晚入场，而拉长到 12 个月后没有一组能保住这一优势。",
+  ans_read_below:"直接结论：正在跑的规则按资本每序列 {cur}（累计 {cursum}），{curprof} 个序列盈利，每个序列进出 {curtrades} 次 — 每次都要付一次往返成本。网格中最佳阈值组为 {best}，仍然比不过最简单的做法 — 入场一次并持有到底 — 的 {ht}。有两点必须一起读：进出场规则相对“不设退出规则”还没有买到任何东西，并且这三个数字都远低于本项目设定的 5–15% 年化区间 — 胜过或输给基准都改变不了这一点。",
+  ans_read_above:"直接结论：正在跑的规则按资本每序列 {cur}（累计 {cursum}），{curprof} 个序列盈利，每个序列进出 {curtrades} 次 — 每次都要付一次往返成本。最佳阈值组达到 {best}，略高于入场一次然后持有的 {ht} — 多出来的部分来自比窗口开头更晚入场，而拉长到 12 个月后没有一组能保住这一优势。这三个数字仍然都远低于本项目设定的 5–15% 年化区间。",
   ans_best_title:"最佳阈值组，完整写出",
   ans_best_words:"用文字读：当已结算费率超过 {rate} bps/8h 并连续 {persist} 期保持在该水平时入场；入场之后几乎不退出 — 持仓下限 {floor}，需连续 {exitp} 期低于下限才平仓，变号闸门设在 X {x} bps / N {n} 期 / C {c} × 往返成本。结果是整个窗口每个序列 {trades} 笔交易。",
   gloss_eyebrow:"术语", gloss_title:"读表格之前需要理解的十二个词",
@@ -464,6 +468,16 @@ try { lang = localStorage.getItem("bt.lang") || lang; const w = localStorage.get
 // stale when the series count changes — it did, from 16 to 24.
 let SERIES_N = 0;
 const withSeries = s => s.replace(/\{series\}/g, SERIES_N);
+// A summed figure adds N series each measured on its OWN full notional, so it
+// ranks parameter sets and nothing more. perCap turns it into the number a
+// capital decision needs: the mean per series, over the capital both legs tie
+// up. Ranking is unchanged — dividing every set by the same constant is a
+// monotone transform — so nothing is lost by leading with it.
+// Returns null when the run mixed capital denominators (a swept margin axis),
+// because one division would then be wrong for most of the rows.
+const capOf = () => { const c = DATA.windows[win].capital; return c && c.unique ? c.per_notional : null; };
+const perCap = (sum, n) => { const c = capOf(); return c == null || !n ? null : sum / n / c; };
+const pcOr = (sum, n, d = 2) => { const v = perCap(sum, n); return v == null ? pct(sum, d, true) : pct(v, d, true); };
 const t = (k, vars) => { let s = T[lang][k]; if (s === undefined) s = T.vi[k]; if (s === undefined) return k;
   if (typeof s !== "string") return s;
   s = withSeries(s);
@@ -534,9 +548,14 @@ function render() {
   renderStatic();
   const W = DATA.windows[win], c = W.counts, g = DATA.grid;
   const best = W.return_stats.max, median = W.return_stats.median;
-  document.getElementById("verdictHeadline").textContent = t(c.profitable === 0 ? "headline_none" : "headline_some", { profitable: num(c.profitable), traded: num(c.traded), best: pct(W.return_stats.max, 3, true) });
-  document.getElementById("verdictSub").textContent = t("verdict_sub", { from: day(W.window_from_ms), to: day(W.window_to_ms), days: num(W.window_days), sets: num(g.param_sets), series: g.series, total: num(c.total), best: pct(best, 3, true), median: pct(median, 3, true) });
-  const figs = [["fig_total", num(c.total), ""], ["fig_refused", num(c.refused), "muted"], ["fig_traded", num(c.traded), ""], ["fig_profit", num(c.profitable), c.profitable ? "gain" : "loss"], ["fig_best", pct(best, 3, true), cls(best)], ["fig_median", pct(median, 2, true), cls(median)]];
+  // These are ONE series' returns, not sums, so the capital conversion is a
+  // plain division: a single delta-neutral position ties up 2N. Leading with
+  // the notional figure here is how "+5.96%" gets read as inside the 5-15%
+  // target band when the number on capital is half that.
+  const capN = capOf() || 1, onCap = v => v == null ? null : v / capN;
+  document.getElementById("verdictHeadline").textContent = t(c.profitable === 0 ? "headline_none" : "headline_some", { profitable: num(c.profitable), traded: num(c.traded), best: pct(onCap(W.return_stats.max), 3, true) });
+  document.getElementById("verdictSub").textContent = t("verdict_sub", { from: day(W.window_from_ms), to: day(W.window_to_ms), days: num(W.window_days), sets: num(g.param_sets), series: g.series, total: num(c.total), best: pct(onCap(best), 3, true), bestnot: pct(best, 3, true), median: pct(onCap(median), 3, true), cap: num(capN, 2) });
+  const figs = [["fig_total", num(c.total), ""], ["fig_refused", num(c.refused), "muted"], ["fig_traded", num(c.traded), ""], ["fig_profit", num(c.profitable), c.profitable ? "gain" : "loss"], ["fig_best", pct(onCap(best), 3, true), cls(best)], ["fig_median", pct(onCap(median), 2, true), cls(median)]];
   document.getElementById("figures").innerHTML = figs.map(([k, v, cl]) => `<div class="fig"><div class="v ${cl}">${v}</div><div class="l">${t(k)}</div></div>`).join("");
 
 
@@ -564,9 +583,12 @@ function render() {
 
   const bestSetsHTML = (sets, current) => `<tr><th>${t("bs_params")}</th><th class="num">${t("bs_sum")}</th><th class="num">${t("bs_med")}</th><th class="num">${t("bs_prof")}</th><th class="num">${t("bs_trades")}</th><th class="num">BTC·bin</th><th class="num">ETH·bin</th><th class="num">BTC·byb</th><th class="num">ETH·byb</th></tr>` +
     (current ? [...sets, { ...current, isCurrent: true }] : sets).map(b => { const p = b.params; const sv = k => b.series[k] ? `<span class="${cls(b.series[k].return_pct)}">${pct(b.series[k].return_pct, 2, true)}</span>` : "—";
-      return `<tr${b.isCurrent ? ' style="font-weight:600"' : ""}><td class="mono">${num(p.min_rate_per_8h_bps, 1)} / ${num(p.persistence_periods)} / ${pct(p.min_net_apr_frac * 100, 0)} / ${pct(p.exit_net_apr_frac * 100, 2)} / ${num(p.exit_persistence_periods)} / ${num(p.exit_negative_min_bps ?? 0, 2)} / ${num(p.exit_negative_periods ?? 1)} / ${num(p.exit_negative_cum_cost_frac ?? 0, 2)} / ${kUSDT(p.notional_quote)} / ${num(p.holding_days)}${b.isCurrent ? ` <span class="pill open">${t("sf_current")}</span>` : ""}</td><td class="num ${cls(b.sum_return_pct)}">${pct(b.sum_return_pct, 2, true)}</td><td class="num ${cls(b.median_return_pct)}">${pct(b.median_return_pct, 2, true)}</td><td class="num">${b.profitable}/${b.n}</td><td class="num">${num(b.mean_trades, 1)}</td><td class="num">${sv("BTCUSDT|binance_futures")}</td><td class="num">${sv("ETHUSDT|binance_futures")}</td><td class="num">${sv("BTCUSDT|bybit_futures")}</td><td class="num">${sv("ETHUSDT|bybit_futures")}</td></tr>`; }).join("");
+      return `<tr${b.isCurrent ? ' style="font-weight:600"' : ""}><td class="mono">${num(p.min_rate_per_8h_bps, 1)} / ${num(p.persistence_periods)} / ${pct(p.min_net_apr_frac * 100, 0)} / ${pct(p.exit_net_apr_frac * 100, 2)} / ${num(p.exit_persistence_periods)} / ${num(p.exit_negative_min_bps ?? 0, 2)} / ${num(p.exit_negative_periods ?? 1)} / ${num(p.exit_negative_cum_cost_frac ?? 0, 2)} / ${kUSDT(p.notional_quote)} / ${num(p.holding_days)}${b.isCurrent ? ` <span class="pill open">${t("sf_current")}</span>` : ""}</td><td class="num ${cls(perCap(b.sum_return_pct, b.n) ?? b.sum_return_pct)}">${pcOr(b.sum_return_pct, b.n)}<div class="muted" style="font-size:.72rem">${pct(b.sum_return_pct, 2, true)}</div></td><td class="num ${cls(b.median_return_pct)}">${pct(b.median_return_pct, 2, true)}</td><td class="num">${b.profitable}/${b.n}</td><td class="num">${num(b.mean_trades, 1)}</td><td class="num">${sv("BTCUSDT|binance_futures")}</td><td class="num">${sv("ETHUSDT|binance_futures")}</td><td class="num">${sv("BTCUSDT|bybit_futures")}</td><td class="num">${sv("ETHUSDT|bybit_futures")}</td></tr>`; }).join("");
   { const hts = W.series.map(s => s.corpus.hold_through_net_pct); const so = [...hts].sort((a, b) => a - b);
-    document.getElementById("bsBench").textContent = t("bs_ht", { sum: pct(hts.reduce((a, b) => a + b, 0), 2, true), med: pct(so[Math.floor(so.length / 2)], 2, true), prof: hts.filter(x => x > 0).length });
+    const htS = hts.reduce((a, b) => a + b, 0);
+    document.getElementById("bsBench").textContent = t("bs_ht", {
+      cap: pcOr(htS, hts.length), sum: pct(htS, 2, true),
+      med: pct(so[Math.floor(so.length / 2)], 2, true), prof: hts.filter(x => x > 0).length });
     document.getElementById("bestSetsTable").innerHTML = bestSetsHTML(W.best_sets || [], W.current_set); }
   if (W.gate_best_sets) document.getElementById("sfBestTable").innerHTML = bestSetsHTML(W.gate_best_sets, W.gate_current_set);
 
@@ -656,8 +678,14 @@ function render() {
     const stats = gate ? W.gate_set_stats : W.set_stats;
     const hts = (gate ? W.gate_hold_through : null) || W.series.map(x => x.corpus.hold_through_net_pct);
     const htSum = hts.reduce((a, b) => a + b, 0), htProf = hts.filter(x => x > 0).length;
-    const row = (who, sub, sum, prof, n, trades, strong) =>
-      `<div class="row"><div class="who">${who}<small>${sub}</small></div><div class="v ${cls(sum)}"${strong ? ' style="font-weight:600"' : ""}>${pct(sum, 2, true)}</div><div class="v sub">${prof}/${n}</div><div class="v sub">${trades}</div></div>`;
+    const row = (who, sub, sum, prof, n, trades, strong) => {
+      const v = perCap(sum, n);
+      // The mean over capital leads; the sum stays underneath, labelled, so the
+      // page can still be compared against earlier reports that quoted sums.
+      const head = v == null ? pct(sum, 2, true) : pct(v, 2, true);
+      const foot = v == null ? "" : `<small>${t("ans_sum_note", { sum: pct(sum, 2, true) })}</small>`;
+      return `<div class="row"><div class="who">${who}<small>${sub}</small></div><div class="v ${cls(v == null ? sum : v)}"${strong ? ' style="font-weight:600"' : ""}>${head}${foot}</div><div class="v sub">${prof}/${n}</div><div class="v sub">${trades}</div></div>`;
+    };
     const rows = [`<div class="row head"><span>${t("ans_who")}</span><span>${t("ans_sum")}</span><span>${t("ans_prof")}</span><span>${t("ans_trades")}</span></div>`];
     if (cur) rows.push(row(t("ans_current"), t("ans_current_sub"), cur.sum_return_pct, cur.profitable, cur.n, num(cur.mean_trades, 1)));
     if (best) rows.push(row(t("ans_best"), t("ans_best_sub", { n: num(stats ? stats.n : 0) }), best.sum_return_pct, best.profitable, best.n, num(best.mean_trades, 1)));
@@ -666,9 +694,11 @@ function render() {
     if (best && cur) {
       const above = best.sum_return_pct >= htSum;
       document.getElementById("answerRead").textContent = t(above ? "ans_read_above" : "ans_read_below",
-        { cur: pct(cur.sum_return_pct, 2, true), curavg: pct(cur.sum_return_pct / cur.n, 2, true), curprof: `${cur.profitable}/${cur.n}`, curtrades: num(cur.mean_trades, 1),
-          best: pct(best.sum_return_pct, 2, true), bestavg: pct(best.sum_return_pct / best.n, 2, true),
-          ht: pct(htSum, 2, true), htavg: pct(htSum / hts.length, 2, true) });
+        { cur: pcOr(cur.sum_return_pct, cur.n), cursum: pct(cur.sum_return_pct, 2, true),
+          curprof: `${cur.profitable}/${cur.n}`, curtrades: num(cur.mean_trades, 1),
+          best: pcOr(best.sum_return_pct, best.n), bestsum: pct(best.sum_return_pct, 2, true),
+          ht: pcOr(htSum, hts.length), htsum: pct(htSum, 2, true),
+          cap: num(capOf() || 2, 2) });
     } else document.getElementById("answerRead").textContent = "";
     if (best) { const p = best.params;
       document.getElementById("answerBestWords").textContent = t("ans_best_words", {

@@ -132,6 +132,27 @@ def series_ret(setrow, sym, perp):
     return (setrow or {}).get("series", {}).get(f"{sym}|{perp}", {}).get("return_pct")
 
 
+# A summed figure is a ranking device; the number a capital decision needs is
+# the mean per series over the capital both legs tie up. Every prose figure on
+# the page goes through this, so no sentence can quote a sum as a return.
+CAP12 = (W12.get("capital") or {})
+
+
+def percap(total, n, f=vi, d=2):
+    c = CAP12.get("per_notional")
+    if not c or not CAP12.get("unique") or not n:
+        return None
+    return f"{f(total / n / c, d)}%"
+
+
+def sum_and_cap(total, n, f=vi):
+    """'X% mỗi chuỗi trên vốn (tổng Y%)' — the honest pairing, in that order."""
+    pc = percap(total, n, f)
+    lead = "mỗi chuỗi trên vốn" if f is vi else "每序列按资本"
+    joiner = "tổng" if f is vi else "累计"
+    return f"{pc} {lead} ({joiner} {f(total, 2)}%)" if pc else f"{f(total, 2)}%"
+
+
 def fmt_set(p, f=vi):
     return (f"{f(p['min_rate_per_8h_bps'],1)} / {int(p['persistence_periods'])} · "
             f"{f(p['min_net_apr_frac']*100,0)}% → {f(p['exit_net_apr_frac']*100,2)}% / {int(p['exit_persistence_periods'])} · "
@@ -156,12 +177,17 @@ cur_sum, cur_prof = cur12["sum_return_pct"], cur12["profitable"]
 prev_sum = prev12["sum_return_pct"] if prev12 else None
 row("Bộ tham số đang chạy, 12 tháng", "实盘参数组，12 个月",
     "pass" if cur_sum >= ht_sum(W12) else ("partial" if cur_sum > 0 else "fail"),
-    f"Bộ shipped ({fmt_set(cur12['params'])}) cho tổng {vi(cur_sum,2)}% trên {cur12['n']} chuỗi, "
+    f"Bộ shipped ({fmt_set(cur12['params'])}) cho {sum_and_cap(cur_sum, cur12['n'])} trên {cur12['n']} chuỗi, "
     f"{cur_prof}/{cur12['n']} chuỗi dương, {vi(cur12['mean_trades'],1)} lệnh mỗi chuỗi. "
+    f"Con số dùng để đánh giá là {percap(cur_sum, cur12['n'])} mỗi chuỗi trên vốn — dải mục tiêu của dự án là 5–15%/năm, "
+    f"nên nó thấp hơn cận dưới khoảng {vi(5/(cur_sum/cur12['n']/(CAP12.get('per_notional') or 2)),0)} lần. "
     + (f"Bộ 3.3 cũ mà nó thay cho {vi(prev_sum,2)}% ({prev12['profitable']}/{prev12['n']}, {vi(prev12['mean_trades'],1)} lệnh mỗi chuỗi) trên cùng lưới, cùng cửa sổ, cùng sổ lệnh — "
         f"khoảng cách nở ra chính vì hai sàn settle theo giờ: luật cũ thoát ở bất kỳ mốc âm nào, mà ở nhịp 1h thì mốc âm nhiều gấp 8 lần, nên nó trả {vi(prev12['mean_trades'],0)} vòng phí mỗi chuỗi. " if prev12 else "")
     + f"Tốt nhất từng chuỗi: " + ", ".join(f"{x['symbol']}·{x['perp'].replace('_futures','')} {vi(x['best']['realized_apr_pct'],2)}% APR" for x in top_series if x["best"]) + ".",
-    f"实盘参数组（{fmt_set(cur12['params'], zh)}）在 {cur12['n']} 个序列上合计 {zh(cur_sum,2)}%，{cur_prof}/{cur12['n']} 个序列为正，每序列 {zh(cur12['mean_trades'],1)} 笔。"
+    f"实盘参数组（{fmt_set(cur12['params'], zh)}）在 {cur12['n']} 个序列上为 {sum_and_cap(cur_sum, cur12['n'], zh)}，"
+    f"{cur_prof}/{cur12['n']} 个序列为正，每序列 {zh(cur12['mean_trades'],1)} 笔。"
+    f"用于判断的数字是按资本每序列 {percap(cur_sum, cur12['n'], zh)} — 本项目的目标区间是 5–15% 年化，"
+    f"因此它比下限还低约 {zh(5/(cur_sum/cur12['n']/(CAP12.get('per_notional') or 2)),0)} 倍。"
     + (f"它所替换的 3.3 参数组在同一网格、同一窗口、同一订单簿上为 {zh(prev_sum,2)}%（{prev12['profitable']}/{prev12['n']}，{zh(prev12['mean_trades'],1)} 笔）。" if prev12 else "")
     + "各序列最佳：" + "，".join(f"{x['symbol']}·{x['perp'].replace('_futures','')} {zh(x['best']['realized_apr_pct'],2)}% 年化" for x in top_series if x["best"]) + "。")
 
@@ -170,11 +196,13 @@ hts, htp = ht_sum(W12), ht_prof(W12)
 beat = stats12["at_or_above_hold_through"]
 row("So với giữ suốt (mốc chuẩn thật)", "对比全程持有（真正的基准）",
     "pass" if beat > 0 else "fail",
-    f"Giữ suốt cả cửa sổ và trả đúng một vòng phí cho tổng {vi(hts,2)}% ({htp}/{len(W12['series'])} chuỗi dương). "
+    f"Giữ suốt cả cửa sổ và trả đúng một vòng phí cho {sum_and_cap(hts, len(W12['series']))} "
+    f"({htp}/{len(W12['series'])} chuỗi dương) — mốc chuẩn này tự nó cũng dưới dải 5–15%. "
     f"Trong {n_vi(stats12['n'])} bộ tham số của lưới, {n_vi(stats12['positive'])} bộ có tổng dương nhưng chỉ "
     f"{n_vi(beat)} bộ đạt hoặc vượt mốc đó; bộ tốt nhất {vi(stats12['max_sum_return_pct'],2)}%. "
     f"Bộ đang chạy {vi(cur_sum,2)}%. Một luật vào/ra chỉ đáng giữ nếu THẮNG giữ suốt, không phải chỉ dương.",
-    f"全程持有整个窗口、只付一次往返，合计 {zh(hts,2)}%（{htp}/{len(W12['series'])} 个序列为正）。"
+    f"全程持有整个窗口、只付一次往返，为 {sum_and_cap(hts, len(W12['series']), zh)}"
+    f"（{htp}/{len(W12['series'])} 个序列为正）— 这个基准本身也低于 5–15% 区间。"
     f"网格 {n_zh(stats12['n'])} 组参数中，{n_zh(stats12['positive'])} 组合计为正，但只有 {n_zh(beat)} 组达到或超过该基准；最佳 {zh(stats12['max_sum_return_pct'],2)}%。"
     f"实盘参数组 {zh(cur_sum,2)}%。一套进出场规则只有胜过全程持有才值得保留，仅仅为正是不够的。")
 

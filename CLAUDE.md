@@ -196,11 +196,32 @@ Bilingual VI/ZH report: `docs/reports/backtest-3.3-wide-2026-09-07.html`.
 **Re-measured on 2026-09-07 evening from `906ac42`, after 3.3b/3.3c** — the
 same grid plus the two axes the shipped set had moved to (`exit-persist 48`,
 `hold-days 90`), so the live configuration sits INSIDE the grid: 12,288 sets ×
-24 series × 3 windows. Over 12 months the shipped set sums **+27.56%** (17/24
-positive, 1.7 trades each) against **−526%** for the retired 3.3 set (73 trades
-each), and hold-through is **+29.73%** (18/24) which **0 of 12,288 sets reach**
-— the grid's best is +27.81%. The verdict does not move: the rule still does
-not beat buying and holding. Two things it did change. The basis exit is
+24 series × 3 windows.
+
+**READ THE DENOMINATOR FIRST.** A set's headline figure is a SUM over 24
+series, each measured on its own full notional. It ranks parameter sets and is
+not a return — the user caught this being quoted as one. Divide by 24 and then
+by the capital both legs tie up (2× notional, because the spot leg cannot be
+levered) to get a number comparable to the project's 5–15% target. Over 12
+months: shipped sums +27.56% = **+0.57%/yr per series on capital** (17/24
+positive, 1.7 trades each); hold-through sums +29.73% = **+0.62%**; the grid's
+best sums +27.81% = +0.58%; the retired 3.3 set sums −526% = −10.96% at 73
+trades each. **0 of 12,288 sets reach hold-through.** Two verdicts, not one:
+the rule does not beat buying and holding, AND everything on the page is an
+order of magnitude below the target band.
+
+**No backtest this project has ever run reached 5–15% on capital.** Swept every
+stored result — 36 files, ~2.1M traded replays: the maximum is **+3.45% on
+capital** (BTC/hyperliquid, 1 trade, the 3-month window, and a quote-bridged
+pair); over 12 months the maximum is +2.98%. Earlier claims that the band had
+been reached ("hyperliquid BTC +5.44%", step 3.1's "7.40% net") were quoted on
+NOTIONAL and are half that on capital; 3.1's figure was additionally a
+projection from an assumed funding rate, not a replay. The band is for SELECTED
+opportunities, not majors held mechanically: BTC/binance averaged 0.306 bps/8h
+for the year, which is ~0.55%/yr on capital before a 0.30% round trip. Reaching
+the band needs a different lever — higher-funding pairs, maker fills (20 of the
+30 bps), or both legs on one venue so capital is N rather than 2N — not another
+parameter grid. Two things it did change. The basis exit is
 EVALUABLE for the first time (20/24 series report 0 unpriced settlements over
 67,121 of them; the residue is entirely Hyperliquid, whose candles stop at
 ~208 days) and it **costs 2.94 points and 10 round trips a year, all of it on
