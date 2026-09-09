@@ -166,6 +166,19 @@ footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);paddi
     <p class="note" id="ansRecNote"></p>
   </section>
 
+  <section id="risk">
+    <header><div class="eyebrow" data-i18n="rk_eyebrow"></div><h2 data-i18n="rk_title"></h2><p class="note" data-i18n="rk_caption"></p></header>
+    <div class="figures" id="rkFigures" style="border-top:0;padding-top:0"></div>
+    <div class="tablewrap"><table class="pin" id="rkTable"></table></div>
+    <p id="rkRead1"></p>
+    <div class="chart" id="rkScatter"></div>
+    <div class="legend"><span><i class="i-gain"></i><span data-i18n="rk_leg_c1"></span></span><span><i class="i-loss"></i><span data-i18n="rk_leg_c0"></span></span><span class="muted" data-i18n="rk_leg_marks"></span></div>
+    <h3 data-i18n="rk_sub_title"></h3>
+    <p class="note" data-i18n="rk_sub_caption"></p>
+    <div class="tablewrap"><table class="pin" id="rkSubTable"></table></div>
+    <p id="rkRead2"></p>
+  </section>
+
   <section id="oneaxis">
     <header><div class="eyebrow" data-i18n="oa_eyebrow"></div><h2 data-i18n="oa_title"></h2><p class="note" data-i18n="oa_caption"></p></header>
     <p id="oaRead"></p>
@@ -251,7 +264,20 @@ vi: {
   rec_same: "Giữ nguyên bộ đang ship: {p}. Lưới {sets} bộ trên trục giữ không tìm được bộ nào hơn nó quá {gap} điểm trên vốn/năm, và {n_better} bộ xếp trên nó chỉ khác ở lối vào.",
   rec_change: "Đổi sang {p}: {best} trên vốn/năm so với {ship} của bộ đang ship (+{gap} điểm), {pos}/{series} chuỗi dương, {be} lệnh hoà vốn.",
   rec_note: "Ba trục giữ đọc theo đơn vị của chúng: holding_days là số ngày KHẤU HAO chi phí vòng (nó đặt ngưỡng thật của lối vào và của lối thoát suy giảm, không phải ngày giữ tối đa); exit_persistence_periods là số MỐC settle — {n8} ngày ở nhịp 8h nhưng {n1} ngày ở nhịp 1h cho cùng một giá trị; min_hold_recovered_cost_frac là phân số chi phí vòng mà lệnh phải thu lại trước khi hai lối thoát lợi suất được phép nổ.",
-  nav_oneaxis: "Đổi một trục",
+  nav_oneaxis: "Đổi một trục", nav_risk: "Lợi nhuận / rủi ro",
+  rk_eyebrow: "Lợi nhuận chia cho rủi ro", rk_title: "Xếp hạng lại theo lợi nhuận / sụt vốn",
+  rk_caption: "Rủi ro đo được của một lượt phát lại là SỤT VỐN TỐI ĐA của đường equity (Go ghi từng chuỗi), trên vốn như lợi nhuận. Tỷ số = lợi nhuận TRUNG BÌNH chia sụt vốn TRUNG BÌNH qua {series} chuỗi — không phải trung bình của các tỷ số từng chuỗi, vì một chuỗi sụt rất ít và lời rất ít sẽ át hết. Cùng thước đo cho giữ suốt.",
+  rk_fig_ship: "bộ ship: lợi nhuận / sụt vốn", rk_fig_best: "bộ tốt nhất theo tỷ số", rk_fig_ht: "giữ suốt, cùng thước đo", rk_fig_sets: "bộ đạt tỷ số của giữ suốt",
+  rk_col_what: "Cách giữ", rk_col_ret: "Lợi nhuận /vốn /năm", rk_col_dd: "Sụt vốn TB", rk_col_wdd: "Sụt vốn tệ nhất", rk_col_wret: "Chuỗi tệ nhất", rk_col_std: "Độ lệch giữa chuỗi", rk_col_calmar: "Lợi nhuận / sụt vốn", rk_col_exp: "Thời gian trong lệnh", rk_col_held: "Giữ TB (ngày)", rk_col_tr: "Lệnh / chuỗi",
+  rk_row_calmar: "Tốt nhất theo lợi nhuận / sụt vốn",
+  rk_read1: "Xếp theo tỷ số cho đúng thứ tự như xếp theo lợi nhuận: bộ tốt nhất theo tỷ số ({calmar_best}) cũng là bộ tốt nhất theo lợi nhuận, vì sụt vốn của mọi bộ trong vùng tốt nằm trong {dd_lo}–{dd_hi}% và đến từ CÙNG những chuỗi — sụt vốn tệ nhất {wdd} luôn là {wdd_series}. Giữ suốt cho {calmar_ht} và {n_ht} / {sets} bộ đạt tới; bộ ship {calmar_ship}. Trục giữ dài hơn không giảm rủi ro này: giữ lâu hơn trên chuỗi funding âm là sụt sâu hơn.",
+  rk_leg_c1: "C = 1 (cổng đảo dấu như bộ ship)", rk_leg_c0: "C = 0 (thoát ở bất kỳ mốc âm nào)", rk_leg_marks: "vòng đậm = bộ ship, tam giác = giữ suốt, ô vuông = tốt nhất theo tỷ số",
+  rk_x: "sụt vốn tối đa TB trên vốn (%)", rk_y: "lợi nhuận trên vốn /năm (%)",
+  rk_sub_title: "Rủi ro không nằm trên trục giữ: chọn chuỗi nào",
+  rk_sub_caption: "Cùng bộ ship và cùng giữ suốt, đo trên các tập chuỗi con. Bốn tập đầu chọn TRƯỚC (theo coin và theo quote của sàn perp); tập cuối chọn theo kết quả nên là hậu nghiệm và chỉ để thấy trần.",
+  rk_sub_all: "Cả {n} chuỗi", rk_sub_usdt_quoted: "Chỉ perp quote USDT (bỏ 8 cặp ghép USD/USDT)", rk_sub_majors: "Chỉ BTC + ETH", rk_sub_majors_usdt: "BTC + ETH, perp quote USDT", rk_sub_ht_positive: "Chuỗi giữ suốt có lãi (HẬU NGHIỆM)",
+  rk_sub_col_set: "Tập chuỗi", rk_sub_col_n: "Chuỗi", rk_sub_ship: "Bộ ship", rk_sub_ht: "Giữ suốt",
+  rk_read2: "Đây là nơi lợi nhuận/rủi ro thật sự đổi. Bỏ SOL và XRP: bộ ship đi từ {ret_all} lên {ret_maj} trên vốn/năm, sụt vốn TB {dd_all} → {dd_maj}, tỷ số {c_all} → {c_maj}; chuỗi tệ nhất {w_all} → {w_maj}. Bỏ thêm 4 cặp ghép USD/USDT (rủi ro depeg không chỗ nào trừ, và là nơi 11 lệnh thoát basis nổ): {ret_mu}, sụt vốn {dd_mu}, tỷ số {c_mu} trên {n_mu} chuỗi — nhưng cũng là mất hai chuỗi hyperliquid trả funding cao nhất. Giữ suốt trên cùng tập BTC+ETH: {ret_ht_maj}, tỷ số {c_ht_maj}. Chọn chuỗi là quyết định LỐI VÀO (cặp và sàn), không phải trục giữ; nó chưa có luật nào trong strategy và là bước tiếp theo đáng đo.",
   oa_eyebrow: "Từ bộ đang ship, đổi đúng MỘT trục", oa_title: "Mỗi trục giữ, giữ nguyên mọi thứ khác",
   oa_caption: "Đây là phép đo thao tác viên thật sự làm: lấy bộ đang ship, đổi một khoá trong config.yaml, xem điều gì đổi. Trung bình lưới (mục Từng trục) trộn mọi bộ khác vào; bảng này thì không.",
   oa_read: "Cổng giữ tối thiểu M={m_on} — “không được thoát vì lợi suất trước khi lệnh đã thu lại chi phí vòng” — là nút bấm đúng cho câu hỏi: từ bộ ship, tỷ lệ lệnh hoà vốn {be0} → {be1}, lệnh thoát vì đảo dấu/suy giảm {ye0} → {ye1}, lệnh mỗi chuỗi {tr0} → {tr1}, và lợi nhuận trên vốn/năm {r0} → {r1} ({dr} điểm). holding_days từ {h_lo} tới {h_hi} ngày dịch kết quả {h_span} điểm; exit_persistence_periods từ {n_lo} tới {n_hi} mốc dịch {n_span} điểm — hai trục đó đã bão hoà ở bộ ship.",
@@ -342,7 +368,20 @@ zh: {
   rec_same: "保持实盘组：{p}。持有轴上的 {sets} 组网格找不到比它高出 {gap} 点以上的组，排在它前面的 {n_better} 组只在入场上不同。",
   rec_change: "改为 {p}：按资本年化 {best}，实盘组为 {ship}（+{gap} 点），{pos}/{series} 个序列为正，{be} 的笔回本。",
   rec_note: "三条持有轴各按自己的单位读：holding_days 是摊销一轮费用的天数（它决定入场和衰减退出的真实门槛，不是最长持有天数）；exit_persistence_periods 是结算期数——同一数值在 8h 节奏是 {n8} 天、在 1h 节奏是 {n1} 天；min_hold_recovered_cost_frac 是两类收益退出被允许触发前，这笔必须收回的一轮费用的比例。",
-  nav_oneaxis: "改一条轴",
+  nav_oneaxis: "改一条轴", nav_risk: "收益 / 风险",
+  rk_eyebrow: "收益除以风险", rk_title: "按收益 / 回撤重新排名",
+  rk_caption: "一次回放可测的风险是权益曲线的最大回撤（Go 逐序列记录），与收益一样按资本。比率 = {series} 个序列的平均收益除以平均回撤——不是各序列比率的平均，否则一个回撤极小、收益也极小的序列会压过一切。全程持有用同一尺度。",
+  rk_fig_ship: "实盘组：收益 / 回撤", rk_fig_best: "按比率最佳组", rk_fig_ht: "全程持有，同一尺度", rk_fig_sets: "达到全程持有比率的组",
+  rk_col_what: "持有方式", rk_col_ret: "收益 /资本 /年", rk_col_dd: "平均回撤", rk_col_wdd: "最大回撤", rk_col_wret: "最差序列", rk_col_std: "序列间标准差", rk_col_calmar: "收益 / 回撤", rk_col_exp: "在场时间", rk_col_held: "平均持有（天）", rk_col_tr: "笔 / 序列",
+  rk_row_calmar: "按收益 / 回撤最佳",
+  rk_read1: "按比率排名与按收益排名顺序一致：比率最佳的组（{calmar_best}）也是收益最佳的组，因为好区域里所有组的回撤都在 {dd_lo}–{dd_hi}% 之间且来自同样的序列——最大回撤 {wdd} 始终是 {wdd_series}。全程持有为 {calmar_ht}，{n_ht} / {sets} 组达到；实盘组 {calmar_ship}。更长的持有轴降不了这种风险：在负 funding 序列上持得更久就是回撤更深。",
+  rk_leg_c1: "C = 1（反号门槛同实盘组）", rk_leg_c0: "C = 0（任一负期即退出）", rk_leg_marks: "粗圆 = 实盘组，三角 = 全程持有，方块 = 比率最佳",
+  rk_x: "平均最大回撤，按资本（%）", rk_y: "按资本年化收益（%）",
+  rk_sub_title: "不在持有轴上的风险：交易哪些序列",
+  rk_sub_caption: "同一实盘组、同一全程持有，在序列子集上测量。前四个子集是事前选择（按币种、按 perp 计价货币）；最后一个按结果选，属事后，仅用于看上限。",
+  rk_sub_all: "全部 {n} 个序列", rk_sub_usdt_quoted: "仅 USDT 计价 perp（剔除 8 个 USD/USDT 桥接对）", rk_sub_majors: "仅 BTC + ETH", rk_sub_majors_usdt: "BTC + ETH，USDT 计价 perp", rk_sub_ht_positive: "全程持有盈利的序列（事后）",
+  rk_sub_col_set: "序列集", rk_sub_col_n: "序列", rk_sub_ship: "实盘组", rk_sub_ht: "全程持有",
+  rk_read2: "收益/风险真正改变的地方在这里。去掉 SOL 和 XRP：实盘组从按资本年化 {ret_all} 升到 {ret_maj}，平均回撤 {dd_all} → {dd_maj}，比率 {c_all} → {c_maj}；最差序列 {w_all} → {w_maj}。再去掉 4 个 USD/USDT 桥接对（无处扣除的脱锚风险，也是 11 笔基差退出的所在）：{ret_mu}，回撤 {dd_mu}，比率 {c_mu}，{n_mu} 个序列——但也失去了 funding 最高的两个 hyperliquid 序列。全程持有在同一 BTC+ETH 集上：{ret_ht_maj}，比率 {c_ht_maj}。选序列是入场决策（币种与交易所），不是持有轴；strategy 里尚无此规则，是下一个值得测的步骤。",
   oa_eyebrow: "从实盘组出发，只改一条轴", oa_title: "每条持有轴，其余全部不变",
   oa_caption: "这是操作者真正会做的测量：拿实盘组，改 config.yaml 里的一个键，看什么变了。网格平均（逐轴一节）把所有其他组混在一起；这张表不混。",
   oa_read: "最短持有门槛 M={m_on}——“这笔收回一轮费用之前不得因收益退出”——正是这个问题的旋钮：从实盘组出发，回本笔数占比 {be0} → {be1}，反号/衰减退出 {ye0} → {ye1}，每序列笔数 {tr0} → {tr1}，按资本年化 {r0} → {r1}（{dr} 点）。holding_days 从 {h_lo} 到 {h_hi} 天只移动 {h_span} 点；exit_persistence_periods 从 {n_lo} 到 {n_hi} 期只移动 {n_span} 点——这两条轴在实盘组上已饱和。",
@@ -463,6 +502,28 @@ function horizonChart(rows, ht) {
   return s + "</svg>";
 }
 
+function scatterChart(pts, sr, bc, HT) {
+  // x = mean max drawdown on capital, y = mean return on capital; one dot per
+  // parameter set, coloured by the sign-flip cost gate C, which is the axis
+  // that splits the cloud. The three marked points are the ones the tables name.
+  const W = 760, H = 380, L = 56, R = 16, Tp = 14, B = 44;
+  const xs = pts.map(p => p[1]), ys = pts.map(p => p[0]);
+  const xmax = Math.max(...xs, HT.mean_dd_cap_pct || 0) * 1.05, ymin = Math.min(0, ...ys), ymax = Math.max(...ys, HT.mean_cap_pct || 0) * 1.1;
+  const x = v => L + (W - L - R) * v / (xmax || 1), y = v => Tp + (H - Tp - B) * (1 - (v - ymin) / ((ymax - ymin) || 1));
+  let s = svg(W, H);
+  const xt = 6, yt = 6;
+  for (let i = 0; i <= xt; i++) { const v = xmax * i / xt; s += `<line class="grid" x1="${x(v)}" x2="${x(v)}" y1="${Tp}" y2="${H - B}"/><text x="${x(v)}" y="${H - B + 14}" text-anchor="middle">${num(v, 2)}</text>`; }
+  for (let i = 0; i <= yt; i++) { const v = ymin + (ymax - ymin) * i / yt; s += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/><text x="${L - 6}" y="${y(v) + 4}" text-anchor="end">${num(v, 2)}</text>`; }
+  s += `<line class="axis" x1="${L}" x2="${W - R}" y1="${y(0)}" y2="${y(0)}"/>`;
+  for (const p of pts) s += `<circle cx="${x(p[1])}" cy="${y(p[0])}" r="2.2" opacity=".45" style="fill:var(--${p[3] >= 1 ? "gain" : "loss"})"><title>${pct(p[0], 3, true)} / dd ${pct(p[1], 3)} · ${num(p[2], 2)} ${lang === "zh" ? "笔/序列" : "lệnh/chuỗi"} · C${p[3]} M${p[4]}</title></circle>`;
+  if (bc) s += `<rect x="${x(bc.mean_dd_cap_pct) - 5}" y="${y(bc.mean_cap_pct) - 5}" width="10" height="10" style="fill:none;stroke:var(--ink);stroke-width:1.5"><title>${esc(t("rk_row_calmar"))}</title></rect>`;
+  if (sr) s += `<circle cx="${x(sr.mean_dd_cap_pct)}" cy="${y(sr.mean_cap_pct)}" r="6" style="fill:none;stroke:var(--ink);stroke-width:2"><title>${esc(t("row_ship"))}</title></circle>`;
+  if (HT.mean_dd_cap_pct != null) { const cx = x(HT.mean_dd_cap_pct), cy = y(HT.mean_cap_pct); s += `<polygon points="${cx},${cy - 7} ${cx - 6},${cy + 5} ${cx + 6},${cy + 5}" style="fill:var(--warn);stroke:var(--ink);stroke-width:1"><title>${esc(t("row_ht"))}</title></polygon>`; }
+  s += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">${esc(t("rk_x"))}</text>`;
+  s += `<text transform="translate(12 ${(Tp + H - B) / 2}) rotate(-90)" text-anchor="middle">${esc(t("rk_y"))}</text>`;
+  return s + "</svg>";
+}
+
 function heatBlock(h, xLabel, yLabel) {
   const vals = h.cells.flat().filter(Boolean).map(c => c.best);
   const lo = Math.min(...vals), hi = Math.max(...vals);
@@ -490,7 +551,7 @@ function renderStatic() {
   const seg = document.getElementById("windowSeg"); seg.innerHTML = "";
   WINS.forEach(k => { const b = document.createElement("button"); b.type = "button"; b.textContent = t("months", { n: k });
     b.setAttribute("aria-pressed", String(k === win)); b.onclick = () => { win = k; try { localStorage.setItem("hold.win", k); } catch (e) {} render(); }; seg.appendChild(b); });
-  document.getElementById("pageNav").innerHTML = ["answer", "oneaxis", "horizon", "ledger", "marginals", "heat", "top", "method"].map(id => `<a href="#${id}">${t("nav_" + id)}</a>`).join("");
+  document.getElementById("pageNav").innerHTML = ["answer", "risk", "oneaxis", "horizon", "ledger", "marginals", "heat", "top", "method"].map(id => `<a href="#${id}">${t("nav_" + id)}</a>`).join("");
 }
 
 function render() {
@@ -499,6 +560,10 @@ function render() {
   const ship = W.shipped, sr = ship && ship.row, best = W.best.row, clean = W.clean_best[0], beb = W.be_best[0];
   const capPct = f => f * 100 / cap; // per-trade fractions of notional → capital
   document.querySelectorAll("[data-i18n='cap_note']").forEach(el => el.textContent = t("cap_note", { cap: num(cap, 1) }));
+  // Static strings that carry a variable are re-rendered here with it: the
+  // data-i18n pass above substitutes nothing, and a bare {series} on the page
+  // is the placeholder trap tools/report/README.md records.
+  document.querySelectorAll("[data-i18n='rk_caption']").forEach(el => el.textContent = t("rk_caption", { series: S }));
   document.getElementById("windowLabel").textContent = t("window_label", { from: day(W.window_from_ms), to: day(W.window_to_ms), series: S, sets: num(W.sets), trades: num(W.trades_total) });
 
   // --- verdict ---
@@ -557,6 +622,34 @@ function render() {
     ? t("rec_same", { p: fmtSet(sr), sets: num(W.sets), gap: num(gapBest, 3), n_better: nBetter })
     : t("rec_change", { p: fmtSet(best), best: pct(best.mean_cap_pct, 3, true), ship: sr ? pct(sr.mean_cap_pct, 3, true) : "—", gap: num(gapBest ?? 0, 3), pos: best.positive, series: S, be: pct((best.be_share || 0) * 100, 0) }))
     + " " + t("rec_note", { n8: num(rec.exit_persistence_periods * 8 / 24, 0), n1: num(rec.exit_persistence_periods / 24, 0) });
+
+  // --- return over risk ---
+  const RK = W.risk, bc = RK.best_calmar;
+  const cal = v => v == null ? "—" : num(v, 2);
+  document.getElementById("rkFigures").innerHTML =
+    (sr ? fig(cal(sr.calmar), t("rk_fig_ship"), cls(sr.calmar)) : "") + (bc ? fig(cal(bc.calmar), t("rk_fig_best"), cls(bc.calmar)) : "") +
+    fig(cal(HT.calmar), t("rk_fig_ht"), cls(HT.calmar)) + fig(`${num(RK.sets_at_or_above_ht_calmar)} / ${num(W.sets)}`, t("rk_fig_sets"), RK.sets_at_or_above_ht_calmar ? "gain" : "loss");
+  const rkRow = (label, r, params) => `<tr><td style="white-space:normal;min-width:18ch">${label}</td><td class="params">${params ? esc(fmtSet(params)) : "—"}</td><td class="num ${cls(r.mean_cap_pct)}">${pct(r.mean_cap_pct, 3, true)}</td><td class="num">${pct(r.mean_dd_cap_pct, 3)}</td><td class="num">${pct(r.worst_dd_cap_pct, 2)}</td><td class="num ${cls(r.worst_series_cap_pct)}">${pct(r.worst_series_cap_pct, 2, true)}</td><td class="num">${pct(r.std_cap_pct, 2)}</td><td class="num ${cls(r.calmar)}"><b>${cal(r.calmar)}</b></td><td class="num">${r.exposure == null ? "—" : pct(r.exposure * 100, 0)}</td><td class="num">${r.mean_held_days == null ? num(W.window_days, 0) : num(r.mean_held_days, 0)}</td><td class="num">${r.trades_per_series == null ? "1" : num(r.trades_per_series, 2)}</td></tr>`;
+  document.getElementById("rkTable").innerHTML = `<thead><tr><th>${t("rk_col_what")}</th><th>${t("col_params")}</th><th class="num">${t("rk_col_ret")}</th><th class="num">${t("rk_col_dd")}</th><th class="num">${t("rk_col_wdd")}</th><th class="num">${t("rk_col_wret")}</th><th class="num">${t("rk_col_std")}</th><th class="num">${t("rk_col_calmar")}</th><th class="num">${t("rk_col_exp")}</th><th class="num">${t("rk_col_held")}</th><th class="num">${t("rk_col_tr")}</th></tr></thead><tbody>` +
+    (sr ? rkRow(t("row_ship"), sr, sr) : "") + rkRow(t("row_best"), best, best) + (bc ? rkRow(t("rk_row_calmar"), bc, bc) : "") +
+    rkRow(t("row_ht"), Object.assign({ mean_held_days: null, trades_per_series: null }, HT), null) + "</tbody>";
+  const wddSeries = Object.entries(HT.dd_by_series).sort((a, b) => b[1] - a[1])[0];
+  const good = W.top.slice(0, 15).map(r => r.mean_dd_cap_pct);
+  document.getElementById("rkRead1").textContent = t("rk_read1", { calmar_best: bc ? cal(bc.calmar) : "—", dd_lo: num(Math.min(...good), 3), dd_hi: num(Math.max(...good), 3),
+    wdd: sr ? pct(sr.worst_dd_cap_pct, 2) : "—", wdd_series: wddSeries ? sname(...wddSeries[0].split("|")) : "—", calmar_ht: cal(HT.calmar), n_ht: num(RK.sets_at_or_above_ht_calmar), sets: num(W.sets), calmar_ship: sr ? cal(sr.calmar) : "—" });
+  document.getElementById("rkScatter").innerHTML = scatterChart(RK.scatter, sr, bc, HT);
+  const SUBS = ["all", "usdt_quoted", "majors", "majors_usdt", "ht_positive"];
+  const sub = name => RK.subsets.find(x => x.name === name);
+  const subCell = x => x ? `<td class="num ${cls(x.mean_cap_pct)}">${pct(x.mean_cap_pct, 3, true)}</td><td class="num">${pct(x.mean_dd_cap_pct, 3)}</td><td class="num ${cls(x.worst_series_cap_pct)}">${pct(x.worst_series_cap_pct, 2, true)}</td><td class="num ${cls(x.calmar)}"><b>${cal(x.calmar)}</b></td><td class="num">${x.positive}/${x.n}</td>` : `<td colspan="5" class="muted">—</td>`;
+  const subHead = who => `<th class="num">${who}: ${t("rk_col_ret")}</th><th class="num">${t("rk_col_dd")}</th><th class="num">${t("rk_col_wret")}</th><th class="num">${t("rk_col_calmar")}</th><th class="num">${t("col_pos")}</th>`;
+  document.getElementById("rkSubTable").innerHTML = `<thead><tr><th>${t("rk_sub_col_set")}</th><th class="num">${t("rk_sub_col_n")}</th>${subHead(t("rk_sub_ship"))}${subHead(t("rk_sub_ht"))}</tr></thead><tbody>` +
+    SUBS.map(nm => sub(nm)).filter(Boolean).map(x => `<tr><td style="white-space:normal;min-width:20ch">${t("rk_sub_" + x.name, { n: x.n })}${x.hindsight ? ` <span class="pill open">${lang === "zh" ? "事后" : "hậu nghiệm"}</span>` : ""}</td><td class="num">${x.n}</td>${subCell(x.ship)}${subCell(x.ht)}</tr>`).join("") + "</tbody>";
+  const sAll = sub("all"), sMaj = sub("majors"), sMU = sub("majors_usdt");
+  if (sAll && sAll.ship && sMaj && sMaj.ship && sMU && sMU.ship) document.getElementById("rkRead2").textContent = t("rk_read2", {
+    ret_all: pct(sAll.ship.mean_cap_pct, 2, true), ret_maj: pct(sMaj.ship.mean_cap_pct, 2, true), dd_all: pct(sAll.ship.mean_dd_cap_pct, 2), dd_maj: pct(sMaj.ship.mean_dd_cap_pct, 2),
+    c_all: cal(sAll.ship.calmar), c_maj: cal(sMaj.ship.calmar), w_all: pct(sAll.ship.worst_series_cap_pct, 2, true), w_maj: pct(sMaj.ship.worst_series_cap_pct, 2, true),
+    ret_mu: pct(sMU.ship.mean_cap_pct, 2, true), dd_mu: pct(sMU.ship.mean_dd_cap_pct, 2), c_mu: cal(sMU.ship.calmar), n_mu: sMU.n,
+    ret_ht_maj: pct(sMaj.ht.mean_cap_pct, 2, true), c_ht_maj: cal(sMaj.ht.calmar) });
 
   // --- one axis at a time ---
   const OA = W.one_axis || {};

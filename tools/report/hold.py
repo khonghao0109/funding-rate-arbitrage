@@ -167,7 +167,18 @@ def corpus(db, series_cost, from_ms, to_ms, entry_bps, entry_persist):
         rule_entries = [k for k in range(entry_persist - 1, n - 1)
                         if all(r8[i] * 1e4 >= entry_bps for i in range(k - entry_persist + 1, k + 1))]
         mean_rate = statistics.mean(rates)
+        # The hold-through equity curve as internal/backtest would draw it:
+        # paid from the second settlement on, the round trip charged at the
+        # close, and the forced close counted in the drawdown.
+        eq, peak, dd = 0.0, 0.0, 0.0
+        for x in rates[1:]:
+            eq += x
+            peak = max(peak, eq)
+            dd = max(dd, peak - eq)
+        eq -= cost
+        dd = max(dd, peak - eq)
         out.append({
+            "hold_through_dd_frac": dd,
             "symbol": sym, "perp": src, "interval_sec": iv, "settlements": n, "cost_frac": cost,
             "covered_days": (ts[-1] - ts[0]) / 86400000 + iv / 86400,
             "mean_rate_per_8h_bps": statistics.mean(r8) * 1e4,
@@ -207,7 +218,12 @@ def aggregate_runs(runs):
         s["liq"] += int(r.get("liquidations") or 0)
         s["positive"] += 1 if v > 0 else 0
         s["trades"] += int(r["trades"])
-        s["per_series"][f"{r['symbol']}|{r['perp_source']}"] = {"cap": v, "trades": int(r["trades"])}
+        s["per_series"][f"{r['symbol']}|{r['perp_source']}"] = {
+            "cap": v, "trades": int(r["trades"]),
+            # The equity curve's peak-to-trough, which Go measured per run; on
+            # capital like the return, so the two divide into one ratio.
+            "dd": float(r["max_drawdown_frac"]) / float(r["capital_per_notional_frac"]),
+            "pip": int(r["periods_in_position"]), "st": int(r["settlements"])}
         cap = float(r["capital_per_notional_frac"])
     return sets, cap
 
@@ -253,9 +269,27 @@ def stream_trades(path, ledger_keys):
     return acc, ledgers, n
 
 
+def risk_stats(per_series):
+    """Return over drawdown for one set (or the hold-through benchmark) across
+    its series. The ratio is MEAN return over MEAN drawdown, never a mean of
+    per-series ratios: a series with a tiny drawdown and a tiny return would
+    otherwise dominate. None when nothing drew down (nothing traded)."""
+    rets = [v["cap"] for v in per_series.values()]
+    dds = [v["dd"] for v in per_series.values()]
+    if not rets:
+        return {}
+    mean_ret, mean_dd, worst_dd = statistics.mean(rets), statistics.mean(dds), max(dds)
+    return {"mean_dd_cap_pct": mean_dd * 100, "worst_dd_cap_pct": worst_dd * 100,
+            "worst_series_cap_pct": min(rets) * 100, "std_cap_pct": statistics.pstdev(rets) * 100,
+            "calmar": mean_ret / mean_dd if mean_dd > 0 else None,
+            "worst_calmar": mean_ret / worst_dd if worst_dd > 0 else None,
+            "exposure": statistics.mean(v["pip"] / v["st"] for v in per_series.values() if v.get("st")) if any(v.get("st") for v in per_series.values()) else None}
+
+
 def set_row(k, s, a):
     n = a["n"] if a else 0
     row = dict(zip(AXES, k))
+    row.update(risk_stats(s["per_series"]))
     row.update({"series": s["series"], "mean_cap_pct": s["sum_cap"] * 100 / s["series"],
                 "sum_notional_pct": s["sum_notional"] * 100, "positive": s["positive"],
                 "trades_per_series": s["trades"] / s["series"], "mean_dd_pct": s["sum_dd"] * 100 / s["series"],
@@ -336,6 +370,9 @@ def window(name, runs_path, trades_path, db, ship, entry_bps, entry_persist):
     corp = corpus(db, series_cost, from_ms, to_ms, entry_bps, entry_persist)
     ht_by = {f"{c['symbol']}|{c['perp']}": c["hold_through_net_frac"] for c in corp}
     ht_mean_cap = statistics.mean(ht_by.values()) * 100 / cap if ht_by else None
+    ht_ps = {f"{c['symbol']}|{c['perp']}": {"cap": c["hold_through_net_frac"] / cap, "dd": c["hold_through_dd_frac"] / cap,
+                                            "trades": 1, "pip": c["settlements"] - 1, "st": c["settlements"]} for c in corp}
+    ht_risk = risk_stats(ht_ps)
 
     ship_key = next((k for k in keys if same(k, ship)), None)
     best_key = max(keys, key=lambda k: sets[k]["sum_cap"])
@@ -371,6 +408,46 @@ def window(name, runs_path, trades_path, db, ship, entry_bps, entry_persist):
 
     ship_row = by_key.get(ship_key) if ship_key else None
     best_row = by_key[best_key]
+
+    # Return over risk. Ranked among sets that trade on every series, so a
+    # set that never entered (no drawdown, no return) cannot top the list.
+    ranked_calmar = sorted([r for r in rows if r.get("calmar") is not None and r["trades_per_series"] >= 1],
+                           key=lambda r: -r["calmar"])
+    best_calmar_row = ranked_calmar[0] if ranked_calmar else None
+
+    # Every set as one point: return, drawdown, trades per series, and the
+    # sign-flip cost gate — the axis that splits the cloud in two.
+    scatter = [[round(r["mean_cap_pct"], 4), round(r.get("mean_dd_cap_pct", 0), 4), round(r["trades_per_series"], 2),
+                r["exit_negative_cum_cost_frac"], r["min_hold_recovered_cost_frac"]] for r in rows]
+
+    # The risk that is NOT on any hold axis: which series are traded. The
+    # same set and the same benchmark on four ex-ante subsets and one
+    # hindsight subset (labelled so), each measured on its own series only.
+    # "Quote-bridged" follows the report convention: the USD-quoted perps.
+    BRIDGED = {"hyperliquid_futures", "kraken_futures", "paradex_futures"}
+    majors = {"BTCUSDT", "ETHUSDT"}
+    all_sk = sorted(ht_ps)
+    subsets = [("all", all_sk, False),
+               ("usdt_quoted", [k for k in all_sk if k.split("|")[1] not in BRIDGED], False),
+               ("majors", [k for k in all_sk if k.split("|")[0] in majors], False),
+               ("majors_usdt", [k for k in all_sk if k.split("|")[0] in majors and k.split("|")[1] not in BRIDGED], False),
+               ("ht_positive", [k for k in all_sk if ht_ps[k]["cap"] > 0], True)]
+
+    def on_subset(per_series, sks):
+        sub = {k: per_series[k] for k in sks if k in per_series}
+        if not sub:
+            return None
+        st = risk_stats(sub)
+        st["mean_cap_pct"] = statistics.mean(v["cap"] for v in sub.values()) * 100
+        st["positive"] = sum(1 for v in sub.values() if v["cap"] > 0)
+        st["n"] = len(sub)
+        return st
+    subset_rows = []
+    for name, sks, hindsight in subsets:
+        subset_rows.append({"name": name, "n": len(sks), "hindsight": hindsight,
+                            "ship": on_subset(sets[ship_key]["per_series"], sks) if ship_key else None,
+                            "best": on_subset(sets[best_key]["per_series"], sks),
+                            "ht": on_subset(ht_ps, sks)})
 
     # What the floor DID, trade by trade: the series whose trade list differs
     # between the shipped set and the same set with the floor on, with the
@@ -413,6 +490,8 @@ def window(name, runs_path, trades_path, db, ship, entry_bps, entry_persist):
         "refusals": [{"symbol": k[0], "perp": k[1], "reason_vi": v} for k, v in refused.items()],
         "hold_through": {"mean_cap_pct": ht_mean_cap, "positive": sum(1 for v in ht_by.values() if v > 0),
                          "by_series": {k: v * 100 / cap for k, v in ht_by.items()},
+                         "dd_by_series": {k: v["dd"] * 100 for k, v in ht_ps.items()},
+                         **ht_risk,
                          "sets_at_or_above": sum(1 for r in rows if ht_mean_cap is not None and r["mean_cap_pct"] >= ht_mean_cap)},
         "corpus": corp,
         "shipped": {"params": ship, "row": ship_row, "ledger": sorted(ledgers.get(ship_key, []), key=lambda t: (t["symbol"], t["perp"], t["open_ms"])),
@@ -420,6 +499,8 @@ def window(name, runs_path, trades_path, db, ship, entry_bps, entry_persist):
         "best": {"row": best_row, "ledger": sorted(ledgers.get(best_key, []), key=lambda t: (t["symbol"], t["perp"], t["open_ms"])),
                  "per_series": series_table(best_key)},
         "one_axis": one_axis, "m_diff": m_diff,
+        "risk": {"best_calmar": best_calmar_row, "ranked_calmar": ranked_calmar[:10], "scatter": scatter, "subsets": subset_rows,
+                 "sets_at_or_above_ht_calmar": sum(1 for r in ranked_calmar if ht_risk.get("calmar") is not None and r["calmar"] >= ht_risk["calmar"])},
         "clean_best": clean[:10], "clean_count": len(clean),
         "be_best": best_be[:10],
         "top": rows[:25],

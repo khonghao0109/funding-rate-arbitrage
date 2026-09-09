@@ -324,7 +324,15 @@ losing SOL trades that then hold to the window end and lose more (SOL/binance
 not because any trade was saved — a count-based target is the wrong target on
 a series whose break-even horizon is infinite. Hold-through stays unreached
 (+0.613%, 0 of 3,200 on 12 months; on 6 months 1,002 sets reach it by entering
-later than the window start). Report:
+later than the window start). **Ranking by return over max drawdown (both on
+capital, mean over mean) gives the same order** — shipped 1.30, best 1.35,
+hold-through 1.49, 0 sets reach it — because every good set draws down 0.42–
+0.44% on the SAME series. The risk lever is not on any hold axis, it is which
+series are traded: the shipped set on BTC+ETH only (12 series) makes +1.19%
+on capital at 0.18% drawdown, ratio 6.55, 12/12 positive, worst series +0.22%;
+on BTC+ETH with USDT-quoted perps (8 series, no USD/USDT bridging) +0.76% at
+ratio 4.26. Twice the return at half the drawdown comes from NOT entering
+SOL/XRP, and no rule in `strategy` decides that yet. Report:
 `docs/reports/backtest-hold-2026-09-09.html`.
 
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is

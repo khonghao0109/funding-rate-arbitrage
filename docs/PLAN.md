@@ -2187,6 +2187,24 @@ vẫn là C (0→1: trung vị −0,10% → +0,53%). Giữ suốt +0,613% (18/24
 bộ đạt tới** trên 12 tháng; trên 6 tháng 1.002 bộ đạt nhờ vào muộn hơn đầu cửa
 sổ.
 
+**④ Lợi nhuận / rủi ro (bổ sung cùng ngày, theo yêu cầu "tăng thời gian giữ
+đồng thời giảm rủi ro khác, lấy bộ có lợi nhuận/rủi ro cao nhất").** Rủi ro đo
+được của một lượt phát lại là sụt vốn tối đa của đường equity, Go ghi từng
+chuỗi; tỷ số = lợi nhuận TB / sụt vốn TB trên vốn (không phải TB của các tỷ số
+từng chuỗi). Trên 12 tháng, 24 chuỗi: bộ ship 1,30, bộ tốt nhất 1,35 (cũng là
+bộ tốt nhất theo lợi nhuận — hai cách xếp cho cùng thứ tự vì sụt vốn của mọi
+bộ vùng tốt nằm trong 0,42–0,44% và đến từ cùng những chuỗi), giữ suốt
+**1,49**, 0/3.200 bộ đạt tới. Trục giữ dài hơn không giảm rủi ro này: giữ lâu
+hơn trên chuỗi funding âm là sụt sâu hơn. Rủi ro thật sự nằm ở **chọn chuỗi**,
+đo trên cùng bộ ship: cả 24 chuỗi +0,56%/vốn, sụt 0,43%, tỷ số 1,30; **chỉ
+BTC+ETH (12 chuỗi) +1,19%, sụt 0,18%, tỷ số 6,55, 12/12 dương, chuỗi tệ nhất
++0,22%**; BTC+ETH perp quote USDT (8 chuỗi, bỏ rủi ro USD/USDT) +0,76%, tỷ số
+4,26. Giữ suốt trên BTC+ETH: +1,24%, tỷ số 6,81. Tức là lợi nhuận gấp đôi và
+sụt vốn giảm một nửa đến từ việc **không vào SOL/XRP**, thứ chưa có luật nào
+trong `strategy` và là bước tiếp theo đáng đo (một sàn vào theo funding trung
+bình trượt của chuỗi, chọn trước chứ không hậu nghiệm). Cửa sổ 6 tháng cùng
+chiều (BTC+ETH tỷ số 3,58 so với 1,53 cả 24).
+
 **③ M=1 là câu trả lời "đen" cho câu hỏi, và nó làm xấu đi.** Bật
 `min_hold_recovered_cost_frac: 1` (không thoát vì lợi suất trước khi lệnh thu
 lại một vòng phí) trên bộ ship: tỷ lệ lệnh hoà vốn 56% → 62%, lệnh thoát lợi
