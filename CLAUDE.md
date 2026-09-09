@@ -335,6 +335,31 @@ ratio 4.26. Twice the return at half the drawdown comes from NOT entering
 SOL/XRP, and no rule in `strategy` decides that yet. Report:
 `docs/reports/backtest-hold-2026-09-09.html`.
 
+**The pair list was screened and expanded on 2026-09-09** (`cmd/pairscreen`
++ `tools/report/pairscreen.py`, report
+`docs/reports/pairscreen-2026-09-09.html`). 32 candidates × 7 perps were put
+through six criteria, all evaluated: listed → hedge leg by the config's own
+declarations → round trip priced at 50k → book fits 50k inside ±0.5% on all
+four sides → corpus ≥ 150 days → mean funding ≥ 0.94 bps/8h (5%/yr on capital
+at K=2 after a 0.30% trip). **0 of 252 pass all six.** The one combination
+above 0.94 (HYPE·hyperliquid 0.946) has no book for 50k. The finding that
+matters: **Hyperliquid pays 2–3× the USDT venues on the same coin** — NEAR
+0.930, LINK 0.925, UNI 0.916, AAVE 0.861 bps/8h over 365 days at 91% positive,
+hold-through **+4.4…+4.8%/yr on capital**, the highest this project has
+measured — and all four are quote-bridged (USD perp / USDT spot) at K=2 across
+venues, with no spot leg on Hyperliquid to bring K down. Best USDT venues:
+HYPE·binance 0.649, LINK·binance 0.425, SUI·bybit 0.412, UNI·binance 0.404.
+`config.yaml` now carries 13 pairs: the 4 shipped plus 9 admitted by the
+weaker "worth a backtest" verdict (every venue-side and corpus criterion, mean
+≥ 0.40 bps/8h), each with its measurements in a comment and the bridged-only
+ones (NEAR, AAVE, LTC, BNB, DOGE) saying so. The running 3.5 process loaded
+its config once and is unaffected; `cmd/backtest` now replays 13 pairs. Two
+traps met: the corpus for a candidate is backfilled AFTER the screen's
+snapshot, so a `recorded_at_ms <= snapshot` filter (right for a replay)
+silently dropped every Hyperliquid alt on the first run; and OKX's 96-day
+mean is not comparable with a 365-day one, so a pair's "best venue" prefers a
+deep corpus before a higher number.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
@@ -541,6 +566,10 @@ cmd/fundingcheck/    step-2.1 diagnostic: reads BTC funding from all 7 venues
 cmd/backfill/        step-2.6 one-off: fills funding_history from the venues'
                      history endpoints and reports how deep each series really
                      reached. Safe to re-run — every row is keyed by settlement
+cmd/pairscreen/      candidate-pair screen (2026-09-09): live registry, hedge
+                     mapping, 9 order books and the round trip strategy prices
+                     at 50k, one JSON row per pair × perp; the corpus half and
+                     the six-criterion verdict are tools/report/pairscreen.py
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
                      the root package is the shared KERNEL: types, Feeds, the
                      RunStream lifecycle, FetchJSON, and the normalization

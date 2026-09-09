@@ -2217,6 +2217,50 @@ lại nằm ở 11 lệnh thoát basis trên kraken (lối thoát rủi ro) và 
 chuỗi mà giữ suốt cũng lỗ — thứ chỉ lối vào (chọn cặp/sàn) sửa được, không phải
 trục giữ.
 
+#### Sàng cặp mở rộng ✅ (2026-09-09, `cmd/pairscreen` + `tools/report/pairscreen.py`)
+
+Câu hỏi: *vấn đề ở đâu để đạt ≥5%/năm* → mức funding của corpus (BTC·binance
+0,31 bps/8h ≈ 3,4%/năm gộp) và mẫu số vốn K = 2. Đòn bẩy 1 là cặp có funding
+cao hơn, nên **32 cặp ứng viên** được sàng theo SÁU điều kiện, đánh giá hết
+chứ không dừng ở điều kiện rớt đầu tiên: niêm yết → chân hedge theo khai báo
+config (base/quote do sàn khai, kiểm hai chiều) → định giá được vòng phí ở 50k
+→ sổ đủ 50k trong ±0,5% ở cả bốn phía → corpus ≥ 150 ngày → funding TB ≥ 0,94
+bps/8h (= 5%/năm trên vốn ở K = 2 sau vòng 0,30%). Phía sàn do Go đo trực tiếp
+(`cmd/pairscreen`: registry 10 nguồn, ánh xạ hedge bằng đúng hàm cmd/scanner
+dùng, sổ lệnh 1.000 mức, vòng phí do `internal/strategy` định giá); phía corpus
+do Python đọc sau khi `cmd/backfill` điền 12 tháng cho 36 cặp × 6 sàn (paradex
+bỏ). Báo cáo: [docs/reports/pairscreen-2026-09-09.html](reports/pairscreen-2026-09-09.html).
+
+**Kết quả: 252 tổ hợp, 234 niêm yết, 230 ghép được, 164 định giá được và đủ
+sổ 50k, 175 đủ corpus, và 0 qua cả sáu.** Đúng một tổ hợp có funding ≥ 0,94
+(HYPE·hyperliquid 0,946) nhưng sổ của nó không đủ 50k. Phát hiện lớn nhất là
+**Hyperliquid trả funding cao gấp 2–3 lần các sàn USDT trên cùng coin**: NEAR
+0,930, LINK 0,925, UNI 0,916, AAVE 0,861 bps/8h qua 365 ngày với 91% mốc dương
+— giữ suốt **+4,4…+4,8%/năm trên vốn**, con số cao nhất dự án từng đo, và cả
+bốn đều là cặp GHÉP KHÁC QUOTE (perp USD / spot USDT) với K = 2 xuyên sàn.
+Sàn USDT tốt nhất: HYPE·binance 0,649, LINK·binance 0,425, SUI·bybit 0,412,
+UNI·binance 0,404. Bốn cặp đang ship xếp #11, #12, #21, #29 trên 36.
+
+Rủi ro đo được, ghi trên trang: 66 tổ hợp có sổ mỏng hơn 50k ở ít nhất một
+phía (paradex gần như rỗng, hyperliquid mỏng ở alt); vòng phí ở 50k từ 0,294%
+tới 1,282% (trung vị 0,588% — gấp đôi BTC, phần nhạy với size nhất); funding
+đảo dấu 40–2.437 lần/năm, đợt âm tệ nhất 12,47% notional (APT·binance) tức
+cổng C=1 sẽ nổ; 36 tổ hợp corpus ngắn (okx 96, gate 179 ngày) nên "sàn tốt
+nhất" ưu tiên corpus sâu trước funding; ký quỹ duy trì trong config đo trên
+BTC, alt có bậc cao hơn (maxLeverage 5–200×) — cần fetcher theo cặp trước khi
+bật đòn bẩy; Paradex thiếu 16/32 cặp.
+
+**Đưa vào `config.yaml` 9 cặp** theo phán quyết yếu hơn "đáng backtest" (qua
+mọi điều kiện phía sàn và corpus, funding ≥ 0,40 bps/8h — hơn mọi cặp đang
+ship ở sàn USDT): HYPE, LINK, UNI, SUI có sàn USDT; NEAR, AAVE, LTC, BNB, DOGE
+chỉ đáng ở hyperliquid (bridge) và comment trong config nói rõ. Mỗi dòng mang
+con số đã sàng. Danh sách này KHÔNG chạm mục tiêu 5% — nó là danh sách để
+backtest bằng bộ luật đang ship, và tiến trình 3.5 (nạp config một lần) không
+đổi. Điều còn thiếu để trả lời "≥5%": (a) luật vào theo funding trung bình của
+chuỗi để chọn cặp TRƯỚC chứ không hậu nghiệm; (b) hai chân trên một sàn để K
+về ~1,2 — với hyperliquid thì không có spot, nên K = 2 và +4,8% là trần của
+cách ghép hiện tại.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.

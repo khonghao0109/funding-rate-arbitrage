@@ -98,6 +98,32 @@ dòng, không PyYAML) và đặt nó vào lưới: trang có bảng "đổi đú
 ship", là phép đo thao tác viên thật sự làm, bên cạnh trung bình lưới. Lưới
 phải CHỨA bộ ship trên mọi trục, nếu không mục đó và sổ lệnh của nó biến mất.
 
+## Sàng cặp (`cmd/pairscreen` + `pairscreen.py`)
+
+Mở rộng danh sách cặp mà không bỏ qua đánh giá rủi ro: nửa SÀN do Go đo trực
+tiếp, nửa CORPUS do Python đọc, và một phán quyết sáu điều kiện cho từng tổ hợp
+cặp × sàn perp — đánh giá hết, không dừng ở điều kiện đầu tiên rớt.
+
+```bash
+# 1. một bản config với danh sách ứng viên (chỉ thêm dòng vào `symbols:`)
+# 2. corpus funding 12 tháng cho ứng viên — bỏ paradex (chỉ số liên tục, backtest từ chối)
+for src in binance_futures bybit_futures okx_futures gate_futures kraken_futures hyperliquid_futures; do
+  go run ./cmd/backfill -config $S/config-screen.yaml -months 12 -source $src
+done
+# 3. phía sàn: registry, ánh xạ hedge, sổ lệnh 9 nguồn, vòng phí ở 50k
+go run ./cmd/pairscreen -config $S/config-screen.yaml -notional 50000 -out $S/screen.json
+# 4. ghép hai nửa, phán quyết, dựng trang
+python3 tools/report/pairscreen.py --db data/scanner.db --screen $S/screen.json --out $S/pairscreen.json
+python3 tools/report/hold_build.py --json $S/pairscreen.json --template tools/report/pairscreen.template.html \
+  --commit $(git rev-parse --short HEAD) --title "Sàng cặp <ngày>" --out docs/reports/pairscreen-<ngày>.html
+```
+
+Ngưỡng funding mặc định (`--min-bps 0.94`) suy từ mục tiêu: 5%/năm trên VỐN ở
+K = 2 sau vòng 0,30% ⇒ gộp ≥ 10,3%/năm ⇒ 0,94 bps/8h. Nó là ngưỡng của mục
+tiêu, không phải điều kiện vào lệnh. "Sàn tốt nhất" của một cặp ưu tiên sàn có
+corpus ≥ `--min-cover-days` (okx ~96 ngày, gate ~180) rồi mới so funding —
+trung bình 96 ngày không so được với 365 ngày.
+
 ## Ba cái bẫy đã mắc, ghi lại để khỏi mắc lại
 
 **1. `{series}` là placeholder ĐÃ ĐƯỢC ĐẶT TRƯỚC trong template.** `withSeries()`

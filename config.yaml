@@ -280,6 +280,24 @@ symbols:
   - { symbol: ETHUSDT, base: ETH, quote: USDT }
   - { symbol: XRPUSDT, base: XRP, quote: USDT }
   - { symbol: SOLUSDT, base: SOL, quote: USDT }
+  # HYPE: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — binance 0,649 bps/8h TB qua 365 ngày, 81% mốc dương, giữ suốt +3,35%/vốn, vòng 0,381% ở 50k; 2 sàn đáng backtest (1 quote USDT); sổ mỏng hơn 50k ở 2 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: HYPEUSDT, base: HYPE, quote: USDT }
+  # NEAR: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — hyperliquid 0,930 bps/8h TB qua 365 ngày, 91% mốc dương, giữ suốt +4,78%/vốn, vòng 0,619% ở 50k; 1 sàn đáng backtest (0 quote USDT — CHỈ sàn perp USD, chân spot USDT ghép qua hedge.quote_equivalents: rủi ro USDT/USD không chỗ nào trừ); sổ mỏng hơn 50k ở 1 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: NEARUSDT, base: NEAR, quote: USDT }
+  # LINK: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — binance 0,425 bps/8h TB qua 365 ngày, 78% mốc dương, giữ suốt +2,07%/vốn, vòng 0,496% ở 50k; 2 sàn đáng backtest (1 quote USDT); sổ mỏng hơn 50k ở 1 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: LINKUSDT, base: LINK, quote: USDT }
+  # UNI: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — binance 0,404 bps/8h TB qua 365 ngày, 78% mốc dương, giữ suốt +1,91%/vốn, vòng 0,593% ở 50k; 1 sàn đáng backtest (1 quote USDT); sổ mỏng hơn 50k ở 2 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: UNIUSDT, base: UNI, quote: USDT }
+  # AAVE: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — hyperliquid 0,861 bps/8h TB qua 365 ngày, 91% mốc dương, giữ suốt +4,43%/vốn, vòng 0,570% ở 50k; 1 sàn đáng backtest (0 quote USDT — CHỈ sàn perp USD, chân spot USDT ghép qua hedge.quote_equivalents: rủi ro USDT/USD không chỗ nào trừ); sổ mỏng hơn 50k ở 1 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: AAVEUSDT, base: AAVE, quote: USDT }
+  # LTC: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — hyperliquid 0,630 bps/8h TB qua 365 ngày, 81% mốc dương, giữ suốt +3,20%/vốn, vòng 0,508% ở 50k; 1 sàn đáng backtest (0 quote USDT — CHỈ sàn perp USD, chân spot USDT ghép qua hedge.quote_equivalents: rủi ro USDT/USD không chỗ nào trừ); sổ mỏng hơn 50k ở 1 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: LTCUSDT, base: LTC, quote: USDT }
+  # BNB: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — hyperliquid 0,519 bps/8h TB qua 365 ngày, 78% mốc dương, giữ suốt +2,66%/vốn, vòng 0,367% ở 50k; 1 sàn đáng backtest (0 quote USDT — CHỈ sàn perp USD, chân spot USDT ghép qua hedge.quote_equivalents: rủi ro USDT/USD không chỗ nào trừ); sổ mỏng hơn 50k ở 1 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: BNBUSDT, base: BNB, quote: USDT }
+  # DOGE: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — hyperliquid 0,490 bps/8h TB qua 365 ngày, 75% mốc dương, giữ suốt +2,48%/vốn, vòng 0,396% ở 50k; 1 sàn đáng backtest (0 quote USDT — CHỈ sàn perp USD, chân spot USDT ghép qua hedge.quote_equivalents: rủi ro USDT/USD không chỗ nào trừ); sổ mỏng hơn 50k ở 1 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: DOGEUSDT, base: DOGE, quote: USDT }
+  # SUI: sàng 2026-09-09 (docs/reports/pairscreen-2026-09-09.html) — bybit 0,412 bps/8h TB qua 365 ngày, 77% mốc dương, giữ suốt +1,97%/vốn, vòng 0,553% ở 50k; 2 sàn đáng backtest (1 quote USDT); sổ mỏng hơn 50k ở 1 sàn. CHƯA tới 0,94 bps/8h của mục tiêu 5%/năm trên vốn.
+  - { symbol: SUIUSDT, base: SUI, quote: USDT }
 
 # Nguồn dữ liệu. Thứ tự ở đây quyết định thứ tự cột của ma trận spread và thứ tự
 # hàng của danh sách nguồn trên dashboard.

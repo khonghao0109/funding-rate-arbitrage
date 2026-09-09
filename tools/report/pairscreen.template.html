@@ -1,0 +1,397 @@
+<title>Sàng cặp</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ground:#F4F6F3; --surface:#FFFFFF; --ink:#1A2024; --muted:#5F6B72; --rule:#D6DCD8; --rule-soft:#E6EAE7;
+  --accent:#35507A; --accent-ink:#FFFFFF; --loss:#B4552D; --gain:#1E7A6C; --warn:#B8891E;
+  --loss-rgb:180,85,45; --gain-rgb:30,122,108; --accent-rgb:53,80,122;
+  --display:"Bricolage Grotesque","IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+    --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+    --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+  --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+  --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+:lang(zh) body, body:lang(zh){font-family:"Noto Sans SC","IBM Plex Sans",sans-serif}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:700}
+h3{font-size:1.05rem;font-weight:600}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mono,.num,td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.loss{color:var(--loss)} .gain{color:var(--gain)} .warn{color:var(--warn)}
+.topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--rule)}
+.topbar .in{max-width:1040px;margin:0 auto;padding:.6rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.topbar .name{font-family:var(--display);font-weight:700;font-size:1rem;margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:2px;gap:2px;background:var(--surface)}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:500;padding:.25rem .7rem;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:1040px;margin:0 auto;padding:2rem 1.25rem 4rem;display:grid;gap:3rem}
+section{display:grid;gap:1rem}
+section>header{display:grid;gap:.35rem;max-width:70ch}
+p{margin:0;max-width:70ch}
+.verdict{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.5rem;display:grid;gap:1.25rem}
+.verdict h1{font-size:clamp(1.5rem,3.2vw,2.3rem)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;border-top:1px solid var(--rule-soft);padding-top:1rem}
+.fig{display:grid;gap:.15rem}
+.fig .v{font-family:var(--mono);font-size:1.6rem;font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums}
+.fig .l{font-size:.8rem;color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);max-width:none}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em}
+.i-loss{background:var(--loss)} .i-gain{background:var(--gain)} .i-accent{background:var(--accent)} .i-warn{background:var(--warn)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--rule-soft);vertical-align:top;white-space:nowrap}
+/* The header stays put while a long table scrolls: 24 series × several
+   columns is past the point where a reader can hold the column names. */
+th{position:sticky;top:0;z-index:2;background:var(--surface);font-weight:600;color:var(--muted);
+   font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--rule)}
+td.num,th.num{text-align:right}
+tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+tbody tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;min-width:22ch;max-width:52ch}
+/* First column pinned on the wide tables, so a row never loses its name. */
+table.pin td:first-child,table.pin th:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+table.pin tbody tr:nth-child(even) td:first-child{background:color-mix(in srgb,var(--ink) 3%,var(--surface))}
+table.pin th:first-child{z-index:3}
+/* A cell holding a whole parameter set: one column instead of ten. */
+td.params{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+td.params b{color:var(--ink);font-weight:600}
+.scrollhint{font-size:.78rem;color:var(--muted);margin-top:.35rem}
+.chart{width:100%;overflow-x:auto}
+.chart svg{display:block;width:100%;height:auto;font-family:var(--mono);font-size:11px}
+.chart .axis{stroke:var(--rule);stroke-width:1}
+.chart .grid{stroke:var(--rule-soft);stroke-width:1}
+.chart text{fill:var(--muted)}
+.chart .bar-loss{fill:var(--loss)} .chart .bar-gain{fill:var(--gain)} .chart .bar-accent{fill:var(--accent)} .chart .bar-warn{fill:var(--warn)}
+.chart .marker{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+.chart .marker-text{fill:var(--ink);font-weight:500}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem 2rem}
+.small h3{margin-bottom:.35rem}
+.heat{display:grid;gap:2px;font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+.heat .c{padding:.35rem .4rem;text-align:right;border-radius:3px;min-width:4.5em;line-height:1.2}
+.heat .c small{display:block;font-size:.66rem;opacity:.75}
+.heat .h{color:var(--muted);text-align:right;padding:.35rem .4rem;font-size:.7rem}
+.heat .rh{color:var(--muted);text-align:left;padding:.35rem .4rem;font-size:.7rem}
+.heatwrap{overflow-x:auto}
+.heat-title{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;flex-wrap:wrap}
+.bullets{margin:0;padding-left:1.2rem;display:grid;gap:.5rem;max-width:75ch}
+.bullets li::marker{color:var(--accent)}
+.assume{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.25rem 1.5rem}
+.assume ol{margin:0;padding-left:1.2rem;display:grid;gap:.6rem;max-width:80ch}
+pre{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1rem;overflow-x:auto;font-family:var(--mono);font-size:.8rem;line-height:1.5}
+.pill{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.72rem;font-weight:600;letter-spacing:.03em;border:1px solid currentColor}
+.pill.fail,.pill.weak{color:var(--loss)} .pill.pass{color:var(--gain)} .pill.partial{color:var(--warn)} .pill.open{color:var(--muted)}
+.tabs{display:flex;gap:.5rem;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:.85rem;border:1px solid var(--rule);background:var(--surface);color:var(--ink);padding:.3rem .75rem;border-radius:6px;cursor:pointer}
+.tabs button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;font-size:.9rem;align-items:baseline}
+.pagenav{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:-2rem}
+.pagenav a{font-size:.8rem;text-decoration:none;color:var(--muted);border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:.2rem .7rem}
+.pagenav a:hover,.pagenav a:focus-visible{color:var(--accent);border-color:var(--accent)}
+.answer{border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--surface)}
+.answer .row{display:grid;grid-template-columns:1fr 7.5rem 6rem 6rem;gap:.35rem 1rem;padding:.8rem 1.25rem;border-bottom:1px solid var(--rule-soft);align-items:baseline}
+.answer .row:last-child{border-bottom:0}
+.answer .row.head{background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.answer .row.head span:not(:first-child){text-align:right}
+.answer .who{font-weight:600;font-size:.95rem}
+.answer .who small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:.1rem}
+.answer .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.05rem;text-align:right}
+.answer .v.sub{font-size:.9rem;color:var(--muted)}
+.answer .v small{display:block;font-size:.72rem;font-weight:400;color:var(--muted);margin-top:.15rem;letter-spacing:.01em}
+.answer .row{grid-template-columns:1fr 9.5rem 6rem 6rem}
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.1rem 2rem;margin:0}
+.gloss>div{display:grid;gap:.15rem;align-content:start}
+.gloss dt{font-weight:600;font-size:.9rem;margin:0}
+.gloss dd{margin:0;font-size:.85rem;color:var(--muted);max-width:48ch}
+@media (max-width:620px){.answer .row{grid-template-columns:1fr max-content}.answer .row .v.sub{display:none}.answer .row.head span:nth-child(3),.answer .row.head span:nth-child(4){display:none}}
+.kv dt{color:var(--muted);margin:0} .kv dd{margin:0}
+footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);padding-top:1rem}
+@media (prefers-reduced-motion:no-preference){.seg button,.tabs button{transition:background .15s,color .15s}}
+/* The one-axis and marginal tables carry 8–10 columns: two per row at most,
+   and the marginals one per row, or the columns past the fourth are only
+   reachable by scrolling inside each card. */
+#oaGrid{grid-template-columns:repeat(auto-fit,minmax(480px,1fr))}
+#mgGrid{grid-template-columns:1fr}
+#oaDiffTable td.wrap{min-width:16ch}
+#sumChart .bar-pass{fill:var(--gain)} #sumChart .bar-fail{fill:var(--loss)} #sumChart .bar-bridged{fill:var(--warn)} #sumChart .bar-worth{fill:var(--accent)}
+td.checks{white-space:normal;min-width:30ch;max-width:60ch;font-size:.78rem;line-height:1.5}
+td.checks .pill{margin-right:.3rem}
+</style>
+
+<div class="topbar"><div class="in">
+  <span class="name" data-i18n="title"></span>
+  <span class="muted" style="font-size:.8rem" id="windowLabel"></span>
+  <div class="seg" id="langSeg" role="group" aria-label="language">
+    <button type="button" data-lang="vi" aria-pressed="true">Tiếng Việt</button>
+    <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+  </div>
+</div></div>
+
+<main>
+  <section class="verdict" id="verdict">
+    <div class="eyebrow" data-i18n="verdict_eyebrow"></div>
+    <h1 id="verdictHeadline"></h1>
+    <p id="verdictSub" class="note"></p>
+    <div class="figures" id="figures"></div>
+    <p class="note" id="capNote"></p>
+  </section>
+
+  <nav class="pagenav" id="pageNav"></nav>
+
+  <section id="symbols">
+    <header><div class="eyebrow" data-i18n="sy_eyebrow"></div><h2 data-i18n="sy_title"></h2><p class="note" id="syCaption"></p></header>
+    <div class="chart" id="sumChart"></div>
+    <div class="legend"><span><i class="i-gain"></i><span data-i18n="sy_leg_pass"></span></span><span><i class="i-accent"></i><span id="syLegWorth"></span></span><span><i class="i-warn"></i><span data-i18n="sy_leg_bridged"></span></span><span><i class="i-loss"></i><span data-i18n="sy_leg_fail"></span></span><span class="muted" data-i18n="sy_leg_lines"></span></div>
+    <div class="tablewrap"><table class="pin" id="syTable"></table></div>
+    <p id="syRead"></p>
+  </section>
+
+  <section id="rows">
+    <header><div class="eyebrow" data-i18n="rw_eyebrow"></div><h2 data-i18n="rw_title"></h2><p class="note" data-i18n="rw_caption"></p></header>
+    <div class="tabs" id="rwTabs"></div>
+    <div class="tablewrap"><table class="pin" id="rwTable"></table></div>
+    <p class="scrollhint" data-i18n="rw_hint"></p>
+  </section>
+
+  <section id="risks">
+    <header><div class="eyebrow" data-i18n="rk_eyebrow"></div><h2 data-i18n="rk_title"></h2><p class="note" data-i18n="rk_caption"></p></header>
+    <ul class="bullets" id="rkList"></ul>
+  </section>
+
+  <section id="method">
+    <header><div class="eyebrow" data-i18n="me_eyebrow"></div><h2 data-i18n="me_title"></h2></header>
+    <div class="assume"><ol id="methodList"></ol></div>
+    <p class="note" id="genNote"></p>
+  </section>
+</main>
+
+<script>
+const DATA = /*__DATA__*/;
+const META = /*__META__*/;
+const CHECKS = ["listed", "hedge_leg", "cost_priced", "book_fits", "corpus", "funding_pays"];
+
+const T = {
+vi: {
+  title: "Sàng cặp",
+  window_label: "{from} → {to} · {symbols} cặp ứng viên × {perps} sàn perp · vốn {notional} mỗi vị thế",
+  verdict_eyebrow: "Câu hỏi: mở rộng danh sách cặp — cặp nào đáng thêm, và rủi ro của từng cặp là gì",
+  verdict_pass: "{pass} trên {rows} tổ hợp cặp × sàn qua được cả sáu điều kiện; {sym_pass} cặp có ít nhất một sàn đạt",
+  verdict_none: "Không tổ hợp nào trong {rows} qua được cả sáu điều kiện: funding 12 tháng của mọi ứng viên đều dưới mức {min_bps} bps/8h cần cho 5%/năm trên vốn",
+  verdict_sub: "{listed} tổ hợp được sàn niêm yết, {paired} có chân spot ghép được theo khai báo của config, {priced} định giá được vòng phí, {fit} có sổ đủ {notional} trong ±0,5% ở cả bốn phía, {corpus} có đủ {min_cover} ngày corpus, và {pays} có funding trung bình ≥ {min_bps} bps/8h. Điều kiện cuối cùng là cái loại nhiều nhất — nó là điều kiện của corpus, không phải của sàn.",
+  fig_rows: "tổ hợp cặp × sàn", fig_listed: "được niêm yết", fig_fit: "sổ đủ {notional}", fig_pays: "funding ≥ {min_bps} bps/8h", fig_pass: "qua cả sáu", fig_worth: "đáng backtest (≥ {bt_bps} bps/8h)", fig_best: "funding TB cao nhất (bps/8h)",
+  worth_line: " Phán quyết yếu hơn — “đáng backtest”: qua mọi điều kiện phía sàn và corpus, funding TB ≥ {bt_bps} bps/8h (hơn mọi cặp đang ship ở sàn quote USDT): {worth} tổ hợp, {sym_worth} cặp, trong đó {sym_worth_unb} cặp có sàn không bridge. Đó là danh sách được đưa vào config.yaml.",
+  sy_col_worth: "Đáng backtest", sy_leg_worth: "đáng backtest (≥ {bt_bps}), chưa tới 5%",
+  cap_note: "Ngưỡng {min_bps} bps/8h suy từ mục tiêu: 5%/năm trên VỐN với hai chân (K = {cap}× notional) sau một vòng phí 0,30% cần funding gộp ≥ {gross}%/năm trên notional. Ở K ≈ 1,2 (hai chân một sàn, ký quỹ hợp nhất — quyết định giai đoạn 4) ngưỡng tụt còn {min_bps_k12} bps/8h; vạch thứ hai trên biểu đồ. Mọi số funding là GỘP; “giữ suốt /vốn” đã trừ đúng một vòng phí theo sổ đo được.",
+  nav_symbols: "Từng cặp", nav_rows: "Từng sàn", nav_risks: "Rủi ro đã thấy", nav_method: "Cách đo",
+  sy_eyebrow: "Từng cặp, sàn tốt nhất của nó", sy_title: "Funding 12 tháng cao nhất mà mỗi cặp có được ở một sàn ghép hedge được",
+  sy_caption: "Mỗi thanh là sàn perp có funding trung bình cao nhất trong số các sàn niêm yết cặp đó VÀ ghép được chân spot. Vạch đứng: {min_bps} bps/8h (K = 2) và {min_bps_k12} (K ≈ 1,2). Bốn cặp đang ship để so.",
+  sy_leg_pass: "qua cả sáu điều kiện", sy_leg_bridged: "qua, nhưng chân spot khác quote (USD/USDT)", sy_leg_fail: "không qua", sy_leg_lines: "vạch = ngưỡng funding cho 5%/năm trên vốn ở K = 2 và K ≈ 1,2",
+  sy_x: "funding trung bình 12 tháng, bps/8h (sàn tốt nhất)",
+  sy_col_sym: "Cặp", sy_col_listed: "Niêm yết", sy_col_paired: "Ghép được", sy_col_pass: "Qua", sy_col_best: "Sàn tốt nhất", sy_col_bps: "Funding TB bps/8h", sy_col_ht: "Giữ suốt /vốn", sy_col_bridge: "Quote", sy_col_unb: "Tốt nhất không bridge",
+  sy_read: "{n_above} cặp có sàn đạt ≥ {min_bps} bps/8h ({list_above}); {n_k12} cặp thêm nữa chỉ đạt nếu K ≈ 1,2 ({list_k12}). Bốn cặp đang ship xếp: {shipped}. Sàn tốt nhất của {n_bridged} cặp là hyperliquid hoặc kraken — perp quote USD, tức mang rủi ro USDT/USD mà không con số nào ở đây trừ.",
+  rw_eyebrow: "Từng tổ hợp cặp × sàn", rw_title: "Sáu điều kiện, đánh giá hết, không dừng ở điều kiện đầu tiên rớt",
+  rw_caption: "Thứ tự là thứ tự một lệnh sẽ bị chặn: niêm yết → chân hedge → định giá được vòng phí → sổ đủ size → corpus đủ sâu → funding trả đủ. Mỗi ô ghi con số quyết định nó.",
+  rw_hint: "Bảng rộng; kéo ngang. Cột đầu ghim.",
+  tab_all: "Tất cả", tab_pass: "Qua", tab_worth: "Đáng backtest", tab_paired: "Ghép được", tab_unlisted: "Không niêm yết",
+  rw_col_sym: "Cặp", rw_col_perp: "Perp", rw_col_spot: "Spot", rw_col_cost: "Vòng phí /notional", rw_col_thin: "Phía mỏng nhất ±0,5%", rw_col_cov: "Corpus (ngày)", rw_col_iv: "Nhịp",
+  rw_col_bps: "Funding TB bps/8h", rw_col_pos: "Mốc dương", rw_col_flips: "Đảo dấu /năm", rw_col_worst: "Đợt âm tệ nhất /notional", rw_col_ht: "Giữ suốt /vốn", rw_col_be: "Hoà vốn trung vị (ngày)", rw_col_w90: "≤ 90 ngày", rw_col_checks: "Sáu điều kiện",
+  c_listed: "niêm yết", c_hedge_leg: "chân hedge", c_cost_priced: "vòng phí", c_book_fits: "sổ đủ", c_corpus: "corpus", c_funding_pays: "funding",
+  rk_eyebrow: "Những gì phép sàng nhìn thấy", rk_title: "Rủi ro theo cặp và theo sàn, bằng con số",
+  rk_caption: "Mỗi dòng dưới đây là một phép đo của lượt này, không phải danh sách rủi ro chung.",
+  rk_unlisted: "{n} tổ hợp không được niêm yết. Paradex thiếu nhiều nhất ({paradex} cặp), rồi {others}. Một cặp chỉ có ở ít sàn là một cặp không có nơi để chuyển khi funding ở sàn đang giữ đảo chiều.",
+  rk_bridged: "{n} tổ hợp qua được chỉ nhờ khai báo USD ≡ USDT (hyperliquid, kraken): trung tính về coin, MỞ về USDT/USD. Trong bốn cặp đang ship đây cũng là nơi lối thoát basis nổ (11 lệnh trên kraken).",
+  rk_thin: "{n} tổ hợp có sổ mỏng hơn {notional} trong ±0,5% ở ít nhất một trong bốn phía (mỏng nhất: {worst}). Slippage đo được ở size này đã nằm trong vòng phí; size lớn hơn thì vòng phí đắt hơn, và độ sâu lúc THOÁT không dự báo được từ lúc vào.",
+  rk_cost: "Vòng phí đo được ở {notional}: {cost_lo}% – {cost_hi}% trên notional, trung vị {cost_med}%. So với 0,30% của BTC: cặp thanh khoản mỏng trả thêm slippage, và đó là phần chi phí nhạy với size nhất.",
+  rk_flips: "Funding đảo dấu {flips_lo}–{flips_hi} lần/năm tuỳ tổ hợp (trung vị {flips_med}); đợt âm tệ nhất tới {worst_ep}% notional ở {worst_ep_where} — lớn hơn một vòng phí, tức cổng C=1 SẼ nổ ở đó và mỗi lần nổ là 0,3%+.",
+  rk_cover: "{n} tổ hợp có corpus ngắn hơn {min_cover} ngày (okx ~96, gate ~180 ngày; sàn mới niêm yết); funding trung bình trên cửa sổ ngắn không so được với cửa sổ 365 ngày.",
+  rk_contract: "{n} tổ hợp đặt lệnh theo HỢP ĐỒNG (okx, gate, kraken) với cỡ hợp đồng khác nhau theo coin; {n_minnot} tổ hợp công bố notional tối thiểu. Cả hai đã được registry quy đổi; con số ở bảng là coin.",
+  rk_margin: "Biểu ký quỹ duy trì trong config đo trên BTC từng sàn; alt thường có bậc duy trì cao hơn và maxLeverage thấp hơn ({lev_lo}–{lev_hi}× ở các tổ hợp công bố). Mô hình ký quỹ tắt (K = 2) nên lượt này không chịu ảnh hưởng, nhưng bật đòn bẩy trên alt cần fetcher ký quỹ theo cặp trước.",
+  rk_regime: "Cửa sổ 12 tháng là MỘT chế độ thị trường. Cặp qua sàng vì funding cao trong năm qua có thể là cặp đang bị short-squeeze theo mùa; tỷ lệ mốc dương và P10 của rate nói nó trả đều hay trả theo đợt.",
+  me_eyebrow: "Cách đo", me_title: "Nguồn số và giả định",
+  me_1: "Phía sàn (cmd/pairscreen, {generated}): instrument registry làm mới trực tiếp từ 10 nguồn, ánh xạ hedge dựng bằng đúng hàm cmd/scanner và cmd/backtest dùng (base/quote do SÀN khai, kiểm hai chiều), chân spot chọn theo CheapestVerifiedSpot, sổ lệnh REST 1.000 mức mỗi sàn (tự kẹp về trần sàn), vòng phí do internal/strategy định giá ở {notional} với biểu phí đã xác minh trong config.yaml.",
+  me_2: "Phía corpus (tools/report/pairscreen.py, mode=ro): funding_history 12 tháng do cmd/backfill điền cho các ứng viên; chỉ hàng ghi trước lúc chụp. Giữ suốt = vào mốc đầu, ra mốc cuối, trừ đúng vòng phí đo được; trên VỐN = chia {cap}. Chân trời hoà vốn = mọi mốc làm điểm vào, số ngày tới khi funding thu được bằng vòng phí.",
+  me_3: "Ngưỡng funding: 5%/năm trên vốn ở K = {cap} sau vòng 0,30% ⇒ gộp ≥ {gross}%/năm ⇒ {min_bps} bps/8h. Đây là ngưỡng của MỤC TIÊU, không phải ngưỡng vào lệnh: nó nói cặp nào có thể chạm 5% nếu giữ suốt năm, không nói lúc nào nên vào.",
+  me_4: "Phán quyết là của báo cáo, không phải luật: internal/strategy chưa có điều kiện vào theo funding trung bình của chuỗi. Cặp “qua” nghĩa là đáng backtest bằng cùng bộ luật đang ship, không nghĩa là đã kiếm được tiền.",
+  me_5: "Chưa đo: nến giá (basis, thanh lý) cho ứng viên mới; ký quỹ duy trì theo cặp; phí theo bậc tài khoản thật; sổ lệnh ở thời điểm thoát; rủi ro depeg USDT/USD của các tổ hợp bridge.",
+  gen_note: "Dựng bởi tools/report/hold_build.py từ tools/report/pairscreen.py và cmd/pairscreen, {when}. Python chỉ đọc; mọi vòng phí do Go định giá.",
+},
+zh: {
+  title: "币对筛选",
+  window_label: "{from} → {to} · {symbols} 个候选币对 × {perps} 家 perp · 每仓资本 {notional}",
+  verdict_eyebrow: "问题：扩大币对列表——哪些值得加入，每个币对的风险是什么",
+  verdict_pass: "{rows} 个币对×交易所组合中 {pass} 个通过全部六项；{sym_pass} 个币对至少在一家交易所通过",
+  verdict_none: "{rows} 个组合没有一个通过全部六项：所有候选的 12 个月 funding 都低于按资本年化 5% 所需的 {min_bps} bps/8h",
+  verdict_sub: "{listed} 个组合有交易所上市，{paired} 个按 config 的声明能配到现货腿，{priced} 个能定价一轮费用，{fit} 个订单簿在 ±0.5% 内四个方向都容得下 {notional}，{corpus} 个语料覆盖 ≥ {min_cover} 天，{pays} 个平均 funding ≥ {min_bps} bps/8h。最后一项淘汰最多——它是语料的条件，不是交易所的。",
+  fig_rows: "币对 × 交易所组合", fig_listed: "已上市", fig_fit: "订单簿容得下 {notional}", fig_pays: "funding ≥ {min_bps} bps/8h", fig_pass: "六项全过", fig_worth: "值得回测（≥ {bt_bps} bps/8h）", fig_best: "最高平均 funding（bps/8h）",
+  worth_line: " 较弱的结论——“值得回测”：交易所侧与语料条件全部通过，平均 funding ≥ {bt_bps} bps/8h（高于实盘所有币对在 USDT 交易所的水平）：{worth} 个组合、{sym_worth} 个币对，其中 {sym_worth_unb} 个币对有不桥接的交易所。这就是写入 config.yaml 的名单。",
+  sy_col_worth: "值得回测", sy_leg_worth: "值得回测（≥ {bt_bps}），未到 5%",
+  cap_note: "{min_bps} bps/8h 的门槛由目标推出：两条腿（K = {cap}× 名义）、扣一轮 0.30% 费用后按资本年化 5%，需要名义上毛 funding ≥ {gross}%/年。K ≈ 1.2（同一交易所两条腿、统一保证金——第四阶段的决定）时门槛降到 {min_bps_k12} bps/8h，即图上第二条线。所有 funding 数字为毛值；“全程持有 /资本”已按实测订单簿扣除一轮费用。",
+  nav_symbols: "逐币对", nav_rows: "逐交易所", nav_risks: "看到的风险", nav_method: "测量方法",
+  sy_eyebrow: "逐币对，其最佳交易所", sy_title: "每个币对在可配对冲的交易所中能拿到的最高 12 个月 funding",
+  sy_caption: "每根柱是该币对在“上市且能配现货腿”的 perp 交易所中平均 funding 最高的一家。竖线：{min_bps} bps/8h（K = 2）与 {min_bps_k12}（K ≈ 1.2）。含实盘四个币对作对照。",
+  sy_leg_pass: "六项全过", sy_leg_bridged: "通过，但现货腿计价不同（USD/USDT）", sy_leg_fail: "未通过", sy_leg_lines: "线 = K = 2 与 K ≈ 1.2 下按资本年化 5% 所需的 funding",
+  sy_x: "12 个月平均 funding，bps/8h（最佳交易所）",
+  sy_col_sym: "币对", sy_col_listed: "上市", sy_col_paired: "可配对", sy_col_pass: "通过", sy_col_best: "最佳交易所", sy_col_bps: "平均 funding bps/8h", sy_col_ht: "全程持有 /资本", sy_col_bridge: "计价", sy_col_unb: "不桥接的最佳",
+  sy_read: "{n_above} 个币对有交易所达到 ≥ {min_bps} bps/8h（{list_above}）；另有 {n_k12} 个仅在 K ≈ 1.2 时达标（{list_k12}）。实盘四个币对排名：{shipped}。{n_bridged} 个币对的最佳交易所是 hyperliquid 或 kraken——USD 计价 perp，即带有这里无处扣除的 USDT/USD 风险。",
+  rw_eyebrow: "逐个币对 × 交易所组合", rw_title: "六项条件全部评估，不在第一项失败处停下",
+  rw_caption: "顺序即一笔交易会被拦下的顺序：上市 → 对冲腿 → 能定价一轮费用 → 订单簿容得下 → 语料足够 → funding 付得起。每格写明决定它的数字。",
+  rw_hint: "表格较宽，可横向滚动。首列固定。",
+  tab_all: "全部", tab_pass: "通过", tab_worth: "值得回测", tab_paired: "可配对", tab_unlisted: "未上市",
+  rw_col_sym: "币对", rw_col_perp: "Perp", rw_col_spot: "现货", rw_col_cost: "一轮费用 /notional", rw_col_thin: "±0.5% 内最薄一侧", rw_col_cov: "语料（天）", rw_col_iv: "节奏",
+  rw_col_bps: "平均 funding bps/8h", rw_col_pos: "正期占比", rw_col_flips: "反号 /年", rw_col_worst: "最差负期 /notional", rw_col_ht: "全程持有 /资本", rw_col_be: "回本中位数（天）", rw_col_w90: "≤ 90 天", rw_col_checks: "六项条件",
+  c_listed: "上市", c_hedge_leg: "对冲腿", c_cost_priced: "费用", c_book_fits: "订单簿", c_corpus: "语料", c_funding_pays: "funding",
+  rk_eyebrow: "筛选看到了什么", rk_title: "按币对、按交易所的风险，用数字说",
+  rk_caption: "以下每条都是本次测量的结果，不是泛泛的风险清单。",
+  rk_unlisted: "{n} 个组合未上市。缺得最多的是 Paradex（{paradex} 个币对），其次 {others}。只在少数交易所上市的币对，在持仓交易所 funding 反转时没有地方可转。",
+  rk_bridged: "{n} 个组合仅靠 USD ≡ USDT 的声明通过（hyperliquid、kraken）：币上中性，在 USDT/USD 上敞口。在实盘四个币对里这也是基差退出触发的地方（kraken 11 笔）。",
+  rk_thin: "{n} 个组合在四个方向中至少一个方向 ±0.5% 内薄于 {notional}（最薄：{worst}）。此规模下的滑点已计入一轮费用；更大规模费用更高，且出场时的深度无法由入场时预测。",
+  rk_cost: "{notional} 规模下实测一轮费用：名义 {cost_lo}% – {cost_hi}%，中位数 {cost_med}%。对比 BTC 的 0.30%：流动性薄的币对多付滑点，这是对规模最敏感的成本部分。",
+  rk_flips: "各组合 funding 每年反号 {flips_lo}–{flips_hi} 次（中位数 {flips_med}）；最差负期达名义 {worst_ep}%，在 {worst_ep_where}——超过一轮费用，即 C=1 门槛会在那里触发，每次 0.3%+。",
+  rk_cover: "{n} 个组合语料短于 {min_cover} 天（okx 约 96 天、gate 约 180 天；新上市）；短窗口的平均 funding 不能与 365 天窗口相比。",
+  rk_contract: "{n} 个组合按合约下单（okx、gate、kraken），合约面值随币种不同；{n_minnot} 个组合公布最小名义。二者已由 registry 换算；表中数字为币数量。",
+  rk_margin: "config 中的维持保证金按各交易所的 BTC 测得；山寨币通常维持档更高、maxLeverage 更低（已公布的组合为 {lev_lo}–{lev_hi}×）。保证金模型关闭（K = 2），本次不受影响，但在山寨币上开杠杆前需先有按币对的保证金抓取。",
+  rk_regime: "12 个月窗口只是一种市场状态。因去年 funding 高而通过的币对，可能只是季节性被挤空；正期占比和 rate 的 P10 说明它是稳定支付还是阵发支付。",
+  me_eyebrow: "测量方法", me_title: "数据来源与假设",
+  me_1: "交易所侧（cmd/pairscreen，{generated}）：从 10 个来源实时刷新 instrument registry，用 cmd/scanner 与 cmd/backtest 同一函数构建对冲映射（交易所声明的 base/quote，双向校验），按 CheapestVerifiedSpot 选现货腿，REST 订单簿每家 1,000 档（自动截到交易所上限），一轮费用由 internal/strategy 以 config.yaml 中已核实的费率在 {notional} 上定价。",
+  me_2: "语料侧（tools/report/pairscreen.py，mode=ro）：cmd/backfill 为候选填充的 12 个月 funding_history；仅取快照前写入的行。全程持有 = 首期进、末期出、扣实测一轮费用；按资本 = 除以 {cap}。回本视界 = 以每期为入场点，数到累计 funding 等于一轮费用的天数。",
+  me_3: "funding 门槛：K = {cap} 下扣 0.30% 后按资本年化 5% ⇒ 毛 ≥ {gross}%/年 ⇒ {min_bps} bps/8h。这是目标的门槛，不是入场门槛：它说哪个币对全年持有可能触及 5%，不说何时该进。",
+  me_4: "结论属于报告而非规则：internal/strategy 尚无按序列平均 funding 的入场条件。“通过”意味着值得用实盘同一套规则回测，不意味着已经赚到钱。",
+  me_5: "未测：新候选的价格 K 线（基差、强平）；按币对的维持保证金；真实账户档位的费率；出场时的订单簿；桥接组合的 USDT/USD 脱锚风险。",
+  gen_note: "由 tools/report/hold_build.py 根据 tools/report/pairscreen.py 与 cmd/pairscreen 生成，{when}。Python 只读；所有一轮费用由 Go 定价。",
+},
+};
+
+let lang = "vi", tab = "all";
+try { lang = localStorage.getItem("ps.lang") || lang; } catch (e) {}
+const t = (k, vars) => { let s = T[lang][k]; if (s === undefined) s = T.vi[k]; if (s === undefined) return k;
+  return vars ? s.replace(/\{(\w+)\}/g, (_, v) => vars[v] ?? "") : s; };
+const loc = () => lang === "zh" ? "zh-CN" : "vi-VN";
+const num = (v, d = 0) => v == null || Number.isNaN(v) ? "—" : new Intl.NumberFormat(loc(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+const pct = (v, d = 2, sign = false) => v == null ? "—" : (sign && v > 0 ? "+" : "") + num(v, d) + "%";
+const cls = v => v == null ? "" : v < 0 ? "loss" : v > 0 ? "gain" : "";
+const day = ms => new Date(ms).toISOString().slice(0, 10);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const short = src => src.replace("_futures", "").replace("_spot", "·spot");
+const kUSD = v => v == null ? "—" : v >= 1e6 ? num(v / 1e6, 1) + "M" : num(v / 1000, 0) + "k";
+const SHIPPED = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT"];
+const C = DATA.criteria, cap = C.capital_per_notional;
+const gross = 5 * cap + 0.30, bpsK12 = (5 * 1.2 + 0.30) / 1095 * 100;
+
+function svg(w, h) { return `<svg viewBox="0 0 ${w} ${h}" role="img">`; }
+
+function sumChart(syms) {
+  const rows = syms.filter(s => s.best);
+  const W = 760, rowH = 20, L = 90, R = 150, Tp = 20, B = 30, H = Tp + rows.length * rowH + B;
+  const vals = rows.map(s => s.best.mean_bps);
+  const lo = Math.min(0, ...vals), hi = Math.max(C.min_bps * 1.1, ...vals);
+  const x = v => L + (W - L - R) * (v - lo) / ((hi - lo) || 1);
+  let s = svg(W, H);
+  const zero = x(0);
+  for (const [v, label] of [[C.min_bps, "K=2"], [bpsK12, "K≈1,2"]]) s += `<line class="marker" x1="${x(v)}" x2="${x(v)}" y1="${Tp - 8}" y2="${H - B}"/><text class="marker-text" x="${x(v) + 3}" y="${Tp - 10}">${label} ${num(v, 2)}</text>`;
+  s += `<line class="axis" x1="${zero}" x2="${zero}" y1="${Tp}" y2="${H - B}"/>`;
+  rows.forEach((sy, i) => {
+    const y = Tp + i * rowH, v = sy.best.mean_bps;
+    const c = sy.best.passed ? "bar-pass" : sy.best.worth ? (sy.best.bridged ? "bar-bridged" : "bar-worth") : "bar-fail";
+    s += `<text x="${L - 8}" y="${y + rowH / 2 + 4}" text-anchor="end" style="${SHIPPED.includes(sy.symbol) ? "font-weight:600;fill:var(--ink)" : ""}">${esc(sy.symbol.replace("USDT", ""))}</text>`;
+    s += `<rect class="${c}" x="${Math.min(zero, x(v))}" y="${y + 4}" width="${Math.max(1, Math.abs(x(v) - zero))}" height="${rowH - 8}"><title>${esc(sy.symbol)} · ${esc(short(sy.best.perp))}: ${num(v, 3)} bps/8h</title></rect>`;
+    s += `<text x="${Math.max(zero, x(v)) + 5}" y="${y + rowH / 2 + 4}">${num(v, 2)} · ${esc(short(sy.best.perp))}${sy.best.bridged ? " (USD)" : ""}</text>`;
+  });
+  s += `<text x="${(L + W - R) / 2}" y="${H - 6}" text-anchor="middle">${esc(t("sy_x"))}</text>`;
+  return s + "</svg>";
+}
+
+function pill(c) { return `<span class="pill ${c.passed ? "pass" : "fail"}" title="${esc(c.detail)}">${t("c_" + c.name)}</span>`; }
+
+function render() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => { const v = t(el.dataset.i18n); if (typeof v === "string") el.textContent = v; });
+  document.title = t("title");
+  document.querySelectorAll("#langSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  document.getElementById("pageNav").innerHTML = ["symbols", "rows", "risks", "method"].map(id => `<a href="#${id}">${t("nav_" + id)}</a>`).join("");
+  const R = DATA.rows, S = DATA.symbols, N = DATA.notional;
+  const perps = new Set(R.map(r => r.perp)).size;
+  document.getElementById("windowLabel").textContent = t("window_label", { from: day(DATA.window_from_ms), to: day(DATA.window_to_ms), symbols: S.length, perps, notional: kUSD(N) });
+  const cnt = name => R.filter(r => r.checks.some(c => c.name === name && c.passed)).length;
+  const passed = R.filter(r => r.passed), symPass = S.filter(s => s.venues_passed > 0);
+  document.getElementById("verdictHeadline").textContent = passed.length ? t("verdict_pass", { pass: passed.length, rows: R.length, sym_pass: symPass.length }) : t("verdict_none", { rows: R.length, min_bps: num(C.min_bps, 2) });
+  document.getElementById("verdictSub").textContent = t("verdict_sub", { listed: cnt("listed"), paired: cnt("hedge_leg"), priced: cnt("cost_priced"), fit: cnt("book_fits"), notional: kUSD(N), corpus: cnt("corpus"), min_cover: num(C.min_cover_days), pays: cnt("funding_pays"), min_bps: num(C.min_bps, 2) }) + t("worth_line", { bt_bps: num(C.backtest_bps, 2), worth: R.filter(r => r.worth_backtest).length, sym_worth: S.filter(s => s.venues_worth > 0).length, sym_worth_unb: S.filter(s => s.worth_unbridged > 0).length });
+  const fig = (v, l, c) => `<div class="fig"><div class="v ${c || ""}">${v}</div><div class="l">${l}</div></div>`;
+  const bestSym = S.find(s => s.best);
+  document.getElementById("figures").innerHTML = fig(R.length, t("fig_rows")) + fig(cnt("listed"), t("fig_listed")) + fig(cnt("book_fits"), t("fig_fit", { notional: kUSD(N) })) +
+    fig(cnt("funding_pays"), t("fig_pays", { min_bps: num(C.min_bps, 2) }), cnt("funding_pays") ? "gain" : "loss") + fig(passed.length, t("fig_pass"), passed.length ? "gain" : "loss") + fig(R.filter(r => r.worth_backtest).length, t("fig_worth", { bt_bps: num(C.backtest_bps, 2) }), R.some(r => r.worth_backtest) ? "gain" : "") +
+    (bestSym ? fig(num(bestSym.best.mean_bps, 2), t("fig_best") + " · " + bestSym.symbol.replace("USDT", "")) : "");
+  document.getElementById("capNote").textContent = t("cap_note", { min_bps: num(C.min_bps, 2), cap: num(cap, 1), gross: num(gross, 1), min_bps_k12: num(bpsK12, 2) });
+
+  // symbols
+  document.getElementById("syCaption").textContent = t("sy_caption", { min_bps: num(C.min_bps, 2), min_bps_k12: num(bpsK12, 2) });
+  document.getElementById("sumChart").innerHTML = sumChart(S);
+  document.getElementById("syLegWorth").textContent = t("sy_leg_worth", { bt_bps: num(C.backtest_bps, 2) });
+  document.getElementById("syTable").innerHTML = `<thead><tr><th>${t("sy_col_sym")}</th><th class="num">${t("sy_col_listed")}</th><th class="num">${t("sy_col_paired")}</th><th class="num">${t("sy_col_pass")}</th><th class="num">${t("sy_col_worth")}</th><th>${t("sy_col_best")}</th><th class="num">${t("sy_col_bps")}</th><th class="num">${t("sy_col_ht")}</th><th>${t("sy_col_bridge")}</th><th>${t("sy_col_unb")}</th></tr></thead><tbody>` +
+    S.map(s => { const b = s.best, u = s.best_unbridged; return `<tr><td${SHIPPED.includes(s.symbol) ? ' style="font-weight:600"' : ""}>${esc(s.symbol)}</td><td class="num">${s.venues_listed}</td><td class="num">${s.venues_paired}</td><td class="num ${s.venues_passed ? "gain" : ""}">${s.venues_passed}</td><td class="num ${s.venues_worth ? "gain" : ""}">${s.venues_worth}${s.venues_worth ? ` <small class="muted">(${s.worth_unbridged} USDT)</small>` : ""}</td><td>${b ? esc(short(b.perp)) : "—"}</td><td class="num ${b ? cls(b.mean_bps) : ""}">${b ? num(b.mean_bps, 3) : "—"}</td><td class="num ${b ? cls(b.ht_net_cap_pct) : ""}">${b ? pct(b.ht_net_cap_pct, 2, true) : "—"}</td><td>${b && b.bridged ? '<span class="pill partial">USD/USDT</span>' : ""}</td><td>${u ? `${esc(short(u.perp))} ${num(u.mean_bps, 3)}` : "—"}</td></tr>`; }).join("") + "</tbody>";
+  const above = S.filter(s => s.best && s.best.mean_bps >= C.min_bps), k12 = S.filter(s => s.best && s.best.mean_bps < C.min_bps && s.best.mean_bps >= bpsK12);
+  const rank = s => S.indexOf(s) + 1;
+  document.getElementById("syRead").textContent = t("sy_read", { n_above: above.length, min_bps: num(C.min_bps, 2), list_above: above.map(s => s.symbol.replace("USDT", "")).join(", ") || "—",
+    n_k12: k12.length, list_k12: k12.map(s => s.symbol.replace("USDT", "")).join(", ") || "—",
+    shipped: S.filter(s => SHIPPED.includes(s.symbol)).map(s => `${s.symbol.replace("USDT", "")} #${rank(s)}`).join(", "),
+    n_bridged: S.filter(s => s.best && s.best.bridged).length });
+
+  // rows
+  const tabs = [["all", r => true], ["pass", r => r.passed], ["worth", r => r.worth_backtest], ["paired", r => !!r.spot], ["unlisted", r => !r.listed]];
+  document.getElementById("rwTabs").innerHTML = tabs.map(([k, f]) => `<button type="button" data-tab="${k}" aria-pressed="${String(k === tab)}">${t("tab_" + k)} (${R.filter(f).length})</button>`).join("");
+  document.querySelectorAll("#rwTabs button").forEach(b => b.onclick = () => { tab = b.dataset.tab; render(); });
+  const shown = R.filter(tabs.find(([k]) => k === tab)[1]);
+  const cv = (r, k) => (r.corpus && r.corpus.model === "discrete") ? r.corpus[k] : null;
+  document.getElementById("rwTable").innerHTML = `<thead><tr><th>${t("rw_col_sym")}</th><th>${t("rw_col_perp")}</th><th>${t("rw_col_spot")}</th><th class="num">${t("rw_col_cost")}</th><th class="num">${t("rw_col_thin")}</th><th class="num">${t("rw_col_cov")}</th><th>${t("rw_col_iv")}</th><th class="num">${t("rw_col_bps")}</th><th class="num">${t("rw_col_pos")}</th><th class="num">${t("rw_col_flips")}</th><th class="num">${t("rw_col_worst")}</th><th class="num">${t("rw_col_ht")}</th><th class="num">${t("rw_col_be")}</th><th class="num">${t("rw_col_w90")}</th><th>${t("rw_col_checks")}</th></tr></thead><tbody>` +
+    shown.map(r => { const c = r.corpus && r.corpus.model === "discrete" ? r.corpus : null, hz = c && c.horizon; const ht = c && c.hold_through_net_pct != null ? c.hold_through_net_pct / cap : null;
+      return `<tr><td>${esc(r.symbol)}</td><td>${esc(short(r.perp))}</td><td>${r.spot ? esc(short(r.spot)) + (r.bridged ? ' <span class="pill partial">USD</span>' : "") : "—"}</td><td class="num">${r.cost && r.cost.OK ? pct(r.cost.TotalPct, 3) : "—"}</td><td class="num ${r.listed && r.spot ? (r.min_depth_wide_quote >= N ? "gain" : "loss") : ""}">${r.spot ? kUSD(r.min_depth_wide_quote) : "—"}</td><td class="num">${c ? num(c.covered_days, 0) : (r.corpus ? esc(r.corpus.model) : "—")}</td><td>${c ? c.interval_sec / 3600 + "h" : "—"}</td><td class="num ${c ? cls(c.mean_rate_per_8h_bps) : ""}">${c ? num(c.mean_rate_per_8h_bps, 3) : "—"}</td><td class="num">${c ? pct(c.positive_share * 100, 0) : "—"}</td><td class="num">${c ? num(c.sign_flips_per_year, 0) : "—"}</td><td class="num">${c ? pct(c.worst_negative_episode_pct, 2) : "—"}</td><td class="num ${cls(ht)}">${ht == null ? "—" : pct(ht, 2, true)}</td><td class="num">${hz ? (hz.median == null ? "∞" : num(hz.median, 0)) : "—"}</td><td class="num">${hz ? pct(hz.within["90"] * 100, 0) : "—"}</td><td class="checks">${r.checks.map(pill).join("")}${!r.listed ? `<div class="muted">${esc(r.refusal_vi)}</div>` : ""}</td></tr>`; }).join("") + "</tbody>";
+
+  // risks
+  const unlisted = R.filter(r => !r.listed), byPerpUn = {};
+  unlisted.forEach(r => { byPerpUn[r.perp] = (byPerpUn[r.perp] || 0) + 1; });
+  const others = Object.entries(byPerpUn).filter(([p]) => p !== "paradex_futures").sort((a, b) => b[1] - a[1]).map(([p, n]) => `${short(p)} ${n}`).join(", ");
+  const bridgedPass = R.filter(r => (r.passed || r.worth_backtest) && r.bridged);
+  const thin = R.filter(r => r.spot && r.min_depth_wide_quote < N), thinnest = thin.length ? thin.reduce((a, b) => a.min_depth_wide_quote < b.min_depth_wide_quote ? a : b) : null;
+  const costs = R.filter(r => r.cost && r.cost.OK).map(r => r.cost.TotalPct).sort((a, b) => a - b);
+  const med = xs => xs.length ? xs[Math.floor(xs.length / 2)] : null;
+  const flips = R.map(r => cv(r, "sign_flips_per_year")).filter(v => v != null).sort((a, b) => a - b);
+  const worstEp = R.filter(r => cv(r, "worst_negative_episode_pct") != null).sort((a, b) => cv(b, "worst_negative_episode_pct") - cv(a, "worst_negative_episode_pct"))[0];
+  const shortCov = R.filter(r => cv(r, "covered_days") != null && cv(r, "covered_days") < C.min_cover_days);
+  const contracts = R.filter(r => r.listed && r.is_contract), minNot = R.filter(r => r.listed && r.min_notional_quote > 0);
+  const levs = R.filter(r => r.listed && r.max_leverage_x > 0).map(r => r.max_leverage_x);
+  const items = [
+    t("rk_unlisted", { n: unlisted.length, paradex: byPerpUn["paradex_futures"] || 0, others: others || "—" }),
+    t("rk_bridged", { n: bridgedPass.length }),
+    t("rk_thin", { n: thin.length, notional: kUSD(N), worst: thinnest ? `${thinnest.symbol}·${short(thinnest.perp)} ${kUSD(thinnest.min_depth_wide_quote)}` : "—" }),
+    t("rk_cost", { notional: kUSD(N), cost_lo: num(costs[0], 3), cost_hi: num(costs[costs.length - 1], 3), cost_med: num(med(costs), 3) }),
+    t("rk_flips", { flips_lo: num(flips[0], 0), flips_hi: num(flips[flips.length - 1], 0), flips_med: num(med(flips), 0), worst_ep: worstEp ? num(cv(worstEp, "worst_negative_episode_pct"), 2) : "—", worst_ep_where: worstEp ? `${worstEp.symbol}·${short(worstEp.perp)}` : "—" }),
+    t("rk_cover", { n: shortCov.length, min_cover: num(C.min_cover_days) }),
+    t("rk_contract", { n: contracts.length, n_minnot: minNot.length }),
+    t("rk_margin", { lev_lo: levs.length ? num(Math.min(...levs)) : "—", lev_hi: levs.length ? num(Math.max(...levs)) : "—" }),
+    t("rk_regime"),
+  ];
+  document.getElementById("rkList").innerHTML = items.map(x => `<li>${esc(x)}</li>`).join("");
+  document.getElementById("methodList").innerHTML = [t("me_1", { generated: new Date(DATA.generated_at_ms).toISOString().slice(0, 16).replace("T", " ") + " UTC", notional: kUSD(N) }), t("me_2", { cap: num(cap, 1) }), t("me_3", { cap: num(cap, 1), gross: num(gross, 1), min_bps: num(C.min_bps, 2) }), t("me_4"), t("me_5")].map(x => `<li>${esc(x)}</li>`).join("");
+  document.getElementById("genNote").textContent = t("gen_note", { when: META.generated });
+}
+document.querySelectorAll("#langSeg button").forEach(b => b.onclick = () => { lang = b.dataset.lang; try { localStorage.setItem("ps.lang", lang); } catch (e) {} render(); });
+render();
+</script>

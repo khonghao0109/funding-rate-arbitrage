@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Render hold.py's JSON through hold.template.html into ONE self-contained
-bilingual page. Every sentence on the page is written in the template from the
+"""Render ONE analysis JSON (hold.py, pairscreen.py) through its template into
+a self-contained bilingual page. Every sentence on the page is written in the template from the
 JSON's numbers; this script only injects the data and the run's provenance."""
 import argparse
 import datetime
 import json
 import pathlib
+import re
 
 HERE = pathlib.Path(__file__).resolve().parent
 ap = argparse.ArgumentParser(description=__doc__)
@@ -22,7 +23,9 @@ tpl = open(args.template, encoding="utf-8").read()
 out = (tpl.replace("/*__DATA__*/", json.dumps(data, ensure_ascii=False, separators=(",", ":")))
           .replace("/*__META__*/", json.dumps(meta, ensure_ascii=False)))
 if args.title:
-    out = out.replace("<title>Chân trời hoà vốn</title>", f"<title>{args.title}</title>", 1)
+    # Whatever <title> the template carries; the same builder serves every
+    # template that takes ONE JSON (hold.template.html, pairscreen.template.html).
+    out = re.sub(r"<title>.*?</title>", f"<title>{args.title}</title>", out, count=1)
 for path in args.out:
     # A new file each run, never an overwrite: an older report is the record of
     # what was known that day.
