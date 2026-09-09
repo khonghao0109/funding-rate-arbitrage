@@ -1855,7 +1855,9 @@ Sửa:
 > ghi ở đây để không ai quên: tiến trình đang chạy (PID 58422, 09:39:52) nạp
 > config MỘT lần nên vẫn dùng bộ cũ và biểu phí cũ — file không còn mô tả nhật
 > ký nó đang sinh ra, và phép so của cổng phải dựng lại bộ cũ bằng
-> `git show ba5ee31:config.yaml`, y như đã phải làm với phí. Khởi động lại để
+> `git show 2328307:config.yaml` (commit 09:46:26 cùng ngày; `ba5ee31` mà bản
+> trước dẫn KHÔNG có khối strategy — phát hiện 2026-09-09), hoặc chắc hơn: cột
+> `params_json` của chính `signal_journal`, ghi kèm mọi quyết định, y như đã phải làm với phí. Khởi động lại để
 > ăn bộ mới = đặt lại đồng hồ 14 ngày. **Không restart trước 2026-09-21.**
 >
 > ② Lỗi người dùng báo — `BTCUSDT/hyperliquid_futures` bị từ chối "không có
@@ -2308,7 +2310,7 @@ USDT/USD mà không chỗ nào trừ.
 (thắng 19/74), 3 tháng +0,227% so với +0,316% (thắng 6/74).
 
 `config.yaml` KHÔNG đổi ở bước này — đây là một phép đo, không phải một thay
-đổi tham số; và tiến trình 3.5 đang chạy vẫn giữ bộ của `ba5ee31`.
+đổi tham số; và tiến trình 3.5 đang chạy vẫn giữ bộ của `2328307`.
 
 #### Bộ ngưỡng vốn và rủi ro ✅ (2026-09-09, `tools/report/capital.py`)
 
@@ -2418,14 +2420,14 @@ nó không tới được tiến trình 3.5 đang chạy.
 >
 > **Đầu vào lệch thứ tư — biểu phí lúc khởi động (ghi 2026-09-07, sau khi
 > xác minh phí):** tiến trình nhật ký nạp `config.yaml` đúng MỘT lần lúc lên
-> (09:39:52, khối `fee` của commit `ba5ee31`: bybit_futures / okx_futures /
+> (09:39:52, khối `fee` của commit `2328307`: bybit_futures / okx_futures /
 > gate_futures / bybit_spot `verified: false`) và không bao giờ nạp lại; từ
 > 11:29 cùng ngày file trên đĩa đã xác minh cả bốn, và `cmd/backtest` đọc file
 > lúc chạy. `params_json` chỉ mang tham số chiến lược nên bước 2 KHÔNG bắt
 > được lệch này bằng máy. Hệ quả: 12 chuỗi phi-binance nằm ngoài (a)/(b)/(c)
 > theo cấu trúc (nhật ký chỉ có thể `skip` "chưa xác minh biểu phí" ở đó, đo
 > được: 156/364 hàng đầu tiên), nên backtest phục vụ phán quyết chạy hoặc chỉ
-> trên 4 chuỗi binance (bước 3 đã ghi) hoặc với `git show ba5ee31:config.yaml`.
+> trên 4 chuỗi binance (bước 3 đã ghi) hoặc với `git show 2328307:config.yaml`.
 > Nếu tiến trình chết và lên lại từ working tree, nửa sau cửa sổ sẽ chạy biểu
 > phí mới — cửa sổ tính lại từ lần lên cuối (bước 1) và phải ghi kèm trạng
 > thái phí. Nợ tooling: ghi `fee_verified` và taker bps của hai chân vào

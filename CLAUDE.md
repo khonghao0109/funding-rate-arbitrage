@@ -282,7 +282,7 @@ so the default grid is unchanged, pinned by test). The old set is
 `0.5 / 3 / 0.005 / 3` with gates `0/1/0`. **This does not move the running 3.5
 process**, which loaded its config once at start-up: the file no longer
 describes what that journal is producing, so the gate comparison must
-reconstruct the old set from `git show ba5ee31:config.yaml` exactly as it
+reconstruct the old set from `git show 2328307:config.yaml` exactly as it
 already does for the pre-verification fees. Restarting to pick the new set up
 would restart the 14-day clock. Measured with the new set over 12 months on
 24 series: hyperliquid BTC +5.44% and ETH +5.01% realized APR, the first
@@ -432,7 +432,7 @@ RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
 mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
 every hedge leg every 10 minutes with the SAME `strategy.Candidate` the
-backtest builds — settled history from the store, fees from config (loaded ONCE at start-up: the 3.5 process still holds the pre-verification fees of `ba5ee31`, see PLAN 3.5 ③), the newest
+backtest builds — settled history from the store, fees from config (loaded ONCE at start-up: the 3.5 process still holds the pre-verification fees of `2328307`, see PLAN 3.5 ③), the newest
 measured books — plus live spot/perp prices, which is why the basis exit is
 evaluable here and nowhere else. Every decision lands in `signal_journal`
 (schema v4) with all its checks as JSON; paper positions reseed from it on
