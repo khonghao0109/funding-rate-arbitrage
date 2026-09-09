@@ -455,6 +455,65 @@ worth 0.053 grid-mean points and is the largest axis left; basis 1.0 → 2.0
 is +0.075 and 2.0 → off only +0.004; widen 1.0 → 2.0 is +0.094 and 2.0 → off
 +0.005; N and M are flat. `config.yaml` was not moved on this grid.
 
+**The corpus was extended to three years on 2026-09-09 (on a scratchpad
+COPY of the DB — the live file is what the 3.5 process writes), and the
+applied set was re-measured on it** (report
+`docs/reports/backtest-3y-2026-09-09.html`; recipe, venue reach and the
+`recorded_at_ms` trap in `tools/report/README.md`). Reach with `-months 36`:
+binance, bybit and hyperliquid answer the full 3 years (HYPE from listing),
+**kraken has nothing before 2025-09-03** (its endpoint takes no time
+parameter and returns all it keeps — an absolute anchor that will grow, not
+a one-year cap), gate 180 days, okx ~3 months, paradex nothing; 3-year candles exist for binance/bybit both legs,
+hyperliquid candles still stop at ~208 days. Only **32 of the 74 series cover
+the whole 3 years**, so the 36-month universe mean mixes corpus lengths and
+the per-year figures are read on those 32. Applied set over 36 months:
++6.49% on capital per series (74), +13.66% = **+4.55%/yr on the 32**, 66/74
+positive, 1.24 trades/series, hold-through +6.49%; 24 months +3.10% vs
++3.16% (+2.91%/yr on the 32); 12 months +0.88% vs +0.92%. Per-year
+hold-through read straight from the corpus (`applied.py --slices`): **2023-24
++7.49%** (1.41 bps/8h; USDT venues +5.94%, hyperliquid +12.16%), 2024-25
++4.20% (0.81 bps; +3.28% / +6.95%), 2025-26 +1.23% over 48 series and
+**+1.42% on the SAME 32** (the third slice adds 13 kraken + 3 HYPE series
+that did not exist earlier) — funding fell ~5× in three years. "The
+universe" of 2023-24 is 32 series on 3 venues and 12 pairs (28/32 inside
+5–15%; USDT-quoted mean +5.94% at the band's floor, the 8 bridged
+hyperliquid series +12.16%); 7/32 in band in 2024-25, 0/32 in 2025-26.
+Hold-through is a Python benchmark from the corpus, not a Go replay, and
+the pair list is in-sample (screened 2026-09-09 on the last 12 months). Grids on the 3-year corpus: 324 sets → the
+applied set ranks 105/324, best +6.561% (0.3/3, N 24, M 0, basis off) is
+0.068 above it, 108 beat hold-through; 1,296 sets (adds C 0.25/1.0 and
+holding_days 30/90) → rank **156/1,296**, best still +6.561%, 164 beat
+hold-through by ≤0.07, the top 20 span 0.02 points, every axis mean within
+0.11 (C 0.25 → 1.0 +0.11, widen 1 → 2 +0.09, basis 1 → 2 +0.07, persist 3 vs
+6 +0.015). The old block (1.0/0.5, M 0) makes +5.574% at 4.97 trades on the
+universe but the SAME +13.67% on the 32 full-coverage series — its whole
+deficit is the short-corpus kraken/alt series. The adversarial review of that
+sweep corrected five readings: re-ranked on the 32 full-coverage series the
+applied set is **365/1,296** (gap 0.085) and 392/1,296 on the USDT-quoted
+subset — mid-grid, though still only 0.03–0.04 points/yr behind; the
+flatness is ONE-SIDED (no set beats hold-through by more than +0.07, but
+805/1,296 trail it by more than 0.1 and the worst by 0.51); the 164
+"beat hold-through" sets all owe their margin to ONE episode — BNB·binance
+flat for 71 days in Dec 2023–Mar 2024, +2.6% on capital — and without that
+series 55 sets beat it by ≤0.017 while the applied set trails by 0.028;
+the two basis axes are worth exactly 0.000 on the 32 three-year series (the
+basis exit never fired there at any threshold, and the whole +0.919 over
+the old block is kraken's one-year cohort, +0.921), the decay exit never
+fires (N 24/48/96 bit-identical), and hyperliquid is basis-blind for 79.9%
+of its 36-month settlements; and 12 of the 36 months are the very window
+the set was chosen on — on the same 32 series the rule tracks hold-through
+year by year (7.85/4.43/1.67 vs 7.72/4.42/1.65) because 26/32 positions
+opened Sep–Oct 2023 and held to the end, and a perfect-foresight exit would
+have added at most +0.16%/yr in 2023-24. The grid also omits every value
+already shown to hurt (widen 0.5, C 0, N 1, rate ≥1.2), so "flat" describes
+the neighbourhood of a set chosen for being flat. **Verdict: nothing in that
+neighbourhood is meaningfully better over 3 years (0.02–0.03 points/yr),
+the upside over hold-through is capped at +0.07 while the downside reaches
+−0.51, and the yearly regime swing (6.07 points/yr on the same 32 series)
+is 31× the grid's whole span and 260× the best-minus-applied gap.** The
+lever left is WHEN and WHERE to be in (the trailing-mean selection key,
+still 0), to be measured on this corpus. `config.yaml` unchanged.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only

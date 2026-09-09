@@ -153,15 +153,23 @@ def summarise(h, entries, ts, to_ms):
     }
 
 
-def corpus(db, series_cost, from_ms, to_ms, entry_bps, entry_persist):
+def corpus(db, series_cost, from_ms, to_ms, entry_bps, entry_persist, recorded_by_ms=None):
+    """recorded_by_ms: only rows recorded by this stamp count. The default,
+    the window's end, is the replay's own view — a row recorded after the
+    window closed did not exist for it. A slice of a BACKFILLED corpus (rows
+    stamped the day of the backfill, settlements years earlier) must pass the
+    backfill time instead, or the filter silently empties every past year —
+    the same trap that dropped the hyperliquid alts from the pair screen."""
+    if recorded_by_ms is None:
+        recorded_by_ms = to_ms
     out = []
     for (sym, src), cost in sorted(series_cost.items()):
         rows = db.execute("""SELECT funding_at_ms, rate_per_interval_frac, rate_per_8h_frac, interval_sec
                              FROM funding_history WHERE source=? AND symbol=? AND model='discrete'
                                AND rate_type<>'Special' AND funding_at_ms>=? AND funding_at_ms<?
                                AND recorded_at_ms<=? ORDER BY funding_at_ms""",
-                          (src, sym, from_ms, to_ms, to_ms)).fetchall()
-        # recorded_at_ms <= window end: only rows the replay could have seen.
+                          (src, sym, from_ms, to_ms, recorded_by_ms)).fetchall()
+        # recorded_at_ms <= window end (by default): only rows the replay could have seen.
         if len(rows) < 2:
             continue
         ts = [r[0] for r in rows]

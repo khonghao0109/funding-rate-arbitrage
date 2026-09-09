@@ -151,6 +151,7 @@ footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);paddi
 
   <nav class="pagenav" aria-label="sections">
     <a href="#where" data-i18n="nav_where"></a>
+    <a href="#regime" data-i18n="nav_regime"></a>
     <a href="#symbols" data-i18n="nav_symbols"></a>
     <a href="#series" data-i18n="nav_series"></a>
     <a href="#trades" data-i18n="nav_trades"></a>
@@ -173,6 +174,16 @@ footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);paddi
     <div class="tablewrap"><table class="pin" id="cohortTable"></table></div>
     <p class="scrollhint" data-i18n="scrollhint"></p>
     <p class="note" id="whereRead"></p>
+  </section>
+
+  <section id="regime">
+    <header>
+      <div class="eyebrow" data-i18n="rg_eyebrow"></div>
+      <h2 data-i18n="rg_h"></h2>
+      <p data-i18n="rg_p"></p>
+    </header>
+    <div class="tablewrap"><table class="pin" id="regimeTable"></table></div>
+    <p class="note" id="rgRead"></p>
   </section>
 
   <section id="symbols">
@@ -286,7 +297,7 @@ const T = {
 vi: {
   title: "Bộ ngưỡng đã áp dụng",
   verdict_eyebrow: "Phán quyết",
-  w12: "12 tháng", w6: "6 tháng", w3: "3 tháng",
+  w36: "36 tháng", w24: "24 tháng", w18: "18 tháng", w12: "12 tháng", w6: "6 tháng", w3: "3 tháng",
   nav_where: "Ăn ở đâu", nav_symbols: "Từng cặp", nav_series: "Từng chuỗi", nav_trades: "Từng lệnh", nav_grid: "Lưới ngưỡng", nav_method: "Cách đo",
   fig_rule: "Bộ đã áp dụng, trên vốn / chuỗi", fig_ht: "Giữ suốt, trên vốn / chuỗi", fig_series: "Chuỗi chạy được",
   fig_positive: "Chuỗi có lãi", fig_trades: "Lệnh mỗi chuỗi", fig_dd: "Sụt vốn trung bình", fig_calmar: "Lãi / sụt vốn",
@@ -363,11 +374,17 @@ vi: {
   cmp_coh_h: "Theo nhóm chuỗi", cmp_ser_h: "10 chuỗi đổi nhiều nhất", cmp_set: "Bộ kia:",
   cmp_read: "So với {what}: bộ đã áp dụng chênh {delta} trên vốn mỗi chuỗi, số lệnh {on} so với {off}, {moved} chuỗi bị đổi. Nhóm ghép cầu chênh {bridged}, nhóm cùng quote USDT chênh {usdt}. Chuỗi đổi nhiều nhất là {series}: {sdelta}, {strades} lệnh.",
   cmp_none: "Không có phép so nào cho cửa sổ này.",
+  nav_regime: "Từng năm",
+  rg_eyebrow: "Từng năm", rg_h: "Corpus trả bao nhiêu trong từng năm",
+  rg_p: "Đọc thẳng từ corpus, không qua luật nào: funding trung bình đã settle, tỷ lệ mốc dương và mốc giữ suốt trên vốn của mỗi lát 365 ngày, trên các chuỗi có corpus phủ đủ lát đó. Bảng này nói NĂM NÀO trả, không nói luật đã làm gì trong năm đó — replay theo từng năm cần cmd/backtest -from/-to, thứ chưa có.",
+  th_slice: "Lát 365 ngày", th_ht_pos: "Giữ suốt dương", th_pos_share: "Mốc dương",
+  co_btc_eth_usdt: "BTC+ETH, perp quote USDT", co_common: "Cùng một bộ chuỗi có mặt ở MỌI lát", rg_all: "Mọi chuỗi phủ đủ lát",
+  rg_read: "Trên cùng một bộ chuỗi có mặt ở mọi lát ({bestn} chuỗi): lát trả nhiều nhất là {best} (giữ suốt {bestv} trên vốn), lát gần nhất {last} chỉ {lastv}. Trên các sàn quote USDT (mọi chuỗi phủ đủ lát): {ubest} ở lát tốt nhất so với {ulast} ở lát gần nhất. Giữ suốt ở đây là mốc chuẩn tính trong Python từ corpus, không phải một lượt replay của Go.",
 },
 zh: {
   title: "已采用的阈值组",
   verdict_eyebrow: "结论",
-  w12: "12 个月", w6: "6 个月", w3: "3 个月",
+  w36: "36 个月", w24: "24 个月", w18: "18 个月", w12: "12 个月", w6: "6 个月", w3: "3 个月",
   nav_where: "赚在哪里", nav_symbols: "按币种", nav_series: "按序列", nav_trades: "按交易", nav_grid: "阈值网格", nav_method: "测量方法",
   fig_rule: "已采用组，按资金/序列", fig_ht: "持有到底，按资金/序列", fig_series: "可回放序列",
   fig_positive: "盈利序列", fig_trades: "每序列交易数", fig_dd: "平均回撤", fig_calmar: "收益/回撤",
@@ -444,6 +461,12 @@ zh: {
   cmp_coh_h: "按子集", cmp_ser_h: "变化最大的 10 条序列", cmp_set: "另一组：",
   cmp_read: "与{what}相比：已采用组按资金每序列相差 {delta}，交易 {on} 对 {off}，{moved} 条序列受影响。跨报价子集相差 {bridged}，同为 USDT 的子集相差 {usdt}。变化最大的序列是 {series}：{sdelta}，交易 {strades}。",
   cmp_none: "本窗口没有对比。",
+  nav_regime: "按年",
+  rg_eyebrow: "按年", rg_h: "语料在各年分别付了多少",
+  rg_p: "直接从语料读出，不经任何规则：每个 365 天切片的平均已结算资金费、正结算占比和按资金计的持有到底基准，只算语料覆盖整个切片的序列。这张表说的是哪一年在付钱，不是规则在那一年做了什么——按年回放需要 cmd/backtest 的 -from/-to，目前没有。",
+  th_slice: "365 天切片", th_ht_pos: "持有为正", th_pos_share: "正结算",
+  co_btc_eth_usdt: "BTC+ETH，USDT 计价永续", co_common: "每个切片都有的同一组序列", rg_all: "覆盖整个切片的全部序列",
+  rg_read: "在每个切片都有的同一组序列上（{bestn} 条）：付得最多的切片是 {best}（持有到底按资金 {bestv}），最近的切片 {last} 只有 {lastv}。USDT 计价交易所（覆盖整个切片的全部序列）：最好切片 {ubest}，最近切片 {ulast}。这里的持有到底是用 Python 从语料算出的基准，不是 Go 的一次回放。",
 }};
 
 let lang = "vi", win = WINS[0], serTab = "all";
@@ -629,6 +652,35 @@ function renderWhere() {
 }
 
 const listVI = xs => xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + (lang === "zh" ? "、" : " và ") + xs[xs.length - 1];
+
+function renderRegime() {
+  const w = W(), box = document.getElementById("regime"), S = w.slices;
+  if (!S || !S.length) { box.hidden = true; return; }
+  box.hidden = false;
+  const COH = ["common", "all", "usdt_quoted", "bridged", "hyperliquid", "btc_eth_usdt"];
+  const rows = [];
+  S.forEach(sl => COH.forEach(c => {
+    const v = sl.cohorts[c];
+    if (!v) return;
+    rows.push([`${day(sl.from_ms)} → ${day(sl.to_ms)}`, c === "all" ? t("rg_all") : t("co_" + c), num(v.series, 0),
+      num(v.mean_bps, 3), pct(v.positive_share * 100, 0),
+      { v: pct(v.ht_cap_pct, 2, true), cls: cls(v.ht_cap_pct) }, pct(v.ht_dd_cap_pct, 2), `${v.ht_positive}/${v.series}`]);
+  }));
+  document.getElementById("regimeTable").innerHTML = tbl(
+    [{ label: t("th_slice") }, { label: t("th_cohort") }, { label: t("th_n"), num: 1 }, { label: t("th_bps"), num: 1 },
+     { label: t("th_pos_share"), num: 1 }, { label: t("th_ht"), num: 1 }, { label: t("th_dd"), num: 1 }, { label: t("th_ht_pos"), num: 1 }], rows);
+  const key = S.every(sl => sl.cohorts.common) ? "common" : "all";
+  const withAll = S.filter(sl => sl.cohorts[key]).map(sl => ({ ...sl, cohorts: { ...sl.cohorts, all: sl.cohorts[key] } }));
+  if (!withAll.length) { document.getElementById("rgRead").textContent = ""; return; }
+  const best = withAll.reduce((a, b) => b.cohorts.all.ht_cap_pct > a.cohorts.all.ht_cap_pct ? b : a);
+  const last = withAll[withAll.length - 1];
+  const u = sl => sl.cohorts.usdt_quoted ? pct(sl.cohorts.usdt_quoted.ht_cap_pct, 2, true) : "—";
+  const ubest = withAll.filter(sl => sl.cohorts.usdt_quoted).reduce((a, b) => !a || b.cohorts.usdt_quoted.ht_cap_pct > a.cohorts.usdt_quoted.ht_cap_pct ? b : a, null);
+  document.getElementById("rgRead").textContent = t("rg_read", {
+    best: `${day(best.from_ms)} → ${day(best.to_ms)}`, bestv: pct(best.cohorts.all.ht_cap_pct, 2, true), bestn: best.cohorts.all.series,
+    last: `${day(last.from_ms)} → ${day(last.to_ms)}`, lastv: pct(last.cohorts.all.ht_cap_pct, 2, true),
+    ubest: ubest ? u(ubest) : "—", ulast: u(last) });
+}
 
 function renderSymbols() {
   const w = W(), need = needBps(w);
@@ -866,7 +918,7 @@ function render() {
   renderStatic();
   document.getElementById("windowLabel").textContent = t("win_label", {
     from: day(W().from_ms), to: day(W().to_ms), n: W().series.length });
-  renderVerdict(); renderWhere(); renderSymbols(); renderSeries(); renderTrades(); renderCmp(); renderGrid(); renderMethod();
+  renderVerdict(); renderWhere(); renderRegime(); renderSymbols(); renderSeries(); renderTrades(); renderCmp(); renderGrid(); renderMethod();
 }
 
 document.getElementById("windowSeg").innerHTML = WINS.map(k =>

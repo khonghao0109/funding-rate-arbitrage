@@ -208,6 +208,48 @@ so có khoá `old` được phán quyết trích riêng ("bộ cũ mà nó thay 
 `applied.template.html` sinh từ `expand.template.html` — cùng khung, mục "giá
 một lối thoát" thay bằng danh sách phép so, nhãn bộ ngưỡng thêm `B basis/dịch`.
 
+### Cửa sổ dài hơn corpus đang có (1–3 năm)
+
+`config.yaml` backfill 12 tháng; hỏi "1 đến 3 năm trước" là phải kéo corpus
+sâu hơn, và KHÔNG được làm việc đó trên `data/scanner.db` trong khi tiến trình
+3.5 đang ghi vào nó. Cách đã dùng ngày 2026-09-09: sao lưu nhất quán bằng
+`.backup`, trỏ một bản sao config vào bản sao DB, backfill và replay ở đó.
+
+```bash
+L=/tmp/long
+sqlite3 data/scanner.db ".backup $L/scanner.db"                       # bản sao nhất quán, không khoá file gốc
+sed "s#^  path: \"data/scanner.db\"#  path: \"$L/scanner.db\"#" config.yaml > $L/config.yaml
+go build -o $L/backfill ./cmd/backfill && go build -o $L/backtest ./cmd/backtest
+$L/backfill -config $L/config.yaml -db $L/scanner.db -months 36        # funding; xem ghi chú tầm với bên dưới
+for src in binance_futures binance_spot bybit_futures bybit_spot; do  # nến: chỉ các sàn funding với tới 3 năm
+  $L/backfill -config $L/config.yaml -db $L/scanner.db -prices -months 36 -source $src
+done
+for M in 36 24 12; do $L/backtest -config $L/config.yaml -months $M -csv $L/runs$M.csv -trades-csv $L/trades$M.csv; done
+python3 tools/report/applied.py --db $L/scanner.db --config $L/config.yaml \
+  --window 36=... --window 24=... --window 12=... --slices 36=3 --sweep $L/wide36.csv:$L/widetrades36.csv --sweep-window 36 --out $L/long.json
+```
+
+Tầm với đo được 2026-09-09 với `-months 36`: **binance, bybit, hyperliquid trả
+đủ 3 năm** (HYPE từ ngày niêm yết 2024-12/2025-05, NEAR·hyperliquid từ
+2023-11); **kraken chỉ có từ 2025-09-03** — endpoint của nó không nhận tham
+số thời gian (`exchanges/kraken/funding_history.go`), trả toàn bộ lịch sử
+nó giữ trong một phản hồi, và mốc cũ nhất là như nhau ở hai lần đo cách
+nhau 5 ngày, tức một mốc neo tuyệt đối của sàn sẽ tự dài ra chứ không phải
+trần "1 năm"; gate 180 ngày, okx ~3 tháng, paradex không có mốc settle
+— và với paradex, một yêu cầu 36 tháng là ~2.000 trang không-thêm-gì mỗi
+cặp (mỗi giờ corpus là một request), nên chạy `-source` cho từng sàn cần
+thay vì để nó đi hết danh sách. Nến hyperliquid vẫn dừng ở ~208 ngày, nên
+lối thoát basis ở đó mù trước 2026-02 dù funding có đủ 3 năm.
+
+`--slices WINDOW=N` cắt cửa sổ thành N lát 365 ngày và đọc từng lát THẲNG từ
+corpus qua `hold.corpus()` (funding trung bình, tỷ lệ mốc dương, giữ suốt trên
+vốn, theo nhóm chuỗi) — bảng "năm nào trả", không phải "luật làm gì trong
+năm đó"; replay theo năm cần `cmd/backtest -from/-to`, chưa có. Bẫy đã mắc
+ngay lần đầu: `hold.corpus()` lọc `recorded_at_ms <= cuối cửa sổ` (đúng cho
+một replay), mà corpus backfill hôm nay thì mọi mốc của 2024 đều ghi ngày
+2026-09-09, nên hai lát đầu ra RỖNG không báo lỗi. Tham số `recorded_by_ms`
+được thêm cho đúng trường hợp này; `--slices` truyền giờ hiện tại.
+
 ## Bộ ngưỡng vốn và rủi ro (`capital.py`)
 
 Xếp hạng một lưới theo hai thứ mà các trang trước không có: **vốn danh mục**

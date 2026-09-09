@@ -2412,6 +2412,108 @@ Công cụ: `tools/report/applied.py` + `applied.template.html` (dùng lại
 `expand.window()`/`expand.isolation()`; chênh trên trang là "bộ đã áp dụng
 trừ bộ kia", ngược dấu với `expand.py`, ghi trong `delta_sign` của JSON).
 
+#### Bộ đã áp dụng trên 1–3 năm ✅ (2026-09-09, `docs/reports/backtest-3y-2026-09-09.html`)
+
+Câu hỏi: bộ ngưỡng hiện tại đã là tốt nhất chưa, nếu backtest 1 đến 3 năm?
+Corpus đang có chỉ 12 tháng, nên bước đầu là kéo corpus sâu hơn — trên một
+BẢN SAO của DB (`sqlite3 .backup`, config trỏ vào bản sao) vì tiến trình 3.5
+đang ghi vào file thật. Tầm với đo được với `-months 36`: **binance, bybit,
+hyperliquid trả đủ 3 năm** (12/13 cặp; HYPE từ ngày niêm yết), **kraken
+chỉ có từ 2025-09-03** (endpoint không nhận tham số thời gian, trả toàn bộ
+lịch sử nó giữ — một mốc neo tuyệt đối sẽ tự dài ra, không phải trần 1
+năm), gate 180 ngày, okx ~3 tháng, paradex không có mốc settle. Nến 3 năm cho binance/bybit cả hai chân; nến hyperliquid vẫn 208
+ngày nên lối thoát basis ở đó mù trước 2026-02. Chi phí vòng vẫn là MỘT lần
+đo sổ hôm nay, áp cho cả lệnh mở năm 2023. Công thức đọc: 74 chuỗi chạy
+được, nhưng chỉ **32 chuỗi có corpus phủ đủ 3 năm** (binance/bybit/
+hyperliquid × 12 cặp trừ HYPE), nên con số "trung bình 74 chuỗi" của cửa sổ
+36 tháng trộn corpus 3 năm với 1 năm, 6 tháng và 3 tháng; số theo năm đọc
+ở 32 chuỗi kia.
+
+| Cửa sổ | Bộ đã áp dụng (74 chuỗi) | Giữ suốt | 32 chuỗi đủ corpus | /năm | Chuỗi dương | Lệnh/chuỗi |
+|---|---|---|---|---|---|---|
+| 36 tháng | +6,49% | +6,49% | +13,66% | **+4,55%/năm** | 66/74 | 1,24 |
+| 24 tháng | +3,10% | +3,16% | +5,81% | +2,91%/năm | 66/74 | 1,22 |
+| 12 tháng | +0,88% | +0,92% | (48 chuỗi) +1,19% | +1,19%/năm | 62/74 | 1,12 |
+
+**Năm nào trả (đọc thẳng từ corpus, giữ suốt trên vốn, chuỗi phủ đủ lát):**
+
+| Lát 365 ngày | Funding TB | Mốc dương | Cả nhóm | Sàn USDT (binance/bybit) | Hyperliquid (ghép cầu) | BTC+ETH sàn USDT |
+|---|---|---|---|---|---|---|
+| 2023-09 → 2024-09 | 1,409 bps/8h | 86% | **+7,49%** (32) | +5,94% (24) | +12,16% (8) | +5,89% (4) |
+| 2024-09 → 2025-09 | 0,808 | 82% | +4,20% (32) | +3,28% | +6,95% | +3,66% |
+| 2025-09 → 2026-09 | 0,268 | 67% | +1,23% (48) | +1,12% (26) | +2,93% (9) | +1,24% |
+| 2025-09 → 2026-09, CÙNG 32 chuỗi của hai lát trên | 0,301 | — | **+1,42%** (32) | +1,00% (24) | +2,68% (8) | +1,24% |
+
+Đọc cho đúng (review đối kháng 2026-09-09): lát thứ ba có 48 chuỗi vì 13
+chuỗi kraken và 3 HYPE chỉ tồn tại ở năm này, nên đường cùng mẫu số là
+**7,49 → 4,20 → 1,42** trên cùng 32 chuỗi (đổi thành phần chỉ giải thích
+0,19 trong 6,26 điểm sụt). Funding giảm khoảng 5 lần trong ba năm; "vũ trụ"
+của 2023–24 là 32 chuỗi trên 3 sàn và 12 cặp (kraken/okx/gate/paradex không
+có corpus năm đó), trong đó giữ suốt nằm trong dải 5–15% ở 28/32 chuỗi, các
+chuỗi quote USDT trung bình +5,94% (sát mép dưới) và 8 chuỗi hyperliquid
+ghép cầu +12,16%; 2024–25 còn 7/32 trong dải, 2025–26 là 0/32. Funding
+trung bình ở bảng là trung bình của trung bình từng chuỗi (tính theo dòng
+thì cao hơn ~40% vì hyperliquid có 8 mốc/ngày). Danh sách cặp là in-sample:
+13 cặp được sàng ngày 2026-09-09 trên funding 12 tháng gần nhất và phải
+đã niêm yết từ 2023-09 để có mặt ở lát đầu. Đây là regime, không phải tham
+số — và mốc giữ suốt là mốc chuẩn tính trong Python từ corpus, không phải
+một lượt replay của Go.
+
+**Lưới quanh bộ đã áp dụng, corpus 3 năm:** 324 bộ × 36 tháng → bộ áp dụng
+hạng 105/324, bộ tốt nhất +6,561% (0,3/3, N 24, M 0, basis tắt) hơn 0,068
+điểm, 108/324 vượt giữ suốt (+6,490%), 324/324 dương, trung vị +6,421%; 324
+bộ × 24 tháng → hạng 96/324, tốt nhất +3,159% so với giữ suốt +3,155%,
+1/324 vượt; **1.296 bộ × 36 tháng** (thêm trục C 0,25/1,0 và holding_days
+30/90) → hạng **156/1.296**, tốt nhất vẫn +6,561%, 164 bộ vượt giữ suốt
+nhưng không bộ nào quá 0,07 điểm, 1.296/1.296 dương, trung vị +6,367%, 20
+bộ đầu nằm trong 0,02 điểm của nhau. Trục lớn nhất trên 3 năm là C 0,25 →
+1,0 (+0,11 điểm trung bình lưới), dịch basis 1 → 2 (+0,09), basis 1 → 2
+(+0,07); bền 3 so với 6 chỉ +0,015; N, M, holding_days trong 0,05. Bộ cũ
+(basis 1,0/0,5, M 0) trên 36 tháng: +5,574% với 4,97 lệnh/chuỗi, 60/74 dương
+— kém bộ áp dụng 0,919 điểm trên vũ trụ, nhưng BẰNG NHAU trên 32 chuỗi đủ
+corpus (+13,665% so với +13,659%): phần chênh nằm ở các chuỗi kraken/alt
+ngắn corpus, nơi basis 0,5 điểm nổ liên tục.
+
+**Những gì review đối kháng bắt được trước khi phán quyết:** (1) hạng 156
+là trên trung bình trộn corpus 93 ngày với 1.096 ngày; xếp lại trên 32 chuỗi
+đủ 3 năm bộ áp dụng đứng **365/1.296** (kém bộ tốt nhất 0,085), trên 26
+chuỗi quote USDT 392/1.296 (0,112), tức giữa lưới, không phải phần tám đầu
+— nhưng mức chênh vẫn chỉ 0,03–0,04 điểm/năm trên vốn. (2) Độ phẳng chỉ
+MỘT PHÍA: không bộ nào hơn giữ suốt quá +0,07, nhưng 805/1.296 bộ kém nó
+hơn 0,1 và bộ tệ nhất kém 0,51 (C 0,25, M 0, hold 30, basis 1/1, 4,65
+lệnh/chuỗi) — đặt sai C/basis/hold vẫn mất một phần ba lợi nhuận 3 năm.
+(3) 164 bộ "vượt giữ suốt" đều vượt 0,0003–0,071 và toàn bộ phần vượt là
+MỘT chuỗi, MỘT đợt: BNB·binance đứng ngoài 71 ngày (2023-12-22 → 2024-03-02)
+tránh được −5,56% notional funding âm (+2,6% trên vốn); bỏ chuỗi đó thì bộ
+áp dụng kém giữ suốt 0,028 và chỉ 55 bộ vượt, tối đa 0,017. (4) Trên 32
+chuỗi 3 năm hai trục basis đáng giá **0,000** — lối thoát basis chưa bao giờ
+nổ trên corpus 3 năm ở bất kỳ ngưỡng nào — nên toàn bộ hiệu ứng basis
+(và toàn bộ 0,919 điểm hơn bộ cũ: kraken góp +0,921) là chuyện của corpus
+1 năm trên kraken; chốt 2,0/2,0 chưa hề được thử qua 3 năm, và hyperliquid
+mù basis ở 79,9% số mốc 36 tháng. Lối thoát suy giảm không nổ lần nào (N
+24/48/96 cho kết quả giống hệt). (5) Không phải out-of-sample: 12 trong 36
+tháng là đúng cửa sổ đã chọn bộ này; 24 tháng trước đó mới là bằng chứng
+mới, và trên cùng 32 chuỗi luật đi sát giữ suốt từng năm (funding thu
+7,85 / 4,43 / 1,67% so với giữ suốt 7,72 / 4,42 / 1,65%) vì 26/32 vị thế mở
+tháng 9–10/2023 và giữ tới cuối cửa sổ; một luật thoát nhìn-trước hoàn hảo
+cũng chỉ thêm được +0,16%/năm ở 2023–24. Lưới cũng KHÔNG chứa các giá trị
+đã biết là có hại (dịch 0,5, C 0, N 1, rate ≥ 1,2), nên "phẳng" là nói về
+lân cận của một bộ đã được chọn vì phẳng; ngoài lân cận đó bộ ngưỡng vẫn là
+cần gạt (bộ cũ −0,31/năm trên vũ trụ, bộ 3.3 đã bỏ −11%/năm).
+
+**Phán quyết:** không bộ nào trong lân cận đã quét tốt hơn bộ đã áp dụng
+một cách có nghĩa trên 3 năm — tối đa +0,068 điểm trên vũ trụ và +0,085
+trên 32 chuỗi đủ corpus, tức 0,02–0,03 điểm/năm; phía trên giữ suốt bị
+chặn ở +0,07, phía dưới mở tới −0,51. Regime funding theo năm dịch 6,07
+điểm/năm trên cùng 32 chuỗi, gấp 31 lần toàn bộ biên độ của lưới (0,19/năm)
+và 260 lần khoảng cách tốt-nhất-trừ-áp-dụng (0,023/năm). `config.yaml`
+không đổi. Câu hỏi có ích tiếp
+theo không phải "bộ nào", mà là "nhập lúc nào và ở chuỗi nào" — funding
+trung bình trượt (khoá `min_trailing_mean_bps`, đang tắt) là đúng cần gạt
+cho việc đó, và phải đo trên corpus 3 năm này. Công cụ: `applied.py
+--slices`, `hold.corpus(recorded_by_ms=…)`; công thức đầy đủ và bẫy
+`recorded_at_ms` trong `tools/report/README.md`.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.
