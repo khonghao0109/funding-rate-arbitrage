@@ -124,6 +124,47 @@ tiêu, không phải điều kiện vào lệnh. "Sàn tốt nhất" của một
 corpus ≥ `--min-cover-days` (okx ~96 ngày, gate ~180) rồi mới so funding —
 trung bình 96 ngày không so được với 365 ngày.
 
+## Bộ ngưỡng trên vũ trụ mới (`expand.py`)
+
+Sau khi danh sách cặp đổi, câu hỏi không còn là "bộ nào tốt nhất" mà là "bộ
+đang ship có còn chạy được trên vũ trụ mới không". `expand.py` đọc MỘT lượt
+chạy thường (không `-sweep`) cho mỗi cửa sổ — tức đúng khối `strategy:` của
+`config.yaml`, không phải một bộ trong lưới — và so nó với mốc giữ suốt của
+chính từng chuỗi. Nó dùng lại `corpus()`, `load_runs()`, `stream_trades()`,
+`set_row()` và `marginals()` của `hold.py`, nên không có luật nào được tính
+lại ở đây.
+
+```bash
+S=/tmp/bt13
+go build -o $S/backtest ./cmd/backtest
+for M in 12 6 3; do
+  $S/backtest -months $M -csv $S/runs$M.csv -trades-csv $S/trades$M.csv
+done
+$S/sweep.sh          # lưới quanh bộ ship, 12 tháng — lưới PHẢI chứa bộ ship
+python3 tools/report/expand.py --db data/scanner.db --config config.yaml \
+  --window 12=$S/runs12.csv:$S/trades12.csv \
+  --window 6=$S/runs6.csv:$S/trades6.csv \
+  --window 3=$S/runs3.csv:$S/trades3.csv \
+  --sweep $S/sweep12.csv:$S/sweeptrades12.csv --out $S/expand.json
+python3 tools/report/hold_build.py --json $S/expand.json \
+  --template tools/report/expand.template.html --commit $(git rev-parse --short HEAD) \
+  --title "Bộ ngưỡng trên 13 cặp" --out docs/reports/backtest-expansion-<ngày>.html
+```
+
+Ba điều kiện trước khi chạy, vì cả ba đều đã hụt ở lần đầu:
+
+1. **Cặp mới cần ảnh sổ lệnh và ảnh instrument**, không chỉ corpus funding.
+   `cmd/backtest` lấy chi phí vòng từ `depth_snapshots` (30 ngày gần nhất) và
+   lấy ánh xạ hedge từ `instrument_snapshots` của ngày mới nhất — cả hai do
+   `cmd/scanner` ghi. Chạy một tiến trình scanner riêng với `strategy.enabled:
+   false` và một cổng khác trong ~5 phút là đủ: nó ghi cả hai, không ghi
+   `signal_journal`, và **không được đụng tiến trình 3.5 đang chạy**.
+2. **Nến giờ cho cặp mới** (`cmd/backfill -prices -symbol <cặp>`), nếu không
+   lối thoát basis không được xét ở mọi mốc của chuỗi đó.
+3. `expand.py` **từ chối** một CSV chứa nhiều hơn một bộ tham số, và từ chối
+   một CSV mà bộ tham số không khớp `config.yaml` — trang này nói "bộ đang
+   ship", nên nó phải chứng minh được điều đó.
+
 ## Ba cái bẫy đã mắc, ghi lại để khỏi mắc lại
 
 **1. `{series}` là placeholder ĐÃ ĐƯỢC ĐẶT TRƯỚC trong template.** `withSeries()`

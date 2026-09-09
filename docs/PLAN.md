@@ -2261,6 +2261,55 @@ chuỗi để chọn cặp TRƯỚC chứ không hậu nghiệm; (b) hai chân t
 về ~1,2 — với hyperliquid thì không có spot, nên K = 2 và +4,8% là trần của
 cách ghép hiện tại.
 
+#### Chạy lại bộ ngưỡng trên 13 cặp ✅ (2026-09-09, `tools/report/expand.py`)
+
+Câu hỏi: *bộ ngưỡng đang ship có còn hiệu quả trên danh sách cặp vừa mở rộng
+không.* Chuẩn bị trước khi replay được — corpus funding đã có từ lượt sàng,
+nhưng cặp mới còn thiếu hai thứ mà chỉ `cmd/scanner` ghi: **ảnh sổ lệnh**
+(`depth_snapshots`, nguồn của chi phí vòng) và **ảnh instrument** (nguồn của
+ánh xạ hedge). Chạy MỘT tiến trình scanner riêng 5 phút với
+`strategy.enabled: false` trên cổng 8087 là đủ (116/117 phép đo sổ, 116
+market), nó không ghi `signal_journal` và **không đụng tiến trình 3.5**; rồi
+`cmd/backfill -prices` điền nến giờ cho 9 cặp mới (binance_spot không niêm yết
+HYPE — 7/8 nguồn). Báo cáo:
+[docs/reports/backtest-expansion-2026-09-09.html](reports/backtest-expansion-2026-09-09.html).
+
+**Kết quả 12 tháng, 74 chuỗi replay được (11 bị từ chối nêu tên: 5 paradex
+`continuous`, 4 hyperliquid alt vì sổ 20 mức không phủ 50k trong 0,5%): bộ
+đang ship LỖ −0,061%/năm trên VỐN mỗi chuỗi, trong khi chỉ giữ suốt cửa sổ
+được +0,924%.** Nó chỉ thắng giữ suốt ở 4/74 chuỗi và mở 4,6 lệnh/chuỗi (trên
+24 chuỗi cũ vẫn là +0,568% ở 1,7 lệnh — vũ trụ cũ không đổi kết luận cũ).
+
+① **Nguyên nhân là MỘT lối thoát trên MỘT sàn, và đo được bằng cách chạy lại**
+— lưới không đổi được ngưỡng basis (`baseParams` cố định, CSV không có cột
+basis), nên phép đo là hai lượt chạy thường cạnh nhau chỉ khác
+`max_basis_pct`/`max_basis_widen_pct` trong một bản sao config. Tắt lối thoát
+basis: **+0,940 điểm** (−0,061% → +0,878%) và **343 → 85 lệnh**. Toàn bộ phần
+chênh nằm ở nhóm ghép cầu (+3,16 điểm); nhóm perp quote USDT đổi **0,000**.
+Nặng nhất là HYPE·kraken −28,82% → +3,50% với 143 → 2 lệnh; cả sàn kraken
+−5,06% ở 20,8 lệnh/chuỗi so với giữ suốt +0,27% của chính nó. Ngưỡng basis
+1,0%/0,5 điểm được hiệu chỉnh trên BTC/ETH; trên perp USD của kraken cho alt,
+basis đo được mang luôn chênh USDT/USD nên nó nổ khoảng 20 lần một năm.
+
+② **Sửa lối thoát đó vẫn chưa đủ**: +0,878% vẫn dưới giữ suốt +0,924%. Và lưới
+768 bộ trên đúng 74 chuỗi ấy (12 tháng, mọi trục quanh bộ ship) cho bộ tốt
+nhất +0,165% (lối vào 0,8 bps/8h), bộ ship hạng 183/768, 129/768 bộ có lãi
+trung bình dương, trung vị −0,299% và **0/768 bộ vượt giữ suốt** — vì mọi bộ
+trong lưới đều mang ngưỡng basis của bộ ship.
+
+③ **Tiền nằm ở Hyperliquid, và vẫn là ghép cầu**: 5 chuỗi cặp-mới trên
+hyperliquid làm +3,713% trên vốn với sụt vốn 0,268% (lãi/sụt 13,8), so với
+giữ suốt +3,876%. HYPE·hyperliquid **+4,99%** và LINK·hyperliquid +4,80% là
+hai con số cao nhất dự án từng đo trên vốn — cả hai đều đúng bằng giữ suốt của
+chính nó (1 lệnh), tức luật không đóng góp gì, và cả hai đều mở rủi ro
+USDT/USD mà không chỗ nào trừ.
+
+④ Cửa sổ ngắn không đổi kết luận: 6 tháng +0,314% so với giữ suốt +0,469%
+(thắng 19/74), 3 tháng +0,227% so với +0,316% (thắng 6/74).
+
+`config.yaml` KHÔNG đổi ở bước này — đây là một phép đo, không phải một thay
+đổi tham số; và tiến trình 3.5 đang chạy vẫn giữ bộ của `ba5ee31`.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.

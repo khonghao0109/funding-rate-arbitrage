@@ -360,6 +360,40 @@ silently dropped every Hyperliquid alt on the first run; and OKX's 96-day
 mean is not comparable with a 365-day one, so a pair's "best venue" prefers a
 deep corpus before a higher number.
 
+**The shipped threshold set was re-run on the expanded universe (2026-09-09)
+and it does NOT work there.** Replaying it over 13 pairs — 74 series, 11
+refused by name (5 paradex `continuous`, 4 hyperliquid alts whose 20-level
+book does not cover 50k inside 0.5%) — gives **−0.061%/yr on capital per
+series against hold-through's +0.924%**, beating hold-through on 4/74 series
+at 4.6 trades each; the old 24 series are unchanged (+0.568% at 1.7 trades).
+**One exit on one venue is the whole difference, and a sweep cannot see it**:
+`cmd/backtest` hardcodes the basis thresholds in `baseParams` and the run CSV
+carries no basis column, so the measurement is two plain runs side by side
+differing only in `max_basis_pct`/`max_basis_widen_pct` (a config copy). With
+the basis exit off: **+0.940 points (−0.061% → +0.878%) and 343 → 85 trades**,
+all of it in the quote-bridged cohort (+3.16 points; the USDT-quoted cohort
+moves 0.000). HYPE·kraken alone goes −28.82% → +3.50% as its trades fall 143
+→ 2, and kraken as a venue is −5.06% at 20.8 trades/series against its own
+hold-through of +0.27% — the 1.0%/0.5-point thresholds were calibrated on
+BTC/ETH, and on kraken's USD alt perps the measured basis carries the
+USDT/USD bridge, so it fires about twenty times a year. Fixing that is still
+not enough: +0.878% is under hold-through, and a 768-set grid on the same 74
+series (every axis around the shipped set) tops out at +0.165%, ranks the
+shipped set 183/768, and puts **0 of 768 above hold-through** — every set in
+it carries the same basis thresholds. Where the money is: the 5 added
+hyperliquid series make **+3.713% on capital at 0.268% drawdown** (ratio 13.8)
+against hold-through's +3.876%, and **HYPE·hyperliquid +4.99%** with
+LINK·hyperliquid +4.80% are the highest figures this project has measured on
+capital — both exactly equal to their own hold-through on ONE trade, so the
+rule contributed nothing, and both quote-bridged. Shorter windows say the
+same (6 months +0.314% vs +0.469%, 3 months +0.227% vs +0.316%). `config.yaml`
+was NOT changed: this is a measurement. Report:
+`docs/reports/backtest-expansion-2026-09-09.html`; the analysis is
+`tools/report/expand.py`, and replaying new pairs needs a depth snapshot and
+an instrument snapshot first — a separate 5-minute scanner with
+`strategy.enabled: false` on another port writes both and never touches the
+3.5 process.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
