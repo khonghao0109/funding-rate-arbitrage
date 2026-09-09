@@ -268,31 +268,31 @@ vi: {
   ax_min_rate_per_8h_bps:"Ngưỡng vào (bps / 8h)", ax_persistence_periods:"Số kỳ funding phải bền trước khi vào", ax_min_net_apr_frac:"Sàn APR ròng để vào", ax_exit_net_apr_frac:"Sàn APR ròng để giữ", ax_exit_persistence_periods:"Số kỳ liên tiếp dưới sàn mới thoát", ax_notional_quote:"Notional (USDT)", ax_holding_days:"Kỳ giữ giả định để khấu hao (ngày)",
   ax_exit_negative_min_bps:"Cổng thoát đảo dấu: mốc mới nhất ≤ −X bps/8h", ax_exit_negative_periods:"Cổng thoát đảo dấu: N mốc âm liên tiếp", ax_exit_negative_cum_cost_frac:"Cổng thoát đảo dấu: funding âm đã trả ≥ C × vòng",
   sf_eyebrow:"Thử luật thoát", sf_title:"Thoát khi funding đảo dấu: sâu bao nhiêu, dài bao lâu, đắt bao nhiêu mới đáng thoát", sf_caption:"Ba cổng ghép theo AND: mốc mới nhất ≤ −X bps/8h, N mốc âm liên tiếp, funding âm đã trả trong đợt ≥ C × chi phí vòng. Bộ 0 / 1 / 0 là luật hiện tại (thoát ở bất kỳ mốc âm nào). Cột “bộ 3.3” là {series} chuỗi với các trục khác giữ ở tham số 3.3; “toàn lưới” gộp {base} bộ nền × {series} chuỗi ({sets} bộ tham số, binary dựng từ commit {commit}, sổ lệnh đo {book}). Lối thoát suy giảm vẫn bật nhưng chỉ đếm mốc KHÔNG âm — mốc âm thuộc về cổng — nên nó không còn chặn cổng ở mốc âm thứ P như lượt v3 trước khi sửa thẩm quyền.",
-  sf_x:"X (bps)", sf_n:"N", sf_c:"C (× vòng)", sf_base_sum:"Bộ đang chạy: tổng {series} chuỗi", sf_base_med:"Bộ đang chạy: ròng trung vị", sf_base_prof:"Chuỗi có lãi", sf_base_trades:"Lệnh TB", sf_base_btc:"BTC·binance", sf_base_eth:"ETH·binance", sf_shown:"Bảng dưới hiện {shown} trong {total} biến thể cổng: mười bộ tốt nhất theo tổng danh mục, cộng dòng của luật đang chạy live.",
+  sf_x:"X (bps)", sf_n:"N", sf_c:"C (× vòng)", sf_base_sum:"Bộ đang chạy: TB/chuỗi /vốn", sf_base_med:"Bộ đang chạy: trung vị /vốn", sf_base_prof:"Chuỗi có lãi", sf_base_trades:"Lệnh TB", sf_base_btc:"BTC·binance", sf_base_eth:"ETH·binance", sf_shown:"Bảng dưới hiện {shown} trong {total} biến thể cổng: mười bộ tốt nhất theo tổng danh mục, cộng dòng của luật đang chạy live.",
   sf_ht:"Mốc chuẩn giữ suốt (một vòng, {series} chuỗi, tính trên đúng cửa sổ của lưới cổng — kết thúc {to}): trung vị {med}, tổng {sum}, {prof}/{series} chuỗi dương.",
   sf_facts:"Toàn lưới cổng: {sets} bộ tham số, {pos} bộ có TỔNG {series} chuỗi dương, {ge} bộ đạt hoặc vượt giữ suốt; bộ tốt nhất {max}. Luật 3.2 thuần (0 / 1 / 0) trên mọi bộ nền: {p32} lượt có lãi. Trục quyết định không phải X hay N: lối thoát suy giảm {ep_lo} kỳ → {p_lo} lượt có lãi, {ep_hi} kỳ → {p_hi}; cổng C = 0 → {c0}, C ≥ {c_next} → {c1}. Đọc cùng mục “Từng trục” ở trên: nó vẽ đúng hai trục ấy.",
   sf_series_title:"Từng chuỗi: bộ tốt nhất của lưới cổng so với giữ suốt", sf_series_caption:"“Bộ vượt giữ suốt” đếm trong {sets} bộ của lưới cổng, trên cùng cửa sổ. Ở các chuỗi giữ suốt mạnh (BTC/ETH tại binance và bybit) gần như không bộ nào vượt; luật chỉ thắng ở chuỗi mà giữ suốt yếu hoặc âm — tức nó tránh được đoạn xấu, không tạo thêm funding.",
-  sfs_ht:"Giữ suốt (cửa sổ cổng)", sfs_best:"Bộ tốt nhất lưới cổng", sfs_trades:"Lệnh", sfs_beat:"Bộ vượt giữ suốt", sf_current:"luật hiện tại",
-  bs_title:"Bộ tham số tốt nhất theo TỔNG {series} chuỗi", bs_caption:"Xếp theo tổng lợi nhuận ròng của danh mục đều notional gồm mọi chuỗi phát lại được — một bộ tham số phải tốt trên cả {series} chuỗi cùng lúc, không phải trên chuỗi may mắn nhất. Dòng đậm là bộ đang chạy trong khối strategy của config.yaml.", bs_params:"Tham số (ngưỡng / bền / sàn vào / sàn giữ / kỳ thoát / X / N / C / vốn / giữ)", bs_sum:"TB/chuỗi trên VỐN · và tổng", bs_med:"Trung vị", bs_prof:"Chuỗi dương", bs_trades:"Lệnh TB", bs_ht:"Giữ suốt (một vòng): {cap} mỗi chuỗi trên vốn — cộng dồn {sum}, trung vị mỗi chuỗi {med}, {prof}/{series} dương. Đây là mốc chuẩn mọi bộ phải vượt, và bản thân nó cũng dưới dải 5–15%.",
+  sfs_ht:"Giữ suốt /vốn", sfs_best:"Bộ tốt nhất lưới cổng /vốn", sfs_trades:"Lệnh", sfs_beat:"Bộ vượt giữ suốt", sf_current:"luật hiện tại",
+  bs_title:"Bộ tham số tốt nhất trên {series} chuỗi", bs_caption:"Xếp theo tổng lợi nhuận ròng của danh mục đều notional gồm mọi chuỗi phát lại được — một bộ tham số phải tốt trên cả {series} chuỗi cùng lúc, không phải trên chuỗi may mắn nhất. Dòng đậm là bộ đang chạy trong khối strategy của config.yaml.", bs_params:"Tham số (ngưỡng / bền / sàn vào / sàn giữ / kỳ thoát / X / N / C / vốn / giữ)", bs_sum:"TB/chuỗi trên VỐN · và tổng", bs_med:"Trung vị /vốn", bs_prof:"Chuỗi dương", bs_trades:"Lệnh TB", bs_ht:"Giữ suốt (một vòng): {cap} mỗi chuỗi trên vốn — cộng dồn {sum}, trung vị mỗi chuỗi {med}, {prof}/{series} dương. Đây là mốc chuẩn mọi bộ phải vượt, và bản thân nó cũng dưới dải 5–15%.",
   sf_best_title:"Bộ tham số tốt nhất của lưới cổng ({base} bộ nền × {gates} biến thể cổng)",
-  dist_return:"Tổng lợi nhuận ròng trên notional (%)", hist_y:"lượt chạy",
+  dist_return:"Ròng trung vị mỗi chuỗi, trên VỐN (%)", hist_y:"lượt chạy",
   axes_eyebrow:"Từng trục", axes_title:"Cố định một tham số, nhìn phần còn lại", axes_caption:"Cột = trung vị tổng lợi nhuận ròng của các lượt có giao dịch tại giá trị đó; nhãn trên cột = tỉ lệ lượt có lãi và số lệnh trung bình. Nếu một trục không đổi được dấu, vấn đề không nằm ở trục đó.",
   ax_lbl:"{profit} có lãi · {trades} lệnh TB · n={n}",
   series_eyebrow:"Từng chuỗi", series_title:"Từng chuỗi phát lại được, và số học hoà vốn của nó", series_caption:"Hoà vốn = chi phí vòng vào/ra chia cho funding trung bình mỗi mốc trong cửa sổ — số mốc phải giữ chỉ để trả hết phí. “Giữ suốt cửa sổ” là mốc chuẩn ngây thơ: vào đầu cửa sổ, thu mọi mốc, trả một vòng.",
-  s_pair:"Cặp", s_perp:"Perp", s_spot:"Spot", s_cov:"Phủ (ngày)", s_settle:"Mốc settle", s_fund:"Funding TB (bps/8h)", s_pos:"% mốc dương", s_cost:"Vòng vào/ra", s_be:"Hoà vốn (mốc / ngày)", s_hold:"Giữ suốt: thô → ròng", s_base:"Bộ 3.3", s_best:"Tốt nhất trong lưới", s_trades:"lệnh",
+  s_pair:"Cặp", s_perp:"Perp", s_spot:"Spot", s_cov:"Phủ (ngày)", s_settle:"Mốc settle", s_fund:"Funding TB (bps/8h)", s_pos:"% mốc dương", s_cost:"Vòng vào/ra (/notional)", s_be:"Hoà vốn (mốc / ngày)", s_hold:"Giữ suốt /vốn: thô → ròng", s_base:"Bộ đang ship /vốn", s_best:"Tốt nhất trong lưới /vốn", s_trades:"lệnh",
   refused_title:"Chuỗi bị từ chối hoặc loại — và vì sao", r_pair:"Cặp", r_perp:"Perp", r_reason:"Lý do",
   reason_unverified:"Chưa xác minh biểu phí của {perp} — “chưa tra” không phải “miễn phí”, nên không công bố chi phí; không định giá được vòng vào/ra nên không phát lại.",
   reason_mapping:"Không có spot nào cùng quote USD với {perp} (spot chỉ có USDT) — từ chối, không đoán.",
   trades_eyebrow:"Từng lệnh", trades_title:"Lệnh giữ bao lâu, thoát vì gì, và ròng ra sao", trades_caption:"Mọi lệnh của mọi bộ tham số gộp lại là hình ảnh của cả lưới, không phải của một chiến lược; hai tab còn lại tách riêng bộ đang chạy trong config.yaml và bộ tốt nhất lưới tìm được.",
   tab_all:"Toàn bộ lưới", tab_base:"Bộ đang chạy (khối strategy)", tab_best:"Bộ tốt nhất",
-  tf_n:"Lệnh", tf_pos:"Lệnh ròng dương", tf_hold:"Giữ trung vị (ngày)", tf_settle:"Mốc / lệnh (trung vị)", tf_fund:"Funding TB / lệnh", tf_cost:"Chi phí / lệnh", tf_net:"Ròng TB / lệnh",
+  tf_n:"Lệnh", tf_pos:"Lệnh ròng dương", tf_hold:"Giữ trung vị (ngày)", tf_settle:"Mốc / lệnh (trung vị)", tf_fund:"Funding TB / lệnh /vốn", tf_cost:"Chi phí / lệnh /vốn", tf_net:"Ròng TB / lệnh /vốn",
   hold_title:"Số ngày giữ mỗi lệnh", hold_bins:["<1","1–3","3–7","7–14","14–30","30–60","≥60"], hold_x:"ngày",
   break_even_note:"Hoà vốn theo chuỗi (notional 50k, funding trung bình của cửa sổ): {list}. Gần như mọi lệnh đóng trước mốc đó.",
   exit_title:"Lý do thoát", exit_basis:"Basis vượt trần / dịch xa", exit_liquidation:"Bị thanh lý", exit_sign_flip:"Funding đảo dấu", exit_decay:"Suy giảm dưới sàn N kỳ", exit_window_end:"Đóng cưỡng bức cuối cửa sổ", exit_unpriceable:"Không còn định giá được", exit_hedge_gone:"Mất chân hedge", exit_other:"Khác",
-  tradenet_title:"Ròng từng lệnh (% notional)",
+  tradenet_title:"Ròng từng lệnh (% trên VỐN)",
   top_eyebrow:"Bảng xếp hạng", top_title:"20 lượt chạy tốt nhất theo APR thực", top_caption:"Khi cả lưới lỗ, tốt nhất vẫn là lỗ; khi có lượt dương, hãy đọc cột số lệnh và số ngày phủ trước khi tin. Một lượt 1–2 lệnh trên một chuỗi phủ 3 tháng không phải bằng chứng.",
   t_params:"Tham số: ngưỡng / bền · sàn vào → sàn giữ / kỳ thoát · cổng X N C",
-  t_pair:"Cặp", t_perp:"Perp", t_cost:"Vòng", t_trades:"Lệnh", t_periods:"Kỳ giữ", t_ret:"Tổng ròng", t_apr:"APR thực", t_dd:"Drawdown",
+  t_pair:"Cặp", t_perp:"Perp", t_cost:"Vòng (/notional)", t_trades:"Lệnh", t_periods:"Kỳ giữ", t_ret:"Tổng ròng /vốn", t_apr:"APR thực /vốn", t_dd:"Drawdown /vốn",
   basis_read:"Trên bộ tham số đang ship, {full}/{nser} chuỗi báo 0 mốc không đánh giá được: điều kiện basis đã CHẠY THẬT ở {settle} mốc. {gap} lần đánh giá vẫn thiếu giá — đó là nơi funding với tới 365 ngày còn nến chỉ với tới ~208 (Hyperliquid) hoặc có lỗ hổng (Kraken), và ở đó luật báo “không đánh giá được” thay vì bịa một con số.",
   cap_read:"Đo trên {nser} chuỗi mở được lệnh ở MỌI mức đòn bẩy. Điểm tốt nhất là {best}: hơn không-đòn-bẩy {gain} điểm — đạt {vs}× trên một trần lý thuyết {ceiling}× — và đổi bằng {liq} lần thanh lý. Từ 5x trở lên là âm.",
   cap_off:"tắt (1x)",
@@ -300,8 +300,8 @@ vi: {
   basis_eyebrow:"Mới ở lượt này", basis_title:"Lối thoát basis: từ CHƯA TỪNG kiểm tới đo được",
   basis_caption:"Suốt bước 3.3, điều kiện thoát theo basis báo “không đánh giá được” ở mọi mốc của mọi lượt chạy — không có giá lịch sử cho hai chân. Không lượt quét nào trước đây có thể phát hiện điều đó. price_history đã lấp chỗ này bằng nến 1h 12 tháng cho cả 8 nguồn giao dịch được.",
   basis_iso_title:"Luật này tốn bao nhiêu — lần đầu trả lời được bằng số",
-  basis_iso_read:"Cùng bộ tham số, cùng cửa sổ 12 tháng, chỉ nới ngưỡng basis lên 1000% để luật không bao giờ nổ: tổng {off} với {offt} lệnh. Bật lại ở mức đang ship (1,0% tuyệt đối / 0,5% dịch chuyển): {on} với {ont} lệnh. Luật này tốn {cost} điểm và {extra} vòng phí một năm — gần đúng bằng {extra} × 0,30%, tức toàn bộ chi phí là phí giao dịch chứ không phải thời điểm thoát xấu. Đổi lại là một chốt chặn khi trung tính delta đang vỡ, và corpus này KHÔNG có cú vỡ nào để cho thấy nó cứu được gì — nên đây là giá đã biết đổi lấy một lợi ích chưa đo được.",
-  bi_pair:"Cặp", bi_perp:"Perp", bi_off:"Luật TẮT", bi_on:"Luật BẬT", bi_delta:"Chênh",
+  basis_iso_read:"Cùng bộ tham số, cùng cửa sổ 12 tháng, chỉ nới ngưỡng basis lên 1000% để luật không bao giờ nổ: {off} mỗi chuỗi trên vốn với {offt} lệnh. Bật lại ở mức đang ship (1,0% tuyệt đối / 0,5% dịch chuyển): {on} với {ont} lệnh. Luật này ép thêm {extra} vòng phí một năm, và đó là TOÀN BỘ chi phí của nó: {extra} × 0,30% notional = {rawcost} điểm cộng dồn trên {nser} chuỗi, tức {cost} điểm mỗi chuỗi trên vốn — khớp với chênh lệch đo được, nên tiền mất là phí giao dịch chứ không phải thời điểm thoát xấu. Đổi lại là một chốt chặn khi trung tính delta đang vỡ, và corpus này KHÔNG có cú vỡ nào để cho thấy nó cứu được gì — nên đây là giá đã biết đổi lấy một lợi ích chưa đo được.",
+  bi_pair:"Cặp", bi_perp:"Perp", bi_off:"Luật TẮT /vốn", bi_on:"Luật BẬT /vốn", bi_delta:"Chênh (điểm /vốn)",
   basis_bridge:"Trên các chuỗi ghép khác quote, basis đo được là basis coin CỘNG chênh USD/USDT — nên ở đó lối thoát này đang canh một phần chính cái rủi ro bridging mà không con số nào trong dự án trừ đi.",
   b_pair:"Cặp", b_perp:"Perp", b_eval:"Mốc đánh giá được", b_note:"Lần đánh giá thiếu giá", b_blind:"Vào lệnh khi chưa có giá", b_cov:"Ngày phủ",
   fig_b_series:"Chuỗi đánh giá được trọn vẹn", fig_b_settle:"Mốc có giá cả hai chân", fig_b_gap:"Lần đánh giá vẫn thiếu giá", fig_b_blind:"Lệnh mở khi chưa có basis",
@@ -358,31 +358,31 @@ zh: {
   ax_min_rate_per_8h_bps:"入场阈值（bps / 8h）", ax_persistence_periods:"入场前费率需持续的期数", ax_min_net_apr_frac:"入场净年化下限", ax_exit_net_apr_frac:"持仓净年化下限", ax_exit_persistence_periods:"连续低于下限多少期才退出", ax_notional_quote:"名义本金（USDT）", ax_holding_days:"用于摊销成本的假设持仓天数",
   ax_exit_negative_min_bps:"变号退出闸门：最新一期 ≤ −X bps/8h", ax_exit_negative_periods:"变号退出闸门：连续 N 期为负", ax_exit_negative_cum_cost_frac:"变号退出闸门：已付负费率 ≥ C × 往返成本",
   sf_eyebrow:"退出规则试验", sf_title:"资金费率变号时退出：多深、多久、多贵才值得退出", sf_caption:"三个闸门按 AND 组合：最新一期 ≤ −X bps/8h、连续 N 期为负、本轮已付负费率 ≥ C × 往返成本。0 / 1 / 0 是当前规则（任何负费率即退出）。“3.3 参数组”列为 {series} 个序列、其余维度固定在 3.3 参数；“全网格”合并 {base} 个基础参数组 × {series} 个序列（{sets} 组参数，二进制由提交 {commit} 构建，订单簿测于 {book}）。衰减退出仍然开启，但只计入非负的期数 — 负费率期归闸门管辖 — 因此它不再像修正管辖前的 v3 那样在第 P 个负费率期拦截闸门。",
-  sf_x:"X（bps）", sf_n:"N", sf_c:"C（× 往返）", sf_base_sum:"实盘组：{series} 序列合计", sf_base_med:"实盘组：净收益中位数", sf_base_prof:"盈利序列数", sf_base_trades:"平均笔数", sf_base_btc:"3.3：BTC·binance", sf_base_eth:"3.3：ETH·binance", sf_shown:"下表显示 {total} 种闸门变体中的 {shown} 种：按组合合计排名前十，再加上实盘正在跑的那一行。",
+  sf_x:"X（bps）", sf_n:"N", sf_c:"C（× 往返）", sf_base_sum:"实盘组：每序列/资本", sf_base_med:"实盘组：中位数/资本", sf_base_prof:"盈利序列数", sf_base_trades:"平均笔数", sf_base_btc:"3.3：BTC·binance", sf_base_eth:"3.3：ETH·binance", sf_shown:"下表显示 {total} 种闸门变体中的 {shown} 种：按组合合计排名前十，再加上实盘正在跑的那一行。",
   sf_ht:"全程持有基准（一次往返，{series} 个序列，按闸门网格自身的窗口计算 — 结束于 {to}）：中位数 {med}，合计 {sum}，{prof}/{series} 个序列为正。",
   sf_facts:"整个闸门网格：{sets} 组参数，{pos} 组的 {series} 序列合计为正，{ge} 组达到或超过全程持有；最佳 {max}。纯 3.2 规则（0 / 1 / 0）在所有基础参数组上：{p32} 的回放盈利。决定性的维度不是 X 或 N：衰减退出 {ep_lo} 期 → {p_lo} 盈利，{ep_hi} 期 → {p_hi}；闸门 C = 0 → {c0}，C ≥ {c_next} → {c1}。请与上方“单维度”一节对照阅读：那里画的正是这两个维度。",
   sf_series_title:"逐序列：闸门网格最佳参数组对比全程持有", sf_series_caption:"“胜过全程持有的组数”在闸门网格的 {sets} 组中、同一窗口内统计。在全程持有强的序列（binance 与 bybit 的 BTC/ETH）几乎没有参数组胜出；规则只在全程持有弱或为负的序列上获胜 — 即它避开了糟糕的区段，并没有创造更多资金费率。",
-  sfs_ht:"全程持有（闸门窗口）", sfs_best:"闸门网格最佳", sfs_trades:"笔数", sfs_beat:"胜过全程持有的组数", sf_current:"当前规则",
-  bs_title:"按 {series} 个序列合计排序的最佳参数组", bs_caption:"按所有可回放序列的等本金组合总净收益排序 — 一组参数必须同时在 {series} 个序列上都好，而不是在最幸运的序列上好。加粗行是 config.yaml strategy 区块中正在使用的参数组。", bs_params:"参数（阈值 / 持续 / 入场下限 / 持仓下限 / 退出期数 / X / N / C / 本金 / 持仓）", bs_sum:"每序列按资本 · 及合计", bs_med:"中位数", bs_prof:"正序列数", bs_trades:"平均笔数", bs_ht:"全程持有（一次往返）：按资本每序列 {cap} — 累计 {sum}，每序列中位数 {med}，{prof}/{series} 为正。这是任何参数组都必须超过的基准，而它本身也低于 5–15% 区间。",
+  sfs_ht:"全程持有/资本", sfs_best:"闸门网格最佳/资本", sfs_trades:"笔数", sfs_beat:"胜过全程持有的组数", sf_current:"当前规则",
+  bs_title:"在 {series} 个序列上的最佳参数组", bs_caption:"按所有可回放序列的等本金组合总净收益排序 — 一组参数必须同时在 {series} 个序列上都好，而不是在最幸运的序列上好。加粗行是 config.yaml strategy 区块中正在使用的参数组。", bs_params:"参数（阈值 / 持续 / 入场下限 / 持仓下限 / 退出期数 / X / N / C / 本金 / 持仓）", bs_sum:"每序列按资本 · 及合计", bs_med:"中位数/资本", bs_prof:"正序列数", bs_trades:"平均笔数", bs_ht:"全程持有（一次往返）：按资本每序列 {cap} — 累计 {sum}，每序列中位数 {med}，{prof}/{series} 为正。这是任何参数组都必须超过的基准，而它本身也低于 5–15% 区间。",
   sf_best_title:"闸门网格（{base} 个基础参数组 × {gates} 种闸门变体）的最佳参数组",
-  dist_return:"相对名义本金的总净收益（%）", hist_y:"回放次数",
+  dist_return:"每序列净收益中位数，按资本（%）", hist_y:"回放次数",
   axes_eyebrow:"逐维度", axes_title:"固定一个参数，看其余的表现", axes_caption:"柱 = 该取值下有交易回放的总净收益中位数；柱上标签 = 盈利占比与平均交易笔数。若某个维度无法改变符号，问题就不在这个维度。",
   ax_lbl:"{profit} 盈利 · 平均 {trades} 笔 · n={n}",
   series_eyebrow:"逐序列", series_title:"每个可回放序列及其盈亏平衡算术", series_caption:"盈亏平衡 = 往返成本 ÷ 窗口内每期平均资金费率 — 仅为付清费用就必须持有的期数。“全程持有”是朴素基准：窗口开始入场，收取每一期，付一次往返。",
-  s_pair:"交易对", s_perp:"永续", s_spot:"现货", s_cov:"覆盖（天）", s_settle:"结算次数", s_fund:"平均费率（bps/8h）", s_pos:"正费率占比", s_cost:"往返成本", s_be:"盈亏平衡（期 / 天）", s_hold:"全程持有：毛 → 净", s_base:"3.3 参数组", s_best:"网格内最佳", s_trades:"笔",
+  s_pair:"交易对", s_perp:"永续", s_spot:"现货", s_cov:"覆盖（天）", s_settle:"结算次数", s_fund:"平均费率（bps/8h）", s_pos:"正费率占比", s_cost:"往返成本（/名义）", s_be:"盈亏平衡（期 / 天）", s_hold:"全程持有/资本：毛 → 净", s_base:"实盘参数组/资本", s_best:"网格内最佳/资本", s_trades:"笔",
   refused_title:"被拒绝或剔除的序列 — 及原因", r_pair:"交易对", r_perp:"永续", r_reason:"原因",
   reason_unverified:"{perp} 的费率表未验证 — “未查证”不等于“免费”，因此不公布成本；往返成本无法定价，故不回放。",
   reason_mapping:"没有与 {perp} 同为 USD 计价的现货（现货只有 USDT）— 拒绝，不猜测。",
   trades_eyebrow:"逐笔交易", trades_title:"持仓多久、为何退出、净结果如何", trades_caption:"把所有参数组的所有交易合在一起，看到的是整个网格而非某一个策略；另外两个标签分别单独展示config.yaml 中正在使用的参数组与网格找到的最佳参数组。",
   tab_all:"全部网格", tab_base:"实盘参数组（strategy 区块）", tab_best:"最佳参数组",
-  tf_n:"交易笔数", tf_pos:"净为正的交易", tf_hold:"持仓中位数（天）", tf_settle:"每笔结算期数（中位）", tf_fund:"每笔平均资金费", tf_cost:"每笔成本", tf_net:"每笔平均净值",
+  tf_n:"交易笔数", tf_pos:"净为正的交易", tf_hold:"持仓中位数（天）", tf_settle:"每笔结算期数（中位）", tf_fund:"每笔平均资金费/资本", tf_cost:"每笔成本/资本", tf_net:"每笔平均净值/资本",
   hold_title:"每笔交易的持仓天数", hold_bins:["<1","1–3","3–7","7–14","14–30","30–60","≥60"], hold_x:"天",
   break_even_note:"各序列盈亏平衡（本金 50k，按窗口平均费率）：{list}。几乎所有交易都在此之前平仓。",
   exit_title:"退出原因", exit_basis:"基差超限/偏移", exit_liquidation:"被强平", exit_sign_flip:"资金费率变号", exit_decay:"连续 N 期衰减低于下限", exit_window_end:"窗口末强制平仓", exit_unpriceable:"无法再定价", exit_hedge_gone:"对冲腿消失", exit_other:"其他",
-  tradenet_title:"每笔交易净值（% 名义本金）",
+  tradenet_title:"每笔交易净值（% 按资本）",
   top_eyebrow:"排行", top_title:"按实际年化排序的最佳 20 次回放", top_caption:"当整个网格都亏时，最佳依然是亏损；当出现盈利回放时，先看交易笔数和覆盖天数再下结论。一个只覆盖 3 个月的序列上 1–2 笔交易不算证据。",
   t_params:"参数：阈值 / 持续 · 入场下限 → 持仓下限 / 退出期数 · 闸门 X N C",
-  t_pair:"交易对", t_perp:"永续", t_cost:"往返", t_trades:"笔数", t_periods:"持仓期数", t_ret:"总净收益", t_apr:"实际年化", t_dd:"回撤",
+  t_pair:"交易对", t_perp:"永续", t_cost:"往返（/名义）", t_trades:"笔数", t_periods:"持仓期数", t_ret:"总净收益/资本", t_apr:"实际年化/资本", t_dd:"回撤/资本",
   basis_read:"在实盘参数组下，{nser} 个序列中有 {full} 个报告 0 个无法评估的结算点：基差条件在 {settle} 个结算点上真正运行过。仍有 {gap} 次评估缺少价格——那是资金费率覆盖 365 天而 K 线只到约 208 天（Hyperliquid）或存在缺口（Kraken）的地方，规则在那里报告“无法评估”，而不是编造一个数字。",
   cap_read:"在所有杠杆档位都能开仓的 {nser} 个序列上测量。最优点是 {best}：比不用杠杆高 {gain} 个百分点 — 实际达到 {vs}×，而理论上限是 {ceiling}× — 代价是 {liq} 次强平。从 5x 起转为负值。",
   cap_off:"不用（1x）",
@@ -390,8 +390,8 @@ zh: {
   basis_eyebrow:"本轮新增", basis_title:"基差退出：从未被检验，到可以测量",
   basis_caption:"在整个 3.3 步中，基差退出条件在每一轮、每一个结算点都报告“无法评估”——两条腿都没有历史价格。此前任何一次参数扫描都无法发现这一点。price_history 用 8 个可交易数据源、12 个月的 1 小时 K 线补上了这个缺口。",
   basis_iso_title:"这条规则的代价 — 首次可以用数字回答",
-  basis_iso_read:"同一参数组、同一 12 个月窗口，只把基差阈值放宽到 1000% 使规则永不触发：合计 {off}，{offt} 笔。恢复到实盘设置（绝对 1.0% / 偏移 0.5%）：{on}，{ont} 笔。这条规则一年花掉 {cost} 个百分点和 {extra} 次往返 — 约等于 {extra} × 0.30%，也就是说全部代价来自手续费，而不是退出时机不好。换来的是 delta 中性正在破裂时的一道止损，而本语料中没有任何一次破裂可以显示它救回了什么 — 因此这是已知的代价，换取尚未测得的收益。",
-  bi_pair:"交易对", bi_perp:"永续", bi_off:"规则关闭", bi_on:"规则开启", bi_delta:"差异",
+  basis_iso_read:"同一参数组、同一 12 个月窗口，只把基差阈值放宽到 1000% 使规则永不触发：按资本每序列 {off}，{offt} 笔。恢复到实盘设置（绝对 1.0% / 偏移 0.5%）：{on}，{ont} 笔。这条规则一年多逼出 {extra} 次往返，而这就是它的全部代价：{extra} × 0.30% 名义本金 = {nser} 个序列累计 {rawcost} 个百分点，即按资本每序列 {cost} 个百分点 — 与实测差额吻合，因此损失来自手续费，而不是退出时机不好。换来的是 delta 中性正在破裂时的一道止损，而本语料中没有任何一次破裂可以显示它救回了什么 — 因此这是已知的代价，换取尚未测得的收益。",
+  bi_pair:"交易对", bi_perp:"永续", bi_off:"规则关闭/资本", bi_on:"规则开启/资本", bi_delta:"差异（点/资本）",
   basis_bridge:"在跨计价货币配对的序列上，测得的基差是币本身的基差再加上 USD/USDT 价差——所以那里的这条退出规则，正在盯着本项目从未扣除过的桥接风险的一部分。",
   b_pair:"交易对", b_perp:"永续", b_eval:"可评估结算点", b_note:"缺少价格的评估次数", b_blind:"无价格时开仓", b_cov:"覆盖天数",
   fig_b_series:"完全可评估的序列", fig_b_settle:"两腿都有价格的结算点", fig_b_gap:"仍缺价格的评估次数", fig_b_blind:"无基差时开的仓",
@@ -449,14 +449,14 @@ Object.assign(T.vi, {eval_eyebrow:"Đánh giá", eval_title:"Đánh giá kết q
   eval_col_crit:"Tiêu chí", eval_col_verdict:"Kết luận", eval_col_evidence:"Bằng chứng",
   v_fail:"KHÔNG ĐẠT", v_pass:"ĐẠT", v_partial:"MỘT PHẦN", v_open:"CHƯA KIỂM", v_weak:"KHÔNG ĐỦ",
   eval_overall_title:"Phán quyết chung", eval_next_title:"Ý nghĩa cho dự án",
-  perp_title:"Theo sàn perp", perp_caption:"Mỗi sàn gộp 4 cặp. Độ phủ corpus KHÁC NHAU: okx ~96 ngày, gate ~182, binance/bybit/hyperliquid/kraken ~365 — một quý mùa hè so với một năm không phải cùng một câu hỏi, nên đọc cột phủ trước khi so hai dòng. hyperliquid và kraken settle theo GIỜ nên số mốc của chúng gấp khoảng 8 lần, và cả hai chỉ có chân spot nhờ khai báo USD ≡ USDT.", p_perp:"Perp", p_series:"Chuỗi", p_cov:"Phủ (ngày, trung vị)", p_cost:"Vòng @50k", p_runs:"Đã chạy", p_traded:"Có giao dịch", p_profit:"Có lãi", p_median:"Ròng trung vị", p_best:"Tốt nhất",
+  perp_title:"Theo sàn perp", perp_caption:"Mỗi sàn gộp 4 cặp. Độ phủ corpus KHÁC NHAU: okx ~96 ngày, gate ~182, binance/bybit/hyperliquid/kraken ~365 — một quý mùa hè so với một năm không phải cùng một câu hỏi, nên đọc cột phủ trước khi so hai dòng. hyperliquid và kraken settle theo GIỜ nên số mốc của chúng gấp khoảng 8 lần, và cả hai chỉ có chân spot nhờ khai báo USD ≡ USDT.", p_perp:"Perp", p_series:"Chuỗi", p_cov:"Phủ (ngày, trung vị)", p_cost:"Vòng @50k (/notional)", p_runs:"Đã chạy", p_traded:"Có giao dịch", p_profit:"Có lãi", p_median:"Ròng trung vị /vốn", p_best:"Tốt nhất /vốn",
   });
 Object.assign(T.zh, {eval_eyebrow:"评估", eval_title:"结果评估",
   eval_intro:"本评估综合三个窗口，不随上方的窗口按钮变化。每条标准给出结论及作为证据的数字；测不到的数字标为未检验，而不是标为通过。",
   eval_col_crit:"标准", eval_col_verdict:"结论", eval_col_evidence:"证据",
   v_fail:"未通过", v_pass:"通过", v_partial:"部分通过", v_open:"未检验", v_weak:"证据不足",
   eval_overall_title:"总体裁定", eval_next_title:"对项目的意义",
-  perp_title:"按永续交易所", perp_caption:"每家交易所合并 4 个交易对。语料覆盖不同：okx 约 96 天，gate 约 182 天，binance/bybit/hyperliquid/kraken 约 365 天 — 一个夏季季度与一整年不是同一个问题，比较两行之前先看覆盖列。hyperliquid 与 kraken 按小时结算，结算次数约为其他家的 8 倍，且两者的现货腿都依赖 USD ≡ USDT 的声明。", p_perp:"永续", p_series:"序列", p_cov:"覆盖（天，中位）", p_cost:"往返 @50k", p_runs:"已运行", p_traded:"有交易", p_profit:"盈利", p_median:"净收益中位数", p_best:"最佳",
+  perp_title:"按永续交易所", perp_caption:"每家交易所合并 4 个交易对。语料覆盖不同：okx 约 96 天，gate 约 182 天，binance/bybit/hyperliquid/kraken 约 365 天 — 一个夏季季度与一整年不是同一个问题，比较两行之前先看覆盖列。hyperliquid 与 kraken 按小时结算，结算次数约为其他家的 8 倍，且两者的现货腿都依赖 USD ≡ USDT 的声明。", p_perp:"永续", p_series:"序列", p_cov:"覆盖（天，中位）", p_cost:"往返 @50k（/名义）", p_runs:"已运行", p_traded:"有交易", p_profit:"盈利", p_median:"净收益中位数/资本", p_best:"最佳/资本",
   });
 
 const WINS = Object.keys(DATA.windows).sort((a, b) => Number(b) - Number(a)); // JS sorts integer-like keys ascending; the page must open on the longest window
@@ -548,11 +548,17 @@ function render() {
   renderStatic();
   const W = DATA.windows[win], c = W.counts, g = DATA.grid;
   const best = W.return_stats.max, median = W.return_stats.median;
-  // These are ONE series' returns, not sums, so the capital conversion is a
-  // plain division: a single delta-neutral position ties up 2N. Leading with
-  // the notional figure here is how "+5.96%" gets read as inside the 5-15%
-  // target band when the number on capital is half that.
+  // ONE series' return converted to capital is a plain division: a single
+  // delta-neutral position ties up 2N, whatever it earned. (A SUM over series
+  // needs perCap, which also divides by the series count.) Leading with the
+  // notional figure is how "+5.96%" gets read as inside the 5-15% target band
+  // when the number on capital is half that — so every P&L figure on the page
+  // goes through onCap, and only the COST inputs stay on notional, because a
+  // fee schedule is quoted against traded size and has to stay checkable
+  // against it. Anything labelled "/vốn" is a result; anything labelled
+  // "/notional" is an input.
   const capN = capOf() || 1, onCap = v => v == null ? null : v / capN;
+  const pctCap = (v, d = 2, sign = true) => pct(onCap(v), d, sign);
   document.getElementById("verdictHeadline").textContent = t(c.profitable === 0 ? "headline_none" : "headline_some", { profitable: num(c.profitable), traded: num(c.traded), best: pct(onCap(W.return_stats.max), 3, true) });
   document.getElementById("verdictSub").textContent = t("verdict_sub", { from: day(W.window_from_ms), to: day(W.window_to_ms), days: num(W.window_days), sets: num(g.param_sets), series: g.series, total: num(c.total), best: pct(onCap(best), 3, true), bestnot: pct(best, 3, true), median: pct(onCap(median), 3, true), cap: num(capN, 2) });
   const figs = [["fig_total", num(c.total), ""], ["fig_refused", num(c.refused), "muted"], ["fig_traded", num(c.traded), ""], ["fig_profit", num(c.profitable), c.profitable ? "gain" : "loss"], ["fig_best", pct(onCap(best), 3, true), cls(best)], ["fig_median", pct(onCap(median), 2, true), cls(median)]];
@@ -566,24 +572,24 @@ function render() {
   const axisFmt = { min_rate_per_8h_bps: v => num(v, 1), persistence_periods: v => num(v), min_net_apr_frac: v => pct(v * 100, 1), exit_net_apr_frac: v => pct(v * 100, 2), exit_persistence_periods: v => num(v), notional_quote: v => kUSDT(v), holding_days: v => num(v),
     exit_negative_min_bps: v => num(v, 2), exit_negative_periods: v => num(v), exit_negative_cum_cost_frac: v => num(v, 2) };
   document.getElementById("axesGrid").innerHTML = Object.keys(axisFmt).filter(a => Array.isArray(W.axes[a]) && W.axes[a].length > 1).map(a => {
-    const items = W.axes[a].map(x => ({ label: axisFmt[a](x.value), value: x.median_return_pct, text: x.n ? pct(x.median_return_pct, 2, true) : "—",
+    const items = W.axes[a].map(x => ({ label: axisFmt[a](x.value), value: onCap(x.median_return_pct), text: x.n ? pctCap(x.median_return_pct, 2) : "—",
       note: x.n ? t("ax_lbl", { profit: pct(x.share_profitable * 100, 0), trades: num(x.mean_trades, 1), n: x.n }) : "" }));
     return `<div class="small"><h3>${t("ax_" + a)}</h3><div class="chart">${barChart(items, { xLabel: t("dist_return"), left: 70 })}</div></div>`;
   }).join("");
 
   document.getElementById("perpTable").innerHTML = `<tr><th>${t("p_perp")}</th><th class="num">${t("p_series")}</th><th class="num">${t("p_cov")}</th><th class="num">${t("p_cost")}</th><th class="num">${t("p_runs")}</th><th class="num">${t("p_traded")}</th><th class="num">${t("p_profit")}</th><th class="num">${t("p_median")}</th><th class="num">${t("p_best")}</th></tr>` +
-    (W.by_perp || []).map(b => `<tr><td>${b.perp}</td><td class="num">${b.series}</td><td class="num">${num(b.covered_days)}</td><td class="num">${pct(b.cost_pct_50k, 3)}</td><td class="num">${num(b.runs)}</td><td class="num">${num(b.traded)}</td><td class="num ${b.profitable ? "gain" : "loss"}">${num(b.profitable)}</td><td class="num ${cls(b.median_return_pct)}">${pct(b.median_return_pct, 2, true)}</td><td class="num ${cls(b.best_return_pct)}">${b.best_return_pct == null ? "—" : pct(b.best_return_pct, 3, true) + ` <span class="muted">${b.best_symbol} · ${b.best_trades} ${t("s_trades")}</span>`}</td></tr>`).join("");
-  const runCell = r => r ? `<span class="${cls(r.total_return_pct)}">${pct(r.total_return_pct, 3, true)}</span> <span class="muted">· ${r.trades} ${t("s_trades")}</span>` : "—";
+    (W.by_perp || []).map(b => `<tr><td>${b.perp}</td><td class="num">${b.series}</td><td class="num">${num(b.covered_days)}</td><td class="num">${pct(b.cost_pct_50k, 3)}</td><td class="num">${num(b.runs)}</td><td class="num">${num(b.traded)}</td><td class="num ${b.profitable ? "gain" : "loss"}">${num(b.profitable)}</td><td class="num ${cls(b.median_return_pct)}">${pctCap(b.median_return_pct, 2)}</td><td class="num ${cls(b.best_return_pct)}">${b.best_return_pct == null ? "—" : pctCap(b.best_return_pct, 3) + ` <span class="muted">${b.best_symbol} · ${b.best_trades} ${t("s_trades")}</span>`}</td></tr>`).join("");
+  const runCell = r => r ? `<span class="${cls(r.total_return_pct)}">${pctCap(r.total_return_pct, 3)}</span> <span class="muted">· ${r.trades} ${t("s_trades")}</span>` : "—";
   document.getElementById("seriesTable").innerHTML = `<tr><th>${t("s_pair")}</th><th>${t("s_perp")}</th><th>${t("s_spot")}</th><th class="num">${t("s_cov")}</th><th class="num">${t("s_settle")}</th><th class="num">${t("s_fund")}</th><th class="num">${t("s_pos")}</th><th class="num">${t("s_cost")}</th><th class="num">${t("s_be")}</th><th class="num">${t("s_hold")}</th><th class="num">${t("s_base")}</th><th class="num">${t("s_best")}</th></tr>` +
     W.series.map(s => { const cb = s.cost_pct_by_notional; const co = s.corpus;
-      return `<tr><td class="mono">${s.symbol}</td><td>${s.perp}</td><td>${s.spot}</td><td class="num">${num(s.covered_days)}</td><td class="num">${num(s.settlements)}</td><td class="num ${cls(co.mean_rate_per_8h_bps)}">${num(co.mean_rate_per_8h_bps, 3)}</td><td class="num">${pct(co.positive_share * 100, 0)}</td><td class="num">${["20000", "50000", "200000"].map(k => cb[k] != null ? num(cb[k], 3) : "—").join(" / ")}%</td><td class="num">${s.break_even_settlements ? `${num(s.break_even_settlements)} / ${num(s.break_even_days)}` : "∞"}</td><td class="num">${pct(co.hold_through_gross_pct, 2, true)} → <span class="${cls(co.hold_through_net_pct)}">${pct(co.hold_through_net_pct, 2, true)}</span></td><td class="num">${runCell(s.base)}</td><td class="num">${runCell(s.best)}</td></tr>`; }).join("");
+      return `<tr><td class="mono">${s.symbol}</td><td>${s.perp}</td><td>${s.spot}</td><td class="num">${num(s.covered_days)}</td><td class="num">${num(s.settlements)}</td><td class="num ${cls(co.mean_rate_per_8h_bps)}">${num(co.mean_rate_per_8h_bps, 3)}</td><td class="num">${pct(co.positive_share * 100, 0)}</td><td class="num">${["20000", "50000", "200000"].map(k => cb[k] != null ? num(cb[k], 3) : "—").join(" / ")}%</td><td class="num">${s.break_even_settlements ? `${num(s.break_even_settlements)} / ${num(s.break_even_days)}` : "∞"}</td><td class="num">${pctCap(co.hold_through_gross_pct, 2)} → <span class="${cls(co.hold_through_net_pct)}">${pctCap(co.hold_through_net_pct, 2)}</span></td><td class="num">${runCell(s.base)}</td><td class="num">${runCell(s.best)}</td></tr>`; }).join("");
 
   const refusedRows = W.refusals.map(r => [r.symbol, r.perp, t("reason_unverified", { perp: r.perp })]).concat(DATA.skipped_by_mapping.map(r => [r.symbol, r.perp, t("reason_mapping", { perp: r.perp })]));
   document.getElementById("refusedTable").innerHTML = `<tr><th>${t("r_pair")}</th><th>${t("r_perp")}</th><th>${t("r_reason")}</th></tr>` + refusedRows.map(r => `<tr><td class="mono">${r[0]}</td><td>${r[1]}</td><td class="wrap">${esc(r[2])}</td></tr>`).join("");
 
   const bestSetsHTML = (sets, current) => `<tr><th>${t("bs_params")}</th><th class="num">${t("bs_sum")}</th><th class="num">${t("bs_med")}</th><th class="num">${t("bs_prof")}</th><th class="num">${t("bs_trades")}</th><th class="num">BTC·bin</th><th class="num">ETH·bin</th><th class="num">BTC·byb</th><th class="num">ETH·byb</th></tr>` +
-    (current ? [...sets, { ...current, isCurrent: true }] : sets).map(b => { const p = b.params; const sv = k => b.series[k] ? `<span class="${cls(b.series[k].return_pct)}">${pct(b.series[k].return_pct, 2, true)}</span>` : "—";
-      return `<tr${b.isCurrent ? ' style="font-weight:600"' : ""}><td class="mono">${num(p.min_rate_per_8h_bps, 1)} / ${num(p.persistence_periods)} / ${pct(p.min_net_apr_frac * 100, 0)} / ${pct(p.exit_net_apr_frac * 100, 2)} / ${num(p.exit_persistence_periods)} / ${num(p.exit_negative_min_bps ?? 0, 2)} / ${num(p.exit_negative_periods ?? 1)} / ${num(p.exit_negative_cum_cost_frac ?? 0, 2)} / ${kUSDT(p.notional_quote)} / ${num(p.holding_days)}${b.isCurrent ? ` <span class="pill open">${t("sf_current")}</span>` : ""}</td><td class="num ${cls(perCap(b.sum_return_pct, b.n) ?? b.sum_return_pct)}">${pcOr(b.sum_return_pct, b.n)}<div class="muted" style="font-size:.72rem">${pct(b.sum_return_pct, 2, true)}</div></td><td class="num ${cls(b.median_return_pct)}">${pct(b.median_return_pct, 2, true)}</td><td class="num">${b.profitable}/${b.n}</td><td class="num">${num(b.mean_trades, 1)}</td><td class="num">${sv("BTCUSDT|binance_futures")}</td><td class="num">${sv("ETHUSDT|binance_futures")}</td><td class="num">${sv("BTCUSDT|bybit_futures")}</td><td class="num">${sv("ETHUSDT|bybit_futures")}</td></tr>`; }).join("");
+    (current ? [...sets, { ...current, isCurrent: true }] : sets).map(b => { const p = b.params; const sv = k => b.series[k] ? `<span class="${cls(b.series[k].return_pct)}">${pctCap(b.series[k].return_pct, 2)}</span>` : "—";
+      return `<tr${b.isCurrent ? ' style="font-weight:600"' : ""}><td class="mono">${num(p.min_rate_per_8h_bps, 1)} / ${num(p.persistence_periods)} / ${pct(p.min_net_apr_frac * 100, 0)} / ${pct(p.exit_net_apr_frac * 100, 2)} / ${num(p.exit_persistence_periods)} / ${num(p.exit_negative_min_bps ?? 0, 2)} / ${num(p.exit_negative_periods ?? 1)} / ${num(p.exit_negative_cum_cost_frac ?? 0, 2)} / ${kUSDT(p.notional_quote)} / ${num(p.holding_days)}${b.isCurrent ? ` <span class="pill open">${t("sf_current")}</span>` : ""}</td><td class="num ${cls(perCap(b.sum_return_pct, b.n) ?? b.sum_return_pct)}">${pcOr(b.sum_return_pct, b.n)}<div class="muted" style="font-size:.72rem">${pct(b.sum_return_pct, 2, true)}</div></td><td class="num ${cls(b.median_return_pct)}">${pctCap(b.median_return_pct, 2)}</td><td class="num">${b.profitable}/${b.n}</td><td class="num">${num(b.mean_trades, 1)}</td><td class="num">${sv("BTCUSDT|binance_futures")}</td><td class="num">${sv("ETHUSDT|binance_futures")}</td><td class="num">${sv("BTCUSDT|bybit_futures")}</td><td class="num">${sv("ETHUSDT|bybit_futures")}</td></tr>`; }).join("");
   { const hts = W.series.map(s => s.corpus.hold_through_net_pct); const so = [...hts].sort((a, b) => a - b);
     const htS = hts.reduce((a, b) => a + b, 0);
     document.getElementById("bsBench").textContent = t("bs_ht", {
@@ -600,11 +606,11 @@ function render() {
     document.getElementById("sfBestTitle").textContent = t("sf_best_title", { base: num(gg.base_sets), gates: num(gg.gate_variants) });
     const hts = W.gate_hold_through || W.series.map(s => s.corpus.hold_through_net_pct);
     const sorted = [...hts].sort((a, b) => a - b); const htMed = sorted[Math.floor(sorted.length / 2)];
-    document.getElementById("sfBench").textContent = t("sf_ht", { med: pct(htMed, 2, true), sum: pct(hts.reduce((a, b) => a + b, 0), 2, true), prof: hts.filter(x => x > 0).length, to: day(W.gate_window ? W.gate_window.to_ms : W.window_to_ms) });
+    document.getElementById("sfBench").textContent = t("sf_ht", { med: pctCap(htMed, 2), sum: pcOr(hts.reduce((a, b) => a + b, 0), hts.length), prof: hts.filter(x => x > 0).length, to: day(W.gate_window ? W.gate_window.to_ms : W.window_to_ms) });
     { const ss = W.gate_set_stats, ga = W.gate_axes; const cur = sf.find(r => r.gates.exit_negative_min_bps === 0 && r.gates.exit_negative_periods === 1 && r.gates.exit_negative_cum_cost_frac === 0);
       const shr = v => v == null ? "—" : pct(v * 100, 1);
       if (ss && ga && cur) { const ep = ga.exit_persistence_periods, cc = ga.exit_negative_cum_cost_frac;
-        document.getElementById("sfFacts").textContent = t("sf_facts", { sets: num(ss.n), pos: num(ss.positive), ge: num(ss.at_or_above_hold_through), max: pct(ss.max_sum_return_pct, 2, true),
+        document.getElementById("sfFacts").textContent = t("sf_facts", { sets: num(ss.n), pos: num(ss.positive), ge: num(ss.at_or_above_hold_through), max: pcOr(ss.max_sum_return_pct, SERIES_N, 2),
           p32: shr(cur.traded ? cur.profitable / cur.traded : null), ep_lo: num(ep[0].value), p_lo: shr(ep[0].share_profitable), ep_hi: num(ep[ep.length - 1].value), p_hi: shr(ep[ep.length - 1].share_profitable),
           c0: shr(cc[0].share_profitable), c_next: num(cc[1] ? cc[1].value : 0, 2), c1: shr(cc[1] ? cc[1].share_profitable : null) }); }
       else document.getElementById("sfFacts").textContent = "";
@@ -612,7 +618,7 @@ function render() {
       document.getElementById("sfSeriesTitle").textContent = gs.length ? t("sf_series_title") : "";
       document.getElementById("sfSeriesCaption").textContent = gs.length ? t("sf_series_caption", { sets: num(ss ? ss.n : 0) }) : "";
       document.getElementById("sfSeriesTable").innerHTML = gs.length ? `<tr><th>${t("s_pair")}</th><th>${t("s_perp")}</th><th class="num">${t("sfs_ht")}</th><th class="num">${t("sfs_best")}</th><th class="num">${t("sfs_trades")}</th><th class="num">${t("sfs_beat")}</th></tr>` +
-        gs.map(x => `<tr><td class="mono">${x.symbol}</td><td>${x.perp}</td><td class="num ${cls(x.hold_through_net_pct)}">${pct(x.hold_through_net_pct, 2, true)}</td><td class="num ${cls(x.best ? x.best.total_return_pct : null)}">${x.best ? pct(x.best.total_return_pct, 2, true) : "—"}</td><td class="num">${x.best ? x.best.trades : "—"}</td><td class="num">${num(x.sets_beating_hold_through)} / ${num(x.runs)}</td></tr>`).join("") : ""; }
+        gs.map(x => `<tr><td class="mono">${x.symbol}</td><td>${x.perp}</td><td class="num ${cls(x.hold_through_net_pct)}">${pctCap(x.hold_through_net_pct, 2)}</td><td class="num ${cls(x.best ? x.best.total_return_pct : null)}">${x.best ? pctCap(x.best.total_return_pct, 2) : "—"}</td><td class="num">${x.best ? x.best.trades : "—"}</td><td class="num">${num(x.sets_beating_hold_through)} / ${num(x.runs)}</td></tr>`).join("") : ""; }
     // 64 gate variants is a list nobody reads. Show the best ten by portfolio
     // sum, and always the live rule's row even when it is not among them, so
     // the comparison the reader came for is on screen.
@@ -625,21 +631,22 @@ function render() {
     document.getElementById("sfShown").textContent = t("sf_shown", { shown: rows.length, total: sf.length });
     document.getElementById("sfTable").innerHTML = `<tr><th class="num">${t("sf_x")}</th><th class="num">${t("sf_n")}</th><th class="num">${t("sf_c")}</th><th class="num">${t("sf_base_sum")}</th><th class="num">${t("sf_base_med")}</th><th class="num">${t("sf_base_prof")}</th><th class="num">${t("sf_base_trades")}</th><th class="num">${t("sf_base_btc")}</th><th class="num">${t("sf_base_eth")}</th></tr>` +
       rows.map(r => { const g = r.gates; const cur = isLive(r);
-        const bs = k => r.base_series[k] ? `<span class="${cls(r.base_series[k].return_pct)}">${pct(r.base_series[k].return_pct, 2, true)}</span> <span class="muted">· ${r.base_series[k].trades}</span>` : "—";
-        return `<tr${cur ? ' style="font-weight:600"' : ""}><td class="num">${num(g.exit_negative_min_bps, 2)}${cur ? ` <span class="pill open">${t("sf_current")}</span>` : ""}</td><td class="num">${num(g.exit_negative_periods)}</td><td class="num">${num(g.exit_negative_cum_cost_frac, 2)}</td><td class="num ${cls(r.base_sum_return_pct)}">${pct(r.base_sum_return_pct, 2, true)}</td><td class="num ${cls(r.base_median_return_pct)}">${pct(r.base_median_return_pct, 2, true)}</td><td class="num">${r.base_profitable}/${r.base_n}</td><td class="num">${num(r.base_mean_trades, 1)}</td><td class="num">${bs("BTCUSDT|binance_futures")}</td><td class="num">${bs("ETHUSDT|binance_futures")}</td></tr>`; }).join("");
+        const bs = k => r.base_series[k] ? `<span class="${cls(r.base_series[k].return_pct)}">${pctCap(r.base_series[k].return_pct, 2)}</span> <span class="muted">· ${r.base_series[k].trades}</span>` : "—";
+        return `<tr${cur ? ' style="font-weight:600"' : ""}><td class="num">${num(g.exit_negative_min_bps, 2)}${cur ? ` <span class="pill open">${t("sf_current")}</span>` : ""}</td><td class="num">${num(g.exit_negative_periods)}</td><td class="num">${num(g.exit_negative_cum_cost_frac, 2)}</td><td class="num ${cls(r.base_sum_return_pct)}">${pcOr(r.base_sum_return_pct, r.base_n || SERIES_N)}</td><td class="num ${cls(r.base_median_return_pct)}">${pctCap(r.base_median_return_pct, 2)}</td><td class="num">${r.base_profitable}/${r.base_n}</td><td class="num">${num(r.base_mean_trades, 1)}</td><td class="num">${bs("BTCUSDT|binance_futures")}</td><td class="num">${bs("ETHUSDT|binance_futures")}</td></tr>`; }).join("");
   }
 
   const tabs = document.getElementById("tradeTabs"); tabs.innerHTML = "";
   [["all", "tab_all"], ["base", "tab_base"], ["best", "tab_best"]].forEach(([k, lbl]) => { const b = document.createElement("button"); b.type = "button"; b.textContent = t(lbl); b.setAttribute("aria-pressed", String(tradeTab === k)); b.onclick = () => { tradeTab = k; render(); }; tabs.appendChild(b); });
   const tb = W["trades_" + tradeTab];
   if (tb.n) {
-    const tfigs = [["tf_n", num(tb.n), ""], ["tf_pos", pct(tb.share_net_positive * 100, 1), tb.share_net_positive > 0.5 ? "gain" : "loss"], ["tf_hold", num(tb.median_held_days, 1), ""], ["tf_settle", num(tb.median_settlements), ""], ["tf_fund", pct(tb.mean_funding_pct, 4, true), cls(tb.mean_funding_pct)], ["tf_cost", pct(tb.mean_cost_pct, 4), "loss"], ["tf_net", pct(tb.mean_net_pct, 4, true), cls(tb.mean_net_pct)]];
+    const tfigs = [["tf_n", num(tb.n), ""], ["tf_pos", pct(tb.share_net_positive * 100, 1), tb.share_net_positive > 0.5 ? "gain" : "loss"], ["tf_hold", num(tb.median_held_days, 1), ""], ["tf_settle", num(tb.median_settlements), ""], ["tf_fund", pctCap(tb.mean_funding_pct, 4), cls(tb.mean_funding_pct)], ["tf_cost", pct(onCap(tb.mean_cost_pct), 4), "loss"], ["tf_net", pctCap(tb.mean_net_pct, 4), cls(tb.mean_net_pct)]];
     document.getElementById("tradeFigures").innerHTML = tfigs.map(([k, v, cl]) => `<div class="fig"><div class="v ${cl}" style="font-size:1.25rem">${v}</div><div class="l">${t(k)}</div></div>`).join("");
     const bins = t("hold_bins");
     document.getElementById("holdHist").innerHTML = histChart(tb.hold_hist.map((b, i) => ({ ...b, name: bins[i] })), { categorical: true, label: b => b.name, tick: b => b.name, xLabel: t("hold_x") });
     const reasons = ["sign_flip", "decay", "basis", "liquidation", "window_end", "unpriceable", "hedge_gone", "other"].filter(k => tb.exit_reasons[k]).map(k => ({ label: t("exit_" + k), value: tb.exit_reasons[k], text: `${num(tb.exit_reasons[k])} (${pct(100 * tb.exit_reasons[k] / tb.n, 0)})`, cls: "bar-accent" }));
     document.getElementById("exitBars").innerHTML = barChart(reasons, { left: 150, xLabel: "" });
-    document.getElementById("tradeNetHist").innerHTML = histChart(tb.net_hist, { label: b => `${num(b.x0, 3)}…${num(b.x1, 3)}%`, tick: b => num(b.x0, 2), xLabel: t("tradenet_title") });
+    const netHist = tb.net_hist.map(b => ({ ...b, x0: onCap(b.x0), x1: onCap(b.x1) }));
+    document.getElementById("tradeNetHist").innerHTML = histChart(netHist, { label: b => `${num(b.x0, 3)}…${num(b.x1, 3)}%`, tick: b => num(b.x0, 2), xLabel: t("tradenet_title") });
   } else { ["tradeFigures", "holdHist", "exitBars", "tradeNetHist"].forEach(id => document.getElementById(id).innerHTML = "<p class='note'>—</p>"); }
   document.getElementById("breakEvenNote").textContent = t("break_even_note", { list: W.series.filter(s => s.break_even_days).map(s => `${s.symbol.replace("USDT", "")}·${s.perp.replace("_futures", "")} ${num(s.break_even_settlements)} ${lang === "zh" ? "期" : "mốc"} ≈ ${num(s.break_even_days)} ${t("hold_x")}`).join(" · ") });
 
@@ -657,9 +664,9 @@ function render() {
       W.top.map((r, i) => `<tr><td class="num muted">${i + 1}</td><td class="mono">${r.symbol}</td><td>${r.perp}</td>` +
         `<td class="params">${paramCell(r.params)}</td>` +
         `<td class="num">${pct(r.cost_pct, 3)}</td><td class="num">${r.trades}</td><td class="num">${num(r.periods_in_position)}</td>` +
-        `<td class="num ${cls(r.total_return_pct)}">${pct(r.total_return_pct, 2, true)}</td>` +
-        `<td class="num ${cls(r.realized_apr_pct)}">${pct(r.realized_apr_pct, 2, true)}</td>` +
-        `<td class="num">${pct(r.max_drawdown_pct, 2)}</td></tr>`).join("");
+        `<td class="num ${cls(r.total_return_pct)}">${pctCap(r.total_return_pct, 2)}</td>` +
+        `<td class="num ${cls(r.realized_apr_pct)}">${pctCap(r.realized_apr_pct, 2)}</td>` +
+        `<td class="num">${pct(onCap(r.max_drawdown_pct), 2)}</td></tr>`).join("");
   }
 
   const first = W.series[0] || {}; const bp = (W.top[0] || {}).params || {};
@@ -738,11 +745,12 @@ function render() {
     const isoT = document.getElementById("basisIsoTable");
     if (iso) {
       document.getElementById("basisIsoRead").textContent = t("basis_iso_read", {
-        off: pct(iso.off.sum_pct, 2, true), offt: num(iso.off.trades),
-        on: pct(iso.on.sum_pct, 2, true), ont: num(iso.on.trades),
-        cost: num(Math.abs(iso.cost_pp), 2), extra: num(iso.extra_trades) });
+        off: pcOr(iso.off.sum_pct, iso.off.n), offt: num(iso.off.trades),
+        on: pcOr(iso.on.sum_pct, iso.on.n), ont: num(iso.on.trades),
+        cost: num(Math.abs(onCap(iso.cost_pp) / (iso.on.n || 1)), 3), rawcost: num(Math.abs(iso.cost_pp), 2),
+        nser: num(iso.on.n || 0), extra: num(iso.extra_trades) });
       isoT.innerHTML = `<tr><th>${t("bi_pair")}</th><th>${t("bi_perp")}</th><th class="num">${t("bi_off")}</th><th class="num">${t("bi_on")}</th><th class="num">${t("bi_delta")}</th></tr>` +
-        iso.rows.map(r => `<tr><td class="mono">${r.symbol}</td><td>${r.perp}</td><td class="num ${cls(r.off_pct)}">${pct(r.off_pct, 2, true)} <span class="muted">· ${r.off_trades} ${t("s_trades")}</span></td><td class="num ${cls(r.on_pct)}">${pct(r.on_pct, 2, true)} <span class="muted">· ${r.on_trades} ${t("s_trades")}</span></td><td class="num ${cls(r.delta_pp)}">${num(r.delta_pp, 2)}</td></tr>`).join("");
+        iso.rows.map(r => `<tr><td class="mono">${r.symbol}</td><td>${r.perp}</td><td class="num ${cls(r.off_pct)}">${pctCap(r.off_pct, 3)} <span class="muted">· ${r.off_trades} ${t("s_trades")}</span></td><td class="num ${cls(r.on_pct)}">${pctCap(r.on_pct, 3)} <span class="muted">· ${r.on_trades} ${t("s_trades")}</span></td><td class="num ${cls(r.delta_pp)}">${num(onCap(r.delta_pp), 3)}</td></tr>`).join("");
     } else { document.getElementById("basis").querySelectorAll("#basisIsoRead,#basisIsoTable").forEach(e => e.remove()); }
     document.getElementById("basisTable").innerHTML =
       `<tr><th>${t("b_pair")}</th><th>${t("b_perp")}</th><th class="num">${t("b_cov")}</th><th class="num">${t("b_eval")}</th><th class="num">${t("b_note")}</th><th class="num">${t("b_blind")}</th></tr>` +
