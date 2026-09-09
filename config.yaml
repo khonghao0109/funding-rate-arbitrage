@@ -181,10 +181,16 @@ strategy:
   # mục 74 chuỗi trong khi giữ suốt được +0,92%. max_basis_widen_pct là trục
   # quyết định (trung bình lưới 0,12% ở 0,5 → 0,30% ở tắt); max_basis_pct gần
   # như không. Bộ đề xuất của lưới: 2,0 / 2,0 với min_hold 1 → +0,87%, hạng
-  # 5/624 và 14/624 ở cửa sổ 6 tháng, còn 6 lệnh thoát basis/năm. Chưa đổi ở
-  # đây: đổi là quyết định vận hành và không tới được tiến trình 3.5 đang chạy.
-  max_basis_pct: 1.0          # thoát nếu |perp − spot| vượt mức này
-  max_basis_widen_pct: 0.5    # thoát nếu basis dịch xa mức lúc vào hơn mức này
+  # 5/624 và 14/624 ở cửa sổ 6 tháng, còn 6 lệnh thoát basis/năm.
+  # ÁP DỤNG 2026-09-09 theo quyết định của người vận hành (1,0/0,5 → 2,0/2,0,
+  # cùng min_hold_recovered_cost_frac 0 → 1). Đo trên 342 lệnh của bộ cũ, 12
+  # tháng, 74 chuỗi × 50k: 259 lệnh thoát basis giữ trung vị 0,9 ngày, trả
+  # 71.954 USD phí cho 11.566 USD funding; bộ mới còn 83 lệnh, phí 91.034 →
+  # 19.709 USD trên cùng dòng funding. Tiến trình 3.5 đang chạy KHÔNG nhận
+  # thay đổi này — nó nạp config một lần lúc khởi động — nên nhật ký của nó
+  # vẫn là bộ 2328307; khởi động lại là làm lại 14 ngày.
+  max_basis_pct: 2.0          # thoát nếu |perp − spot| vượt mức này
+  max_basis_widen_pct: 2.0    # thoát nếu basis dịch xa mức lúc vào hơn mức này
   # Cổng thoát khi funding đảo dấu (thêm 2026-09-07 sau khi đo: đợt âm trên
   # BTC/ETH binance trung vị 1 mốc và 0,3 bps, còn mỗi lần thoát-rồi-vào-lại
   # trả 30 bps). Ba cổng ghép theo AND. 0/1/0 là luật 3.2 cũ — thoát ở BẤT KỲ
@@ -227,7 +233,12 @@ strategy:
   # vốn +0,562% → +0,542%/năm — 4 lệnh nó chặn đều là lệnh SOL đang lỗ, chặn
   # xong thì giữ tới cuối cửa sổ và lỗ nhiều hơn (SOL·binance −1,12% → −2,15%
   # notional). Tỷ lệ hoà vốn tăng vì mẫu số giảm, không phải vì cứu được lệnh.
-  min_hold_recovered_cost_frac: 0
+  # Bật lên 1 ngày 2026-09-09 cùng với hai ngưỡng basis ở trên: trên lưới 624
+  # bộ × 74 chuỗi (docs/reports/backtest-capital-2026-09-09.html) bộ đề xuất
+  # là basis 2,0/2,0 VỚI M=1 (+0,872%, hạng 5); cùng ngưỡng basis mà M=0 xếp
+  # sau. Ở đây nó là bảo hiểm cho hai lối thoát lợi suất đã gần tắt; phần lợi
+  # nhuận nằm ở hai ngưỡng basis.
+  min_hold_recovered_cost_frac: 1.0
   # Mô hình ký quỹ chân perp (thêm 2026-09-07). Vị thế trung tính về COIN
   # nhưng chân perp thì KHÔNG: khoản lãi của chân spot nằm ở tài khoản khác,
   # thường ở sàn khác, và ký quỹ không chuyển qua lại được. Một đợt tăng giá

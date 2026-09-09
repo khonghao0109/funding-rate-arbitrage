@@ -423,9 +423,19 @@ ranks 403rd in the 6-month window — and concentrating capital there is at a
 size the book was never priced for (hyperliquid refused 4 alts at 50k). So
 selection is the DRAWDOWN-BUDGET lever, meaningful only when idle capital has
 another use; the absolute return lives in the basis guard and in not leaving.
-`config.yaml` values are unchanged (the two new keys ship at 0); the proposal
-is in `docs/reports/backtest-capital-2026-09-09.html` and applying it is the
-operator's call because it cannot reach the running 3.5 process.
+The proposal is in `docs/reports/backtest-capital-2026-09-09.html`, and
+**the user applied it on 2026-09-09**: `config.yaml` now ships
+`max_basis_pct: 2.0`, `max_basis_widen_pct: 2.0`,
+`min_hold_recovered_cost_frac: 1.0` (the two selection keys stay at 0), and
+`cmd/backtest`'s `baseParams` moved with it — every sweep axis overrides those
+fields, so the default grid is unchanged, pinned by test. Where an earlier
+paragraph says "the shipped set", it means the block as it stood before this
+change (basis 1.0/0.5, M=0). The measurement behind the decision, on the old
+set's 342 trades over 74 series × 50k, 12 months: 259 basis exits held a
+median 0.9 days and paid $71,954 in round trips for $11,566 of funding; the
+new set makes 83 trades and pays $19,709 for the same funding stream. **The
+running 3.5 process is unaffected** — it loaded its config once — so its
+journal is still the `2328307` block and restarting would reset the 14 days.
 
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in

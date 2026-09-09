@@ -2356,9 +2356,20 @@ tháng — vốn dồn vào 5 chuỗi ở size chưa được định giá (hype
 có nghĩa khi vốn của ô không chọn dùng được vào việc khác; lợi nhuận tuyệt đối
 nằm ở chốt basis và ở việc không rời vị thế.
 
-`config.yaml` KHÔNG đổi giá trị nào trong bước này (hai khoá mới thêm ở 0);
-bộ đề xuất nằm trong báo cáo, và đổi nó là quyết định của người vận hành vì
-nó không tới được tiến trình 3.5 đang chạy.
+`config.yaml` KHÔNG đổi giá trị nào trong bước đo này (hai khoá mới thêm ở
+0); bộ đề xuất nằm trong báo cáo, và đổi nó là quyết định của người vận hành
+vì nó không tới được tiến trình 3.5 đang chạy.
+
+**Người vận hành đã áp dụng bộ đề xuất ngày 2026-09-09**: `max_basis_pct`
+1,0 → 2,0, `max_basis_widen_pct` 0,5 → 2,0, `min_hold_recovered_cost_frac`
+0 → 1,0; hai khoá chọn chuỗi giữ 0. `baseParams` của `cmd/backtest` đổi theo
+(test ghim nó bằng khối config); lưới mặc định không đổi vì mọi trục của
+sweep ghi đè các trường đó. Số đo đứng sau quyết định, trên 342 lệnh của bộ
+cũ (74 chuỗi × 50k, 12 tháng): 259 lệnh thoát basis giữ trung vị 0,9 ngày,
+trả 71.954 USD phí vòng cho 11.566 USD funding; bộ mới còn 83 lệnh, phí
+91.034 → 19.709 USD trên cùng dòng funding. Tiến trình 3.5 KHÔNG nhận thay
+đổi — nhật ký của nó vẫn là khối `2328307` — và cổng 3.5 vẫn so nhật ký đó
+với backtest của đúng khối ấy.
 
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
