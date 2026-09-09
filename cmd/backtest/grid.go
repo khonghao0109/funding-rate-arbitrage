@@ -32,6 +32,17 @@ const (
 	// Margin on the perp leg: off, exactly as every run before it existed.
 	defaultPerpMargin = "0"
 	defaultLiqBuffer  = "0"
+	// The basis exit's two limits (strategy.Params.MaxBasisPct /
+	// MaxBasisWidenPct). Until 2026-09-09 these were the ONE parameter a
+	// sweep could not vary — baseParams hardcoded them — and the isolation
+	// run that day priced them at 0.94 points on 13 pairs. The defaults are
+	// baseParams' values, so the default grid is unchanged.
+	defaultMaxBasis      = "1.0"
+	defaultMaxBasisWiden = "0.5"
+	// Series selection (strategy.Params.MinTrailingMeanBps / TrailingMeanDays):
+	// off, exactly as every run before the condition existed.
+	defaultTrailBps  = "0"
+	defaultTrailDays = "0"
 )
 
 // gridSpec is every axis of a sweep, named as strategy.Params names them.
@@ -52,6 +63,12 @@ type gridSpec struct {
 
 	PerpMarginFrac          []float64
 	MinLiquidationBufferPct []float64
+
+	MaxBasisPct      []float64
+	MaxBasisWidenPct []float64
+
+	MinTrailingMeanBps []float64
+	TrailingMeanDays   []float64
 }
 
 func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hold string) (gridSpec, error) {
@@ -83,7 +100,35 @@ func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hol
 	// The minimum-hold floor defaults to off for the same reason.
 	spec.MinHoldRecoveredCostFrac = []float64{0}
 	spec.PerpMarginFrac, spec.MinLiquidationBufferPct = []float64{0}, []float64{0}
+	spec.MaxBasisPct, spec.MaxBasisWidenPct = []float64{1.0}, []float64{0.5}
+	spec.MinTrailingMeanBps, spec.TrailingMeanDays = []float64{0}, []float64{0}
 	return spec, nil
+}
+
+// withBasis sets the two basis-exit axes from their flags.
+func (g gridSpec) withBasis(maxBasis, maxWiden string) (gridSpec, error) {
+	var err error
+	if g.MaxBasisPct, err = parseFloatList(maxBasis); err != nil {
+		return g, fmt.Errorf("-max-basis: %w", err)
+	}
+	if g.MaxBasisWidenPct, err = parseFloatList(maxWiden); err != nil {
+		return g, fmt.Errorf("-max-basis-widen: %w", err)
+	}
+	return g, nil
+}
+
+// withSelection sets the two series-selection axes. They move together like
+// the margin pair: a floor on a mean with no horizon is refused by check(),
+// as config.Strategy refuses the same block.
+func (g gridSpec) withSelection(trailBps, trailDays string) (gridSpec, error) {
+	var err error
+	if g.MinTrailingMeanBps, err = parseFloatList(trailBps); err != nil {
+		return g, fmt.Errorf("-trail-bps: %w", err)
+	}
+	if g.TrailingMeanDays, err = parseFloatList(trailDays); err != nil {
+		return g, fmt.Errorf("-trail-days: %w", err)
+	}
+	return g, nil
 }
 
 // withMargin sets the two perp-margin axes. They move together because a
@@ -147,7 +192,8 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 					if exitNet >= minNet {
 						dropped += len(g.MinRatePer8hBps) * len(g.PersistencePeriods) * len(g.ExitPersistencePeriods) *
 							len(g.ExitNegativeMinBps) * len(g.ExitNegativePeriods) * len(g.ExitNegativeCumCostFrac) *
-							len(g.MinHoldRecoveredCostFrac) * len(g.PerpMarginFrac) * len(g.MinLiquidationBufferPct)
+							len(g.MinHoldRecoveredCostFrac) * len(g.PerpMarginFrac) * len(g.MinLiquidationBufferPct) *
+							len(g.MaxBasisPct) * len(g.MaxBasisWidenPct) * len(g.MinTrailingMeanBps) * len(g.TrailingMeanDays)
 						continue
 					}
 					for _, minBps := range g.MinRatePer8hBps {
@@ -159,19 +205,31 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 											for _, minHold := range g.MinHoldRecoveredCostFrac {
 												for _, marginFrac := range g.PerpMarginFrac {
 													for _, buffer := range g.MinLiquidationBufferPct {
-														p := baseParams(notional, hold)
-														p.MinRatePer8hBps = minBps
-														p.PersistencePeriods = periods
-														p.MinNetAPRFrac = minNet
-														p.ExitNetAPRFrac = exitNet
-														p.ExitPersistencePeriods = exitPeriods
-														p.ExitNegativeMinBps = negBps
-														p.ExitNegativePeriods = negPeriods
-														p.ExitNegativeCumCostFrac = negCum
-														p.MinHoldRecoveredCostFrac = minHold
-														p.PerpMarginFrac = marginFrac
-														p.MinLiquidationBufferPct = buffer
-														grid = append(grid, p)
+														for _, maxBasis := range g.MaxBasisPct {
+															for _, maxWiden := range g.MaxBasisWidenPct {
+																for _, trailBps := range g.MinTrailingMeanBps {
+																	for _, trailDays := range g.TrailingMeanDays {
+																		p := baseParams(notional, hold)
+																		p.MinRatePer8hBps = minBps
+																		p.PersistencePeriods = periods
+																		p.MinNetAPRFrac = minNet
+																		p.ExitNetAPRFrac = exitNet
+																		p.ExitPersistencePeriods = exitPeriods
+																		p.ExitNegativeMinBps = negBps
+																		p.ExitNegativePeriods = negPeriods
+																		p.ExitNegativeCumCostFrac = negCum
+																		p.MinHoldRecoveredCostFrac = minHold
+																		p.PerpMarginFrac = marginFrac
+																		p.MinLiquidationBufferPct = buffer
+																		p.MaxBasisPct = maxBasis
+																		p.MaxBasisWidenPct = maxWiden
+																		p.MinTrailingMeanBps = trailBps
+																		p.TrailingMeanDays = trailDays
+																		grid = append(grid, p)
+																	}
+																}
+															}
+														}
 													}
 												}
 											}
@@ -271,6 +329,37 @@ func (g gridSpec) check() error {
 			}
 		}
 	}
+	for _, v := range g.MaxBasisPct {
+		if v < 0 {
+			return fmt.Errorf("-max-basis %g: a basis ceiling cannot be negative", v)
+		}
+	}
+	for _, v := range g.MaxBasisWidenPct {
+		if v < 0 {
+			return fmt.Errorf("-max-basis-widen %g: a basis move limit cannot be negative", v)
+		}
+	}
+	for _, v := range g.MinTrailingMeanBps {
+		if v < 0 {
+			return fmt.Errorf("-trail-bps %g: a floor on the mean settled rate cannot be negative", v)
+		}
+	}
+	for _, v := range g.TrailingMeanDays {
+		if v < 0 {
+			return fmt.Errorf("-trail-days %g: a horizon cannot be negative", v)
+		}
+	}
+	for _, bps := range g.MinTrailingMeanBps {
+		if bps <= 0 {
+			continue
+		}
+		for _, d := range g.TrailingMeanDays {
+			if d <= 0 {
+				return fmt.Errorf("-trail-bps %g with -trail-days 0: a floor on a mean needs the horizon "+
+					"the mean is taken over", bps)
+			}
+		}
+	}
 	return nil
 }
 
@@ -309,9 +398,11 @@ func parseIntList(s string) ([]int, error) {
 // sweepOnlyFlagsTouched reports whether a flag only -sweep reads was given a
 // non-default value, so a plain run can refuse it instead of ignoring it.
 func sweepOnlyFlagsTouched(minRate, persist, minNet, exitNet, exitPersist, negBps, negPeriods, negCum, minHold,
-	perpMargin, liqBuffer string, top int) bool {
+	perpMargin, liqBuffer, maxBasis, maxWiden, trailBps, trailDays string, top int) bool {
 	return minRate != defaultMinRateBps || persist != defaultPersist || minNet != defaultMinNetAPR ||
 		exitNet != defaultExitNetAPR || exitPersist != defaultExitPersist ||
 		negBps != defaultExitNegBps || negPeriods != defaultExitNegPeriods || negCum != defaultExitNegCum ||
-		minHold != defaultMinHold || perpMargin != defaultPerpMargin || liqBuffer != defaultLiqBuffer || top != 0
+		minHold != defaultMinHold || perpMargin != defaultPerpMargin || liqBuffer != defaultLiqBuffer ||
+		maxBasis != defaultMaxBasis || maxWiden != defaultMaxBasisWiden ||
+		trailBps != defaultTrailBps || trailDays != defaultTrailDays || top != 0
 }

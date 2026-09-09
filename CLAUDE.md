@@ -394,6 +394,39 @@ an instrument snapshot first — a separate 5-minute scanner with
 `strategy.enabled: false` on another port writes both and never touches the
 3.5 process.
 
+**The capital-and-risk grid (2026-09-09) found the set, and it is mostly
+"stop leaving".** Two axes were added to the code first: a SERIES-SELECTION
+entry condition — `strategy.Params.MinTrailingMeanBps` over `TrailingMeanDays`
+(config `min_trailing_mean_bps` / `trailing_mean_days`, 0 = off = the old rule,
+pinned by test; DAYS not settlements, rule 3, and a history that does not
+reach the window start REFUSES rather than averaging less) — and the basis
+limits as sweep axes (`-max-basis`, `-max-basis-widen`; four new columns at
+the END of both CSVs). 624 sets × 74 series × 12 and 6 months, ranked on the
+UNIVERSE's capital (74 slots × 2 notional, an unselected slot earns 0) and on
+the PORTFOLIO drawdown — a daily equity curve rebuilt from Go's own trades for
+every set (`tools/report/capital.py`). Twelve months: hold-through +0.924% at
+0.231% portfolio drawdown; the shipped set ranks **624/624** (−0.056%, 0.551%
+drawdown, 259 basis exits); the best set is +0.888% with the basis exit OFF
+and M=1, and **0/624 beat hold-through**. `max_basis_widen_pct` is the axis
+that matters (grid mean 0.121% at 0.5 → 0.304% at off); `max_basis_pct` barely
+does. The recommended set keeps a finite guard — **basis 2.0 / widen 2.0,
+M=1, selection off, everything else as shipped → +0.872% (rank 5), portfolio
+drawdown 0.231%, 62/74 positive, 1.12 trades/series, and rank 14/624 in the
+6-month window**; the guard costs 0.016 points against fully off. Series
+selection does NOT raise return on the universe's capital (grid mean falls
+monotonically 0.595 → 0.139% as the floor rises to 0.9 bps) because unselected
+slots idle; it buys drawdown: the frontier is ≤0.05% → +0.269% on 16 series
+(0.9 bps/30d, ratio 5.7), ≤0.10% → +0.365% on 31, ≤0.20% → +0.548% on 60, and
+from 0.30% up the unselected set wins. The tightest selection (0.9/90d) puts
++2.625% on DEPLOYED capital across 5 series but +0.177% on the universe and
+ranks 403rd in the 6-month window — and concentrating capital there is at a
+size the book was never priced for (hyperliquid refused 4 alts at 50k). So
+selection is the DRAWDOWN-BUDGET lever, meaningful only when idle capital has
+another use; the absolute return lives in the basis guard and in not leaving.
+`config.yaml` values are unchanged (the two new keys ship at 0); the proposal
+is in `docs/reports/backtest-capital-2026-09-09.html` and applying it is the
+operator's call because it cannot reach the running 3.5 process.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only

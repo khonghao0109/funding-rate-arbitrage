@@ -247,6 +247,7 @@ func journalRecord(d strategy.Decision, p strategy.Params) store.SignalRecord {
 		"exit_negative_cum_cost_frac":  p.ExitNegativeCumCostFrac,
 		"min_hold_recovered_cost_frac": p.MinHoldRecoveredCostFrac,
 		"max_basis_pct":                p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
+		"min_trailing_mean_bps": p.MinTrailingMeanBps, "trailing_mean_days": p.TrailingMeanDays,
 	})
 	rec := store.SignalRecord{
 		EvaluatedAtMs: d.At.UnixMilli(), Symbol: d.Symbol, PerpSource: d.PerpSource, SpotSource: d.SpotSource,

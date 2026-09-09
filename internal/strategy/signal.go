@@ -239,6 +239,29 @@ type Params struct {
 	HoldingDays   float64
 	MaxBookAge    time.Duration
 
+	// --- series selection (added 2026-09-09) ---
+	// MinTrailingMeanBps is the floor the series' MEAN settled rate over the
+	// last TrailingMeanDays must clear, per 8h. 0 turns the condition off,
+	// which is every run before the field existed (pinned by test).
+	//
+	// This is the CAPITAL-ALLOCATION rule: which series gets a position at
+	// all. The persistence check asks whether the last few settlements were
+	// good; this one asks whether the series has PAID over a horizon of the
+	// order of the hold, because the break-even horizon measured on
+	// 2026-09-09 is 21–52 days on the majors and infinite on the six series
+	// whose mean funding sits below the round trip — and no exit rule saves a
+	// trade opened there. Measured the same day on 13 pairs: pointing the
+	// shipped set at the BTC+ETH series alone doubled its return on capital
+	// at half the drawdown, and nothing in this package decided that.
+	//
+	// DAYS, not a count of settlements (CLAUDE.md rule 3): 270 settlements is
+	// 90 days at an 8h cadence and 11 at an hourly one, so one swept count
+	// would be a different horizon on every venue. The window is measured on
+	// the stamps, and a history that does not reach back to its start
+	// refuses rather than averaging what it has.
+	MinTrailingMeanBps float64
+	TrailingMeanDays   float64
+
 	// --- exit ---
 	// ExitNetAPRFrac is lower than MinNetAPRFrac on purpose: entering costs a
 	// round trip, so the bar to STAY in is below the bar to get in, or the
@@ -415,6 +438,7 @@ func EvaluateEntry(at time.Time, c Candidate, p Params) Decision {
 		checkHistoryDepth(usable, droppedSpecial, p),
 		checkRateThreshold(newest, haveNewest, p),
 		checkPersistence(usable, p),
+		checkTrailingMean(at, usable, p),
 		checkLiquidity(d.Cost, p, hedge.Passed),
 		checkNetAPR(d.NetAPR, p, hedge.Passed),
 		checkMarginKnown(c, p),
@@ -543,6 +567,49 @@ func checkPersistence(usable []exchanges.FundingHistoryEntry, p Params) Check {
 	return Check{Name: "persistence", Passed: held == len(window), DetailVI: fmt.Sprintf(
 		"%d/%d mốc gần nhất trên ngưỡng %.4f bps/8h; mốc thấp nhất trong cửa sổ %.4f bps/8h.",
 		held, len(window), p.MinRatePer8hBps, worstBps)}
+}
+
+// checkTrailingMean is the series-selection condition: the mean settled rate
+// over the last TrailingMeanDays, per 8h, must clear MinTrailingMeanBps.
+//
+// The window is cut on the venue's stamps, never on a count, and it must be
+// COVERED: a history that starts inside the window would average a shorter
+// horizon than the one configured and call it the same number. One interval
+// of slack at the start, because the first settlement inside a window that
+// begins at 00:00 lands at the cadence boundary after it, not on it.
+//
+// The mean is of the per-8h rate across settlements, which is the figure the
+// pair screen ranks on (tools/report/pairscreen.py), so "0.94 bps/8h on the
+// screen" and "0.94 bps/8h here" are the same statement about the same series.
+func checkTrailingMean(at time.Time, usable []exchanges.FundingHistoryEntry, p Params) Check {
+	if p.MinTrailingMeanBps <= 0 || p.TrailingMeanDays <= 0 {
+		return Check{Name: "trailing_mean", Passed: true,
+			DetailVI: "Không xét funding trung bình của chuỗi (min_trailing_mean_bps = 0) — mọi chuỗi đủ điều kiện khác đều được vào."}
+	}
+	if len(usable) == 0 {
+		return Check{Name: "trailing_mean", Passed: false, DetailVI: "Không có mốc settle nào để tính funding trung bình."}
+	}
+	startMs := at.Add(-time.Duration(p.TrailingMeanDays * float64(24*time.Hour))).UnixMilli()
+	newest := usable[len(usable)-1]
+	if usable[0].SettledAtMs > startMs+newest.IntervalSec*1000 {
+		return Check{Name: "trailing_mean", Passed: false, DetailVI: fmt.Sprintf(
+			"Lịch sử chỉ bắt đầu từ %s, chưa phủ %g ngày để tính funding trung bình — không lấy trung bình của một cửa sổ ngắn hơn thay thế.",
+			time.UnixMilli(usable[0].SettledAtMs).UTC().Format("2006-01-02"), p.TrailingMeanDays)}
+	}
+	var sum float64
+	n := 0
+	for i := len(usable) - 1; i >= 0 && usable[i].SettledAtMs >= startMs; i-- {
+		sum += usable[i].RatePer8hFrac
+		n++
+	}
+	if n == 0 {
+		return Check{Name: "trailing_mean", Passed: false, DetailVI: fmt.Sprintf(
+			"Không có mốc settle nào trong %g ngày gần nhất.", p.TrailingMeanDays)}
+	}
+	meanBps := sum / float64(n) * bpsPerUnit
+	return Check{Name: "trailing_mean", Passed: meanBps >= p.MinTrailingMeanBps, DetailVI: fmt.Sprintf(
+		"Funding trung bình %.4f bps/8h qua %d mốc trong %g ngày, ngưỡng chọn chuỗi %.4f bps/8h.",
+		meanBps, n, p.TrailingMeanDays, p.MinTrailingMeanBps)}
 }
 
 // checkMarginKnown refuses to OPEN a leveraged short whose liquidation price

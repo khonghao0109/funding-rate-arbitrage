@@ -1,0 +1,730 @@
+<title>Bộ ngưỡng vốn và rủi ro</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ground:#F4F6F3; --surface:#FFFFFF; --ink:#1A2024; --muted:#5F6B72; --rule:#D6DCD8; --rule-soft:#E6EAE7;
+  --accent:#35507A; --accent-ink:#FFFFFF; --loss:#B4552D; --gain:#1E7A6C; --warn:#B8891E;
+  --loss-rgb:180,85,45; --gain-rgb:30,122,108; --accent-rgb:53,80,122;
+  --display:"Bricolage Grotesque","IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+    --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+    --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+  --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+  --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+:lang(zh) body, body:lang(zh){font-family:"Noto Sans SC","IBM Plex Sans",sans-serif}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:700}
+h3{font-size:1.05rem;font-weight:600}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mono,.num,td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.loss{color:var(--loss)} .gain{color:var(--gain)} .warn{color:var(--warn)}
+.topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--rule)}
+.topbar .in{max-width:1040px;margin:0 auto;padding:.6rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.topbar .name{font-family:var(--display);font-weight:700;font-size:1rem;margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:2px;gap:2px;background:var(--surface)}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:500;padding:.25rem .7rem;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:1040px;margin:0 auto;padding:2rem 1.25rem 4rem;display:grid;gap:3rem}
+section{display:grid;gap:1rem}
+section>header{display:grid;gap:.35rem;max-width:70ch}
+p{margin:0;max-width:70ch}
+.verdict{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.5rem;display:grid;gap:1.25rem}
+.verdict h1{font-size:clamp(1.5rem,3.2vw,2.3rem)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;border-top:1px solid var(--rule-soft);padding-top:1rem}
+.fig{display:grid;gap:.15rem}
+.fig .v{font-family:var(--mono);font-size:1.6rem;font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums}
+.fig .l{font-size:.8rem;color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);max-width:none}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em}
+.i-loss{background:var(--loss)} .i-gain{background:var(--gain)} .i-accent{background:var(--accent)} .i-warn{background:var(--warn)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--rule-soft);vertical-align:top;white-space:nowrap}
+/* The header stays put while a long table scrolls: 24 series × several
+   columns is past the point where a reader can hold the column names. */
+th{position:sticky;top:0;z-index:2;background:var(--surface);font-weight:600;color:var(--muted);
+   font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--rule)}
+td.num,th.num{text-align:right}
+tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+tbody tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;min-width:22ch;max-width:52ch}
+/* First column pinned on the wide tables, so a row never loses its name. */
+table.pin td:first-child,table.pin th:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+table.pin tbody tr:nth-child(even) td:first-child{background:color-mix(in srgb,var(--ink) 3%,var(--surface))}
+table.pin th:first-child{z-index:3}
+/* A cell holding a whole parameter set: one column instead of ten. */
+td.params{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+td.params b{color:var(--ink);font-weight:600}
+.scrollhint{font-size:.78rem;color:var(--muted);margin-top:.35rem}
+.chart{width:100%;overflow-x:auto}
+.chart svg{display:block;width:100%;height:auto;font-family:var(--mono);font-size:11px}
+.chart .axis{stroke:var(--rule);stroke-width:1}
+.chart .grid{stroke:var(--rule-soft);stroke-width:1}
+.chart text{fill:var(--muted)}
+.chart .bar-loss{fill:var(--loss)} .chart .bar-gain{fill:var(--gain)} .chart .bar-accent{fill:var(--accent)} .chart .bar-warn{fill:var(--warn)}
+.chart .marker{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+.chart .marker-text{fill:var(--ink);font-weight:500}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem 2rem}
+.small h3{margin-bottom:.35rem}
+.heat{display:grid;gap:2px;font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+.heat .c{padding:.35rem .4rem;text-align:right;border-radius:3px;min-width:4.5em;line-height:1.2}
+.heat .c small{display:block;font-size:.66rem;opacity:.75}
+.heat .h{color:var(--muted);text-align:right;padding:.35rem .4rem;font-size:.7rem}
+.heat .rh{color:var(--muted);text-align:left;padding:.35rem .4rem;font-size:.7rem}
+.heatwrap{overflow-x:auto}
+.heat-title{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;flex-wrap:wrap}
+.bullets{margin:0;padding-left:1.2rem;display:grid;gap:.5rem;max-width:75ch}
+.bullets li::marker{color:var(--accent)}
+.assume{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.25rem 1.5rem}
+.assume ol{margin:0;padding-left:1.2rem;display:grid;gap:.6rem;max-width:80ch}
+pre{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1rem;overflow-x:auto;font-family:var(--mono);font-size:.8rem;line-height:1.5}
+.pill{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.72rem;font-weight:600;letter-spacing:.03em;border:1px solid currentColor}
+.pill.fail,.pill.weak{color:var(--loss)} .pill.pass{color:var(--gain)} .pill.partial{color:var(--warn)} .pill.open{color:var(--muted)}
+.tabs{display:flex;gap:.5rem;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:.85rem;border:1px solid var(--rule);background:var(--surface);color:var(--ink);padding:.3rem .75rem;border-radius:6px;cursor:pointer}
+.tabs button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;font-size:.9rem;align-items:baseline}
+.pagenav{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:-2rem}
+.pagenav a{font-size:.8rem;text-decoration:none;color:var(--muted);border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:.2rem .7rem}
+.pagenav a:hover,.pagenav a:focus-visible{color:var(--accent);border-color:var(--accent)}
+.answer{border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--surface)}
+.answer .row{display:grid;grid-template-columns:1fr 7.5rem 6rem 6rem;gap:.35rem 1rem;padding:.8rem 1.25rem;border-bottom:1px solid var(--rule-soft);align-items:baseline}
+.answer .row:last-child{border-bottom:0}
+.answer .row.head{background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.answer .row.head span:not(:first-child){text-align:right}
+.answer .who{font-weight:600;font-size:.95rem}
+.answer .who small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:.1rem}
+.answer .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.05rem;text-align:right}
+.answer .v.sub{font-size:.9rem;color:var(--muted)}
+.answer .v small{display:block;font-size:.72rem;font-weight:400;color:var(--muted);margin-top:.15rem;letter-spacing:.01em}
+.answer .row{grid-template-columns:1fr 9.5rem 6rem 6rem}
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.1rem 2rem;margin:0}
+.gloss>div{display:grid;gap:.15rem;align-content:start}
+.gloss dt{font-weight:600;font-size:.9rem;margin:0}
+.gloss dd{margin:0;font-size:.85rem;color:var(--muted);max-width:48ch}
+@media (max-width:620px){.answer .row{grid-template-columns:1fr max-content}.answer .row .v.sub{display:none}.answer .row.head span:nth-child(3),.answer .row.head span:nth-child(4){display:none}}
+.kv dt{color:var(--muted);margin:0} .kv dd{margin:0}
+footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);padding-top:1rem}
+@media (prefers-reduced-motion:no-preference){.seg button,.tabs button{transition:background .15s,color .15s}}
+/* The marginal cards carry 8 columns each: one per row, or everything past
+   the fourth is reachable only by scrolling inside the card. */
+#mgGrid{grid-template-columns:1fr}
+</style><style>
+.diffline{display:grid;grid-template-columns:minmax(16rem,max-content) 7rem 7rem 1fr;gap:.35rem 1.25rem;padding:.45rem 1.25rem;border-bottom:1px solid var(--rule-soft);font-family:var(--mono);font-size:.84rem;align-items:baseline}
+.diffline:last-child{border-bottom:0}
+.diffline.head{font-family:var(--body);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600;background:color-mix(in srgb,var(--accent) 8%,transparent)}
+.diffline.changed{background:color-mix(in srgb,var(--gain) 10%,transparent)}
+.diffline .why{font-family:var(--body);font-size:.8rem;color:var(--muted)}
+.chips{display:flex;flex-wrap:wrap;gap:.4rem}
+.chip{font-family:var(--mono);font-size:.78rem;border:1px solid var(--rule);border-radius:6px;padding:.2rem .5rem;background:var(--surface)}
+.chip b{font-weight:500}
+.chart .line-rule{fill:none;stroke:var(--accent);stroke-width:2}
+.chart .line-ship{fill:none;stroke:var(--muted);stroke-width:1.5;stroke-dasharray:4 3}
+.chart .line-ht{fill:none;stroke:var(--warn);stroke-width:1.5}
+.chart .line-calmar{fill:none;stroke:var(--gain);stroke-width:1.5}
+</style>
+
+<div class="topbar"><div class="in">
+  <span class="name" data-i18n="title"></span>
+  <span class="muted" style="font-size:.8rem" id="windowLabel"></span>
+  <div class="seg" id="windowSeg" role="group"></div>
+  <div class="seg" id="langSeg" role="group" aria-label="language">
+    <button type="button" data-lang="vi" aria-pressed="true">Tiếng Việt</button>
+    <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+  </div>
+</div></div>
+
+<main>
+  <section class="verdict" id="verdict">
+    <div class="eyebrow" data-i18n="verdict_eyebrow"></div>
+    <h1 id="vHeadline"></h1>
+    <p id="vLede"></p>
+    <div class="figures" id="vFigures"></div>
+    <p class="note" id="vNote"></p>
+  </section>
+
+  <nav class="pagenav" aria-label="sections">
+    <a href="#answer" data-i18n="nav_answer"></a>
+    <a href="#set" data-i18n="nav_set"></a>
+    <a href="#portfolio" data-i18n="nav_portfolio"></a>
+    <a href="#frontier" data-i18n="nav_frontier"></a>
+    <a href="#where" data-i18n="nav_where"></a>
+    <a href="#axes" data-i18n="nav_axes"></a>
+    <a href="#robust" data-i18n="nav_robust"></a>
+    <a href="#method" data-i18n="nav_method"></a>
+  </nav>
+
+  <section id="answer">
+    <header>
+      <div class="eyebrow" data-i18n="an_eyebrow"></div>
+      <h2 data-i18n="an_h"></h2>
+      <p data-i18n="an_p"></p>
+    </header>
+    <div class="tablewrap"><table class="pin" id="anTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+    <p class="note" id="anRead"></p>
+  </section>
+
+  <section id="set">
+    <header>
+      <div class="eyebrow" data-i18n="set_eyebrow"></div>
+      <h2 data-i18n="set_h"></h2>
+      <p data-i18n="set_p"></p>
+    </header>
+    <div class="answer" id="setDiff"></div>
+    <p class="note" id="setRead"></p>
+  </section>
+
+  <section id="portfolio">
+    <header>
+      <div class="eyebrow" data-i18n="pf_eyebrow"></div>
+      <h2 data-i18n="pf_h"></h2>
+      <p id="pfIntro"></p>
+    </header>
+    <div class="chart" id="pfChart"></div>
+    <div class="legend" id="pfLegend"></div>
+    <div class="figures" id="pfFigures"></div>
+    <p class="note" id="pfRead"></p>
+  </section>
+
+  <section id="frontier">
+    <header>
+      <div class="eyebrow" data-i18n="fr_eyebrow"></div>
+      <h2 data-i18n="fr_h"></h2>
+      <p data-i18n="fr_p"></p>
+    </header>
+    <div class="chart" id="frChart"></div>
+    <div class="legend">
+      <span><i class="i-accent"></i><span data-i18n="lg_sel_on"></span></span>
+      <span><i class="i-gain"></i><span data-i18n="lg_sel_off"></span></span>
+      <span><i class="i-warn"></i><span data-i18n="lg_ht"></span></span>
+    </div>
+    <div class="tablewrap"><table class="pin" id="frTable"></table></div>
+    <p class="note" id="frRead"></p>
+  </section>
+
+  <section id="where">
+    <header>
+      <div class="eyebrow" data-i18n="wh_eyebrow"></div>
+      <h2 data-i18n="wh_h"></h2>
+      <p id="whIntro"></p>
+    </header>
+    <div class="chips" id="whChips"></div>
+    <div class="tablewrap"><table class="pin" id="whTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+    <p class="note" id="whRead"></p>
+  </section>
+
+  <section id="axes">
+    <header>
+      <div class="eyebrow" data-i18n="ax_eyebrow"></div>
+      <h2 data-i18n="ax_h"></h2>
+      <p data-i18n="ax_p"></p>
+    </header>
+    <div class="grid2" id="mgGrid"></div>
+    <p class="note" id="axRead"></p>
+  </section>
+
+  <section id="robust">
+    <header>
+      <div class="eyebrow" data-i18n="rb_eyebrow"></div>
+      <h2 data-i18n="rb_h"></h2>
+      <p id="rbIntro"></p>
+    </header>
+    <div class="grid2">
+      <div class="small">
+        <h3 data-i18n="rb_top_h"></h3>
+        <div class="tablewrap"><table class="pin" id="topTable"></table></div>
+      </div>
+      <div class="small">
+        <h3 data-i18n="rb_sel_h"></h3>
+        <div class="tablewrap"><table class="pin" id="calmarTable"></table></div>
+      </div>
+    </div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+  </section>
+
+  <section id="method">
+    <header>
+      <div class="eyebrow" data-i18n="me_eyebrow"></div>
+      <h2 data-i18n="me_h"></h2>
+    </header>
+    <div class="assume"><ol id="meList"></ol></div>
+    <dl class="gloss" id="meGloss"></dl>
+  </section>
+
+  <footer><span id="footText"></span></footer>
+</main>
+
+<script>
+const DATA = /*__DATA__*/;
+const META = /*__META__*/;
+const WINS = DATA.window_order || Object.keys(DATA.windows);
+const AXES = DATA.axes;
+const CAP_AXES = DATA.cap_axes;
+const COHORTS = ["all", "baseline", "added", "usdt_quoted", "bridged", "hyperliquid", "added_hyperliquid", "added_usdt", "deep_corpus"];
+const SHORT = { min_rate_per_8h_bps: "rate", persistence_periods: "pers", min_net_apr_frac: "minNet", exit_net_apr_frac: "floor",
+  exit_persistence_periods: "N", exit_negative_min_bps: "X", exit_negative_periods: "negN", exit_negative_cum_cost_frac: "C",
+  min_hold_recovered_cost_frac: "M", notional_quote: "size", holding_days: "hold",
+  max_basis_pct: "basis", max_basis_widen_pct: "widen", min_trailing_mean_bps: "sel", trailing_mean_days: "selDays" };
+const YAML_KEYS = ["min_rate_per_8h_bps", "persistence_periods", "min_net_apr_frac", "notional_quote", "holding_days",
+  "exit_net_apr_frac", "exit_persistence_periods", "max_basis_pct", "max_basis_widen_pct",
+  "exit_negative_min_bps", "exit_negative_periods", "exit_negative_cum_cost_frac", "min_hold_recovered_cost_frac",
+  "min_trailing_mean_bps", "trailing_mean_days"];
+
+const T = {
+vi: {
+  title: "Bộ ngưỡng vốn và rủi ro",
+  verdict_eyebrow: "Phán quyết", w12: "12 tháng", w6: "6 tháng", w3: "3 tháng",
+  nav_answer: "Năm dòng", nav_set: "Bộ ngưỡng", nav_portfolio: "Đường vốn", nav_frontier: "Ngân sách rủi ro", nav_where: "Vốn đi đâu", nav_axes: "Từng trục", nav_robust: "Độ bền", nav_method: "Cách đo",
+  v_head: "Bộ đề xuất làm {rec} trên vốn toàn danh mục mỗi năm, so với {ship} của bộ đang ship và {ht} nếu chỉ giữ suốt — {verb} mốc giữ suốt.",
+  v_verb_above: "VƯỢT", v_verb_below: "vẫn DƯỚI",
+  v_lede: "{sets} bộ ngưỡng, mỗi bộ chạy trên đúng {n} chuỗi (13 cặp × 6 sàn perp, {refused} chuỗi bị từ chối nêu tên), cửa sổ {from} → {to}. Hai trục mới của ngày 2026-09-09 — CHỌN CHUỖI theo funding trung bình ({sel}) và hai ngưỡng thoát basis ({basis}) — quét cùng sàn giữ tối thiểu và lối vào; mọi trục khác giữ đúng bộ ship. Mẫu số là VỐN toàn danh mục: {n} chuỗi × 2 notional, chuỗi không được chọn thì vốn nằm không và tính 0.",
+  fig_rec: "Bộ đề xuất, trên vốn danh mục", fig_best: "Bộ tốt nhất (tắt hẳn basis)", fig_pfdd: "Sụt vốn danh mục", fig_ship: "Bộ đang ship",
+  fig_ht: "Giữ suốt", fig_shiprank: "Hạng bộ ship", fig_beat: "Bộ vượt giữ suốt",
+  v_note: "Bộ đề xuất giữ một chốt basis hữu hạn ({guard}) và trả {price} điểm cho chốt đó so với tắt hẳn; nó xếp hạng {rank} ở cửa sổ này và {cross} ở cửa sổ kia. Chọn chuỗi theo funding trung bình KHÔNG tăng lợi nhuận trên vốn danh mục — nó mua sụt vốn thấp hơn bằng vốn nằm không (xem ngân sách rủi ro).",
+  an_eyebrow: "Năm dòng", an_h: "Bộ ship, bộ tốt nhất, bộ đề xuất, bộ chọn chuỗi gắt nhất, và giữ suốt",
+  an_p: "Hai mẫu số đặt cạnh nhau, không thay nhau: vốn DANH MỤC (mọi chuỗi, chuỗi không được chọn tính 0) và vốn ĐÃ DÙNG (chỉ chuỗi có lệnh). Bộ chọn ít chuỗi luôn đẹp ở cột thứ hai; cột thứ nhất mới là thứ ví thật nhận được. Sụt vốn danh mục là đỉnh-đáy của đường vốn gộp theo ngày.",
+  th_who: "Bộ", th_pf: "Vốn danh mục", th_dep: "Vốn đã dùng", th_traded: "Chuỗi có lệnh", th_pos: "Chuỗi lãi", th_pfdd: "Sụt vốn danh mục",
+  th_pfcalmar: "Lãi/sụt danh mục", th_beat: "Thắng giữ suốt", th_trades: "Lệnh/chuỗi", th_hton: "Giữ suốt cùng chuỗi", th_rank: "Hạng", th_set: "Bộ ngưỡng",
+  who_ship: "Bộ đang ship", who_best: "Tốt nhất theo lợi nhuận", who_guarded: "Đề xuất (giữ chốt basis)", who_sel: "Chọn chuỗi, tốt nhất trên vốn đã dùng", who_ht: "Giữ suốt cửa sổ",
+  an_read: "Bộ chọn chuỗi gắt nhất cấp vốn cho {traded}/{n} chuỗi và làm {dep} trên vốn đã dùng — nhưng chỉ {pf} trên vốn danh mục vì {idle} ô nằm không; giữ suốt trên đúng các chuỗi đó được {hton}, nên nó vào muộn hơn giữ suốt {timing} điểm. Bộ đang ship hạng {shiprank}/{sets}.",
+  set_eyebrow: "Bộ ngưỡng", set_h: "Khối strategy: đề xuất, đặt cạnh khối đang ship",
+  set_p: "Dòng tô màu là khoá đổi. Đây là ĐỀ XUẤT từ phép đo: config.yaml chưa đổi, và tiến trình 3.5 đang chạy vẫn giữ bộ nó nạp lúc khởi động.",
+  th_key: "Khoá", th_ship: "Đang ship", th_best: "Đề xuất", th_why: "Vì sao",
+  why_sel: "Chọn chuỗi: TẮT — trên vốn danh mục nó chỉ giảm lợi nhuận; bật khi có ngân sách sụt vốn (bảng dưới).",
+  why_basis: "Chốt basis nới từ 1,0/0,5 lên hữu hạn: 0,5 điểm nổ 259 lần/năm trên kraken; hữu hạn giữ được lối thoát rủi ro thật mà không trả cái giá đó.",
+  why_hold: "Sàn giữ tối thiểu: chặn hai lối thoát lợi suất tới khi lệnh hoàn vốn phí.",
+  why_rate: "Ngưỡng mốc settle mới nhất để vào.",
+  why_same: "Giữ nguyên.",
+  set_read: "Đọc bộ: {set}. Khoá thay đổi: {changed}. Tắt hẳn basis (100/100) cho {best} — hơn {price} điểm — nhưng là bỏ lối thoát rủi ro, không phải quản lý nó.",
+  pf_eyebrow: "Đường vốn", pf_h: "Đường vốn danh mục, vẽ lại từ chính các lệnh Go đã ghi",
+  pf_p: "Mỗi chuỗi là một ô vốn bằng nhau (2 × notional). Mỗi lệnh thu funding từ mốc sau khi mở tới mốc đóng và trả vòng phí ở ngày đóng — đúng số học của engine — rồi lấy trung bình mọi ô, theo lưới NGÀY để vẽ được cho cả {sets} bộ. Sụt vốn danh mục nhỏ hơn trung bình sụt vốn từng chuỗi vì các chuỗi không sụt cùng lúc.",
+  lg_rec: "Đề xuất", lg_best: "Tốt nhất (tắt basis)", lg_ship: "Đang ship", lg_ht: "Giữ suốt", lg_sel: "Chọn chuỗi gắt nhất",
+  fig_pf_final: "Cuối cửa sổ", fig_pf_dd: "Sụt vốn danh mục", fig_conc: "Nhiều lệnh nhất cùng lúc", fig_first: "Lệnh đầu tiên",
+  pf_read: "Bộ đề xuất: {final} cuối cửa sổ, sụt vốn danh mục {dd} (bộ ship {shipdd}, giữ suốt {htdd}); tối đa {conc} vị thế mở cùng lúc trên {n} ô.",
+  fr_eyebrow: "Ngân sách rủi ro", fr_h: "Với mỗi mức sụt vốn chấp nhận được, bộ nào ăn nhất",
+  fr_p: "Mỗi chấm là một bộ: sụt vốn danh mục theo trục ngang, lợi nhuận trên vốn danh mục theo trục dọc. Bảng đọc biên trên của đám mây: ở mỗi ngân sách sụt vốn, bộ có lợi nhuận cao nhất trong ngân sách đó. Đây là câu trả lời cho 'quản lý vốn': ngưỡng chọn chuỗi quyết định bao nhiêu ô được cấp vốn, và đó là thứ đặt sụt vốn.",
+  lg_sel_on: "Có chọn chuỗi", lg_sel_off: "Không chọn chuỗi",
+  th_budget: "Sụt vốn ≤", th_inside: "Bộ trong ngân sách", th_bestin: "Ăn nhất", th_ratio: "Lãi / sụt",
+  fr_read: "Ở ngân sách gắt nhất ({b0}) bộ tốt nhất làm {r0} với {t0}/{n} chuỗi được cấp vốn (lãi/sụt {c0}); nới tới {b1} thì {r1} với {t1} chuỗi; từ {bfree} trở lên bộ không chọn chuỗi thắng với {rfree}. Chọn chuỗi đổi lợi nhuận lấy sụt vốn gần như tuyến tính — tỷ số cao hơn, tiền ít hơn — nên nó chỉ có nghĩa khi vốn của ô không được chọn dùng được vào việc khác.",
+  wh_eyebrow: "Vốn đi đâu", wh_h: "Bộ đề xuất làm gì trên từng nhóm chuỗi",
+  wh_intro: "{traded} chuỗi có lệnh trong {n}. Chip là lợi nhuận trên vốn của từng chuỗi (⇄ = ghép cầu); bảng là theo nhóm, có cột giữ suốt của chính nhóm.",
+  th_cohort: "Nhóm", th_n: "Chuỗi", th_rule: "Bộ đề xuất", th_ht: "Giữ suốt", th_gap: "Chênh", th_dd: "Sụt vốn TB", th_calmar: "Lãi/sụt", th_worst: "Tệ nhất",
+  co_all: "Cả 13 cặp", co_baseline: "4 cặp cũ", co_added: "9 cặp mới", co_usdt_quoted: "Perp quote USDT", co_bridged: "Perp quote USD (ghép cầu)",
+  co_hyperliquid: "Hyperliquid", co_added_hyperliquid: "9 cặp mới trên Hyperliquid", co_added_usdt: "9 cặp mới, sàn USDT", co_deep_corpus: "Corpus ≥ 300 ngày",
+  wh_read: "{bridged} chuỗi ghép cầu (perp USD / spot USDT, rủi ro USDT/USD không chỗ nào trừ) và {usdt} chuỗi cùng quote USDT. Nhóm ăn nhất: {bestc} ({bestv}); chuỗi tệ nhất: {worst} ({worstv}).",
+  ax_eyebrow: "Từng trục", ax_h: "Đổi một trục thì cả lưới dịch bao nhiêu",
+  ax_p: "Trung bình và tốt nhất của mọi bộ có cùng giá trị ở trục đó. Ba cột cuối chỉ tính các bộ có lệnh.",
+  th_value: "Giá trị", th_sets: "Số bộ", th_mean: "Trung bình", th_best_col: "Tốt nhất", th_be: "Hoà vốn", th_flip: "Đảo dấu", th_decay: "Suy giảm",
+  ax_read: "Trục dịch mạnh nhất: {axis} ({span} điểm giữa giá trị tệ nhất và tốt nhất). Trục dịch yếu nhất: {flat} ({flatspan} điểm).",
+  rb_eyebrow: "Độ bền", rb_h: "Bộ của cửa sổ này đứng đâu ở cửa sổ kia",
+  rb_intro: "{cross} Cửa sổ 6 tháng là nửa sau của cửa sổ 12 tháng, nên nó chỉ loại được bộ không bền, không chứng minh được bộ bền.",
+  rb_cross: "{who} của cửa sổ {a} xếp hạng {r}/{sets} ở cửa sổ {b}.",
+  rb_top_h: "15 bộ tốt nhất theo vốn danh mục", rb_sel_h: "10 bộ chọn chuỗi tốt nhất theo vốn đã dùng",
+  me_eyebrow: "Cách đo", me_h: "Điều kiện và giới hạn của trang này",
+  me_1: "Mẫu số là VỐN = {k}× notional cho mỗi ô chuỗi. 'Vốn danh mục' chia cho {n} ô dù ô có lệnh hay không; 'vốn đã dùng' chỉ chia cho ô có lệnh. Không cột nào là tổng.",
+  me_2: "Luật chọn chuỗi tính funding trung bình TẠI từng mốc trên lịch sử đã settle tới mốc đó — không hậu nghiệm — và từ chối khi lịch sử chưa phủ hết chân trời, nên OKX (93 ngày) không bao giờ qua chân trời 180.",
+  me_3: "Mọi bộ chạy trên cùng {n} chuỗi; {dropped} bộ không chạy đủ bị loại. Lưới chọn-chuỗi TẮT là một lượt chạy riêng để không nhân ba các bộ giống hệt nhau.",
+  me_4: "Đường vốn danh mục vẽ lại từ các lệnh Go ghi ra và các mốc settle của corpus theo đúng số học của engine, trên lưới ngày; nó là phép đo, không phải một quyết định thứ hai, và sụt vốn theo ngày không bao giờ lớn hơn sụt vốn theo mốc.",
+  me_5: "Chi phí vòng từ MỘT lần đo sổ ở 50k, giữ cố định. Cột 'vốn đã dùng' của bộ chọn chuỗi giả định vốn dồn vào ít chuỗi hơn — ở size đó sổ CHƯA được định giá, và hyperliquid đã từ chối 4 alt ngay ở 50k. {bridged_note}",
+  me_6: "Đòn bẩy chân perp giữ 0 trên toàn lưới: biểu ký quỹ duy trì của alt chưa xác minh theo cặp, và strategy từ chối mở lệnh đòn bẩy ở nơi không nêu được giá thanh lý.",
+  me_7: "Ngưỡng basis 100 là lối thoát tắt: nó không bao giờ nổ trên corpus này. Bộ đề xuất vì thế là bộ tốt nhất trong các bộ còn chốt hữu hạn, và cái giá của chốt được nêu bằng số.",
+  gl_pf: "Vốn danh mục", gl_pf_d: "Lợi nhuận chia cho vốn của mọi ô chuỗi trong vũ trụ, kể cả ô không được chọn.",
+  gl_dep: "Vốn đã dùng", gl_dep_d: "Lợi nhuận chia cho vốn của riêng các ô có lệnh — đẹp hơn nhưng không phải thứ ví nhận.",
+  gl_sel: "Chọn chuỗi", gl_sel_d: "min_trailing_mean_bps / trailing_mean_days: funding trung bình qua N ngày phải đạt ngưỡng mới cấp vốn.",
+  gl_pfdd: "Sụt vốn danh mục", gl_pfdd_d: "Đỉnh-đáy của đường vốn gộp theo ngày, nhỏ hơn trung bình từng chuỗi nhờ đa dạng hoá.",
+  gl_guard: "Chốt basis", gl_guard_d: "max_basis_pct / max_basis_widen_pct: thoát khi |perp − spot| hoặc độ dịch so với lúc vào vượt ngưỡng; 100 là tắt.",
+  scrollhint: "Bảng cuộn ngang.", win_label: "{from} → {to} · {n} chuỗi · {sets} bộ",
+  foot: "Dựng từ {commit} lúc {generated}. Dữ liệu do cmd/backtest ghi ra; trang này chỉ đọc.",
+},
+zh: {
+  title: "资金与风险阈值组",
+  verdict_eyebrow: "结论", w12: "12 个月", w6: "6 个月", w3: "3 个月",
+  nav_answer: "五行", nav_set: "阈值组", nav_portfolio: "资金曲线", nav_frontier: "风险预算", nav_where: "资金去向", nav_axes: "逐轴", nav_robust: "稳健性", nav_method: "测量方法",
+  v_head: "建议组按组合资金每年做出 {rec}，对比在用组的 {ship} 和只持有到底的 {ht}——{verb}持有到底。",
+  v_verb_above: "高于", v_verb_below: "仍低于",
+  v_lede: "{sets} 组阈值，每组跑在同样 {n} 条序列上（13 对 × 6 家永续所，{refused} 条被点名拒绝），窗口 {from} → {to}。2026-09-09 新增的两个轴——按平均资金费选序列（{sel}）和基差退出的两个阈值（{basis}）——与最低持有下限和入场阈值一起扫描；其他轴保持在用值。分母是组合资金：{n} 条 × 2 名义，未被选中的序列资金闲置，计 0。",
+  fig_rec: "建议组，按组合资金", fig_best: "最优组（完全关闭基差）", fig_pfdd: "组合回撤", fig_ship: "在用组",
+  fig_ht: "持有到底", fig_shiprank: "在用组排名", fig_beat: "胜过持有的组数",
+  v_note: "建议组保留一个有限的基差闸门（{guard}），相比完全关闭付出 {price} 个百分点；它在本窗口排第 {rank}，在另一窗口排第 {cross}。按平均资金费选序列不会提高组合资金上的收益——它用闲置资金换更低的回撤（见风险预算）。",
+  an_eyebrow: "五行", an_h: "在用组、最优组、建议组、最严选序列组、持有到底",
+  an_p: "两个分母并列而非互换：组合资金（全部序列，未选中计 0）与已用资金（仅有交易的序列）。选得少的组在第二列总是好看；第一列才是钱包真正拿到的。组合回撤是合并资金曲线按日的峰谷差。",
+  th_who: "组", th_pf: "组合资金", th_dep: "已用资金", th_traded: "有交易序列", th_pos: "盈利序列", th_pfdd: "组合回撤",
+  th_pfcalmar: "组合收益/回撤", th_beat: "胜过持有", th_trades: "交易/序列", th_hton: "同序列持有到底", th_rank: "排名", th_set: "阈值组",
+  who_ship: "在用组", who_best: "按收益最优", who_guarded: "建议（保留基差闸门）", who_sel: "选序列，按已用资金最优", who_ht: "持有整个窗口",
+  an_read: "最严的选序列组给 {traded}/{n} 条序列配资，按已用资金做出 {dep}——但按组合资金只有 {pf}，因为 {idle} 个槽闲置；在同样这些序列上持有到底是 {hton}，即它比持有到底晚入场了 {timing} 个百分点。在用组排名 {shiprank}/{sets}。",
+  set_eyebrow: "阈值组", set_h: "strategy 块：建议值，与在用值并列",
+  set_p: "着色行是改动的键。这是测量得出的建议：config.yaml 未改，运行中的 3.5 进程仍用它启动时加载的那组。",
+  th_key: "键", th_ship: "在用", th_best: "建议", th_why: "原因",
+  why_sel: "选序列：关闭——按组合资金它只降低收益；有回撤预算时再开（见下表）。",
+  why_basis: "基差闸门从 1.0/0.5 放宽到有限值：0.5 个点在 kraken 上一年触发 259 次；有限值保留真正的风险退出而不付那个代价。",
+  why_hold: "最低持有下限：交易收回费用前挡住两个收益退出。",
+  why_rate: "入场时最新结算的阈值。",
+  why_same: "不变。",
+  set_read: "阈值组读法：{set}。改动的键：{changed}。完全关闭基差（100/100）得 {best}——高 {price} 个百分点——但那是放弃风险退出，不是管理它。",
+  pf_eyebrow: "资金曲线", pf_h: "组合资金曲线，由 Go 记录的交易重绘",
+  pf_p: "每条序列是一个等额资金槽（2 × 名义）。每笔交易从开仓后的结算到平仓结算收取资金费，在平仓日扣一次开平费——与引擎的算术一致——再对全部槽取平均，按日网格以便为全部 {sets} 组绘制。组合回撤小于各序列平均回撤，因为它们不同时回撤。",
+  lg_rec: "建议", lg_best: "最优（关闭基差）", lg_ship: "在用", lg_ht: "持有到底", lg_sel: "最严选序列",
+  fig_pf_final: "窗口末", fig_pf_dd: "组合回撤", fig_conc: "最多同时持仓", fig_first: "首笔交易",
+  pf_read: "建议组：窗口末 {final}，组合回撤 {dd}（在用组 {shipdd}，持有到底 {htdd}）；{n} 个槽中最多同时 {conc} 个持仓。",
+  fr_eyebrow: "风险预算", fr_h: "在每个可接受的回撤水平下，哪组赚得最多",
+  fr_p: "每个点是一组：横轴组合回撤，纵轴组合资金收益。表格读的是点云的上沿：在每个回撤预算内收益最高的组。这就是「资金管理」的答案：选序列阈值决定多少槽获配资金，而这决定回撤。",
+  lg_sel_on: "有选序列", lg_sel_off: "无选序列",
+  th_budget: "回撤 ≤", th_inside: "预算内组数", th_bestin: "最高收益", th_ratio: "收益 / 回撤",
+  fr_read: "最严预算（{b0}）下最优组做出 {r0}，{t0}/{n} 条序列获配（收益/回撤 {c0}）；放宽到 {b1} 得 {r1}，{t1} 条；从 {bfree} 起不选序列的组胜出，{rfree}。选序列几乎线性地用收益换回撤——比率更高、钱更少——所以只有当闲置槽的资金另有用途时它才有意义。",
+  wh_eyebrow: "资金去向", wh_h: "建议组在各序列子集上的表现",
+  wh_intro: "{n} 条中 {traded} 条有交易。芯片是每条序列按资金的收益（⇄ = 跨报价）；表格按子集，附该子集自身的持有到底。",
+  th_cohort: "子集", th_n: "序列", th_rule: "建议组", th_ht: "持有到底", th_gap: "差额", th_dd: "平均回撤", th_calmar: "收益/回撤", th_worst: "最差",
+  co_all: "全部 13 对", co_baseline: "4 个原有对", co_added: "9 个新增对", co_usdt_quoted: "USDT 计价永续", co_bridged: "USD 计价永续（跨报价）",
+  co_hyperliquid: "Hyperliquid", co_added_hyperliquid: "新增对在 Hyperliquid", co_added_usdt: "新增对，USDT 交易所", co_deep_corpus: "语料 ≥ 300 天",
+  wh_read: "{bridged} 条跨报价（USD 永续 / USDT 现货，USDT/USD 风险无处扣除），{usdt} 条同为 USDT。最好的子集：{bestc}（{bestv}）；最差序列：{worst}（{worstv}）。",
+  ax_eyebrow: "逐轴", ax_h: "改动一个轴，整个网格移动多少",
+  ax_p: "该轴取同一值的所有组的平均与最优。最后三列只计有交易的组。",
+  th_value: "取值", th_sets: "组数", th_mean: "平均", th_best_col: "最优", th_be: "回本", th_flip: "转负", th_decay: "衰减",
+  ax_read: "移动最大的轴：{axis}（最差与最优取值相差 {span} 个百分点）。最平的轴：{flat}（{flatspan}）。",
+  rb_eyebrow: "稳健性", rb_h: "本窗口的组在另一窗口排第几",
+  rb_intro: "{cross} 6 个月窗口是 12 个月窗口的后半段，所以它只能淘汰不稳健的组，不能证明哪组稳健。",
+  rb_cross: "窗口 {a} 的{who}在窗口 {b} 排名 {r}/{sets}。",
+  rb_top_h: "按组合资金最优 15 组", rb_sel_h: "按已用资金最优的 10 个选序列组",
+  me_eyebrow: "测量方法", me_h: "本页的条件与边界",
+  me_1: "分母是资金 = 每个序列槽 {k}× 名义。「组合资金」除以全部 {n} 个槽，无论有无交易；「已用资金」只除以有交易的槽。没有任何一列是求和。",
+  me_2: "选序列规则在每个结算点上用截至该点的已结算历史计算平均——不是事后——历史未覆盖整个周期时拒绝，所以 OKX（93 天）永远过不了 180 天周期。",
+  me_3: "所有组跑在同样 {n} 条序列上；{dropped} 组未跑完全部而被剔除。选序列关闭的网格是单独一次运行，以免把完全相同的组重复三次。",
+  me_4: "组合资金曲线由 Go 写出的交易与语料结算点按引擎算术在日网格上重绘；它是测量，不是第二次决策，且按日回撤永远不大于按结算的回撤。",
+  me_5: "开平成本来自一次 50k 盘口测量并保持不变。选序列组的「已用资金」列假设资金集中到更少的序列——那种规模的盘口从未定价，而 hyperliquid 在 50k 就已拒绝 4 个山寨币。{bridged_note}",
+  me_6: "永续腿杠杆在全网格保持 0：山寨币的维持保证金档位未按币种核验，strategy 拒绝在说不出强平价的地方开杠杆仓。",
+  me_7: "基差阈值 100 即退出关闭：在本语料上它从不触发。因此建议组是仍保留有限闸门的组中最优者，闸门的代价以数字写明。",
+  gl_pf: "组合资金", gl_pf_d: "收益除以宇宙中全部序列槽的资金，含未选中的槽。",
+  gl_dep: "已用资金", gl_dep_d: "收益只除以有交易的槽——更好看，但不是钱包拿到的。",
+  gl_sel: "选序列", gl_sel_d: "min_trailing_mean_bps / trailing_mean_days：N 天平均资金费达标才配资。",
+  gl_pfdd: "组合回撤", gl_pfdd_d: "合并资金曲线按日的峰谷差，因分散而小于各序列平均。",
+  gl_guard: "基差闸门", gl_guard_d: "max_basis_pct / max_basis_widen_pct：|永续 − 现货| 或相对开仓的位移超过阈值即退出；100 即关闭。",
+  scrollhint: "表格可横向滚动。", win_label: "{from} → {to} · {n} 条序列 · {sets} 组",
+  foot: "由 {commit} 于 {generated} 生成。数据由 cmd/backtest 写出；本页只读。",
+}};
+
+let lang = "vi", win = WINS[0];
+const t = (k, vars) => { let s = T[lang][k]; if (s === undefined) s = T.vi[k]; if (s === undefined) return k;
+  return vars ? s.replace(/\{(\w+)\}/g, (m, p) => vars[p] !== undefined ? vars[p] : m) : s; };
+const loc = () => lang === "zh" ? "zh-CN" : "vi-VN";
+const num = (v, d = 0) => v == null || Number.isNaN(v) ? "—" : new Intl.NumberFormat(loc(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+const pct = (v, d = 2, sign = false) => v == null ? "—" : (sign && v > 0 ? "+" : "") + num(v, d) + "%";
+const cls = v => v == null ? "" : v < 0 ? "loss" : v > 0 ? "gain" : "";
+const day = ms => ms == null ? "—" : new Date(ms).toISOString().slice(0, 10);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const vshort = s => s.replace("_futures", "").replace("_spot", "");
+const sname = (sym, perp) => sym.replace("USDT", "") + "·" + vshort(perp);
+const g = v => v == null ? "—" : num(v, Number.isInteger(v) ? 0 : (Math.abs(v) < 0.1 ? 3 : 2));
+const fmtSet = p => `${g(p.min_rate_per_8h_bps)}/${g(p.persistence_periods)} · sel ${g(p.min_trailing_mean_bps)}/${g(p.trailing_mean_days)}d · basis ${g(p.max_basis_pct)}/${g(p.max_basis_widen_pct)} · M${g(p.min_hold_recovered_cost_frac)} · X${g(p.exit_negative_min_bps)} C${g(p.exit_negative_cum_cost_frac)} · ${g(p.holding_days)}d`;
+const W = () => DATA.windows[win];
+const REC = () => W().guarded || W().best;   // the recommended set: the best that kept a finite basis guard
+
+function tbl(head, rows) {
+  const th = head.map(h => `<th class="${h.num ? "num" : ""}">${esc(h.label)}</th>`).join("");
+  const tr = rows.map(r => "<tr>" + r.map((c, i) => {
+    const cell = (c && typeof c === "object") ? c : { v: c };
+    return `<td class="${head[i].num ? "num " : ""}${cell.cls || ""}">${cell.v == null ? "—" : cell.v}</td>`;
+  }).join("") + "</tr>").join("");
+  return `<thead><tr>${th}</tr></thead><tbody>${tr}</tbody>`;
+}
+function figures(el, items) {
+  el.innerHTML = items.map(i => `<div class="fig"><div class="v ${i.cls || ""}">${i.v}</div><div class="l">${esc(i.l)}</div></div>`).join("");
+}
+function svg(w, h) { return `<svg viewBox="0 0 ${w} ${h}" role="img">`; }
+
+function lineChart(series, from_ms, to_ms) {
+  const W0 = 900, H = 320, left = 56, right = 16, top = 14, bot = 34;
+  const ys = series.flatMap(s => s.curve.map(p => p[1]));
+  const lo = Math.min(0, ...ys), hi = Math.max(0, ...ys);
+  const pad = (hi - lo) * 0.08 || 0.5;
+  const y0 = lo - pad, y1 = hi + pad;
+  const X = ms => left + (ms - from_ms) / (to_ms - from_ms) * (W0 - left - right);
+  const Y = v => H - bot - (v - y0) / (y1 - y0) * (H - top - bot);
+  let s = svg(W0, H);
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + (y1 - y0) * i / 4;
+    s += `<line class="grid" x1="${left}" y1="${Y(v)}" x2="${W0 - right}" y2="${Y(v)}"/>`;
+    s += `<text x="${left - 8}" y="${Y(v) + 4}" text-anchor="end">${pct(v, 2)}</text>`;
+  }
+  s += `<line class="axis" x1="${left}" y1="${Y(0)}" x2="${W0 - right}" y2="${Y(0)}"/>`;
+  for (let d = new Date(from_ms); d.getTime() < to_ms; d.setUTCMonth(d.getUTCMonth() + 1)) {
+    const m = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1);
+    if (m < to_ms) s += `<text x="${X(m)}" y="${H - bot + 16}" text-anchor="middle">${new Date(m).toISOString().slice(0, 7)}</text>`;
+  }
+  series.forEach(sr => {
+    if (!sr.curve.length) return;
+    const d = sr.curve.map((p, i) => `${i ? "L" : "M"}${X(p[0]).toFixed(1)},${Y(p[1]).toFixed(1)}`).join("");
+    s += `<path class="${sr.cls}" d="${d}"/>`;
+    const last = sr.curve[sr.curve.length - 1];
+    s += `<text x="${Math.min(X(last[0]) + 4, W0 - 60)}" y="${Y(last[1]) + 4 + (sr.dy || 0)}" fill="var(--ink)">${pct(last[1], 2, true)}</text>`;
+  });
+  return s + "</svg>";
+}
+
+/* Every set as a point: portfolio drawdown against return, both on the
+   universe's capital; hold-through as the one hollow diamond. */
+function frontierChart(pts, ht) {
+  const W0 = 900, H = 340, left = 56, right = 18, top = 16, bot = 40;
+  const xs = pts.map(p => p[1]).concat([ht.dd]), ys = pts.map(p => p[0]).concat([ht.ret]);
+  const x1 = Math.max(...xs) * 1.06 || 1, y0 = Math.min(0, ...ys) * 1.1, y1 = Math.max(...ys) * 1.08 || 1;
+  const X = v => left + v / x1 * (W0 - left - right);
+  const Y = v => H - bot - (v - y0) / (y1 - y0) * (H - top - bot);
+  let s = svg(W0, H);
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + (y1 - y0) * i / 4;
+    s += `<line class="grid" x1="${left}" y1="${Y(v)}" x2="${W0 - right}" y2="${Y(v)}"/><text x="${left - 8}" y="${Y(v) + 4}" text-anchor="end">${pct(v, 2)}</text>`;
+  }
+  for (let i = 0; i <= 5; i++) {
+    const v = x1 * i / 5;
+    s += `<text x="${X(v)}" y="${H - bot + 16}" text-anchor="middle">${pct(v, 2)}</text>`;
+  }
+  s += `<line class="axis" x1="${left}" y1="${Y(0)}" x2="${W0 - right}" y2="${Y(0)}"/>`;
+  s += `<text x="${(left + W0) / 2}" y="${H - 6}" text-anchor="middle">${esc(t("th_pfdd"))}</text>`;
+  pts.forEach(p => {
+    s += `<circle cx="${X(p[1])}" cy="${Y(p[0])}" r="3.5" fill="${p[3] ? "var(--accent)" : "var(--gain)"}" fill-opacity=".7"><title>${pct(p[0], 3, true)} / dd ${pct(p[1], 3)} · ${p[2]} series · widen ${p[4]}</title></circle>`;
+  });
+  s += `<path d="M${X(ht.dd)},${Y(ht.ret) - 7} l7,7 l-7,7 l-7,-7 z" fill="none" stroke="var(--warn)" stroke-width="2"><title>hold-through</title></path>`;
+  return s + "</svg>";
+}
+
+function renderStatic() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("#langSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  document.querySelectorAll("#windowSeg button").forEach(b => {
+    b.setAttribute("aria-pressed", String(b.dataset.win === win));
+    b.textContent = t("w" + b.dataset.win);
+  });
+}
+
+function crossOf(which) {
+  const w = W();
+  const e = Object.entries(w.cross_rank || {}).find(([k]) => k.startsWith(which + "_in_"));
+  return e ? { other: e[0].slice(which.length + 4), rank: e[1] } : null;
+}
+
+function renderVerdict() {
+  const w = W(), R = REC(), B = w.best, S = w.shipped, HT = w.hold_through, gv = w.grid_values;
+  document.getElementById("vHeadline").textContent = t("v_head", {
+    rec: pct(R.row.mean_cap_pct, 2, true), ship: S ? pct(S.row.mean_cap_pct, 2, true) : "—", ht: pct(HT.mean_cap_pct, 2, true),
+    verb: t(R.row.mean_cap_pct > HT.mean_cap_pct ? "v_verb_above" : "v_verb_below") });
+  document.getElementById("vLede").textContent = t("v_lede", {
+    sets: num(w.sets, 0), n: w.series, refused: w.refused, from: day(w.from_ms), to: day(w.to_ms),
+    sel: `${gv.min_trailing_mean_bps.map(g).join("/")} bps · ${gv.trailing_mean_days.map(g).join("/")} ${lang === "zh" ? "天" : "ngày"}`,
+    basis: `${gv.max_basis_pct.map(g).join("/")} · ${gv.max_basis_widen_pct.map(g).join("/")}` });
+  figures(document.getElementById("vFigures"), [
+    { v: pct(R.row.mean_cap_pct, 2, true), l: t("fig_rec"), cls: cls(R.row.mean_cap_pct) },
+    { v: pct(B.row.mean_cap_pct, 2, true), l: t("fig_best"), cls: cls(B.row.mean_cap_pct) },
+    { v: pct(HT.mean_cap_pct, 2, true), l: t("fig_ht"), cls: cls(HT.mean_cap_pct) },
+    { v: S ? pct(S.row.mean_cap_pct, 2, true) : "—", l: t("fig_ship"), cls: S ? cls(S.row.mean_cap_pct) : "" },
+    { v: pct(R.portfolio.max_dd_cap_pct, 2), l: t("fig_pfdd") },
+    { v: S ? `${S.row.rank}/${w.sets}` : "—", l: t("fig_shiprank") },
+    { v: `${w.stats.beat_ht}/${w.sets}`, l: t("fig_beat") },
+  ]);
+  const cr = crossOf("guarded") || crossOf("best");
+  document.getElementById("vNote").textContent = t("v_note", {
+    guard: `${g(R.params.max_basis_pct)} / ${g(R.params.max_basis_widen_pct)}`,
+    price: num(B.row.mean_cap_pct - R.row.mean_cap_pct, 3), rank: R.row.rank,
+    cross: cr && cr.rank != null ? `${cr.rank}/${DATA.windows[cr.other].sets}` : "—" });
+}
+
+function renderAnswer() {
+  const w = W(), HT = w.hold_through;
+  const rows = [];
+  if (w.shipped) rows.push({ who: t("who_ship"), b: w.shipped });
+  rows.push({ who: t("who_best"), b: w.best });
+  if (w.guarded) rows.push({ who: t("who_guarded"), b: w.guarded });
+  if (w.selection_best_block) rows.push({ who: t("who_sel"), b: w.selection_best_block });
+  const head = [{ label: t("th_who") }, { label: t("th_pf"), num: 1 }, { label: t("th_dep"), num: 1 }, { label: t("th_traded"), num: 1 },
+    { label: t("th_pos"), num: 1 }, { label: t("th_pfdd"), num: 1 }, { label: t("th_pfcalmar"), num: 1 },
+    { label: t("th_beat"), num: 1 }, { label: t("th_hton"), num: 1 }, { label: t("th_trades"), num: 1 }, { label: t("th_rank"), num: 1 }];
+  const body = rows.map(({ who, b }) => {
+    const r = b.row;
+    return [`${esc(who)}<br><span class="muted mono" style="font-size:.75rem">${esc(fmtSet(b.params))}</span>`,
+      { v: pct(r.mean_cap_pct, 2, true), cls: cls(r.mean_cap_pct) },
+      { v: pct(r.deployed_cap_pct, 2, true), cls: cls(r.deployed_cap_pct) },
+      `${r.traded_series}/${w.series}`, `${r.positive}/${r.series}`, pct(r.pf_dd_cap_pct, 3),
+      r.pf_calmar == null ? "—" : num(r.pf_calmar, 2),
+      `${r.beat_ht}/${w.series}`, { v: pct(r.ht_on_traded_cap_pct, 2, true), cls: cls(r.ht_on_traded_cap_pct) },
+      num(r.trades_per_series, 2), num(r.rank, 0)];
+  });
+  body.push([`${esc(t("who_ht"))}`,
+    { v: pct(HT.mean_cap_pct, 2, true), cls: cls(HT.mean_cap_pct) }, { v: pct(HT.mean_cap_pct, 2, true), cls: cls(HT.mean_cap_pct) },
+    `${w.series}/${w.series}`, `${HT.positive}/${w.series}`, pct(HT.portfolio.max_dd_cap_pct, 3),
+    HT.portfolio.pf_calmar == null ? "—" : num(HT.portfolio.pf_calmar, 2), "—", "—", "1,00", "—"]);
+  document.getElementById("anTable").innerHTML = tbl(head, body);
+  const Sb = w.selection_best_block;
+  document.getElementById("anRead").textContent = Sb ? t("an_read", {
+    traded: Sb.row.traded_series, n: w.series, dep: pct(Sb.row.deployed_cap_pct, 2, true), pf: pct(Sb.row.mean_cap_pct, 2, true),
+    idle: w.series - Sb.row.traded_series, hton: pct(Sb.row.ht_on_traded_cap_pct, 2, true),
+    timing: num(Sb.row.ht_on_traded_cap_pct - Sb.row.deployed_cap_pct, 2),
+    shiprank: w.shipped ? num(w.shipped.row.rank, 0) : "—", sets: num(w.sets, 0) }) : "";
+}
+
+function renderSet() {
+  const w = W(), ship = DATA.shipped, R = REC(), best = w.best.row;
+  const whyOf = k => k.startsWith("min_trailing") || k.startsWith("trailing") ? t("why_sel")
+    : k.startsWith("max_basis") ? t("why_basis") : k === "min_hold_recovered_cost_frac" ? t("why_hold")
+    : k === "min_rate_per_8h_bps" ? t("why_rate") : t("why_same");
+  const changed = [];
+  let html = `<div class="diffline head"><span>${t("th_key")}</span><span>${t("th_ship")}</span><span>${t("th_best")}</span><span>${t("th_why")}</span></div>`;
+  YAML_KEYS.forEach(k => {
+    const a = ship[k], b = R.params[k];
+    const diff = Math.abs((a ?? 0) - (b ?? 0)) > 1e-9;
+    if (diff) changed.push(k);
+    html += `<div class="diffline ${diff ? "changed" : ""}"><span>${esc(k)}</span><span>${g(a)}</span><span><b>${g(b)}</b></span><span class="why">${esc(diff ? whyOf(k) : t("why_same"))}</span></div>`;
+  });
+  document.getElementById("setDiff").innerHTML = html;
+  document.getElementById("setRead").textContent = t("set_read", { set: fmtSet(R.params), changed: changed.length ? changed.join(", ") : "—",
+    best: pct(best.mean_cap_pct, 2, true), price: num(best.mean_cap_pct - R.row.mean_cap_pct, 3) });
+}
+
+function renderPortfolio() {
+  const w = W(), R = REC();
+  const series = [];
+  if (w.shipped) series.push({ cls: "line-ship", curve: w.shipped.portfolio.curve, dy: 12 });
+  series.push({ cls: "line-ht", curve: w.hold_through.portfolio.curve, dy: -10 });
+  if (w.selection_best_block) series.push({ cls: "line-calmar", curve: w.selection_best_block.portfolio.curve, dy: 12 });
+  series.push({ cls: "line-rule", curve: R.portfolio.curve });
+  document.getElementById("pfChart").innerHTML = lineChart(series, w.from_ms, w.to_ms);
+  document.getElementById("pfLegend").innerHTML =
+    `<span><i class="i-accent"></i>${t("lg_rec")}</span>` + (w.shipped ? `<span><i style="background:var(--muted)"></i>${t("lg_ship")}</span>` : "") +
+    `<span><i class="i-warn"></i>${t("lg_ht")}</span>` + (w.selection_best_block ? `<span><i class="i-gain"></i>${t("lg_sel")}</span>` : "");
+  document.getElementById("pfIntro").textContent = t("pf_p", { sets: num(w.sets, 0) });
+  const P = R.portfolio;
+  figures(document.getElementById("pfFigures"), [
+    { v: pct(P.final_cap_pct, 2, true), l: t("fig_pf_final"), cls: cls(P.final_cap_pct) },
+    { v: pct(P.max_dd_cap_pct, 3), l: t("fig_pf_dd") },
+    { v: `${P.max_concurrent}/${w.series}`, l: t("fig_conc") },
+    { v: day(P.first_entry_ms), l: t("fig_first") },
+  ]);
+  document.getElementById("pfRead").textContent = t("pf_read", {
+    final: pct(P.final_cap_pct, 2, true), dd: pct(P.max_dd_cap_pct, 3),
+    shipdd: w.shipped ? pct(w.shipped.portfolio.max_dd_cap_pct, 3) : "—", htdd: pct(w.hold_through.portfolio.max_dd_cap_pct, 3),
+    conc: P.max_concurrent, n: w.series });
+}
+
+function renderFrontier() {
+  const w = W(), HT = w.hold_through;
+  document.getElementById("frChart").innerHTML = frontierChart(w.scatter, { ret: HT.mean_cap_pct, dd: HT.portfolio.max_dd_cap_pct });
+  const head = [{ label: t("th_budget"), num: 1 }, { label: t("th_inside"), num: 1 }, { label: t("th_bestin"), num: 1 },
+    { label: t("th_pfdd"), num: 1 }, { label: t("th_ratio"), num: 1 }, { label: t("th_traded"), num: 1 }, { label: t("th_set") }];
+  document.getElementById("frTable").innerHTML = tbl(head, w.frontier.map(f => [pct(f.budget_pct, 2), num(f.sets_inside, 0),
+    { v: pct(f.row.mean_cap_pct, 3, true), cls: cls(f.row.mean_cap_pct) }, pct(f.row.pf_dd_cap_pct, 3),
+    f.row.pf_calmar == null ? "—" : num(f.row.pf_calmar, 2), `${f.row.traded_series}/${w.series}`, { v: fmtSet(f.params), cls: "params" }]));
+  const fr = w.frontier;
+  const free = fr.find(f => !f.row.selection_on) || fr[fr.length - 1];
+  const mid = fr[Math.min(3, fr.length - 1)];
+  document.getElementById("frRead").textContent = fr.length ? t("fr_read", {
+    b0: pct(fr[0].budget_pct, 2), r0: pct(fr[0].row.mean_cap_pct, 2, true), t0: fr[0].row.traded_series, n: w.series,
+    c0: fr[0].row.pf_calmar == null ? "—" : num(fr[0].row.pf_calmar, 1),
+    b1: pct(mid.budget_pct, 2), r1: pct(mid.row.mean_cap_pct, 2, true), t1: mid.row.traded_series,
+    bfree: pct(free.budget_pct, 2), rfree: pct(free.row.mean_cap_pct, 2, true) }) : "";
+}
+
+function renderWhere() {
+  const w = W(), R = REC();
+  const picked = R.per_series.filter(s => s.trades > 0);
+  document.getElementById("whIntro").textContent = t("wh_intro", { traded: picked.length, n: w.series });
+  document.getElementById("whChips").innerHTML = picked.map(s =>
+    `<span class="chip">${esc(sname(s.symbol, s.perp))}${s.quote_bridged ? " ⇄" : ""} <b class="${cls(s.cap_pct)}">${pct(s.cap_pct, 2, true)}</b></span>`).join("");
+  const head = [{ label: t("th_cohort") }, { label: t("th_n"), num: 1 }, { label: t("th_traded"), num: 1 }, { label: t("th_rule"), num: 1 },
+    { label: t("th_ht"), num: 1 }, { label: t("th_gap"), num: 1 }, { label: t("th_dd"), num: 1 }, { label: t("th_calmar"), num: 1 }, { label: t("th_worst"), num: 1 }];
+  const coh = COHORTS.filter(c => R.cohorts[c] && R.cohorts[c].series);
+  document.getElementById("whTable").innerHTML = tbl(head, coh.map(c => {
+    const v = R.cohorts[c], gap = v.mean_cap_pct - v.ht_mean_cap_pct;
+    return [t("co_" + c), num(v.series, 0), num(v.traded, 0),
+      { v: pct(v.mean_cap_pct, 2, true), cls: cls(v.mean_cap_pct) }, { v: pct(v.ht_mean_cap_pct, 2, true), cls: cls(v.ht_mean_cap_pct) },
+      { v: pct(gap, 2, true), cls: cls(gap) }, pct(v.mean_dd_cap_pct, 2), v.calmar == null ? "—" : num(v.calmar, 2),
+      { v: pct(v.worst_cap_pct, 2, true), cls: cls(v.worst_cap_pct) }];
+  }));
+  const bestc = coh.filter(c => c !== "all").sort((a, b) => R.cohorts[b].mean_cap_pct - R.cohorts[a].mean_cap_pct)[0];
+  const worst = picked.length ? picked[picked.length - 1] : null;
+  document.getElementById("whRead").textContent = t("wh_read", {
+    bridged: picked.filter(s => s.quote_bridged).length, usdt: picked.filter(s => !s.quote_bridged).length,
+    bestc: bestc ? t("co_" + bestc) : "—", bestv: bestc ? pct(R.cohorts[bestc].mean_cap_pct, 2, true) : "—",
+    worst: worst ? sname(worst.symbol, worst.perp) : "—", worstv: worst ? pct(worst.cap_pct, 2, true) : "—" });
+}
+
+function renderAxes() {
+  const w = W(), cards = [], spans = [];
+  for (const a of CAP_AXES) {
+    const m = w.marginals[a];
+    if (!m) continue;
+    const means = m.map(v => v.mean_cap_pct);
+    spans.push({ a, span: Math.max(...means) - Math.min(...means) });
+    cards.push(`<div class="small"><h3>${SHORT[a]} — <span class="muted" style="font-weight:400">${esc(a)}</span></h3><div class="tablewrap"><table>` +
+      tbl([{ label: t("th_value"), num: 1 }, { label: t("th_sets"), num: 1 }, { label: t("th_mean"), num: 1 }, { label: t("th_best_col"), num: 1 },
+           { label: t("th_trades"), num: 1 }, { label: t("th_be"), num: 1 }, { label: t("th_flip"), num: 1 }, { label: t("th_decay"), num: 1 }],
+        m.map(v => [g(v.value), num(v.n, 0), { v: pct(v.mean_cap_pct, 2, true), cls: cls(v.mean_cap_pct) },
+          { v: pct(v.best_cap_pct, 2, true), cls: cls(v.best_cap_pct) }, num(v.trades_per_series, 1),
+          v.be_share == null ? "—" : pct(v.be_share * 100, 0), v.flip_share == null ? "—" : pct(v.flip_share * 100, 0),
+          v.decay_share == null ? "—" : pct(v.decay_share * 100, 0)])) + `</table></div></div>`);
+  }
+  document.getElementById("mgGrid").innerHTML = cards.join("");
+  spans.sort((x, y) => y.span - x.span);
+  document.getElementById("axRead").textContent = spans.length ? t("ax_read", {
+    axis: spans[0].a, span: num(spans[0].span, 2), flat: spans[spans.length - 1].a, flatspan: num(spans[spans.length - 1].span, 3) }) : "";
+}
+
+function renderRobust() {
+  const w = W();
+  const lines = [];
+  for (const [which, who] of [["best", "who_best"], ["guarded", "who_guarded"], ["selection_best_block", "who_sel"]]) {
+    const c = crossOf(which);
+    if (c && c.rank != null) lines.push(t("rb_cross", { who: t(who), a: t("w" + win), b: t("w" + c.other), r: num(c.rank, 0), sets: num(DATA.windows[c.other].sets, 0) }));
+  }
+  document.getElementById("rbIntro").textContent = t("rb_intro", { cross: lines.join(" ") });
+  const head = [{ label: t("th_rank"), num: 1 }, { label: t("th_set") }, { label: t("th_pf"), num: 1 }, { label: t("th_dep"), num: 1 },
+    { label: t("th_traded"), num: 1 }, { label: t("th_pfdd"), num: 1 }, { label: t("th_pfcalmar"), num: 1 }, { label: t("th_trades"), num: 1 }];
+  const row = r => [num(r.rank, 0), { v: fmtSet(r), cls: "params" },
+    { v: pct(r.mean_cap_pct, 2, true), cls: cls(r.mean_cap_pct) }, { v: pct(r.deployed_cap_pct, 2, true), cls: cls(r.deployed_cap_pct) },
+    `${r.traded_series}/${w.series}`, pct(r.pf_dd_cap_pct, 3), r.pf_calmar == null ? "—" : num(r.pf_calmar, 2), num(r.trades_per_series, 2)];
+  document.getElementById("topTable").innerHTML = tbl(head, w.top.slice(0, 15).map(row));
+  document.getElementById("calmarTable").innerHTML = tbl(head, w.selection_best_deployed.slice(0, 10).map(row));
+}
+
+function renderMethod() {
+  const w = W(), R = REC();
+  const bridged = R.per_series.filter(s => s.quote_bridged && s.trades > 0).length;
+  const items = [t("me_1", { k: num(w.capital_per_notional, 1), n: w.series }), t("me_2"),
+    t("me_3", { n: w.series, dropped: num(w.dropped_partial, 0) }), t("me_4"),
+    t("me_5", { bridged_note: lang === "zh" ? `${bridged} 条被选序列为跨报价配对，其基差含 USDT/USD 价差。` : `${bridged} chuỗi có lệnh là ghép cầu, basis đo được mang cả chênh USDT/USD.` }),
+    t("me_6"), t("me_7")];
+  document.getElementById("meList").innerHTML = items.map(x => `<li>${esc(x)}</li>`).join("");
+  const gl = [["gl_pf", "gl_pf_d"], ["gl_dep", "gl_dep_d"], ["gl_sel", "gl_sel_d"], ["gl_guard", "gl_guard_d"], ["gl_pfdd", "gl_pfdd_d"]];
+  document.getElementById("meGloss").innerHTML = gl.map(([k, d]) => `<div><dt>${esc(t(k))}</dt><dd>${esc(t(d))}</dd></div>`).join("");
+  document.getElementById("footText").textContent = t("foot", META);
+}
+
+function render() {
+  renderStatic();
+  document.getElementById("windowLabel").textContent = t("win_label", { from: day(W().from_ms), to: day(W().to_ms), n: W().series, sets: num(W().sets, 0) });
+  renderVerdict(); renderAnswer(); renderSet(); renderPortfolio(); renderFrontier(); renderWhere(); renderAxes(); renderRobust(); renderMethod();
+}
+document.getElementById("windowSeg").innerHTML = WINS.map(k => `<button type="button" data-win="${k}"></button>`).join("");
+document.querySelectorAll("#windowSeg button").forEach(b => b.onclick = () => { win = b.dataset.win; render(); });
+document.querySelectorAll("#langSeg button").forEach(b => b.onclick = () => { lang = b.dataset.lang; render(); });
+render();
+</script>

@@ -165,6 +165,42 @@ Ba điều kiện trước khi chạy, vì cả ba đều đã hụt ở lần �
    một CSV mà bộ tham số không khớp `config.yaml` — trang này nói "bộ đang
    ship", nên nó phải chứng minh được điều đó.
 
+## Bộ ngưỡng vốn và rủi ro (`capital.py`)
+
+Xếp hạng một lưới theo hai thứ mà các trang trước không có: **vốn danh mục**
+(mọi ô chuỗi, ô không được chọn tính 0 — mẫu số duy nhất đúng khi có luật chọn
+chuỗi) và **sụt vốn danh mục** — đường vốn gộp theo NGÀY, vẽ lại cho MỌI bộ
+từ các lệnh Go ghi ra và các mốc settle của corpus theo đúng số học của engine
+(trả từ mốc sau khi mở tới mốc đóng, vòng phí trừ ở ngày đóng). Một tỷ số
+lãi/sụt trên trung bình từng chuỗi sẽ tôn vinh bộ để 97% vốn nằm không và
+trúng một chuỗi, nên trang này đọc biên trên của đám mây theo NGÂN SÁCH sụt
+vốn thay vì xếp theo tỷ số.
+
+```bash
+S=/tmp/bt13/cap
+COMMON=(-persist 6 -min-net-apr 0.02 -exit-net-apr 0 -exit-persist 48 -exit-neg-bps 2.0 -exit-neg-periods 2 \
+        -exit-neg-cum 1.0 -min-rate-bps 0.3,0.8 -min-hold 0,1.0 -notional 50000 -hold-days 90 \
+        -max-basis 1.0,2.0,100 -max-basis-widen 0.5,1.0,2.0,100)
+for M in 12 6; do
+  # chọn chuỗi BẬT và TẮT là hai lượt: với trail-bps 0 trục ngày vô nghĩa và sẽ nhân ba bộ giống hệt
+  $S/backtest -sweep -months $M "${COMMON[@]}" -trail-bps 0.3,0.5,0.7,0.9 -trail-days 30,90,180 \
+    -csv $S/on$M.csv -trades-csv $S/ontrades$M.csv
+  $S/backtest -sweep -months $M "${COMMON[@]}" -trail-bps 0 -trail-days 0 \
+    -csv $S/off$M.csv -trades-csv $S/offtrades$M.csv
+done
+python3 tools/report/capital.py --db data/scanner.db --config config.yaml \
+  --window 12=$S/on12.csv,$S/off12.csv:$S/ontrades12.csv,$S/offtrades12.csv \
+  --window 6=$S/on6.csv,$S/off6.csv:$S/ontrades6.csv,$S/offtrades6.csv --out $S/capital.json
+python3 tools/report/hold_build.py --json $S/capital.json --template tools/report/capital.template.html \
+  --commit $(git rev-parse --short HEAD) --title "Bộ ngưỡng vốn và rủi ro" --out docs/reports/backtest-capital-<ngày>.html
+```
+
+"Bộ đề xuất" của trang là bộ tốt nhất trong các bộ còn CHỐT basis hữu hạn
+(ngưỡng 100 là lối thoát tắt, không bao giờ nổ trên corpus này); giá của chốt
+so với tắt hẳn được in ra bằng số. `hold.py` giờ mang bốn trục mới trong
+`AXES` với giá trị mặc định là thứ engine dùng trước khi cột tồn tại (basis
+1,0/0,5; chọn chuỗi 0), nên CSV cũ vẫn khoá đúng.
+
 ## Ba cái bẫy đã mắc, ghi lại để khỏi mắc lại
 
 **1. `{series}` là placeholder ĐÃ ĐƯỢC ĐẶT TRƯỚC trong template.** `withSeries()`

@@ -173,6 +173,16 @@ strategy:
   holding_days: 90            # thời gian giữ dự kiến, để khấu hao chi phí vào/ra
   exit_net_apr_frac: 0        # sàn giữ 0: không thoát vì APR dự phóng tụt
   exit_persistence_periods: 48 # thoát do suy giảm cần N mốc liên tiếp dưới sàn giữ (12 → 48: trung vị lưới 27,02% → 28,87%)
+  # Hai ngưỡng basis được hiệu chỉnh trên BTC/ETH. Đo 2026-09-09 trên 13 cặp
+  # (docs/reports/backtest-expansion-2026-09-09.html, rồi lưới 624 bộ ở
+  # docs/reports/backtest-capital-2026-09-09.html): biên dịch 0,5 điểm nổ 259
+  # lần/năm, gần như toàn bộ trên perp USD của kraken cho alt — basis đo được
+  # ở đó mang luôn chênh USDT/USD — và làm bộ này LỖ −0,06%/năm trên vốn danh
+  # mục 74 chuỗi trong khi giữ suốt được +0,92%. max_basis_widen_pct là trục
+  # quyết định (trung bình lưới 0,12% ở 0,5 → 0,30% ở tắt); max_basis_pct gần
+  # như không. Bộ đề xuất của lưới: 2,0 / 2,0 với min_hold 1 → +0,87%, hạng
+  # 5/624 và 14/624 ở cửa sổ 6 tháng, còn 6 lệnh thoát basis/năm. Chưa đổi ở
+  # đây: đổi là quyết định vận hành và không tới được tiến trình 3.5 đang chạy.
   max_basis_pct: 1.0          # thoát nếu |perp − spot| vượt mức này
   max_basis_widen_pct: 0.5    # thoát nếu basis dịch xa mức lúc vào hơn mức này
   # Cổng thoát khi funding đảo dấu (thêm 2026-09-07 sau khi đo: đợt âm trên
@@ -274,6 +284,22 @@ strategy:
   # điểm — đúng độ nhạy "một phép đo sổ giữ cố định" mà CLAUDE.md đã ghi.)
   perp_margin_frac: 0
   min_liquidation_buffer_pct: 0
+  # Chọn chuỗi theo funding trung bình (thêm 2026-09-09): chỉ mở vị thế trên
+  # chuỗi có funding TRUNG BÌNH đã settle qua `trailing_mean_days` ngày gần
+  # nhất ≥ `min_trailing_mean_bps` (bps/8h). Đây là luật PHÂN BỔ VỐN — chuỗi
+  # nào được nhận vị thế — chứ không phải luật vào lệnh theo mốc: độ bền
+  # (persistence_periods) hỏi vài mốc gần nhất có tốt không, còn khoá này hỏi
+  # chuỗi đã TRẢ được bao nhiêu qua một chân trời cỡ thời gian giữ. Đo
+  # 2026-09-09: chân trời hoà vốn của BTC/ETH là 21–52 ngày, còn 6 chuỗi có
+  # funding trung bình dưới chi phí thì không luật thoát nào cứu được; và chĩa
+  # đúng bộ này vào riêng BTC+ETH cho lợi nhuận trên vốn gấp đôi ở nửa sụt vốn
+  # mà không luật nào trong strategy quyết định điều đó — khoá này là luật đó.
+  # Tính theo NGÀY chứ không theo số mốc (quy tắc 3): 270 mốc là 90 ngày ở
+  # nhịp 8h nhưng 11 ngày ở nhịp 1h. Lịch sử chưa phủ hết cửa sổ thì TỪ CHỐI,
+  # không lấy trung bình ngắn hơn thay thế. 0 là TẮT — đúng luật mọi lượt chạy
+  # trước khi khoá này tồn tại, và là thứ tiến trình 3.5 đang chạy.
+  min_trailing_mean_bps: 0
+  trailing_mean_days: 0
 
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }

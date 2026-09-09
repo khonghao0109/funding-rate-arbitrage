@@ -51,6 +51,10 @@ func main() {
 	perpMargin := flag.String("perp-margin", defaultPerpMargin, "-sweep axis: collateral posted on the perp leg as a fraction of its notional (0 = margin model off; 0.1 is 10x)")
 	liqBuffer := flag.String("liq-buffer", defaultLiqBuffer, "-sweep axis: close when the price is within this many percent of the perp leg's liquidation price")
 	minHold := flag.String("min-hold", defaultMinHold, "-sweep axis: YIELD exits are blocked until the position has collected M x its round-trip cost (0 = off; risk exits are never blocked)")
+	maxBasis := flag.String("max-basis", defaultMaxBasis, "-sweep axis: close when |perp - spot| exceeds this many percent of spot")
+	maxBasisWiden := flag.String("max-basis-widen", defaultMaxBasisWiden, "-sweep axis: close when the basis has moved this many points from where the position opened")
+	trailBps := flag.String("trail-bps", defaultTrailBps, "-sweep axis: series selection — enter only where the mean settled rate over -trail-days clears this, bps per 8h (0 = off)")
+	trailDays := flag.String("trail-days", defaultTrailDays, "-sweep axis: the horizon -trail-bps averages over, in days (0 only with -trail-bps 0)")
 	tradesCSVPath := flag.String("trades-csv", "", "also write one row per trade to this CSV file")
 	top := flag.Int("top", 0, "with -sweep, print only the best N rows (0 = all)")
 	flag.Parse()
@@ -63,6 +67,12 @@ func main() {
 		log.Fatal(err)
 	}
 	if spec, err = spec.withMinHold(*minHold); err != nil {
+		log.Fatal(err)
+	}
+	if spec, err = spec.withBasis(*maxBasis, *maxBasisWiden); err != nil {
+		log.Fatal(err)
+	}
+	if spec, err = spec.withSelection(*trailBps, *trailDays); err != nil {
 		log.Fatal(err)
 	}
 	if spec, err = spec.withNegativeGates(*exitNegBps, *exitNegPeriods, *exitNegCum); err != nil {
@@ -113,9 +123,10 @@ func main() {
 		if len(spec.NotionalQuote) != 1 || len(spec.HoldingDays) != 1 {
 			log.Fatalf("-notional and -hold-days take a list only with -sweep")
 		}
-		if sweepOnlyFlagsTouched(*minRateBps, *persist, *minNetAPR, *exitNetAPR, *exitPersist, *exitNegBps, *exitNegPeriods, *exitNegCum, *minHold, *perpMargin, *liqBuffer, *top) {
-			log.Fatalf("-min-rate-bps, -persist, -min-net-apr, -exit-net-apr, -exit-persist, -exit-neg-* and -top " +
-				"apply only with -sweep; a plain run uses the step-3.3 base parameters")
+		if sweepOnlyFlagsTouched(*minRateBps, *persist, *minNetAPR, *exitNetAPR, *exitPersist, *exitNegBps, *exitNegPeriods, *exitNegCum, *minHold, *perpMargin, *liqBuffer, *maxBasis, *maxBasisWiden, *trailBps, *trailDays, *top) {
+			log.Fatalf("-min-rate-bps, -persist, -min-net-apr, -exit-net-apr, -exit-persist, -exit-neg-*, -min-hold, " +
+				"-perp-margin, -liq-buffer, -max-basis*, -trail-* and -top apply only with -sweep; " +
+				"a plain run uses config.yaml's strategy block")
 		}
 		grid = []strategy.Params{plainParams(cfg, spec.NotionalQuote[0], spec.HoldingDays[0],
 			*notional != defaultNotional, *holdDays != defaultHoldDays)}
@@ -401,6 +412,7 @@ func baseParams(notional, holdDays float64) strategy.Params {
 		ExitNetAPRFrac: 0, ExitPersistencePeriods: 48,
 		ExitNegativeMinBps: 2.0, ExitNegativePeriods: 2, ExitNegativeCumCostFrac: 1.0,
 		MaxBasisPct: 1.0, MaxBasisWidenPct: 0.5,
+		MinTrailingMeanBps: 0, TrailingMeanDays: 0,
 	}
 }
 

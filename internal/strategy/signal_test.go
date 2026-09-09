@@ -1288,3 +1288,106 @@ func TestEvaluateEntry_MarginCheckIsSilentWhenLeverageIsOff(t *testing.T) {
 		t.Errorf("the check must say it was not needed: %q", detailOf(got, "margin_known"))
 	}
 }
+
+// --- series selection: the trailing-mean condition (2026-09-09) ---
+
+// Off is the rule exactly as it stood before the fields existed: the same
+// decision, check for check, with the new one reporting itself as not applied.
+func TestEvaluateEntry_TrailingMeanOffChangesNothing(t *testing.T) {
+	p := entryParams()
+	before := EvaluateEntry(evalAt, goodCandidate(), p)
+	p.MinTrailingMeanBps, p.TrailingMeanDays = 0, 0
+	after := EvaluateEntry(evalAt, goodCandidate(), p)
+	if before.Action != after.Action || len(before.Checks) != len(after.Checks) {
+		t.Fatalf("zero selection fields changed the decision: %v vs %v", before.Action, after.Action)
+	}
+	tm := findCheck(t, after, "trailing_mean")
+	if !tm.Passed || !strings.Contains(tm.DetailVI, "Không xét") {
+		t.Errorf("an off condition must pass and say it is off: %+v", tm)
+	}
+	// A floor with no horizon is off too — config refuses the block, but the
+	// package must not divide by an empty window if handed one.
+	p.MinTrailingMeanBps, p.TrailingMeanDays = 0.5, 0
+	if d := EvaluateEntry(evalAt, goodCandidate(), p); d.Action != before.Action {
+		t.Errorf("a floor with a zero horizon must be off, got %v", d.Action)
+	}
+}
+
+// The mean is taken over the venue's stamps inside the window, per 8h, and
+// compared to the floor. Ten 8h settlements averaging 1.1 bps clear a 1.0
+// floor and miss a 1.2 one.
+func TestEvaluateEntry_TrailingMeanComparesTheWindowMeanToTheFloor(t *testing.T) {
+	c := goodCandidate()
+	c.Settled = settled("binance_futures", 28800, 1.0, 1.2, 1.0, 1.2, 1.0, 1.2, 1.0, 1.2, 1.0, 1.2) // mean 1.1
+	p := entryParams()
+	p.PersistencePeriods = 2
+	p.TrailingMeanDays = 10 * 8.0 / 24 // exactly the ten settlements
+	p.MinTrailingMeanBps = 1.0
+	d := EvaluateEntry(evalAt, c, p)
+	tm := findCheck(t, d, "trailing_mean")
+	if !tm.Passed || !strings.Contains(tm.DetailVI, "1.1000 bps/8h") || !strings.Contains(tm.DetailVI, "10 mốc") {
+		t.Errorf("mean 1.1 over 10 settlements must clear a 1.0 floor: %+v", tm)
+	}
+	p.MinTrailingMeanBps = 1.2
+	d = EvaluateEntry(evalAt, c, p)
+	if tm := findCheck(t, d, "trailing_mean"); tm.Passed {
+		t.Errorf("mean 1.1 must not clear a 1.2 floor: %+v", tm)
+	}
+	if d.Action != ActionSkip {
+		t.Errorf("a failed selection must skip, got %v", d.Action)
+	}
+}
+
+// A history that starts INSIDE the window is refused rather than averaged:
+// the mean of a shorter horizon is a different number wearing the same name.
+// One interval of slack at the start, because the first settlement inside a
+// window that begins at a cadence boundary lands one interval after it.
+func TestEvaluateEntry_TrailingMeanRefusesAHistoryShorterThanItsWindow(t *testing.T) {
+	c := goodCandidate() // six 8h settlements = 2 days of history
+	p := entryParams()
+	p.MinTrailingMeanBps = 0.5
+	p.TrailingMeanDays = 30
+	d := EvaluateEntry(evalAt, c, p)
+	tm := findCheck(t, d, "trailing_mean")
+	if tm.Passed || !strings.Contains(tm.DetailVI, "chưa phủ 30 ngày") {
+		t.Errorf("2 days of history must not produce a 30-day mean: %+v", tm)
+	}
+	// Exactly the history's span, allowing the one-interval slack, is covered.
+	p.TrailingMeanDays = 2
+	if tm := findCheck(t, EvaluateEntry(evalAt, c, p), "trailing_mean"); !tm.Passed {
+		t.Errorf("a 2-day window over 2 days of 8h history is covered: %+v", tm)
+	}
+}
+
+// The window is cut on stamps, not on a count: 90 days is 270 settlements at
+// 8h and 2,160 at 1h, and the same floor means the same thing on both.
+func TestEvaluateEntry_TrailingMeanWindowIsDaysNotSettlements(t *testing.T) {
+	hourly := make([]float64, 48) // two days of hourly settlements at 0.9
+	for i := range hourly {
+		hourly[i] = 0.9
+	}
+	c := goodCandidate()
+	c.PerpSource = "hyperliquid_futures"
+	c.Settled = settled("hyperliquid_futures", 3600, hourly...)
+	p := entryParams()
+	p.MinRatePer8hBps, p.PersistencePeriods = 0.5, 3
+	p.MinTrailingMeanBps, p.TrailingMeanDays = 0.8, 1
+	tm := findCheck(t, EvaluateEntry(evalAt, c, p), "trailing_mean")
+	if !tm.Passed || !strings.Contains(tm.DetailVI, "24 mốc") {
+		t.Errorf("one day of hourly history is 24 settlements, not 3: %+v", tm)
+	}
+}
+
+// findCheck returns the named check of a decision, failing the test when it
+// is absent — a condition that silently stopped being evaluated would
+// otherwise pass every assertion written about it.
+func findCheck(t *testing.T, d Decision, name string) Check {
+	t.Helper()
+	for _, c := range d.Checks {
+		if c.Name == name {
+			return c
+		}
+	}
+	t.Fatalf("no check named %q in:\n%s", name, strings.Join(d.LogLines(), "\n"))
+	return Check{}
+}

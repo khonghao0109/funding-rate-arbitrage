@@ -37,6 +37,12 @@ var csvHeader = []string{
 	"funding_reversals", "positive_funding_period_share", "dropped_special",
 	"basis_not_evaluable", "basis_evaluable", "entered_without_basis", "liquidations",
 	"perp_margin_frac", "min_liquidation_buffer_pct",
+	// Added 2026-09-09, at the END so a reader keyed on column names before
+	// that date still finds every column where it was: the two basis limits
+	// (until then the one parameter a sweep could not vary, and the one that
+	// turned out to cost 0.94 points on 13 pairs) and the series-selection
+	// pair.
+	"max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days",
 	"coverage_short", "ok", "reason_vi", "assumptions_vi",
 }
 
@@ -65,6 +71,7 @@ func WriteCSV(w io.Writer, results []Result) error {
 			strconv.Itoa(r.BasisNotEvaluable), strconv.Itoa(r.BasisEvaluable), strconv.Itoa(r.EnteredWithoutBasis),
 			strconv.Itoa(r.Liquidations),
 			f(r.Params.PerpMarginFrac), f(r.Params.MinLiquidationBufferPct),
+			f(r.Params.MaxBasisPct), f(r.Params.MaxBasisWidenPct), f(r.Params.MinTrailingMeanBps), f(r.Params.TrailingMeanDays),
 			strconv.FormatBool(r.CoverageShort),
 			strconv.FormatBool(r.OK), r.ReasonVI, strings.Join(r.AssumptionsVI, " | "),
 		}
@@ -171,6 +178,7 @@ var tradesCSVHeader = []string{
 	"notional_quote", "holding_days",
 	"open_at_ms", "close_at_ms", "held_days", "settlements",
 	"funding_frac", "cost_frac", "net_frac", "exit_reason_vi",
+	"max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days",
 }
 
 // WriteTradesCSV writes a header and one row per trade of every run that
@@ -197,6 +205,7 @@ func WriteTradesCSV(w io.Writer, results []Result) error {
 				strconv.FormatInt(t.OpenAtMs, 10), strconv.FormatInt(t.CloseAtMs, 10),
 				f(heldDays), strconv.Itoa(t.Settlements),
 				f(t.FundingFrac), f(t.CostFrac), f(t.NetFrac), t.ExitReasonVI,
+				f(r.Params.MaxBasisPct), f(r.Params.MaxBasisWidenPct), f(r.Params.MinTrailingMeanBps), f(r.Params.TrailingMeanDays),
 			}
 			if err := out.Write(row); err != nil {
 				return fmt.Errorf("backtest: write trades csv row: %w", err)

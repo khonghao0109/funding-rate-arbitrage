@@ -167,6 +167,15 @@ type Strategy struct {
 
 	MaxBasisPct      float64 `yaml:"max_basis_pct"`
 	MaxBasisWidenPct float64 `yaml:"max_basis_widen_pct"`
+
+	// Series selection (strategy.Params.MinTrailingMeanBps / TrailingMeanDays,
+	// added 2026-09-09): the series' mean settled rate over the last
+	// trailing_mean_days must clear min_trailing_mean_bps before a position is
+	// opened on it. OPTIONAL; 0 is off, which is the rule as it stood before
+	// the keys existed and what the running 3.5 journal loaded. A floor needs
+	// a horizon: a positive floor with zero days is refused at load.
+	MinTrailingMeanBps float64 `yaml:"min_trailing_mean_bps"`
+	TrailingMeanDays   float64 `yaml:"trailing_mean_days"`
 }
 
 // Depth configures the periodic order book sampling (step 2.7b).
@@ -847,6 +856,13 @@ func (st Strategy) validate(d Depth) error {
 			"would only leave once the venue had ALREADY liquidated it, which is not a rule")
 	case st.MinHoldRecoveredCostFrac < 0:
 		return fmt.Errorf("strategy.min_hold_recovered_cost_frac must be >= 0 (a fraction of the round trip), got %g", st.MinHoldRecoveredCostFrac)
+	case st.MinTrailingMeanBps < 0:
+		return fmt.Errorf("strategy.min_trailing_mean_bps must be >= 0 (a floor on the mean settled rate, bps per 8h), got %g", st.MinTrailingMeanBps)
+	case st.TrailingMeanDays < 0:
+		return fmt.Errorf("strategy.trailing_mean_days must be >= 0, got %g", st.TrailingMeanDays)
+	case st.MinTrailingMeanBps > 0 && st.TrailingMeanDays <= 0:
+		return fmt.Errorf("strategy.min_trailing_mean_bps is set but trailing_mean_days is 0: a floor on a mean " +
+			"needs the horizon the mean is taken over")
 	case d.Enabled && st.MaxBookAgeMin < d.RefreshEveryMin:
 		return fmt.Errorf("strategy.max_book_age_min (%d) is below depth.refresh_every_min (%d): every fill "+
 			"would be refused as stale before the next sweep", st.MaxBookAgeMin, d.RefreshEveryMin)
@@ -871,6 +887,7 @@ func (st Strategy) StrategyParams() strategy.Params {
 		PerpMarginFrac:           st.PerpMarginFrac,
 		MinLiquidationBufferPct:  st.MinLiquidationBufferPct,
 		MaxBasisPct:              st.MaxBasisPct, MaxBasisWidenPct: st.MaxBasisWidenPct,
+		MinTrailingMeanBps: st.MinTrailingMeanBps, TrailingMeanDays: st.TrailingMeanDays,
 	}
 }
 

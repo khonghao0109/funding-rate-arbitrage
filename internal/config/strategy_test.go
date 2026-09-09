@@ -162,3 +162,48 @@ strategy:
 		}
 	}
 }
+
+// The series-selection pair is optional and zero is off — the config the 3.5
+// process loaded still parses to the same parameters — and a floor on a mean
+// with no horizon is refused, like a margin with no buffer.
+func TestStrategy_SeriesSelectionIsOptionalAndNeedsAHorizon(t *testing.T) {
+	base := `
+strategy:
+  enabled: true
+  min_rate_per_8h_bps: 0.5
+  persistence_periods: 3
+  min_net_apr_frac: 0.02
+  notional_quote: 50000
+  holding_days: 30
+  exit_net_apr_frac: 0.005
+  exit_persistence_periods: 3
+  max_basis_pct: 1.0
+  max_basis_widen_pct: 0.5
+`
+	cfg, err := loadStrategyFixture(t, base)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if p := cfg.Strategy.StrategyParams(); p.MinTrailingMeanBps != 0 || p.TrailingMeanDays != 0 {
+		t.Errorf("absent keys must be off, got %+v", p)
+	}
+	cfg, err = loadStrategyFixture(t, base+"  min_trailing_mean_bps: 0.7\n  trailing_mean_days: 90\n")
+	if err != nil {
+		t.Fatalf("load with selection: %v", err)
+	}
+	if p := cfg.Strategy.StrategyParams(); p.MinTrailingMeanBps != 0.7 || p.TrailingMeanDays != 90 {
+		t.Errorf("selection not carried into Params: %+v", p)
+	}
+	for _, bad := range []string{
+		"  min_trailing_mean_bps: -0.1\n",
+		"  trailing_mean_days: -1\n",
+		"  min_trailing_mean_bps: 0.5\n", // a floor with no horizon
+	} {
+		if _, err := loadStrategyFixture(t, base+bad); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+	if _, err := loadStrategyFixture(t, base+"  trailing_mean_days: 90\n"); err != nil {
+		t.Errorf("a horizon with a zero floor is off, not an error: %v", err)
+	}
+}

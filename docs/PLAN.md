@@ -2310,6 +2310,54 @@ USDT/USD mà không chỗ nào trừ.
 `config.yaml` KHÔNG đổi ở bước này — đây là một phép đo, không phải một thay
 đổi tham số; và tiến trình 3.5 đang chạy vẫn giữ bộ của `ba5ee31`.
 
+#### Bộ ngưỡng vốn và rủi ro ✅ (2026-09-09, `tools/report/capital.py`)
+
+Câu hỏi: *bộ ngưỡng quản lý vốn và rủi ro nào cho lợi nhuận tốt nhất.* Hai
+trục còn thiếu được thêm vào mã trước khi đo: (a) **luật chọn chuỗi**
+`strategy.Params.MinTrailingMeanBps` / `TrailingMeanDays` (config
+`min_trailing_mean_bps` / `trailing_mean_days`, 0 = tắt = đúng luật cũ, pin
+bằng test) — chỉ cấp vốn cho chuỗi có funding trung bình đã settle qua N NGÀY
+(quy tắc 3: không đếm mốc) ≥ ngưỡng, và TỪ CHỐI khi lịch sử chưa phủ hết chân
+trời; (b) hai ngưỡng basis thành trục quét (`-max-basis`, `-max-basis-widen`),
+cùng bốn cột mới ở cuối cả hai CSV. Lưới: chọn chuỗi 0,3/0,5/0,7/0,9 bps ×
+30/90/180 ngày (+ tắt, chạy riêng) × basis 1/2/100 × dịch 0,5/1/2/100 × M 0/1
+× lối vào 0,3/0,8 = **624 bộ × 74 chuỗi × 12 và 6 tháng**, xếp hạng trên vốn
+DANH MỤC (74 ô × 2 notional, ô không được chọn tính 0) và trên **sụt vốn danh
+mục** — đường vốn gộp theo ngày vẽ lại từ chính các lệnh Go ghi, cho mọi bộ.
+Báo cáo: [docs/reports/backtest-capital-2026-09-09.html](reports/backtest-capital-2026-09-09.html).
+
+**Kết quả 12 tháng.** Giữ suốt +0,924%, sụt vốn danh mục 0,231%. Bộ đang
+ship **hạng 624/624** (−0,056%, sụt 0,551%, 259 lệnh thoát basis). Bộ tốt nhất
++0,888% với basis TẮT hẳn (100/100) và M = 1; **0/624 bộ vượt giữ suốt**,
+618/624 dương, trung vị +0,220%. Trục quyết định là `max_basis_widen_pct`:
+trung bình lưới 0,121% ở 0,5 → 0,304% ở tắt; `max_basis_pct` 1,0 so với tắt
+chỉ 0,242 → 0,257. M cộng 0,010 điểm; lối vào 0,3 hơn 0,8.
+
+**Bộ đề xuất giữ một chốt basis hữu hạn**: `max_basis_pct 2.0`,
+`max_basis_widen_pct 2.0`, `min_hold_recovered_cost_frac 1.0`, chọn chuỗi
+tắt, mọi khoá khác như đang ship → **+0,872%/năm trên vốn danh mục** (hạng 5),
+sụt vốn danh mục 0,231% (= giữ suốt), 62/74 chuỗi dương, 1,12 lệnh/chuỗi
+(6 thoát basis, 3 đảo dấu), và hạng **14/624 ở cửa sổ 6 tháng** (bộ tốt nhất
+của 6 tháng, basis 1,0/1,0 M 0, hạng 26 ở 12 tháng). Giá của chốt so với tắt
+hẳn: 0,016 điểm. Trên vốn vẫn dưới giữ suốt 0,05 điểm.
+
+**Chọn chuỗi KHÔNG tăng lợi nhuận trên vốn danh mục** — trung bình lưới tụt
+đơn điệu 0,595 → 0,139% khi ngưỡng tăng 0 → 0,9 bps — vì ô không được chọn
+nằm không. Nó mua sụt vốn: biên trên của đám mây (bộ ăn nhất trong mỗi ngân
+sách sụt vốn danh mục) là **≤ 0,05% → +0,269% với 16/74 chuỗi (0,9 bps/30
+ngày, lãi/sụt 5,7); ≤ 0,10% → +0,365% với 31 chuỗi (0,7/30); ≤ 0,20% →
++0,548% với 60 chuỗi (0,5/30); từ 0,30% trở lên bộ không chọn thắng
+(+0,888%)**. Gắt nhất trên vốn ĐÃ DÙNG: 0,9 bps/90 ngày cấp vốn cho 5 chuỗi,
++2,625% trên vốn đã dùng nhưng +0,177% trên danh mục, và hạng 403 ở cửa sổ 6
+tháng — vốn dồn vào 5 chuỗi ở size chưa được định giá (hyperliquid đã từ chối
+4 alt ngay ở 50k). Kết luận: chọn chuỗi là cần gạt của NGÂN SÁCH SỤT VỐN, chỉ
+có nghĩa khi vốn của ô không chọn dùng được vào việc khác; lợi nhuận tuyệt đối
+nằm ở chốt basis và ở việc không rời vị thế.
+
+`config.yaml` KHÔNG đổi giá trị nào trong bước này (hai khoá mới thêm ở 0);
+bộ đề xuất nằm trong báo cáo, và đổi nó là quyết định của người vận hành vì
+nó không tới được tiến trình 3.5 đang chạy.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.
