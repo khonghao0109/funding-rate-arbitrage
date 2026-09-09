@@ -2514,6 +2514,96 @@ cho việc đó, và phải đo trên corpus 3 năm này. Công cụ: `applied.p
 --slices`, `hold.corpus(recorded_by_ms=…)`; công thức đầy đủ và bẫy
 `recorded_at_ms` trong `tools/report/README.md`.
 
+#### Quy luật ba năm ✅ (2026-09-09, `docs/reports/regime-3y-2026-09-09.html`)
+
+Câu hỏi: từ 3 năm dữ liệu có đúc kết được quy luật và bộ ngưỡng mạnh nhất
+để dùng về sau không? Trả lời bằng ba công cụ mới, tất cả trên bản sao DB 3
+năm và 32 chuỗi phủ đủ 3 năm (12 cặp × binance/bybit/hyperliquid):
+`tools/report/regime.py` (mốc chuẩn Python đọc thẳng corpus, như `hold.py`),
+`cmd/backtest -from/-to` + nạp funding 200 ngày trước cửa sổ + định giá trên
+sổ mới nhất (ba thay đổi Go, có test), và `tools/report/forward.py`
+(walk-forward trên lưới Go: chọn trên cửa sổ học, đọc trên cửa sổ kiểm).
+
+**Sáu quy luật, mỗi cái kèm số và điều bác bỏ nó** (đã qua review đối
+kháng 2026-09-09, ba tác nhân tính lại độc lập từ bản sao DB; số nào bị
+sửa cách đọc thì ghi đúng cách đọc còn đứng được):
+1. **Cái dự báo được là XẾP HẠNG giữa các chuỗi, không phải MỨC của một
+   chuỗi.** Tại một ngày, chuỗi trả nhiều hơn các chuỗi khác cũng trả nhiều
+   hơn trong 1–3 tháng tới: Spearman chéo chuỗi ≈ 0,55–0,63 ở mọi chân trời
+   và ở CẢ ba năm. Còn mức của chính chuỗi so với chính nó thì yếu: trong
+   chuỗi 30 → 30 khoảng +0,45, 30 → 90 khoảng +0,4 gộp nhưng ≈ 0 ở 2024–25,
+   90 → 90 là +0,40 / −0,47 / −0,03 theo năm. Con số gộp +0,63 là hai thứ
+   này trộn nhau, trên mẫu tuần chồng nhau (không độc lập), lấy mẫu từ ngày
+   thứ 180 của corpus (lát "2023–24" của phần dự báo là tháng 3–9/2024).
+2. **Ngưỡng đáng một vòng phí là chi phí của CHÍNH chuỗi chia cho số mốc,
+   không phải một con số chung.** Ở chi phí trung bình 0,45% và ~90 mốc,
+   điểm cắt ≈ 0,5 bps/8h (bucket 0,3–0,5 cho 30 ngày tới −0,05% trên vốn,
+   dương 32%; từ 0,5 bps trở lên 90 ngày tới dương 91–92%, từ 1,0 bps 94%,
+   từ 2,0 bps 98% — trên nền 80% số điểm đã dương sẵn ở 90 ngày). Điểm cắt
+   là 0,33 bps ở BTC/ETH (chi phí 0,30%) và 0,8 ở NEAR (0,74%), và dịch theo
+   năm (≈ 0,25 ở 2024–25, ≈ 0,8 ở 2025–26). Là luật CHỌN CHUỖI để vào; luật
+   thật phải tính từ chi phí đã định giá của từng chuỗi.
+3. **Cái bền qua năm là SÀN, và BNB ở đáy.** Spearman thứ hạng năm → năm
+   +0,75 rồi +0,40 trên 32 chuỗi, nhưng trong riêng 24 chuỗi sàn USDT chỉ
+   +0,48 rồi +0,18 (top-6 giữ chỗ 3/6 rồi 1/6): phần lớn tính bền là
+   hyperliquid chiếm top và BNB chiếm đáy. Hyperliquid trả 2,0× / 2,0× /
+   2,3× sàn USDT ở cả ba năm — một mức, và là chuỗi ghép cầu. Xếp hạng coin
+   bên trong một sàn không đủ bền để định size.
+4. **Mức thì không bền:** 1,41 → 0,81 → 0,30 bps/8h; giữ suốt trên cùng 32
+   chuỗi 7,49 → 4,20 → 1,42%. Dải 5–15% chỉ có ở 2023–24 (28/32 chuỗi trong
+   dải; sàn USDT +5,94% sát mép, hyperliquid +12,16%).
+5. **Canh thời điểm và lối thoát bị chặn trần, ngay cả khi biết trước tương
+   lai.** Mốc chuẩn regime (vào khi trượt ≥ X, ra khi tụt dưới X_ra, 54 cấu
+   hình): 0/54 thắng giữ suốt trên 36 tháng (chân trời 30 ngày là phép đo
+   sạch; 90/180 ngày mù nửa năm đầu vì corpus bắt đầu đúng ở cửa sổ), chọn
+   trên hai năm đầu kém giữ suốt 0,31 ở năm sau. **Trần biết trước tương
+   lai** (quy hoạch động hai trạng thái, nửa vòng phí mỗi lần đổi, kiểm tra
+   bằng brute force và bằng đường không-đổi = giữ suốt của hold.py): hơn giữ
+   suốt **+0,83% trên vốn cho CẢ ba năm** (+0,41 / +0,14 / +0,28), +0,74%
+   nếu chỉ quyết định mỗi 7 ngày; 53% của nó nằm ở ba chuỗi BNB — coin duy
+   nhất mà giữ suốt là lỗ, nên "trần" ở đó là "đừng giữ BNB" — bỏ BNB còn
+   +0,43, chỉ BTC/ETH còn +0,07. Không luật thoát nào đáng viết thêm. Trần
+   này chỉ chặn luật vào/ra hai trạng thái theo funding trên từng chuỗi.
+6. **Cần gạt còn lại là PHÂN BỔ, và phần lớn là chọn SÀN.** Cùng vốn trên
+   32 chuỗi, cân lại mỗi 90 ngày theo funding trượt 90 ngày (trần 2× phần
+   đều, nửa vòng phí trên phần vốn di chuyển, trọng số đều khi lịch sử chưa
+   phủ 90 ngày): **+15,55% so với +13,56% chia đều** trong 3 năm (+1,99
+   điểm; top ¼ chia đều +15,68%); gán ngẫu nhiên +12,86 ± 0,25 (100 lần).
+   Bỏ hyperliquid: +11,15% so với +10,69% (+0,46 ≈ 0,15%/năm; ngẫu nhiên
+   +10,07 ± 0,12). Phần giữ được khi không có hyperliquid là giá trị của
+   việc chọn coin trong sàn; phần còn lại (~+1,4) là nghiêng sang
+   hyperliquid, tức phần bù của một sàn ghép cầu. Với tài khoản chỉ giữ 1–2
+   vị thế luật này thu về "100% vào chuỗi hyperliquid trả nhiều nhất quý
+   trước" (top-1 là hyperliquid ở 13/13 quý), phân tán kết quả rộng hơn con
+   số 32 chuỗi hàng chục lần. Mốc chuẩn Python; luật phân bổ là việc phase 4/5.
+
+**Walk-forward trên lưới Go (208 bộ × 5 cửa sổ lịch, xếp trên chuỗi phủ ≥
+95% cửa sổ):** bộ tốt nhất của MỌI cửa sổ đều tắt chọn chuỗi, vào 0,3
+bps, bền 3 hoặc 6, C 1,0; bộ đang ship hạng 5–11/208 ở mọi cửa sổ; bộ chọn
+trên bất kỳ cửa sổ học nào nằm trong 0,05 điểm của bộ tốt nhất và của giữ
+suốt ở cửa sổ kiểm (học 2023-09 → 2025-09 chọn +12,09% → kiểm 2025-09 →
+2026-09 +1,19% so với giữ suốt +1,24% và tốt nhất +1,22%). Đọc cho đúng: 16
+bộ tắt chọn chuỗi ở mỗi cửa sổ chỉ cách nhau 0,13–0,23 điểm và các trục
+rate/bền/M dịch ≤ 0,02, chỉ C dịch ~0,1 — walk-forward xác nhận "không rời
+vị thế" (C = 1,0) chứ không phân biệt được bộ đang ship với các bộ hàng
+xóm. Bật chọn chuỗi làm giảm trung bình trên vốn danh mục ở mọi cửa sổ
+(ngưỡng 1,0 bps: 9,50 so với 11,96 khi học, 0,54 so với 1,16 khi kiểm) vì ô
+không chọn nằm không — là mẫu số, không phải tín hiệu sai; cửa sổ kiểm
+2025–26 xếp trên 48 chuỗi trong khi cửa sổ học trên 32.
+
+**Bộ ngưỡng mạnh nhất để dùng về sau, đọc từ đó:** bộ đang ship (vào 0,3
+bps/8h bền 6, C 1,0, M 1, basis 2,0/2,0, chọn chuỗi tắt) đã là bộ mà mọi
+cửa sổ học đều chọn trong sai số, và không bộ nào trong lân cận hơn nó
+quá 0,05 điểm ở cửa sổ kiểm; **giữ nguyên `config.yaml`**. Cái mạnh hơn
+không phải một ngưỡng mà là hai luật ngoài `strategy` hiện có: (a) chỉ mở
+chuỗi có funding trượt 30–90 ngày ≥ 0,5 bps/8h (quy luật 2, đã có khoá
+`min_trailing_mean_bps` nhưng khoá đó chỉ chặn VÀO — trên vốn danh mục nó
+làm giảm vì vốn nằm không), và (b) chuyển vốn giữa các chuỗi theo funding
+trượt (quy luật 6) — cần luật phân bổ trong Go, chưa có. Ba caveat đứng
+trước mọi số: mẫu in-sample có sống sót (12 cặp sàng ngày 2026-09-09 và đã
+niêm yết từ 2023), chi phí một lần đo sổ hôm nay áp cho cả 2023, và nhóm
+trả cao nhất là perp USD ghép spot USDT với rủi ro USDT/USD chưa trừ.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.

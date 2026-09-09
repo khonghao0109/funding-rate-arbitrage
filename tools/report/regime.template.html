@@ -1,0 +1,665 @@
+<title>Quy luật ba năm</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ground:#F4F6F3; --surface:#FFFFFF; --ink:#1A2024; --muted:#5F6B72; --rule:#D6DCD8; --rule-soft:#E6EAE7;
+  --accent:#35507A; --accent-ink:#FFFFFF; --loss:#B4552D; --gain:#1E7A6C; --warn:#B8891E;
+  --loss-rgb:180,85,45; --gain-rgb:30,122,108; --accent-rgb:53,80,122;
+  --display:"Bricolage Grotesque","IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+    --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+    --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+  --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+  --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+:lang(zh) body, body:lang(zh){font-family:"Noto Sans SC","IBM Plex Sans",sans-serif}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:700}
+h3{font-size:1.05rem;font-weight:600}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mono,.num,td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.loss{color:var(--loss)} .gain{color:var(--gain)} .warn{color:var(--warn)}
+.topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--rule)}
+.topbar .in{max-width:1040px;margin:0 auto;padding:.6rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.topbar .name{font-family:var(--display);font-weight:700;font-size:1rem;margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:2px;gap:2px;background:var(--surface)}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:500;padding:.25rem .7rem;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:1040px;margin:0 auto;padding:2rem 1.25rem 4rem;display:grid;gap:3rem}
+section{display:grid;gap:1rem}
+section>header{display:grid;gap:.35rem;max-width:70ch}
+p{margin:0;max-width:70ch}
+.verdict{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.5rem;display:grid;gap:1.25rem}
+.verdict h1{font-size:clamp(1.5rem,3.2vw,2.3rem)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;border-top:1px solid var(--rule-soft);padding-top:1rem}
+.fig{display:grid;gap:.15rem}
+.fig .v{font-family:var(--mono);font-size:1.6rem;font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums}
+.fig .l{font-size:.8rem;color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);max-width:none}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em}
+.i-loss{background:var(--loss)} .i-gain{background:var(--gain)} .i-accent{background:var(--accent)} .i-warn{background:var(--warn)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--rule-soft);vertical-align:top;white-space:nowrap}
+/* The header stays put while a long table scrolls: 24 series × several
+   columns is past the point where a reader can hold the column names. */
+th{position:sticky;top:0;z-index:2;background:var(--surface);font-weight:600;color:var(--muted);
+   font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--rule)}
+td.num,th.num{text-align:right}
+tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+tbody tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;min-width:22ch;max-width:52ch}
+/* First column pinned on the wide tables, so a row never loses its name. */
+table.pin td:first-child,table.pin th:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+table.pin tbody tr:nth-child(even) td:first-child{background:color-mix(in srgb,var(--ink) 3%,var(--surface))}
+table.pin th:first-child{z-index:3}
+/* A cell holding a whole parameter set: one column instead of ten. */
+td.params{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+td.params b{color:var(--ink);font-weight:600}
+.scrollhint{font-size:.78rem;color:var(--muted);margin-top:.35rem}
+.chart{width:100%;overflow-x:auto}
+.chart svg{display:block;width:100%;height:auto;font-family:var(--mono);font-size:11px}
+.chart .axis{stroke:var(--rule);stroke-width:1}
+.chart .grid{stroke:var(--rule-soft);stroke-width:1}
+.chart text{fill:var(--muted)}
+.chart .bar-loss{fill:var(--loss)} .chart .bar-gain{fill:var(--gain)} .chart .bar-accent{fill:var(--accent)} .chart .bar-warn{fill:var(--warn)}
+.chart .marker{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+.chart .marker-text{fill:var(--ink);font-weight:500}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem 2rem}
+.small h3{margin-bottom:.35rem}
+.heat{display:grid;gap:2px;font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+.heat .c{padding:.35rem .4rem;text-align:right;border-radius:3px;min-width:4.5em;line-height:1.2}
+.heat .c small{display:block;font-size:.66rem;opacity:.75}
+.heat .h{color:var(--muted);text-align:right;padding:.35rem .4rem;font-size:.7rem}
+.heat .rh{color:var(--muted);text-align:left;padding:.35rem .4rem;font-size:.7rem}
+.heatwrap{overflow-x:auto}
+.heat-title{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;flex-wrap:wrap}
+.bullets{margin:0;padding-left:1.2rem;display:grid;gap:.5rem;max-width:75ch}
+.bullets li::marker{color:var(--accent)}
+.assume{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.25rem 1.5rem}
+.assume ol{margin:0;padding-left:1.2rem;display:grid;gap:.6rem;max-width:80ch}
+pre{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1rem;overflow-x:auto;font-family:var(--mono);font-size:.8rem;line-height:1.5}
+.pill{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.72rem;font-weight:600;letter-spacing:.03em;border:1px solid currentColor}
+.pill.fail,.pill.weak{color:var(--loss)} .pill.pass{color:var(--gain)} .pill.partial{color:var(--warn)} .pill.open{color:var(--muted)}
+.tabs{display:flex;gap:.5rem;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:.85rem;border:1px solid var(--rule);background:var(--surface);color:var(--ink);padding:.3rem .75rem;border-radius:6px;cursor:pointer}
+.tabs button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;font-size:.9rem;align-items:baseline}
+.pagenav{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:-2rem}
+.pagenav a{font-size:.8rem;text-decoration:none;color:var(--muted);border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:.2rem .7rem}
+.pagenav a:hover,.pagenav a:focus-visible{color:var(--accent);border-color:var(--accent)}
+.answer{border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--surface)}
+.answer .row{display:grid;grid-template-columns:1fr 7.5rem 6rem 6rem;gap:.35rem 1rem;padding:.8rem 1.25rem;border-bottom:1px solid var(--rule-soft);align-items:baseline}
+.answer .row:last-child{border-bottom:0}
+.answer .row.head{background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.answer .row.head span:not(:first-child){text-align:right}
+.answer .who{font-weight:600;font-size:.95rem}
+.answer .who small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:.1rem}
+.answer .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.05rem;text-align:right}
+.answer .v.sub{font-size:.9rem;color:var(--muted)}
+.answer .v small{display:block;font-size:.72rem;font-weight:400;color:var(--muted);margin-top:.15rem;letter-spacing:.01em}
+.answer .row{grid-template-columns:1fr 9.5rem 6rem 6rem}
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.1rem 2rem;margin:0}
+.gloss>div{display:grid;gap:.15rem;align-content:start}
+.gloss dt{font-weight:600;font-size:.9rem;margin:0}
+.gloss dd{margin:0;font-size:.85rem;color:var(--muted);max-width:48ch}
+@media (max-width:620px){.answer .row{grid-template-columns:1fr max-content}.answer .row .v.sub{display:none}.answer .row.head span:nth-child(3),.answer .row.head span:nth-child(4){display:none}}
+.kv dt{color:var(--muted);margin:0} .kv dd{margin:0}
+footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);padding-top:1rem}
+@media (prefers-reduced-motion:no-preference){.seg button,.tabs button{transition:background .15s,color .15s}}
+/* The marginal cards carry 8 columns each: one per row, or everything past
+   the fourth is reachable only by scrolling inside the card. */
+#mgGrid{grid-template-columns:1fr}
+.rules{margin:0;padding-left:1.4rem;display:grid;gap:.9rem;max-width:72ch}.rules li{line-height:1.55}.rules li::marker{font-weight:600}
+</style>
+<div class="topbar"><div class="in">
+  <span class="name" data-i18n="title"></span>
+  <span class="muted" style="font-size:.8rem" id="windowLabel"></span>
+    <div class="seg" id="langSeg" role="group" aria-label="language">
+    <button type="button" data-lang="vi" aria-pressed="true">Tiếng Việt</button>
+    <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+  </div>
+</div></div>
+
+<main>
+  <section class="verdict" id="verdict">
+    <div class="eyebrow" data-i18n="verdict_eyebrow"></div>
+    <h1 id="vHeadline"></h1>
+    <p id="vLede"></p>
+    <div class="figures" id="vFigures"></div>
+    <p class="note" id="vNote"></p>
+  </section>
+
+  <nav class="pagenav" aria-label="sections">
+    <a href="#rules" data-i18n="nav_rules"></a>
+    <a href="#pred" data-i18n="nav_pred"></a>
+    <a href="#pers" data-i18n="nav_pers"></a>
+    <a href="#regime" data-i18n="nav_regime"></a>
+    <a href="#oracle" data-i18n="nav_oracle"></a>
+    <a href="#alloc" data-i18n="nav_alloc"></a>
+    <a href="#wf" data-i18n="nav_wf"></a>
+    <a href="#method" data-i18n="nav_method"></a>
+  </nav>
+
+  <section id="rules">
+    <header>
+      <div class="eyebrow" data-i18n="ru_eyebrow"></div>
+      <h2 data-i18n="ru_h"></h2>
+      <p data-i18n="ru_p"></p>
+    </header>
+    <ol class="rules" id="ruleList"></ol>
+  </section>
+
+  <section id="pred">
+    <header>
+      <div class="eyebrow" data-i18n="pr_eyebrow"></div>
+      <h2 data-i18n="pr_h"></h2>
+      <p data-i18n="pr_p"></p>
+    </header>
+    <div class="grid2">
+      <div class="small">
+        <h3 data-i18n="pr_corr_h"></h3>
+        <div class="tablewrap"><table id="corrTable"></table></div>
+      </div>
+      <div class="small">
+        <h3 data-i18n="pr_slice_h"></h3>
+        <div class="tablewrap"><table id="sliceCorrTable"></table></div>
+      </div>
+    </div>
+    <h3 data-i18n="pr_bucket_h"></h3>
+    <div class="tablewrap"><table class="pin" id="bucketTable"></table></div>
+    <p class="note" id="prRead"></p>
+  </section>
+
+  <section id="pers">
+    <header>
+      <div class="eyebrow" data-i18n="pe_eyebrow"></div>
+      <h2 data-i18n="pe_h"></h2>
+      <p data-i18n="pe_p"></p>
+    </header>
+    <div class="tablewrap"><table id="persTable"></table></div>
+    <div class="grid2">
+      <div class="small">
+        <h3 data-i18n="pe_venue_h"></h3>
+        <div class="tablewrap"><table id="venueTable"></table></div>
+      </div>
+      <div class="small">
+        <h3 data-i18n="pe_top_h"></h3>
+        <div class="tablewrap"><table id="topTable"></table></div>
+      </div>
+    </div>
+    <p class="note" id="peRead"></p>
+  </section>
+
+  <section id="regime">
+    <header>
+      <div class="eyebrow" data-i18n="rg_eyebrow"></div>
+      <h2 data-i18n="rg_h"></h2>
+      <p data-i18n="rg_p"></p>
+    </header>
+    <div class="figures" id="rgFigures"></div>
+    <h3 data-i18n="rg_cfg_h"></h3>
+    <div class="tablewrap"><table class="pin" id="cfgTable"></table></div>
+    <h3 data-i18n="rg_wf_h"></h3>
+    <div class="tablewrap"><table class="pin" id="rgwfTable"></table></div>
+    <p class="note" id="rgRead"></p>
+  </section>
+
+  <section id="oracle">
+    <header>
+      <div class="eyebrow" data-i18n="or_eyebrow"></div>
+      <h2 data-i18n="or_h"></h2>
+      <p data-i18n="or_p"></p>
+    </header>
+    <div class="figures" id="orFigures"></div>
+    <div class="tablewrap"><table id="orTable"></table></div>
+    <p class="note" id="orRead"></p>
+  </section>
+
+  <section id="alloc">
+    <header>
+      <div class="eyebrow" data-i18n="al_eyebrow"></div>
+      <h2 data-i18n="al_h"></h2>
+      <p id="alIntro"></p>
+    </header>
+    <div class="tablewrap"><table class="pin" id="alTable"></table></div>
+    <p class="note" id="alRead"></p>
+  </section>
+
+  <section id="wf">
+    <header>
+      <div class="eyebrow" data-i18n="wf_eyebrow"></div>
+      <h2 data-i18n="wf_h"></h2>
+      <p id="wfIntro"></p>
+    </header>
+    <h3 data-i18n="wf_win_h"></h3>
+    <div class="tablewrap"><table class="pin" id="winTable"></table></div>
+    <h3 data-i18n="wf_pair_h"></h3>
+    <div class="tablewrap"><table class="pin" id="pairTable"></table></div>
+    <h3 data-i18n="wf_axis_h"></h3>
+    <div class="grid2" id="axisGrid"></div>
+    <p class="note" id="wfRead"></p>
+  </section>
+
+  <section id="method">
+    <header>
+      <div class="eyebrow" data-i18n="me_eyebrow"></div>
+      <h2 data-i18n="me_h"></h2>
+    </header>
+    <div class="assume"><ol id="meList"></ol></div>
+    <dl class="gloss" id="meGloss"></dl>
+  </section>
+
+  <footer><span id="footText"></span></footer>
+</main>
+
+<script>
+const DATA = /*__DATA__*/;
+const META = /*__META__*/;
+const R = DATA.regime, F = DATA.forward;
+
+const T = {
+vi: {
+  title: "Quy luật ba năm",
+  verdict_eyebrow: "Phán quyết",
+  nav_rules: "Sáu quy luật", nav_pred: "Dự báo được không", nav_pers: "Bền qua các năm", nav_regime: "Vào ra theo regime", nav_wf: "Walk-forward", nav_method: "Cách đo",
+  v_head: "Cái bền qua ba năm là XẾP HẠNG giữa các chuỗi tại một thời điểm và phần bù của hyperliquid, không phải mức funding; canh thời điểm ra vào bị chặn trần ở +{lazy} trên vốn cho cả ba năm; và bộ chọn trên hai năm đầu {wf_word} giữ suốt ở năm sau.",
+  v_lede: "Ba năm corpus (2023-09 → 2026-09) trên {n} chuỗi có corpus đủ ba năm (binance, bybit, hyperliquid × 12 cặp), vốn = {k}× notional, chi phí vòng là MỘT lần đo sổ hôm nay. Ba câu hỏi: funding trung bình trượt có nói gì về funding sắp tới không; chuỗi trả nhiều năm nay có trả nhiều năm sau không; và một luật chỉ ở trong chuỗi khi regime tốt có thắng được giữ suốt không — chọn trên một khoảng, kiểm trên khoảng khác.",
+  fig_sp30: "Spearman chéo chuỗi, 30d → 30d tới", fig_sp90: "Spearman trong chuỗi, 30d → 90d tới", fig_pos: "90d tới có lãi khi trượt 30d ≥ 0,5 bps",
+  fig_prem: "Hyperliquid so với sàn USDT", fig_persist: "Spearman năm → năm: 32 chuỗi / riêng sàn USDT", fig_beat: "Cấu hình regime thắng giữ suốt", fig_wf: "Bộ chọn 2 năm đầu, năm sau so giữ suốt",
+  v_note: "Mọi số ở đây là mốc chuẩn tính trong Python từ corpus (như giữ suốt của các trang trước), trừ mục walk-forward là replay Go của cmd/backtest. Không số nào là giao dịch thật.",
+  ru_eyebrow: "Sáu quy luật", ru_h: "Những gì corpus ba năm cho phép nói", ru_p: "Mỗi quy luật kèm con số đứng sau nó và điều sẽ bác bỏ nó. Không quy luật nào là tham số.",
+  ru_1: "Cái dự báo được là XẾP HẠNG, không phải MỨC. Tại một ngày, chuỗi đang trả nhiều hơn các chuỗi khác cũng trả nhiều hơn trong 1–3 tháng tới: Spearman chéo chuỗi {cs30} (30 ngày tới) và {cs90} (90 ngày tới), giữ ở {cs_lo}–{cs_hi} trong cả ba năm. Còn mức của chính một chuỗi so với chính nó thì yếu: trong chuỗi {ws30} ở 30 ngày và {ws90} ở 90 ngày, và ở năm {worst_slice} chân trời 90 → 90 xuống {worst_ws}. Con số gộp {sp30} mọi người hay trích là hai thứ này trộn nhau, trên mẫu tuần chồng nhau ({n} điểm, không độc lập), lấy mẫu từ ngày thứ 180 của corpus.",
+  ru_2: "Ngưỡng đáng một vòng phí là chi phí của CHÍNH chuỗi chia cho số mốc trong cửa sổ giữ, không phải một con số chung. Ở chi phí trung bình 0,45% notional và ~90 mốc, điểm cắt là ≈0,5 bps/8h: bucket trượt 0,3–0,5 cho 30 ngày tới {b_lo} trên vốn (dương {b_lo_share}); từ 0,5 bps trở lên 90 ngày tới có lãi {p05} số lần, từ 1,0 {p10}, từ 2,0 {p20} — trên nền 80% số điểm đã dương sẵn ở 90 ngày. Điểm cắt là 0,33 bps ở BTC/ETH (0,30%) và 0,8 ở NEAR (0,74%), và nó dịch theo năm (≈0,25 năm 2024–25, ≈0,8 năm 2025–26). Đây là luật CHỌN CHUỖI để vào, không phải luật canh thời điểm; luật thật phải tính từ chi phí đã định giá của từng chuỗi.",
+  ru_3: "Cái bền qua năm là SÀN, và BNB ở đáy. Spearman thứ hạng giữa hai năm liên tiếp {pe1} rồi {pe2} trên 32 chuỗi, nhưng trong riêng 24 chuỗi sàn USDT chỉ {pu1} rồi {pu2} ({tu1}/{tq} rồi {tu2}/{tq} top giữ chỗ): phần lớn tính bền là hyperliquid chiếm top và BNB chiếm đáy. Hyperliquid trả gấp {prem1}× / {prem2}× / {prem3}× sàn USDT ở ba năm — một mức, và là chuỗi ghép cầu USD/USDT. Xếp hạng coin bên trong một sàn không đủ bền để định size.",
+  ru_4: "Mức funding thì không bền: 1,41 → 0,81 → 0,30 bps/8h. Dải 5–15% trên vốn chỉ có ở năm 2023–24; không luật nào làm ra nó từ funding 2025–26. Cần theo dõi mức trượt 90 ngày như một biến regime, và không hứa suất sinh lời từ năm trước.",
+  ru_5: "Canh thời điểm và lối thoát bị chặn trần, ngay cả khi biết trước tương lai. Vào/ra theo regime: {beat}/{cfgs} cấu hình thắng giữ suốt (chân trời 30 ngày là phép đo sạch; 90/180 ngày mù nửa năm đầu vì corpus bắt đầu đúng ở cửa sổ), bộ chọn trên hai năm đầu kém giữ suốt {wfgap} điểm ở năm sau. Trần biết trước hoàn toàn: {free} trên vốn cho CẢ ba năm, {lazy} khi chỉ quyết định mỗi 7 ngày; bỏ ba chuỗi BNB (coin duy nhất mà giữ là lỗ) còn {exbnb}, chỉ BTC/ETH còn {btceth}. Không luật thoát nào đáng viết thêm; lối thoát chỉ nên là rủi ro.",
+  pr_eyebrow: "Dự báo được không", pr_h: "Funding trung bình trượt so với funding tới", pr_p: "Mỗi điểm là một chuỗi tại một ngày lấy mẫu (mỗi 7 ngày). Trượt D ngày là funding trung bình đã settle của D ngày trước đó; tới F ngày là của F ngày sau. “Ròng trên vốn” của F ngày tới là funding thu trong F ngày trừ đúng một vòng phí của chuỗi, chia vốn.",
+  pr_corr_h: "Tương quan theo chân trời: gộp, chéo chuỗi, trong chuỗi", pr_slice_h: "Spearman theo từng năm (chéo / trong chuỗi)", pr_bucket_h: "Trượt 30 ngày nói gì về 30 và 90 ngày tới",
+  th_horizon: "Trượt → tới", th_n: "Điểm", th_pearson: "Pearson", th_spearman: "Spearman gộp", th_cs: "Chéo chuỗi", th_ws: "Trong chuỗi", th_slice: "Lát", th_bucket: "Trượt 30d (bps/8h)", th_fwd: "Tới TB (bps/8h)", th_net: "Ròng trên vốn", th_posshare: "Có lãi",
+  pr_read: "Chân trời ngắn dự báo tốt nhất ({best_h}: Spearman {best_sp}); chân trời dài hơn không thêm gì. Theo năm, {slice_note}.",
+  pe_eyebrow: "Bền qua các năm", pe_h: "Chuỗi tốt năm nay có tốt năm sau không", pe_p: "Xếp hạng 32 chuỗi theo funding trung bình từng năm rồi so hai năm liền nhau; “top 8” là phần tư trên.",
+  th_from: "Năm", th_to: "Năm sau", th_overlap: "Top-8 giữ chỗ", th_bottom: "Bottom-8 giữ chỗ",
+  pe_venue_h: "Funding trung bình theo sàn perp (bps/8h)", pe_top_h: "Top 8 mỗi năm", th_venue: "Sàn",
+  pe_read: "Tỷ lệ hyperliquid so với trung bình binance/bybit: {ratios}. Chuỗi có mặt trong top 8 cả ba năm: {always}. Bên trong 24 chuỗi sàn USDT, Spearman năm → năm chỉ {pu}, top giữ chỗ {tu}.",
+  rg_eyebrow: "Vào ra theo regime", rg_h: "Chỉ ở trong chuỗi khi funding trượt còn tốt", rg_p: "Mốc chuẩn tính trong Python, KHÔNG phải luật của Go: vào khi trượt D ngày ≥ X, ra khi nó tụt dưới X_ra (bằng X, nửa X, hoặc 0 = chỉ ra khi trung bình âm), trả một vòng phí mỗi lần ra. So với giữ suốt trên cùng 32 chuỗi, cùng chi phí.",
+  fig_ht: "Giữ suốt, 36 tháng", fig_best: "Cấu hình tốt nhất", fig_trips: "Vòng phí / chuỗi của nó", fig_in: "Thời gian ở trong",
+  rg_cfg_h: "Tám cấu hình tốt nhất trong {cfgs}", rg_wf_h: "Chọn trên một khoảng, kiểm trên khoảng khác",
+  th_cfg: "Cấu hình", th_cap: "Trên vốn", th_pos: "Chuỗi dương", th_trips: "Vòng/chuỗi", th_in: "Ở trong", th_byyear: "Từng năm", th_usdt: "Sàn USDT", th_bridged: "Hyperliquid",
+  th_train: "Chọn trên", th_chosen: "Chọn được", th_test: "Kiểm trên", th_ontest: "Kết quả kiểm", th_rank: "Hạng", th_ht: "Giữ suốt", th_testbest: "Tốt nhất của khoảng kiểm", th_beat: "Thắng giữ suốt",
+  rg_read: "Trên 36 tháng {beat}/{cfgs} cấu hình thắng giữ suốt ({ht}); cấu hình tốt nhất ({bestcfg}) làm {best}, kém {gap} điểm với {trips} vòng phí mỗi chuỗi. Walk-forward: {wf}.",
+  wf_eyebrow: "Walk-forward", wf_h: "Lưới Go chọn trên khoảng này, đọc trên khoảng kia",
+  wf_intro: "Đây là replay của cmd/backtest (luật thật, kể cả cổng chọn chuỗi min_trailing_mean_bps), {sets} bộ trên mỗi cửa sổ, xếp trên vốn theo trung bình mỗi chuỗi trên {universe}. Cột “chọn được” là bộ tốt nhất của khoảng học; cột kết quả là bộ ĐÓ trên khoảng kiểm, cạnh giữ suốt và cạnh bộ tốt nhất mà khoảng kiểm tự chọn — trần in-sample mà không ai nên kỳ vọng chạm.",
+  universe_full: "các chuỗi có corpus phủ đủ cửa sổ", universe_all: "mọi chuỗi chạy được",
+  wf_win_h: "Từng cửa sổ", wf_pair_h: "Từng cặp học → kiểm", wf_axis_h: "Trục chọn chuỗi: học so với kiểm",
+  th_window: "Cửa sổ", th_series: "Chuỗi", th_sets: "Bộ", th_best_set: "Bộ tốt nhất", th_applied: "Bộ đang ship", th_median: "Trung vị",
+  th_trail: "Ngưỡng trượt (bps/8h)", th_days: "Ngày", th_mean: "TB", th_bestv: "Tốt nhất",
+  wf_read: "{pairs_read} Bộ đang ship: {applied_read}. Đọc cho đúng: 16 bộ tắt chọn chuỗi ở mỗi cửa sổ chỉ cách nhau {off_span} điểm, nên walk-forward xác nhận “không rời vị thế” (C = 1,0) chứ không phân biệt được bộ đang ship với các bộ hàng xóm; bật chọn chuỗi thua trên vốn danh mục vì ô không chọn nằm không, không phải vì tín hiệu sai.",
+  wf_pair_read: "{train} → {test}: chọn {chosen} (hạng 1 khi học, {chosen_train}); trên khoảng kiểm nó làm {on_test} (hạng {rank}/{sets}) so với giữ suốt {ht} và bộ tốt nhất của khoảng kiểm {best}.",
+  wf_applied_read: "{applied}",
+  me_eyebrow: "Cách đo", me_h: "Điều kiện và giới hạn",
+  me_1: "32 chuỗi = 12 cặp × binance, bybit, hyperliquid, là các chuỗi có corpus phủ đủ 2023-09 → 2026-09. Danh sách cặp được sàng ngày 2026-09-09 trên funding 12 tháng gần nhất và phải đã niêm yết từ 2023-09: đây là mẫu in-sample có sống sót.",
+  me_2: "Mẫu số là VỐN = 2× notional; mọi số ba năm là TÍCH LUỸ ba năm trên trung bình mỗi chuỗi — chia ba trước khi đặt cạnh dải 5–15%/năm. Chi phí vòng là một lần đo sổ ngày 2026-09-09 ở 50k, áp cho cả lệnh năm 2023 và cho từng lần ra-vào của mốc chuẩn regime. Giữ suốt ở mục regime/trần/phân bổ trả một vòng phí cho cả ba năm; giữ suốt theo từng năm ở trang 3 năm trả một vòng mỗi năm — cùng dữ liệu, hai quy ước.",
+  me_3: "Dự báo: điểm lấy mẫu 7 ngày chồng nhau và 32 chuỗi cùng chia một mức thị trường ở mỗi ngày, nên n không phải số quan sát độc lập và không có kiểm định thống kê ở đây; đọc độ lớn của tương quan và bảng bucket, không đọc p-value. Lấy mẫu bắt đầu ở ngày thứ 180 của corpus, nên lát “2023–24” của phần dự báo là tháng 3–9/2024, không có pha bull cuối 2023.",
+  me_4: "Mốc chuẩn regime và giữ suốt là số học Python từ corpus (như hold.py), không phải replay Go; phần walk-forward là replay Go. Hai bên dùng cùng chi phí và cùng cách trả funding (từ mốc sau khi vào tới mốc ra).",
+  me_5: "Hyperliquid là perp quote USD ghép spot USDT (ghép cầu): trung tính theo coin, mở theo USDT/USD, không con số nào trừ rủi ro đó. Nó cũng là nhóm trả cao nhất cả ba năm.",
+  me_6: "cmd/backtest nạp funding 200 ngày TRƯỚC cửa sổ (thêm 2026-09-09) để cổng trượt 180 ngày đánh giá được từ mốc đầu; trước đó mọi cửa sổ cố định mù đúng bằng chân trời trượt.",
+  gl_sp: "Spearman", gl_sp_d: "Tương quan hạng, −1…+1; 0 là không dự báo.", gl_bps: "bps/8h", gl_bps_d: "Funding quy về 8 giờ; 1 bps = 0,01%.", gl_ht: "Giữ suốt", gl_ht_d: "Vào mốc đầu, ra mốc cuối, một vòng phí.", gl_wf: "Walk-forward", gl_wf_d: "Chọn tham số trên một khoảng, đo trên khoảng không dùng để chọn.",
+  foot: "Dựng từ {commit} lúc {generated}. Dữ liệu do cmd/backtest và tools/report/regime.py đọc từ corpus; trang này chỉ đọc.",
+  wf_worse: "vẫn KÉM", wf_better: "VƯỢT",
+  nav_oracle: "Trần của luật thoát", nav_alloc: "Phân bổ theo funding",
+  or_eyebrow: "Trần của mọi luật thoát", or_h: "Biết trước tương lai thì luật vào/ra thêm được bao nhiêu",
+  or_p: "Quy hoạch động hai trạng thái trên từng chuỗi: ở mỗi mốc settle chọn ở trong hay ở ngoài, biết TRƯỚC toàn bộ funding sắp tới, mỗi lần đổi trạng thái trả nửa vòng phí (vào rồi ra là trọn một vòng). Đây là TRẦN của bất kỳ luật canh thời điểm hay luật thoát nào, không phải một luật. “Chậm” là phiên bản chỉ được đổi trạng thái mỗi 7 ngày — độ trễ mà mọi thống kê thật đều có.",
+  fig_or_free: "Trần − giữ suốt, biết trước hoàn toàn", fig_or_lazy: "Trần − giữ suốt, quyết định mỗi 7 ngày", fig_or_sw: "Số lần đổi trạng thái (chậm)", fig_or_clear: "Chuỗi mà trần chậm hơn giữ suốt quá một vòng phí/năm",
+  th_oracle: "Phiên bản", th_edge: "Trần − giữ suốt, trên vốn", th_sw: "Đổi trạng thái / chuỗi", th_clear: "Chuỗi vượt một vòng phí",
+  or_free: "Biết trước hoàn toàn", or_lazy: "Chỉ quyết định mỗi 7 ngày",
+  or_read: "Với thông tin hoàn hảo, luật vào/ra tốt nhất có thể chỉ hơn giữ suốt {free} trên vốn trong ba năm ({free_y}), và {lazy} khi bị ép chờ 7 ngày ({lazy_y}). Bỏ ba chuỗi BNB — coin duy nhất mà giữ suốt là lỗ, nên “trần” ở đó là “đừng giữ BNB” — còn {exbnb}; chỉ BTC/ETH còn {btceth}. Một luật thật không có thông tin hoàn hảo; mọi luật thoát cho tới nay đều âm. Trần này chỉ chặn luật vào/ra hai trạng thái theo funding trên từng chuỗi; nó không nói gì về đổi size, phân bổ giữa chuỗi hay basis.",
+  al_eyebrow: "Phân bổ theo funding", al_h: "Chuyển vốn sang chuỗi đang trả nhiều, thay vì để ô không chọn nằm không",
+  al_intro: "Cùng một vốn trên {n} chuỗi, tái cân bằng mỗi {reb} ngày. “Đều” là mỗi chuỗi một phần bằng nhau giữ suốt (chính là mốc giữ suốt). “Theo funding” là trọng số tỷ lệ với funding trượt {trail} ngày, trần {cap}× phần đều. “Top ¼” là chia đều cho phần tư chuỗi trượt cao nhất. Mỗi đơn vị vốn di chuyển trả nửa vòng phí của chuỗi đó. “Ngẫu nhiên” là cùng trọng số nhưng gán cho chuỗi xáo trộn ({draws} lần, trung bình và tốt nhất). Mốc chuẩn Python, không phải luật Go — luật phân bổ là việc của phase 4/5.",
+  th_scheme: "Cách phân bổ", th_pool: "Tập chuỗi", th_turn: "Phí luân chuyển", th_hl: "Trọng số hyperliquid",
+  sch_equal: "Đều (giữ suốt)", sch_weighted: "Theo funding trượt", sch_topq: "Top ¼ theo funding trượt", sch_null: "Ngẫu nhiên (TB / tốt nhất)",
+  pool_all: "Cả 32 chuỗi", pool_no_hyperliquid: "Không có hyperliquid",
+  al_read: "Trên cả 32 chuỗi, theo funding trượt hơn đều {d_all} điểm trên vốn trong ba năm (ngẫu nhiên: {null_all}); bỏ hyperliquid ra thì chênh còn {d_nohl} (ngẫu nhiên: {null_nohl}). Phần chênh giữ được khi không có hyperliquid mới là giá trị của quy luật; phần còn lại là phần bù của sàn — có thật, nhưng là chuyện chọn sàn, và là chuỗi ghép cầu.",
+  ru_6: "Cần gạt còn lại là PHÂN BỔ, và phần lớn của nó là chọn SÀN. Cùng vốn trên 32 chuỗi, dồn phần hơn cho chuỗi có funding trượt 90 ngày cao (trần 2× phần đều, cân lại mỗi quý) hơn chia đều {d_all} điểm trên vốn trong ba năm (ngẫu nhiên {null_all} ± {sd_all}); bỏ hyperliquid ra còn {d_nohl} (ngẫu nhiên {null_nohl} ± {sd_nohl}) — đó là giá trị của việc chọn coin bên trong sàn, khoảng {d_nohl_yr}/năm. Phần còn lại là nghiêng sang hyperliquid, tức phần bù của một sàn ghép cầu. Với tài khoản chỉ giữ 1–2 vị thế, luật này thu về “100% vào chuỗi hyperliquid trả nhiều nhất quý trước”, phân tán kết quả rộng hơn con số 32 chuỗi hàng chục lần.",
+},
+zh: {
+  title: "三年规律",
+  verdict_eyebrow: "结论",
+  nav_rules: "六条规律", nav_pred: "可预测吗", nav_pers: "跨年稳定性", nav_regime: "按状态进出", nav_wf: "前推检验", nav_method: "测量方法",
+  v_head: "三年里稳定的是同一时点上各序列之间的排名和 hyperliquid 的溢价，不是资金费的水平；择时进出的上限是整整三年按资金 +{lazy}；在前两年选出的组，在下一年{wf_word}持有到底。",
+  v_lede: "三年语料（2023-09 → 2026-09），{n} 条语料完整覆盖三年的序列（binance、bybit、hyperliquid × 12 对），资金 = {k}× 名义，一次开平成本来自今天盘口的一次测量。三个问题：滚动平均资金费能否说明接下来的资金费；今年付得多的序列明年是否仍然多；只在状态好时持仓的规则能否胜过持有到底——在一段上选择，在另一段上检验。",
+  fig_sp30: "跨序列 Spearman，30 天 → 未来 30 天", fig_sp90: "序列内 Spearman，30 天 → 未来 90 天", fig_pos: "滚动 ≥ 0.5 bps 时未来 90 天盈利占比",
+  fig_prem: "Hyperliquid 相对 USDT 交易所", fig_persist: "年→年 Spearman：32 条 / 仅 USDT 交易所", fig_beat: "胜过持有到底的状态配置", fig_wf: "前两年选出的组，下一年对比持有到底",
+  v_note: "这里的数字都是用 Python 从语料算出的基准（同此前各页的持有到底），前推检验一节除外，那是 cmd/backtest 的 Go 回放。没有任何一个是真实交易。",
+  ru_eyebrow: "六条规律", ru_h: "三年语料允许说的话", ru_p: "每条规律附上背后的数字和能推翻它的证据。没有一条是参数。",
+  ru_1: "可预测的是排名，不是水平。同一天里付得比别的序列多的序列，在未来 1–3 个月里也付得更多：跨序列 Spearman {cs30}（未来 30 天）和 {cs90}（未来 90 天），三年里都在 {cs_lo}–{cs_hi}。而一条序列自身的水平对比自身则很弱：序列内 {ws30}（30 天）和 {ws90}（90 天），{worst_slice} 在 90 → 90 期限上降到 {worst_ws}。常被引用的汇总值 {sp30} 是这两者的混合，采样点每周重叠（{n} 个，不独立），从语料第 180 天起采样。",
+  ru_2: "值得一次开平的门槛是该序列自身的成本除以持有窗口内的结算数，不是一个通用数字。在平均成本 0.45% 名义、约 90 次结算下，交叉点约为 0.5 bps/8h：滚动 0.3–0.5 桶的未来 30 天为 {b_lo}（按资金，{b_lo_share} 为正）；≥ 0.5 bps 时未来 90 天有 {p05} 盈利，≥ 1.0 为 {p10}，≥ 2.0 为 {p20}——而 90 天期限上所有点本来就有 80% 为正。交叉点在 BTC/ETH（0.30%）约 0.33 bps，NEAR（0.74%）约 0.8，并随年份移动（2024–25 约 0.25，2025–26 约 0.8）。这是进场时挑选序列的规则，不是择时规则；真实规则必须用每条序列已定价的成本计算。",
+  ru_3: "跨年稳定的是交易所，以及垫底的 BNB。相邻两年的排名 Spearman 在 32 条上为 {pe1} 然后 {pe2}，但仅在 24 条 USDT 交易所序列内只有 {pu1} 然后 {pu2}（前四分之一保持 {tu1}/{tq} 然后 {tu2}/{tq}）：大部分稳定性来自 hyperliquid 占据前列、BNB 占据末尾。Hyperliquid 三年里分别是 USDT 交易所的 {prem1}× / {prem2}× / {prem3}×——一个水平——而且是 USD/USDT 跨报价序列。同一交易所内币种的排名不够稳定，不能据此定仓位。",
+  ru_4: "资金费的水平并不稳定：1.41 → 0.81 → 0.30 bps/8h。按资金 5–15% 的区间只在 2023–24 年出现；没有任何规则能从 2025–26 年的资金费里做出它。要把 90 天滚动水平当作状态变量跟踪，不要用去年承诺收益。",
+  ru_5: "择时与退出有上限，即使预知未来。按状态进出：{beat}/{cfgs} 个配置胜过持有到底（30 天期限是干净的测量；90/180 天在头半年是盲区，因为语料恰好从窗口开始），在前两年选出的组在下一年落后持有到底 {wfgap} 个百分点。完全预知的上限：整整三年按资金 {free}，每 7 天才决策时 {lazy}；去掉三条 BNB 序列（唯一持有即亏的币）后为 {exbnb}，只看 BTC/ETH 为 {btceth}。不值得再写任何退出规则；退出只应是风险退出。",
+  pr_eyebrow: "可预测吗", pr_h: "滚动平均资金费与未来资金费", pr_p: "每个点是一条序列在一个采样日（每 7 天）。滚动 D 天是之前 D 天已结算资金费的均值；未来 F 天是之后 F 天的均值。未来 F 天的“按资金净额”是 F 天内收到的资金费减去该序列一次开平成本，再除以资金。",
+  pr_corr_h: "各期限的相关性：汇总、跨序列、序列内", pr_slice_h: "按年的 Spearman（跨序列 / 序列内）", pr_bucket_h: "30 天滚动对未来 30 天和 90 天说明了什么",
+  th_horizon: "滚动 → 未来", th_n: "点数", th_pearson: "Pearson", th_spearman: "汇总 Spearman", th_cs: "跨序列", th_ws: "序列内", th_slice: "切片", th_bucket: "30 天滚动（bps/8h）", th_fwd: "未来均值（bps/8h）", th_net: "按资金净额", th_posshare: "盈利占比",
+  pr_read: "短期限预测最好（{best_h}：Spearman {best_sp}）；更长的期限没有增加信息。按年看，{slice_note}。",
+  pe_eyebrow: "跨年稳定性", pe_h: "今年好的序列明年还好吗", pe_p: "按各年平均资金费给 32 条序列排名，再比较相邻两年；“前 8”即上四分位。",
+  th_from: "年", th_to: "下一年", th_overlap: "前 8 保持", th_bottom: "后 8 保持",
+  pe_venue_h: "按永续交易所的平均资金费（bps/8h）", pe_top_h: "各年前 8", th_venue: "交易所",
+  pe_read: "hyperliquid 相对 binance/bybit 均值的比率：{ratios}。三年都在前 8 的序列：{always}。仅在 24 条 USDT 交易所序列内，年→年 Spearman 只有 {pu}，前列保持 {tu}。",
+  rg_eyebrow: "按状态进出", rg_h: "只在滚动资金费仍好时持仓", rg_p: "Python 算出的基准，不是 Go 的规则：D 天滚动 ≥ X 时进场，跌破 X_out（等于 X、X 的一半，或 0 = 仅在均值转负时退出）时离场，每次离场付一次开平。与同样 32 条序列、同样成本的持有到底相比。",
+  fig_ht: "持有到底，36 个月", fig_best: "最好的配置", fig_trips: "它每序列的开平次数", fig_in: "持仓时间占比",
+  rg_cfg_h: "{cfgs} 个配置中最好的八个", rg_wf_h: "在一段上选，在另一段上检",
+  th_cfg: "配置", th_cap: "按资金", th_pos: "盈利序列", th_trips: "开平/序列", th_in: "持仓占比", th_byyear: "逐年", th_usdt: "USDT 交易所", th_bridged: "Hyperliquid",
+  th_train: "选择于", th_chosen: "选出", th_test: "检验于", th_ontest: "检验结果", th_rank: "排名", th_ht: "持有到底", th_testbest: "检验段自身最优", th_beat: "胜过持有",
+  rg_read: "36 个月里 {beat}/{cfgs} 个配置胜过持有到底（{ht}）；最好的配置（{bestcfg}）做出 {best}，落后 {gap} 个百分点，每序列 {trips} 次开平。前推检验：{wf}。",
+  wf_eyebrow: "前推检验", wf_h: "Go 网格在这一段上选，在另一段上读",
+  wf_intro: "这是 cmd/backtest 的回放（真实规则，含序列选择闸门 min_trailing_mean_bps），每个窗口 {sets} 组，按资金、每序列均值在{universe}上排名。“选出”列是训练段最好的组；结果列是同一组在检验段上的表现，旁边是持有到底和检验段自己选出的最优组——不应指望达到的样本内上限。",
+  universe_full: "语料完整覆盖窗口的序列", universe_all: "全部可回放序列",
+  wf_win_h: "各窗口", wf_pair_h: "各训练 → 检验对", wf_axis_h: "序列选择轴：训练与检验",
+  th_window: "窗口", th_series: "序列", th_sets: "组数", th_best_set: "最优组", th_applied: "在用组", th_median: "中位",
+  th_trail: "滚动阈值（bps/8h）", th_days: "天数", th_mean: "均值", th_bestv: "最好",
+  wf_read: "{pairs_read} 在用组：{applied_read}。正确的读法：每个窗口里 16 个关闭序列选择的组彼此只差 {off_span} 个百分点，所以前推检验确认的是“不离场”（C = 1.0），并不能把在用组与其邻居区分开；开启序列选择在总资金上落后，是因为未选中的资金闲置，不是信号错了。",
+  wf_pair_read: "{train} → {test}：选出 {chosen}（训练时第 1 名，{chosen_train}）；在检验段它做出 {on_test}（第 {rank}/{sets} 名），持有到底 {ht}，检验段最优 {best}。",
+  wf_applied_read: "{applied}",
+  me_eyebrow: "测量方法", me_h: "条件与边界",
+  me_1: "32 条序列 = 12 对 × binance、bybit、hyperliquid，即语料完整覆盖 2023-09 → 2026-09 的序列。交易对列表于 2026-09-09 按最近 12 个月资金费筛选，且必须自 2023-09 起已上市：这是带幸存偏差的样本内样本。",
+  me_2: "分母是资金 = 2× 名义；所有三年数字都是三年累计、按每序列平均——与 5–15%/年的区间并列前要除以三。一次开平成本是 2026-09-09 在 50k 名义上对盘口的一次测量，用于 2023 年的交易，也用于状态基准的每次出入。状态/上限/配置各节的持有到底整整三年只付一次开平；三年页面上的逐年持有到底每年付一次——同一数据，两种约定。",
+  me_3: "可预测性：7 天采样点相互重叠，且 32 条序列在同一天共享一个市场水平，n 不是独立观测数，此处不做统计检验；读相关性大小和分桶表，不读 p 值。采样从语料第 180 天开始，所以可预测性一节的“2023–24”切片是 2024 年 3–9 月，不含 2023 年末的牛市阶段。",
+  me_4: "状态基准与持有到底是从语料算出的 Python 算术（同 hold.py），不是 Go 回放；前推检验一节是 Go 回放。两边使用相同成本和相同的资金费计法（从进场后的下一结算到离场结算）。",
+  me_5: "Hyperliquid 是 USD 计价永续配 USDT 现货（跨报价）：币上中性，USDT/USD 上敞口，没有任何数字扣除这一风险。它也是三年里付得最多的一组。",
+  me_6: "cmd/backtest 会加载窗口之前 200 天的资金费（2026-09-09 新增），使 180 天滚动闸门从首个结算即可评估；此前每个固定窗口都有与滚动期限等长的盲区。",
+  gl_sp: "Spearman", gl_sp_d: "秩相关，−1…+1；0 表示没有预测力。", gl_bps: "bps/8h", gl_bps_d: "折算到 8 小时的资金费；1 bps = 0.01%。", gl_ht: "持有到底", gl_ht_d: "首个结算进，最后结算出，一次费用。", gl_wf: "前推检验", gl_wf_d: "在一段上选参数，在未用于选择的另一段上测量。",
+  foot: "由 {commit} 于 {generated} 生成。数据由 cmd/backtest 与 tools/report/regime.py 从语料读出；本页只读。",
+  wf_worse: "仍落后于", wf_better: "超过了",
+  nav_oracle: "退出规则的上限", nav_alloc: "按资金费配置",
+  or_eyebrow: "一切退出规则的上限", or_h: "预知未来时，进出规则最多能多赚多少",
+  or_p: "对每条序列做两状态动态规划：在每个结算点选择在场或离场，预先知道全部未来资金费，每次改变状态付半次开平（进而出即一次完整开平）。这是任何择时或退出规则的上限，不是一条规则。“慢”版本每 7 天才能改变一次状态——任何真实统计量都有的延迟。",
+  fig_or_free: "上限 − 持有到底，完全预知", fig_or_lazy: "上限 − 持有到底，每 7 天决策", fig_or_sw: "状态切换次数（慢）", fig_or_clear: "慢上限领先持有到底超过一次开平/年的序列",
+  th_oracle: "版本", th_edge: "上限 − 持有到底，按资金", th_sw: "切换/序列", th_clear: "领先超过一次开平的序列",
+  or_free: "完全预知", or_lazy: "每 7 天才决策",
+  or_read: "即使信息完美，最好的进出规则三年里也只比持有到底多 {free}（按资金，{free_y}），被迫等 7 天时为 {lazy}（{lazy_y}）。去掉三条 BNB 序列——唯一持有即亏的币，那里的“上限”其实是“别持有 BNB”——后为 {exbnb}；只看 BTC/ETH 为 {btceth}。真实规则没有完美信息；迄今每条退出规则都是负的。该上限只约束逐序列、两状态、按资金费的进出规则；它对调整仓位、序列间配置或基差不置一词。",
+  al_eyebrow: "按资金费配置", al_h: "把资金转到正在付得多的序列，而不是让未选中的槽位闲置",
+  al_intro: "同一笔资金分布在 {n} 条序列上，每 {reb} 天再平衡。“均等”是每条序列等份并持有到底（即持有到底基准）。“按资金费”是权重与 {trail} 天滚动资金费成正比，上限为均等份额的 {cap} 倍。“前 ¼”是在滚动最高的四分之一序列间等分。每移动一单位资金付该序列半次开平。“随机”是相同权重分配给打乱后的序列（{draws} 次，均值与最好）。Python 基准，不是 Go 规则——配置规则属于第 4/5 阶段。",
+  th_scheme: "配置方式", th_pool: "序列集合", th_turn: "换仓成本", th_hl: "hyperliquid 权重",
+  sch_equal: "均等（持有到底）", sch_weighted: "按滚动资金费", sch_topq: "滚动资金费前 ¼", sch_null: "随机（均值 / 最好）",
+  pool_all: "全部 32 条", pool_no_hyperliquid: "不含 hyperliquid",
+  al_read: "在全部 32 条上，按滚动资金费比均等三年多 {d_all} 个百分点（随机：{null_all}）；去掉 hyperliquid 后差额为 {d_nohl}（随机：{null_nohl}）。没有 hyperliquid 时仍保留的差额才是规律本身的价值；其余是交易所溢价——真实，但属于选交易所，而且是跨报价序列。",
+  ru_6: "剩下的杠杆是配置，而其中大半是选交易所。同样的资金分布在 32 条序列上，把更多份额给 90 天滚动资金费高的序列（上限为均等份额的 2 倍，每季再平衡），三年里比均等多 {d_all} 个百分点（按资金；随机 {null_all} ± {sd_all}）；去掉 hyperliquid 后只多 {d_nohl}（随机 {null_nohl} ± {sd_nohl}）——这才是交易所内选币的价值，约每年 {d_nohl_yr}。其余是向 hyperliquid 倾斜，即一个跨报价交易所的溢价。对只持有 1–2 个仓位的账户，这条规则退化为“100% 押上季付得最多的 hyperliquid 序列”，结果的离散度比 32 条序列的数字宽十几倍。",
+}};
+
+let lang = "vi";
+const t = (k, vars) => { let s = T[lang][k]; if (s === undefined) s = T.vi[k]; if (s === undefined) return k;
+  return vars ? s.replace(/\{(\w+)\}/g, (m, p) => vars[p] !== undefined ? vars[p] : m) : s; };
+const loc = () => lang === "zh" ? "zh-CN" : "vi-VN";
+const num = (v, d = 0) => v == null || Number.isNaN(v) ? "—" : new Intl.NumberFormat(loc(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+const pct = (v, d = 2, sign = false) => v == null ? "—" : (sign && v > 0 ? "+" : "") + num(v, d) + "%";
+const cls = v => v == null ? "" : v < 0 ? "loss" : v > 0 ? "gain" : "";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const sname = k => { const [sym, perp] = k.split("|"); return sym.replace("USDT", "") + "·" + perp.replace("_futures", ""); };
+const day = ms => new Date(ms).toISOString().slice(0, 10);
+
+function tbl(head, rows) {
+  const th = head.map(h => `<th${h.num ? ' class="num"' : ""}>${esc(h.label)}</th>`).join("");
+  const body = rows.map(r => "<tr>" + r.map((c, i) => {
+    const v = c && typeof c === "object" ? c.v : c, k = c && typeof c === "object" && c.cls ? ` class="${c.cls}${head[i].num ? " num" : ""}"` : (head[i].num ? ' class="num"' : "");
+    return `<td${k}>${typeof v === "string" && v.startsWith("<") ? v : esc(v)}</td>`; }).join("") + "</tr>").join("");
+  return `<thead><tr>${th}</tr></thead><tbody>${body}</tbody>`;
+}
+function figures(el, items) {
+  el.innerHTML = items.map(i => `<div class="fig"><div class="v ${i.cls || ""}">${i.v}</div><div class="l">${esc(i.l)}</div></div>`).join("");
+}
+const cfgLabel = r => `≥${num(r.x_in, 1)} / ${r.days}d / ${r.x_out_mode === "same" ? "=X" : r.x_out_mode === "half" ? "X/2" : "0"}`;
+const setLabel = r => `${num(r.min_rate_per_8h_bps, 1)}/${r.persistence_periods} · C${num(r.exit_negative_cum_cost_frac, 2)} · M${num(r.min_hold_recovered_cost_frac, 0)} · ${r.min_trailing_mean_bps > 0 ? `trail ≥${num(r.min_trailing_mean_bps, 1)}/${num(r.trailing_days ?? r.trailing_mean_days, 0)}d` : "no selection"}`;
+
+function bucket(h, lo, hi) { return (R.predictability[h].pooled.buckets || []).find(b => b.lo === lo && b.hi === hi); }
+function posAbove(h, lo) { const bs = (R.predictability[h].pooled.buckets || []).filter(b => b.lo >= lo); const n = bs.reduce((a, b) => a + b.n, 0); return n ? bs.reduce((a, b) => a + b.fwd_net_positive_share * b.n, 0) / n : null; }
+
+function renderVerdict() {
+  const p30 = R.predictability["30/30"].pooled, p90 = R.predictability["30/90"].pooled;
+  const pairs = R.persistence.pairs, venues = R.persistence.venues;
+  const ratio = v => v.venues.hyperliquid_futures / ((v.venues.binance_futures + v.venues.bybit_futures) / 2);
+  const ht = R.regime.hold_through, best = R.regime.configs[0];
+  const beat = R.regime.configs.filter(c => c.mean_cap_pct > ht.mean_cap_pct).length;
+  const wf = R.walk_forward[0];
+  const gap = wf.test_chosen.mean_cap_pct - wf.test_hold_through.mean_cap_pct;
+  document.getElementById("vHeadline").textContent = t("v_head", { wf_word: gap >= 0 ? t("wf_better") : t("wf_worse"), lazy: R.oracle ? pct(R.oracle.lazy7.mean_edge_cap_pct, 2) : "—" });
+  document.getElementById("vLede").textContent = t("v_lede", { n: R.series.length, k: num(R.capital_per_notional, 1) });
+  figures(document.getElementById("vFigures"), [
+    { v: num(p30.cross_sectional_spearman, 2), l: t("fig_sp30") },
+    { v: num(p90.within_series_spearman, 2), l: t("fig_sp90") },
+    { v: pct(posAbove("30/90", 0.5) * 100, 0), l: t("fig_pos") },
+    { v: venues.map(v => num(ratio(v), 1) + "×").join(" / "), l: t("fig_prem") },
+    { v: pairs.map(p => num(p.spearman, 2)).join(" → ") + " / " + pairs.map(p => p.within_usdt ? num(p.within_usdt.spearman, 2) : "—").join(" → "), l: t("fig_persist") },
+    { v: `${beat}/${R.regime.configs.length}`, l: t("fig_beat"), cls: beat ? "gain" : "loss" },
+    { v: `${pct(wf.test_chosen.mean_cap_pct, 2, true)} / ${pct(wf.test_hold_through.mean_cap_pct, 2, true)}`, l: t("fig_wf"), cls: cls(gap) },
+  ]);
+  document.getElementById("vNote").textContent = t("v_note");
+}
+
+function renderRules() {
+  const p30 = R.predictability["30/30"].pooled, p90 = R.predictability["30/90"].pooled;
+  const slices = Object.entries(R.predictability["90/90"].by_slice).filter(([, s]) => s.n > 3);
+  const worst = slices.reduce((a, b) => (b[1].spearman < a[1].spearman ? b : a));
+  const pairs = R.persistence.pairs, venues = R.persistence.venues;
+  const ratio = v => v.venues.hyperliquid_futures / ((v.venues.binance_futures + v.venues.bybit_futures) / 2);
+  const ht = R.regime.hold_through, best = R.regime.configs[0];
+  const beat = R.regime.configs.filter(c => c.mean_cap_pct > ht.mean_cap_pct).length;
+  const wf = R.walk_forward[0];
+  const lo = bucket("30/30", 0.3, 0.5);
+  const csSlices = Object.values(R.predictability["30/30"].by_slice).filter(s => s.n > 3).map(s => s.cross_sectional_spearman).filter(x => x != null);
+  const wsWorst = slices.reduce((a, b) => ((b[1].within_series_spearman ?? 9) < (a[1].within_series_spearman ?? 9) ? b : a));
+  const O = R.oracle;
+  const items = [
+    t("ru_1", { cs30: num(p30.cross_sectional_spearman, 2), cs90: num(p90.cross_sectional_spearman, 2), cs_lo: num(Math.min(...csSlices), 2), cs_hi: num(Math.max(...csSlices), 2),
+      ws30: num(p30.within_series_spearman, 2), ws90: num(p90.within_series_spearman, 2), worst_slice: wsWorst[0], worst_ws: num(wsWorst[1].within_series_spearman, 2),
+      sp30: num(p30.spearman, 2), n: num(p30.n, 0) }),
+    t("ru_2", { b_lo: lo ? pct(lo.fwd_net_cap_pct, 2, true) : "—", b_lo_share: lo ? pct(lo.fwd_net_positive_share * 100, 0) : "—",
+      p05: pct(posAbove("30/90", 0.5) * 100, 0), p10: pct(posAbove("30/90", 1.0) * 100, 0), p20: pct(posAbove("30/90", 2.0) * 100, 0) }),
+    t("ru_3", { pe1: num(pairs[0].spearman, 2), pe2: num(pairs[1] ? pairs[1].spearman : null, 2),
+      pu1: pairs[0].within_usdt ? num(pairs[0].within_usdt.spearman, 2) : "—", pu2: pairs[1] && pairs[1].within_usdt ? num(pairs[1].within_usdt.spearman, 2) : "—",
+      tu1: pairs[0].within_usdt ? pairs[0].within_usdt.top_overlap : "—", tu2: pairs[1] && pairs[1].within_usdt ? pairs[1].within_usdt.top_overlap : "—", tq: pairs[0].within_usdt ? pairs[0].within_usdt.top_quarter : "—",
+      prem1: num(ratio(venues[0]), 1), prem2: num(ratio(venues[1]), 1), prem3: num(ratio(venues[2]), 1) }),
+    t("ru_4"),
+    t("ru_5", { beat, cfgs: R.regime.configs.length, gap: num(ht.mean_cap_pct - best.mean_cap_pct, 2), wfgap: num(wf.test_hold_through.mean_cap_pct - wf.test_chosen.mean_cap_pct, 2),
+      free: O ? pct(O.free.mean_edge_cap_pct, 2, true) : "—", lazy: O ? pct(O.lazy7.mean_edge_cap_pct, 2, true) : "—",
+      exbnb: O && O.free.excluding_bnb ? pct(O.free.excluding_bnb.mean_edge_cap_pct, 2, true) : "—", btceth: O && O.free.btc_eth_only ? pct(O.free.btc_eth_only.mean_edge_cap_pct, 2, true) : "—" }),
+  ];
+  if (R.allocation && R.oracle) {
+    const a = R.allocation.schemes.all, h = R.allocation.schemes.no_hyperliquid;
+    const yrs = Math.max(1, Math.round((R.to_ms - R.from_ms) / (365 * 86400000)));
+    items.push(t("ru_6", { d_all: num(a.weighted.cap_pct - a.equal.cap_pct, 2), d_nohl: h ? num(h.weighted.cap_pct - h.equal.cap_pct, 2) : "—",
+      d_nohl_yr: h ? num((h.weighted.cap_pct - h.equal.cap_pct) / yrs, 2) : "—",
+      null_all: num(a.null_weighted_mean_cap_pct - a.equal.cap_pct, 2), null_nohl: h ? num(h.null_weighted_mean_cap_pct - h.equal.cap_pct, 2) : "—",
+      sd_all: num(a.null_weighted_sd_cap_pct, 2), sd_nohl: h ? num(h.null_weighted_sd_cap_pct, 2) : "—",
+      lazy: pct(R.oracle.lazy7.mean_edge_cap_pct, 2, true) }));
+  }
+  document.getElementById("ruleList").innerHTML = items.map(x => `<li>${esc(x)}</li>`).join("");
+}
+
+function renderPred() {
+  const keys = Object.keys(R.predictability);
+  document.getElementById("corrTable").innerHTML = tbl(
+    [{ label: t("th_horizon") }, { label: t("th_n"), num: 1 }, { label: t("th_spearman"), num: 1 }, { label: t("th_cs"), num: 1 }, { label: t("th_ws"), num: 1 }],
+    keys.map(k => { const p = R.predictability[k].pooled; return [`${R.predictability[k].trailing_days}d → ${R.predictability[k].forward_days}d`, num(p.n, 0), num(p.spearman, 3), num(p.cross_sectional_spearman, 3), num(p.within_series_spearman, 3)]; }));
+  const sl = R.predictability["30/30"].by_slice, sl9 = R.predictability["90/90"].by_slice;
+  const cw = s => s && s.n > 3 ? `${num(s.cross_sectional_spearman, 2)} / ${num(s.within_series_spearman, 2)}` : "—";
+  document.getElementById("sliceCorrTable").innerHTML = tbl(
+    [{ label: t("th_slice") }, { label: "30d → 30d", num: 1 }, { label: "90d → 90d", num: 1 }, { label: t("th_n"), num: 1 }],
+    Object.keys(sl).map(k => [k, cw(sl[k]), cw(sl9[k]), num(sl[k].n, 0)]));
+  const b30 = R.predictability["30/30"].pooled.buckets, b90 = R.predictability["30/90"].pooled.buckets;
+  document.getElementById("bucketTable").innerHTML = tbl(
+    [{ label: t("th_bucket") }, { label: t("th_n"), num: 1 }, { label: `${t("th_fwd")} 30d`, num: 1 }, { label: `${t("th_net")} 30d`, num: 1 }, { label: `${t("th_posshare")} 30d`, num: 1 },
+     { label: `${t("th_fwd")} 90d`, num: 1 }, { label: `${t("th_net")} 90d`, num: 1 }, { label: `${t("th_posshare")} 90d`, num: 1 }],
+    b30.map(b => { const c = b90.find(x => x.lo === b.lo) || {};
+      return [`${b.lo <= -90 ? "< 0" : num(b.lo, 1) + " – " + (b.hi >= 90 ? "∞" : num(b.hi, 1))}`, num(b.n, 0), num(b.mean_fwd_bps, 3),
+        { v: pct(b.fwd_net_cap_pct, 2, true), cls: cls(b.fwd_net_cap_pct) }, pct(b.fwd_net_positive_share * 100, 0),
+        num(c.mean_fwd_bps, 3), { v: pct(c.fwd_net_cap_pct, 2, true), cls: cls(c.fwd_net_cap_pct) }, c.fwd_net_positive_share == null ? "—" : pct(c.fwd_net_positive_share * 100, 0)]; }));
+  const best = keys.reduce((a, b) => R.predictability[b].pooled.spearman > R.predictability[a].pooled.spearman ? b : a);
+  const notes = Object.entries(sl9).filter(([, s]) => s.n > 3).map(([k, s]) => `${k}: ${num(s.spearman, 2)}`).join("; ");
+  document.getElementById("prRead").textContent = t("pr_read", { best_h: best.replace("/", "d → ") + "d", best_sp: num(R.predictability[best].pooled.spearman, 2), slice_note: notes });
+}
+
+function renderPers() {
+  const P = R.persistence;
+  document.getElementById("persTable").innerHTML = tbl(
+    [{ label: t("th_from") }, { label: t("th_to") }, { label: t("th_n"), num: 1 }, { label: t("th_spearman"), num: 1 }, { label: t("th_pearson"), num: 1 }, { label: t("th_overlap"), num: 1 }, { label: t("th_bottom"), num: 1 }],
+    P.pairs.map(p => [p.from_slice, p.to_slice, num(p.n, 0), num(p.spearman, 2), num(p.pearson, 2), `${p.top_overlap}/${p.top_quarter}`, `${p.bottom_overlap}/${p.top_quarter}`]));
+  const venues = Object.keys(P.venues[0].venues).sort();
+  document.getElementById("venueTable").innerHTML = tbl(
+    [{ label: t("th_slice") }, ...venues.map(v => ({ label: v.replace("_futures", ""), num: 1 }))],
+    P.venues.map(s => [s.slice, ...venues.map(v => num(s.venues[v], 3))]));
+  const tops = P.slices.map(s => Object.entries(s.series).sort((a, b) => b[1].mean_bps - a[1].mean_bps).slice(0, 8));
+  document.getElementById("topTable").innerHTML = tbl(
+    P.slices.map(s => ({ label: `${s.from} → ${s.to}` })),
+    Array.from({ length: 8 }, (_, i) => tops.map(tp => tp[i] ? `${sname(tp[i][0])} ${num(tp[i][1].mean_bps, 2)}` : "—")));
+  const ratios = P.venues.map(v => num(v.venues.hyperliquid_futures / ((v.venues.binance_futures + v.venues.bybit_futures) / 2), 2) + "×").join(" / ");
+  const always = tops.reduce((acc, tp) => acc.filter(k => tp.some(x => x[0] === k)), tops[0].map(x => x[0])).map(sname).join(", ") || "—";
+  document.getElementById("peRead").textContent = t("pe_read", { ratios, always,
+    pu: P.pairs.map(p => p.within_usdt ? num(p.within_usdt.spearman, 2) : "—").join(" → "),
+    tu: P.pairs.map(p => p.within_usdt ? `${p.within_usdt.top_overlap}/${p.within_usdt.top_quarter}` : "—").join(" → ") });
+}
+
+function renderRegime() {
+  const G = R.regime, ht = G.hold_through, best = G.configs[0];
+  const beat = G.configs.filter(c => c.mean_cap_pct > ht.mean_cap_pct).length;
+  figures(document.getElementById("rgFigures"), [
+    { v: pct(ht.mean_cap_pct, 2, true), l: t("fig_ht"), cls: cls(ht.mean_cap_pct) },
+    { v: pct(best.mean_cap_pct, 2, true), l: t("fig_best"), cls: cls(best.mean_cap_pct) },
+    { v: num(best.trips_per_series, 1), l: t("fig_trips") },
+    { v: pct(best.in_share * 100, 0), l: t("fig_in") },
+    { v: `${beat}/${G.configs.length}`, l: t("fig_beat"), cls: beat ? "gain" : "loss" },
+  ]);
+  document.querySelector("#regime h3[data-i18n=rg_cfg_h]").textContent = t("rg_cfg_h", { cfgs: G.configs.length });
+  const row = (label, r) => [label, { v: pct(r.mean_cap_pct, 2, true), cls: cls(r.mean_cap_pct) }, `${r.positive}/${r.series}`,
+    num(r.trips_per_series, 1), pct(r.in_share * 100, 0), r.by_year_cap_pct.map(x => pct(x, 2, true)).join(" · "),
+    pct((r.usdt || {}).mean_cap_pct, 2, true), pct((r.bridged || {}).mean_cap_pct, 2, true)];
+  document.getElementById("cfgTable").innerHTML = tbl(
+    [{ label: t("th_cfg") }, { label: t("th_cap"), num: 1 }, { label: t("th_pos"), num: 1 }, { label: t("th_trips"), num: 1 }, { label: t("th_in"), num: 1 },
+     { label: `${t("th_byyear")} (${G.year_labels.map(l => l.slice(0, 4)).join(" · ")})`, num: 1 }, { label: t("th_usdt"), num: 1 }, { label: t("th_bridged"), num: 1 }],
+    [row(t("gl_ht"), ht), ...G.configs.slice(0, 8).map(r => row(`#${r.rank} ${cfgLabel(r)}`, r))]);
+  document.getElementById("rgwfTable").innerHTML = tbl(
+    [{ label: t("th_train") }, { label: t("th_chosen") }, { label: t("th_test") }, { label: t("th_ontest"), num: 1 }, { label: t("th_rank"), num: 1 }, { label: t("th_trips"), num: 1 }, { label: t("th_ht"), num: 1 }, { label: t("th_testbest"), num: 1 }, { label: t("th_beat"), num: 1 }],
+    R.walk_forward.map(w => [w.train, `${cfgLabel(w.chosen)} (${pct(w.chosen.mean_cap_pct, 2, true)})`, w.test,
+      { v: pct(w.test_chosen.mean_cap_pct, 2, true), cls: cls(w.test_chosen.mean_cap_pct) }, `${w.test_chosen.rank}/${w.test_sets}`, num(w.test_chosen.trips_per_series, 1),
+      { v: pct(w.test_hold_through.mean_cap_pct, 2, true), cls: cls(w.test_hold_through.mean_cap_pct) },
+      `${cfgLabel(w.test_best)} ${pct(w.test_best.mean_cap_pct, 2, true)}`, `${w.test_sets_beating_hold_through}/${w.test_sets}`]));
+  const wfs = R.walk_forward.map(w => `${w.train} → ${w.test}: ${pct(w.test_chosen.mean_cap_pct, 2, true)} vs ${pct(w.test_hold_through.mean_cap_pct, 2, true)}`).join("; ");
+  document.getElementById("rgRead").textContent = t("rg_read", { beat, cfgs: G.configs.length, ht: pct(ht.mean_cap_pct, 2, true), bestcfg: cfgLabel(best),
+    best: pct(best.mean_cap_pct, 2, true), gap: num(ht.mean_cap_pct - best.mean_cap_pct, 2), trips: num(best.trips_per_series, 1), wf: wfs });
+}
+
+function renderWF() {
+  if (!F) { document.getElementById("wf").hidden = true; return; }
+  const wins = Object.keys(F.windows);
+  const nsets = Math.max(...wins.map(w => F.windows[w].sets));
+  document.getElementById("wfIntro").textContent = t("wf_intro", { sets: num(nsets, 0), universe: t(F.universe === "full" ? "universe_full" : "universe_all") });
+  document.getElementById("winTable").innerHTML = tbl(
+    [{ label: t("th_window") }, { label: t("th_series"), num: 1 }, { label: t("th_sets"), num: 1 }, { label: t("th_best_set") }, { label: t("th_cap"), num: 1 },
+     { label: t("th_median"), num: 1 }, { label: t("th_ht"), num: 1 }, { label: t("th_beat"), num: 1 }, { label: t("th_applied"), num: 1 }, { label: t("th_rank"), num: 1 }],
+    wins.map(w => { const W = F.windows[w]; return [`${day(W.from_ms)} → ${day(W.to_ms)}`, num(W.series, 0), num(W.sets, 0), setLabel(W.best),
+      { v: pct(W.best.mean_cap_pct, 2, true), cls: cls(W.best.mean_cap_pct) }, pct(W.median_cap_pct, 2, true),
+      { v: pct(W.hold_through.mean_cap_pct, 2, true), cls: cls(W.hold_through.mean_cap_pct) }, `${W.beating_hold_through}/${W.sets}`,
+      W.applied ? { v: pct(W.applied.mean_cap_pct, 2, true), cls: cls(W.applied.mean_cap_pct) } : "—", W.applied ? `${W.applied.rank}/${W.sets}` : "—"]; }));
+  document.getElementById("pairTable").innerHTML = tbl(
+    [{ label: t("th_train") }, { label: t("th_chosen") }, { label: t("th_test") }, { label: t("th_ontest"), num: 1 }, { label: t("th_rank"), num: 1 }, { label: t("th_ht"), num: 1 }, { label: t("th_testbest"), num: 1 }, { label: t("th_applied"), num: 1 }],
+    F.pairs.map(p => { const a = F.windows[p.train], b = F.windows[p.test]; return [`${day(a.from_ms)} → ${day(a.to_ms)}`, `${setLabel(p.chosen)} (${pct(p.chosen.train.mean_cap_pct, 2, true)})`,
+      `${day(b.from_ms)} → ${day(b.to_ms)}`, p.chosen_on_test ? { v: pct(p.chosen_on_test.mean_cap_pct, 2, true), cls: cls(p.chosen_on_test.mean_cap_pct) } : "—",
+      p.chosen_on_test ? `${p.chosen_on_test.rank}/${p.test_sets}` : "—", { v: pct(p.test_hold_through.mean_cap_pct, 2, true), cls: cls(p.test_hold_through.mean_cap_pct) },
+      `${setLabel(p.test_best)} ${pct(p.test_best.mean_cap_pct, 2, true)}`, p.applied_on_test ? `${pct(p.applied_on_test.mean_cap_pct, 2, true)} (${p.applied_on_test.rank})` : "—"]; }));
+  const cards = [];
+  for (const p of F.pairs) {
+    for (const a of ["min_trailing_mean_bps", "trailing_mean_days"]) {
+      const tr = p.axes_train[a], te = p.axes_test[a];
+      if (!tr || !te) continue;
+      cards.push(`<div class="small"><h3>${esc(a === "min_trailing_mean_bps" ? t("th_trail") : t("th_days"))} — ${esc(p.train)} → ${esc(p.test)}</h3><div class="tablewrap"><table>` +
+        tbl([{ label: a === "min_trailing_mean_bps" ? t("th_trail") : t("th_days"), num: 1 }, { label: `${t("th_mean")} ${t("th_train").toLowerCase()}`, num: 1 }, { label: `${t("th_bestv")} ${t("th_train").toLowerCase()}`, num: 1 },
+              { label: `${t("th_mean")} ${t("th_test").toLowerCase()}`, num: 1 }, { label: `${t("th_bestv")} ${t("th_test").toLowerCase()}`, num: 1 }],
+          tr.map(v => { const w = te.find(x => Math.abs(x.value - v.value) < 1e-9) || {}; return [num(v.value, 1), { v: pct(v.mean_cap_pct, 2, true), cls: cls(v.mean_cap_pct) }, pct(v.best_cap_pct, 2, true),
+            { v: pct(w.mean_cap_pct, 2, true), cls: cls(w.mean_cap_pct) }, pct(w.best_cap_pct, 2, true)]; })) + `</table></div></div>`);
+    }
+  }
+  document.getElementById("axisGrid").innerHTML = cards.join("");
+  const reads = F.pairs.map(p => { const a = F.windows[p.train], b = F.windows[p.test]; return t("wf_pair_read", { train: `${day(a.from_ms)} → ${day(a.to_ms)}`, test: `${day(b.from_ms)} → ${day(b.to_ms)}`,
+    chosen: setLabel(p.chosen), chosen_train: pct(p.chosen.train.mean_cap_pct, 2, true), on_test: p.chosen_on_test ? pct(p.chosen_on_test.mean_cap_pct, 2, true) : "—",
+    rank: p.chosen_on_test ? p.chosen_on_test.rank : "—", sets: p.test_sets, ht: pct(p.test_hold_through.mean_cap_pct, 2, true), best: pct(p.test_best.mean_cap_pct, 2, true) }); }).join(" ");
+  const applied = wins.map(w => { const W = F.windows[w]; return W.applied ? `${day(W.from_ms)} → ${day(W.to_ms)} ${pct(W.applied.mean_cap_pct, 2, true)} (${W.applied.rank}/${W.sets})` : null; }).filter(Boolean).join("; ");
+  const offSpans = F.pairs.map(p => { const ax = p.axes_train.min_trailing_mean_bps; return ax ? null : null; });
+  const spanOf = W => { const off = W.axes && W.axes.min_trailing_mean_bps ? W.axes.min_trailing_mean_bps.find(v => v.value === 0) : null; return off ? off.best_cap_pct - off.mean_cap_pct : null; };
+  const spans = wins.map(w => spanOf(F.windows[w])).filter(x => x != null);
+  document.getElementById("wfRead").textContent = t("wf_read", { pairs_read: reads, applied_read: applied, off_span: spans.length ? `${num(Math.min(...spans) * 2, 2)}–${num(Math.max(...spans) * 2, 2)}` : "—" });
+}
+
+function renderOracle() {
+  const O = R.oracle;
+  if (!O) { document.getElementById("oracle").hidden = true; return; }
+  const yrs = O.year_labels.map(l => l.slice(0, 4)).join(" · ");
+  const fmtY = a => a.map(x => pct(x, 2, true)).join(" · ");
+  figures(document.getElementById("orFigures"), [
+    { v: pct(O.free.mean_edge_cap_pct, 2, true), l: t("fig_or_free"), cls: cls(O.free.mean_edge_cap_pct) },
+    { v: pct(O.lazy7.mean_edge_cap_pct, 2, true), l: t("fig_or_lazy"), cls: cls(O.lazy7.mean_edge_cap_pct) },
+    { v: num(O.lazy7.mean_switches, 1), l: t("fig_or_sw") },
+    { v: O.lazy7.series_clearing_one_trip_per_year.map(x => `${x}/${O.lazy7.series}`).join(" · "), l: t("fig_or_clear") },
+  ]);
+  document.getElementById("orTable").innerHTML = tbl(
+    [{ label: t("th_oracle") }, { label: t("th_edge"), num: 1 }, { label: `${t("th_byyear")} (${yrs})`, num: 1 }, { label: t("th_sw"), num: 1 }, { label: t("th_clear"), num: 1 }],
+    [[t("or_free"), { v: pct(O.free.mean_edge_cap_pct, 2, true), cls: cls(O.free.mean_edge_cap_pct) }, fmtY(O.free.mean_edge_by_year_cap_pct), num(O.free.mean_switches, 1), O.free.series_clearing_one_trip_per_year.join(" · ")],
+     [t("or_lazy"), { v: pct(O.lazy7.mean_edge_cap_pct, 2, true), cls: cls(O.lazy7.mean_edge_cap_pct) }, fmtY(O.lazy7.mean_edge_by_year_cap_pct), num(O.lazy7.mean_switches, 1), O.lazy7.series_clearing_one_trip_per_year.join(" · ")]]);
+  document.getElementById("orRead").textContent = t("or_read", { free: pct(O.free.mean_edge_cap_pct, 2, true), free_y: fmtY(O.free.mean_edge_by_year_cap_pct),
+    lazy: pct(O.lazy7.mean_edge_cap_pct, 2, true), lazy_y: fmtY(O.lazy7.mean_edge_by_year_cap_pct),
+    exbnb: O.free.excluding_bnb ? pct(O.free.excluding_bnb.mean_edge_cap_pct, 2, true) : "—", btceth: O.free.btc_eth_only ? pct(O.free.btc_eth_only.mean_edge_cap_pct, 2, true) : "—" });
+}
+
+function renderAlloc() {
+  const A = R.allocation;
+  if (!A) { document.getElementById("alloc").hidden = true; return; }
+  document.getElementById("alIntro").textContent = t("al_intro", { n: R.series.length, reb: A.rebalance_days, trail: A.trail_days, cap: num(A.cap_mult, 0), draws: (A.schemes.all || {}).null_draws || "—" });
+  const yrs = R.oracle ? R.oracle.year_labels.map(l => l.slice(0, 4)).join(" · ") : "";
+  const rows = [];
+  for (const [pool, S] of Object.entries(A.schemes)) {
+    for (const sch of ["equal", "weighted", "topq"]) {
+      const r = S[sch];
+      rows.push([t("pool_" + pool), t("sch_" + sch), num(S.series, 0), { v: pct(r.cap_pct, 2, true), cls: cls(r.cap_pct) },
+        r.by_year_cap_pct.map(x => pct(x, 2, true)).join(" · "), pct(r.turnover_cost_cap_pct, 2), pct((r.venue_weight.hyperliquid_futures || 0) * 100, 0)]);
+    }
+    rows.push([t("pool_" + pool), t("sch_null"), num(S.series, 0), `${pct(S.null_weighted_mean_cap_pct, 2, true)} / ${pct(S.null_weighted_max_cap_pct, 2, true)}`, "—", "—", "—"]);
+  }
+  document.getElementById("alTable").innerHTML = tbl(
+    [{ label: t("th_pool") }, { label: t("th_scheme") }, { label: t("th_series"), num: 1 }, { label: t("th_cap"), num: 1 }, { label: `${t("th_byyear")} (${yrs})`, num: 1 }, { label: t("th_turn"), num: 1 }, { label: t("th_hl"), num: 1 }], rows);
+  const a = A.schemes.all, h = A.schemes.no_hyperliquid;
+  document.getElementById("alRead").textContent = t("al_read", { d_all: num(a.weighted.cap_pct - a.equal.cap_pct, 2), null_all: num(a.null_weighted_mean_cap_pct - a.equal.cap_pct, 2),
+    d_nohl: h ? num(h.weighted.cap_pct - h.equal.cap_pct, 2) : "—", null_nohl: h ? num(h.null_weighted_mean_cap_pct - h.equal.cap_pct, 2) : "—" });
+}
+
+function renderMethod() {
+  document.getElementById("meList").innerHTML = ["me_1", "me_2", "me_3", "me_4", "me_5", "me_6"].map(k => `<li>${esc(t(k))}</li>`).join("");
+  document.getElementById("meGloss").innerHTML = [["gl_sp", "gl_sp_d"], ["gl_bps", "gl_bps_d"], ["gl_ht", "gl_ht_d"], ["gl_wf", "gl_wf_d"]].map(([k, d]) => `<div><dt>${esc(t(k))}</dt><dd>${esc(t(d))}</dd></div>`).join("");
+  document.getElementById("footText").textContent = t("foot", META);
+}
+
+function render() {
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("#langSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  document.title = t("title");
+  renderVerdict(); renderRules(); renderPred(); renderPers(); renderRegime(); renderOracle(); renderAlloc(); renderWF(); renderMethod();
+}
+document.querySelectorAll("#langSeg button").forEach(b => b.onclick = () => { lang = b.dataset.lang; render(); });
+render();
+</script>

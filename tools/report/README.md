@@ -250,6 +250,70 @@ một replay), mà corpus backfill hôm nay thì mọi mốc của 2024 đều g
 2026-09-09, nên hai lát đầu ra RỖNG không báo lỗi. Tham số `recorded_by_ms`
 được thêm cho đúng trường hợp này; `--slices` truyền giờ hiện tại.
 
+## Quy luật từ corpus và walk-forward (`regime.py`, `forward.py`)
+
+Câu hỏi "đúc kết quy luật và bộ ngưỡng mạnh nhất để dùng về sau" có hai
+nửa, và mỗi nửa có một công cụ.
+
+**`regime.py`** đọc thẳng `funding_history` (không lọc `recorded_at_ms` —
+corpus backfill một ngày thì mọi mốc 2023 đều mang dấu 2026) và trả lời ba
+câu: (1) DỰ BÁO — funding trung bình trượt D ngày của một chuỗi có nói gì về
+F ngày tới không (Pearson/Spearman gộp trên chuỗi × ngày lấy mẫu mỗi 7
+ngày, theo từng năm, và bảng bucket "trượt ở khoảng này thì F ngày tới trung
+bình bao nhiêu, ròng sau một vòng phí dương bao nhiêu lần"); (2) BỀN — xếp
+hạng chuỗi theo năm có giữ không (Spearman năm → năm, top-8 trùng nhau,
+funding theo sàn); (3) MỐC CHUẨN REGIME — chỉ ở trong chuỗi khi trượt D ngày
+≥ X, ra khi tụt dưới X_ra (= X, X/2, hoặc 0), trả một vòng phí mỗi lần ra, so
+với giữ suốt trên cùng chuỗi và cùng chi phí, RỒI walk-forward: chọn (X, D,
+X_ra) trên một khoảng, đọc trên khoảng khác cạnh bộ tốt nhất in-sample của
+khoảng đó; (4) TRẦN CỦA MỌI LUẬT THOÁT — quy hoạch động hai trạng thái biết
+trước toàn bộ funding, nửa vòng phí mỗi lần đổi trạng thái, mở và đóng ở
+trạng thái ngoài (không đổi trạng thái = đúng giữ suốt của `hold.py`), thêm
+bản "chậm" chỉ được quyết định mỗi 7 ngày; (5) PHÂN BỔ — cùng vốn cân lại
+mỗi 90 ngày theo funding trượt 90 ngày (trần 2× phần đều, trần sàn ½, nửa
+vòng phí của chuỗi trên phần vốn di chuyển), cạnh "top ¼ chia đều", phép so
+ngẫu nhiên (cùng trọng số gán cho chuỗi xáo trộn, 20 lần) và bản không có
+hyperliquid — vì phần bù của sàn một mình đã làm mọi cách "theo funding"
+trông khôn. Tất cả là số học Python từ corpus như `hold.py` — KHÔNG phải luật
+Go; luật nào trang này ủng hộ phải viết trong `internal/strategy` và replay
+bằng `cmd/backtest` trước khi gọi là kết quả.
+
+**`forward.py`** làm walk-forward trên LƯỚI GO: `cmd/backtest -from/-to`
+(thêm 2026-09-09) cho cùng một lưới chạy trên các cửa sổ lịch cố định; script
+lấy bộ tốt nhất của cửa sổ HỌC và đọc kết quả của đúng bộ đó trên cửa sổ
+KIỂM, cạnh giữ suốt và cạnh bộ tốt nhất mà cửa sổ kiểm tự chọn (trần
+in-sample). `--universe full` chỉ xếp trên các chuỗi có corpus phủ ≥ 95% cửa
+sổ (mặc định), `all` xếp trên mọi chuỗi chạy được.
+
+```bash
+L=/tmp/long                      # bản sao DB 3 năm và config trỏ vào nó, xem mục trên
+python3 tools/report/regime.py --db $L/scanner.db --config $L/config.yaml --runs $L/runs36.csv --out $L/regime.json
+COMMON=(-sweep -min-rate-bps 0.3,0.5 -persist 3,6 -min-net-apr 0.02 -exit-net-apr 0 -exit-persist 48 \
+        -exit-neg-bps 2.0 -exit-neg-periods 2 -exit-neg-cum 0.25,1.0 -min-hold 0,1.0 -notional 50000 -hold-days 90 \
+        -max-basis 2.0 -max-basis-widen 2.0)
+for w in "train24 2023-09-09 2025-09-09" "test12 2025-09-09 2026-09-09" "year1 2023-09-09 2024-09-09" \
+         "year2 2024-09-09 2025-09-09" "last24 2024-09-09 2026-09-09"; do set -- $w
+  $L/backtest -config $L/config.yaml -from $2 -to $3 "${COMMON[@]}" -trail-bps 0 -trail-days 0 -csv $L/wf-$1-off.csv
+  $L/backtest -config $L/config.yaml -from $2 -to $3 "${COMMON[@]}" -trail-bps 0.3,0.5,0.7,1.0 -trail-days 30,90,180 -csv $L/wf-$1-on.csv
+done
+python3 tools/report/forward.py --db $L/scanner.db --config $L/config.yaml \
+  --window train24=$L/wf-train24-off.csv,$L/wf-train24-on.csv --window test12=... --window year1=... --window year2=... --window last24=... \
+  --pair train24:test12 --pair last24:year1 --pair year1:year2 --pair year2:test12 --universe full --out $L/forward.json
+python3 -c "import json; json.dump({'regime': json.load(open('$L/regime.json')), 'forward': json.load(open('$L/forward.json'))}, open('$L/study.json','w'))"
+python3 tools/report/hold_build.py --json $L/study.json --template tools/report/regime.template.html \
+  --commit $(git rev-parse --short HEAD) --title "Quy luật ba năm" --out docs/reports/regime-3y-<ngày>.html
+```
+
+Hai điều `cmd/backtest` phải làm để cửa sổ cố định có nghĩa, cả hai đều
+thiếu ở lần chạy đầu ngày 2026-09-09: (a) nạp funding **200 ngày TRƯỚC** cửa
+sổ (`fundingHistoryLookbackDays`) — engine chỉ quyết định trong cửa sổ,
+nhưng cổng trượt 180 ngày nhìn ngược vào lịch sử đã nạp, nên không nạp thì
+nửa đầu của cửa sổ kiểm một năm là vùng mù và walk-forward so luật với chính
+thời gian khởi động của nó; (b) định giá vòng phí trên **sổ mới nhất hiện
+có** thay vì sổ trước ngày cuối cửa sổ — depth không backfill được, nên tìm
+sổ ở cuối một cửa sổ năm 2024 từ chối toàn bộ 832 dòng ("không định giá
+được"). `cost_book_sampled_at_ms` trong CSV nói sổ đó đo lúc nào.
+
 ## Bộ ngưỡng vốn và rủi ro (`capital.py`)
 
 Xếp hạng một lưới theo hai thứ mà các trang trước không có: **vốn danh mục**

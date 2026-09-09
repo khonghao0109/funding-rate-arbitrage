@@ -35,6 +35,8 @@ import (
 func main() {
 	configPath := flag.String("config", "config.yaml", "configuration file")
 	months := flag.Int("months", 6, "how many months back to replay")
+	from := flag.String("from", "", "replay window start, YYYY-MM-DD UTC (default: -months before the end)")
+	to := flag.String("to", "", "replay window end, YYYY-MM-DD UTC, exclusive (default: now)")
 	only := flag.String("symbol", "", "replay one symbol only")
 	sweep := flag.Bool("sweep", false, "sweep the entry threshold and persistence grid")
 	csvPath := flag.String("csv", "", "also write the results to this CSV file")
@@ -91,9 +93,9 @@ func main() {
 
 	ctx := context.Background()
 	now := time.Now().UTC()
-	window := backtest.Window{
-		FromMs: now.AddDate(0, -*months, 0).UnixMilli(),
-		ToMs:   now.UnixMilli(),
+	window, err := replayWindow(now, *months, *from, *to)
+	if err != nil {
+		log.Fatalf("window: %v", err)
 	}
 
 	series, err := buildSeries(ctx, db, cfg, *only, window)
@@ -134,8 +136,12 @@ func main() {
 
 	results := backtest.Sweep(series, window, grid)
 
-	fmt.Printf("BACKTEST %d tháng · %s → %s · %d chuỗi × %d bộ tham số\n",
-		*months, stamp(window.FromMs), stamp(window.ToMs), len(series), len(grid))
+	span := fmt.Sprintf("%d tháng", *months)
+	if *from != "" || *to != "" {
+		span = "cửa sổ cố định"
+	}
+	fmt.Printf("BACKTEST %s · %s → %s · %d chuỗi × %d bộ tham số\n",
+		span, stamp(window.FromMs), stamp(window.ToMs), len(series), len(grid))
 	if dropped > 0 {
 		fmt.Printf("(bỏ %d tổ hợp có sàn thoát ≥ sàn vào — config.yaml cũng từ chối nạp chúng)\n", dropped)
 	}
@@ -195,7 +201,14 @@ func main() {
 func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 	only string, window backtest.Window) ([]backtest.Series, error) {
 
-	books, err := latestBooks(ctx, db, cfg, only, window.ToMs)
+	// The round trip is priced on the NEWEST book there is, whatever the window:
+	// depth cannot be backfilled (CLAUDE.md), so a window pinned to the past has
+	// no book of its own, and pricing it on the newest one is exactly what every
+	// "last N months" replay already did — the CSV's cost_book_sampled_at_ms says
+	// when that book was measured, and the assumptions block says it is one
+	// sample held fixed. Looking for a book at the window's END refused every
+	// series of every pinned window on 2026-09-09 (all 832 rows "unpriceable").
+	books, err := latestBooks(ctx, db, cfg, only, time.Now().UTC().UnixMilli())
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +251,7 @@ func buildSeries(ctx context.Context, db *store.Store, cfg config.Config,
 		if only != "" && symbol.Symbol != only {
 			continue
 		}
-		rows, err := db.FundingHistory(ctx, symbol.Symbol, window.FromMs, window.ToMs)
+		rows, err := db.FundingHistory(ctx, symbol.Symbol, fundingLoadFrom(window), window.ToMs)
 		if err != nil {
 			return nil, fmt.Errorf("funding history for %s: %w", symbol.Symbol, err)
 		}
@@ -476,3 +489,48 @@ func printSweep(results []backtest.Result, top int) {
 }
 
 func stamp(ms int64) string { return time.UnixMilli(ms).UTC().Format("2006-01-02") }
+
+// fundingHistoryLookbackDays is how far BEFORE the window the funding corpus is
+// loaded. The engine decides only inside the window (every entry outside it is
+// skipped), but the checks a decision runs — persistence, and since 2026-09-09
+// the trailing mean over up to 180 days — look BACKWARDS through whatever
+// history was loaded. Loading from the window start alone made every pinned
+// window begin with a blind spot as long as the trailing horizon: a 180-day
+// selection gate could not admit anything for the first half of a one-year
+// test window, and the walk-forward compared a rule against its own warm-up.
+// 200 days covers the longest horizon the grid offers, with slack for the
+// one-interval tolerance checkTrailingMean allows.
+const fundingHistoryLookbackDays = 200
+
+func fundingLoadFrom(window backtest.Window) int64 {
+	return window.FromMs - int64(fundingHistoryLookbackDays)*24*3600*1000
+}
+
+// replayWindow is the span a replay covers. Left alone it is "the last N
+// months", which every report before 2026-09-09 used. -from / -to pin it to
+// calendar dates instead, which is what a walk-forward needs: a set chosen on
+// one span can only be TESTED on another if the two spans do not both end
+// today. -to alone keeps the N-month length and moves the end; -from alone
+// keeps today's end and moves the start; both together ignore -months.
+func replayWindow(now time.Time, months int, from, to string) (backtest.Window, error) {
+	end := now
+	if to != "" {
+		t, err := time.Parse("2006-01-02", to)
+		if err != nil {
+			return backtest.Window{}, fmt.Errorf("-to %q: want YYYY-MM-DD", to)
+		}
+		end = t
+	}
+	start := end.AddDate(0, -months, 0)
+	if from != "" {
+		t, err := time.Parse("2006-01-02", from)
+		if err != nil {
+			return backtest.Window{}, fmt.Errorf("-from %q: want YYYY-MM-DD", from)
+		}
+		start = t
+	}
+	if !start.Before(end) {
+		return backtest.Window{}, fmt.Errorf("window %s → %s is empty: -from must be before -to", stamp(start.UnixMilli()), stamp(end.UnixMilli()))
+	}
+	return backtest.Window{FromMs: start.UnixMilli(), ToMs: end.UnixMilli()}, nil
+}

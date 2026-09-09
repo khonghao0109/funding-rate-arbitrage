@@ -514,6 +514,57 @@ is 31× the grid's whole span and 260× the best-minus-applied gap.** The
 lever left is WHEN and WHERE to be in (the trailing-mean selection key,
 still 0), to be measured on this corpus. `config.yaml` unchanged.
 
+**Six regularities were then distilled from the 3-year corpus (2026-09-09,
+report `docs/reports/regime-3y-2026-09-09.html`; tools `tools/report/regime.py`
+and `forward.py`; `cmd/backtest` gained `-from/-to`, a 200-day funding
+LOOKBACK before the window so trailing checks are not blind at the start, and
+prices pinned windows on the NEWEST book — looking for a book at a past
+window's end had refused every series).** On the 32 series covering all
+three years, as the adversarial review of 2026-09-09 left them: (1) what is
+predictable is the RANKING across series at a date, not a series' own
+level — cross-sectional Spearman ≈ 0.55–0.63 at every horizon and in every
+year, within-series ≈ 0.45 at 30 → 30 but ≈ 0 at 30 → 90 in 2024-25 and
++0.40 / −0.47 / −0.03 at 90 → 90 by year; the pooled +0.63 mixes the two on
+overlapping weekly samples that start 180 days into the corpus; (2) the
+threshold that pays a round trip is the series' OWN cost ÷ settlements in
+the hold, not a universal number — ≈ 0.5 bps/8h at the 0.45% mean cost
+(0.33 at BTC/ETH's 0.30%, 0.8 at NEAR's 0.74%), and it moved from ≈ 0.25 in
+2024-25 to ≈ 0.8 in 2025-26; above it the forward 90-day net is positive
+91–98% against an 80% base rate — a SELECTION rule, not timing; (3) what
+persists across years is the VENUE (hyperliquid 2.0 / 2.0 / 2.3× the USDT
+venues, quote-bridged) and BNB at the bottom: year-to-year Spearman +0.75 /
++0.40 on 32 series but only +0.48 / +0.18 inside the 24 USDT series (top-6
+overlap 3/6 then 1/6), so coin ranking inside a venue is not something to
+size on; (4) the LEVEL does not persist (1.41 → 0.81 → 0.30 bps/8h;
+hold-through 7.49 → 4.20 → 1.42% on the same 32; the 5–15% band existed only
+in 2023-24 — one bull phase and its decay, no information about recurrence);
+(5) timing and exits are bounded: 0/54 regime in/out benchmarks beat
+hold-through, and the **oracle ceiling** — a two-state DP with perfect
+foresight and half a round trip per switch, verified by brute force — adds
+only **+0.83% on capital over THREE years** (+0.74% with weekly decisions),
+53% of it on the three BNB series (the one coin where holding loses), +0.43
+without BNB, +0.07 on BTC/ETH; (6) the lever is ALLOCATION, and most of it
+is the venue: the same capital rebalanced quarterly ∝ trailing 90-day
+funding (cap 2× equal, equal weights until the horizon is covered) makes
++15.55% vs +13.56% equal-weight over 3 years (+1.99; null +12.86 ± 0.25), of
+which ≈ +1.4 is the static hyperliquid tilt and **+0.46 (≈ 0.15%/yr) is
+within-venue selection** (no-hyperliquid +11.15 vs +10.69; null +10.07 ±
+0.12) — a Python benchmark; an allocation rule belongs to phases 4–5, and
+for a 1–2 position account it collapses to "100% in last quarter's best
+hyperliquid series". **Walk-forward on the Go grid** (208 sets × 5 calendar
+windows): the best set of EVERY window has selection off, entry 0.3 bps,
+persistence 3 or 6, C 1.0; the applied set ranks 5–11/208 everywhere; a set
+chosen on any train window lands within 0.05 of the test window's best and
+of hold-through — but the 16 selection-off sets span only 0.13–0.23 points
+per window and only C moves them (~0.1), so the walk-forward validates "do
+not leave", not the applied set over its siblings; selection ON lowers the
+universe mean on every window by the idle-capital denominator, not by the
+signal. So the applied block stays; the stronger thing is not a threshold
+but two rules outside `strategy`: enter only series whose trailing 30–90d
+funding clears that series' own cost-crossing, and move capital between
+series by trailing funding — knowing the second is mostly "hold more
+hyperliquid".
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
