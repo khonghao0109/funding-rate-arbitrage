@@ -437,6 +437,24 @@ new set makes 83 trades and pays $19,709 for the same funding stream. **The
 running 3.5 process is unaffected** — it loaded its config once — so its
 journal is still the `2328307` block and restarting would reset the 14 days.
 
+**Re-measured on the applied set the same day** (`0773a73`, report
+`docs/reports/backtest-applied-2026-09-09.html`, tool `tools/report/applied.py`
++ `applied.template.html`): 12 months, 74 series → **+0.871%/yr on capital per
+series**, 62/74 positive, 1.12 trades/series, hold-through +0.924%; 6 months
++0.443% vs +0.469%; 3 months +0.277% vs +0.315%. Three plain runs of the same
+universe differing in ONE named thing, diffed as applied − other: the block
+it replaced (basis 1.0/0.5, M 0) made −0.065% at 344 trades → **+0.937
+points**, 19 series moved, HYPE·kraken alone +31.86; the basis exit fully OFF
+(100/100) makes +0.888% at 78 trades → the finite guard costs 0.016; M 0
+makes +0.862% at 90 trades → M=1 adds 0.009. A 324-set grid around the
+applied set (rate 0.3/0.5/0.8 × persist 3/6 × N 24/48/96 × M 0/1 × basis
+1/2/100 × widen 1/2/100): all 324 positive, median +0.789%, the applied set
+ranks **93/324**, the best (0.3/3, N 24, M 1, basis off) is +0.917%, 0.046
+above it, and **0/324 beat hold-through**. Per axis: persistence 3 over 6 is
+worth 0.053 grid-mean points and is the largest axis left; basis 1.0 → 2.0
+is +0.075 and 2.0 → off only +0.004; widen 1.0 → 2.0 is +0.094 and 2.0 → off
++0.005; N and M are flat. `config.yaml` was not moved on this grid.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only

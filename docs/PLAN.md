@@ -2371,6 +2371,47 @@ trả 71.954 USD phí vòng cho 11.566 USD funding; bộ mới còn 83 lệnh, p
 đổi — nhật ký của nó vẫn là khối `2328307` — và cổng 3.5 vẫn so nhật ký đó
 với backtest của đúng khối ấy.
 
+#### Chạy lại bộ đã áp dụng ✅ (2026-09-09, `docs/reports/backtest-applied-2026-09-09.html`)
+
+Cùng binary từ `0773a73`, đúng `config.yaml` sau khi đổi, 13 cặp — 85 chuỗi,
+74 chạy được, 11 bị từ chối nêu tên. Trên VỐN, trung bình mỗi chuỗi:
+
+| Cửa sổ | Bộ đã áp dụng | Giữ suốt | Chuỗi dương | Lệnh/chuỗi | Thắng giữ suốt |
+|---|---|---|---|---|---|
+| 12 tháng | **+0,871%** | +0,924% | 62/74 | 1,12 | 6/74 |
+| 6 tháng | +0,443% | +0,469% | 62/74 | 1,00 | 25/74 |
+| 3 tháng | +0,277% | +0,315% | 62/74 | 1,00 | 11/74 |
+
+Con số 12 tháng tái hiện đúng dòng "bộ đề xuất" của lưới vốn–rủi ro
+(+0,872%, 62/74, 1,12), chênh 0,001 do mốc cửa sổ trôi.
+
+**Ba phép so, mỗi phép một lượt chạy thường trên cùng 74 chuỗi, chỉ khác một
+thứ (chênh = bộ đã áp dụng trừ bộ kia):**
+- **Bộ cũ mà nó thay** (basis 1,0/0,5, M 0, lấy từ `git show 0773a73~1`):
+  −0,065% với 344 lệnh và 55/74 chuỗi dương → chênh **+0,937 điểm**, 19
+  chuỗi đổi, gần hết ở nhóm ghép cầu; HYPE·kraken một mình +31,86 điểm.
+- **Tắt hẳn lối thoát basis** (100/100, M vẫn 1): +0,888% với 78 lệnh →
+  chốt basis hữu hạn giá **0,016 điểm**, 3 chuỗi đổi (HYPE·kraken −0,69).
+- **Tắt sàn giữ tối thiểu** (M 0, basis vẫn 2,0/2,0): +0,862% với 90 lệnh
+  → M=1 cộng **0,009 điểm**, 5 chuỗi đổi (BNB·binance +0,85).
+
+**Lưới 324 bộ quanh bộ đã áp dụng** (rate 0,3/0,5/0,8 × bền 3/6 × N
+24/48/96 × M 0/1 × basis 1/2/100 × dịch 1/2/100, mọi khoá khác như đã áp
+dụng, 12 tháng, 74 chuỗi): 324/324 bộ dương, trung vị +0,789%; bộ đã áp
+dụng xếp **93/324**; bộ tốt nhất +0,917% (0,3/3, N 24, M 1, basis tắt) hơn
+nó 0,046 điểm; **0/324 vượt giữ suốt**. Từng trục: bền 3 hơn bền 6 là 0,053
+điểm trung bình lưới (0,835 so với 0,782) — trục lớn nhất còn lại; basis 1,0
+→ 2,0 là +0,075 và 2,0 → tắt chỉ +0,004; dịch 1,0 → 2,0 là +0,094 và 2,0 →
+tắt +0,005; N và M gần như phẳng (≤ 0,003). Nên phần lớn cái lưới vốn–rủi ro
+đã tìm được là ở hai ngưỡng basis, và điểm gãy nằm ở 2,0 — nới thêm không
+mua gì. Không đổi `config.yaml` theo lưới này: 0,046 điểm ở hạng 93 không
+đủ để đổi lối vào mà tiến trình 3.5 chưa phán, và không bộ nào vượt được
+giữ suốt.
+
+Công cụ: `tools/report/applied.py` + `applied.template.html` (dùng lại
+`expand.window()`/`expand.isolation()`; chênh trên trang là "bộ đã áp dụng
+trừ bộ kia", ngược dấu với `expand.py`, ghi trong `delta_sign` của JSON).
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.

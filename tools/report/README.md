@@ -165,6 +165,49 @@ Ba điều kiện trước khi chạy, vì cả ba đều đã hụt ở lần �
    một CSV mà bộ tham số không khớp `config.yaml` — trang này nói "bộ đang
    ship", nên nó phải chứng minh được điều đó.
 
+## Bộ ngưỡng đã áp dụng (`applied.py`)
+
+Sau khi người vận hành đổi khối `strategy:` (2026-09-09: basis 1,0/0,5 →
+2,0/2,0, `min_hold_recovered_cost_frac` 0 → 1), câu hỏi là "bộ đã áp dụng
+làm được gì, và từng thay đổi mua được gì". `applied.py` dùng lại
+`expand.window()` cho ba cửa sổ, rồi thêm một DANH SÁCH phép so — mỗi phép
+là một lượt chạy thường trên cùng vũ trụ, chỉ khác điều được nêu tên trong
+một bản sao config, trừ nhau bằng `expand.isolation()`. Chênh trên trang là
+"bộ đã áp dụng trừ bộ kia" (`delta_sign` trong JSON nói vậy), ngược dấu với
+`expand.py`. `--sweep` là lưới quanh bộ đã áp dụng, nay có cả trục basis và
+M vì `cmd/backtest` đã nhận chúng.
+
+```bash
+S=/tmp/applied
+go build -o $S/backtest ./cmd/backtest
+for M in 12 6 3; do
+  $S/backtest -months $M -csv $S/runs$M.csv -trades-csv $S/trades$M.csv
+done
+git show <commit-trước>:config.yaml > $S/old.yaml            # bộ cũ, lấy từ git
+sed 's/^  max_basis_pct: 2.0 /  max_basis_pct: 100 /; s/^  max_basis_widen_pct: 2.0 /  max_basis_widen_pct: 100 /' config.yaml > $S/nobasis.yaml
+sed 's/^  min_hold_recovered_cost_frac: 1.0$/  min_hold_recovered_cost_frac: 0/' config.yaml > $S/m0.yaml
+for f in old nobasis m0; do
+  $S/backtest -config $S/$f.yaml -months 12 -csv $S/iso-$f.csv -trades-csv $S/isotrades-$f.csv
+done
+$S/backtest -sweep -months 12 -min-rate-bps 0.3,0.5,0.8 -persist 3,6 -min-net-apr 0.02 -exit-net-apr 0 \
+  -exit-persist 24,48,96 -exit-neg-bps 2.0 -exit-neg-periods 2 -exit-neg-cum 1.0 -min-hold 0,1.0 \
+  -notional 50000 -hold-days 90 -max-basis 1.0,2.0,100 -max-basis-widen 1.0,2.0,100 \
+  -csv $S/sweep12.csv -trades-csv $S/sweeptrades12.csv        # 324 bộ, PHẢI chứa bộ đã áp dụng
+python3 tools/report/applied.py --db data/scanner.db --config config.yaml \
+  --window 12=$S/runs12.csv:$S/trades12.csv --window 6=... --window 3=... \
+  --compare 12:old=$S/iso-old.csv:$S/isotrades-old.csv --label "old=<tiếng Việt>|<中文>" \
+  --compare 12:nobasis=... --label "nobasis=..." --compare 12:m0=... --label "m0=..." \
+  --sweep $S/sweep12.csv:$S/sweeptrades12.csv --out $S/applied.json
+python3 tools/report/hold_build.py --json $S/applied.json --template tools/report/applied.template.html \
+  --commit $(git rev-parse --short HEAD) --title "Bộ ngưỡng đã áp dụng" --out docs/reports/backtest-applied-<ngày>.html
+```
+
+Mỗi `--compare` bắt buộc có `--label` cùng khoá: CSV nói bộ kia là gì (cột
+tham số) nhưng không nói VÌ SAO nó khác, và trang phải nêu được điều đó. Phép
+so có khoá `old` được phán quyết trích riêng ("bộ cũ mà nó thay làm ...").
+`applied.template.html` sinh từ `expand.template.html` — cùng khung, mục "giá
+một lối thoát" thay bằng danh sách phép so, nhãn bộ ngưỡng thêm `B basis/dịch`.
+
 ## Bộ ngưỡng vốn và rủi ro (`capital.py`)
 
 Xếp hạng một lưới theo hai thứ mà các trang trước không có: **vốn danh mục**

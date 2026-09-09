@@ -1,0 +1,877 @@
+<title>Bộ ngưỡng đã áp dụng</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ground:#F4F6F3; --surface:#FFFFFF; --ink:#1A2024; --muted:#5F6B72; --rule:#D6DCD8; --rule-soft:#E6EAE7;
+  --accent:#35507A; --accent-ink:#FFFFFF; --loss:#B4552D; --gain:#1E7A6C; --warn:#B8891E;
+  --loss-rgb:180,85,45; --gain-rgb:30,122,108; --accent-rgb:53,80,122;
+  --display:"Bricolage Grotesque","IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+    --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+    --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+  --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+  --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+:lang(zh) body, body:lang(zh){font-family:"Noto Sans SC","IBM Plex Sans",sans-serif}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:700}
+h3{font-size:1.05rem;font-weight:600}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mono,.num,td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.loss{color:var(--loss)} .gain{color:var(--gain)} .warn{color:var(--warn)}
+.topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--rule)}
+.topbar .in{max-width:1040px;margin:0 auto;padding:.6rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.topbar .name{font-family:var(--display);font-weight:700;font-size:1rem;margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:2px;gap:2px;background:var(--surface)}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:500;padding:.25rem .7rem;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:1040px;margin:0 auto;padding:2rem 1.25rem 4rem;display:grid;gap:3rem}
+section{display:grid;gap:1rem}
+section>header{display:grid;gap:.35rem;max-width:70ch}
+p{margin:0;max-width:70ch}
+.verdict{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.5rem;display:grid;gap:1.25rem}
+.verdict h1{font-size:clamp(1.5rem,3.2vw,2.3rem)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;border-top:1px solid var(--rule-soft);padding-top:1rem}
+.fig{display:grid;gap:.15rem}
+.fig .v{font-family:var(--mono);font-size:1.6rem;font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums}
+.fig .l{font-size:.8rem;color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);max-width:none}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em}
+.i-loss{background:var(--loss)} .i-gain{background:var(--gain)} .i-accent{background:var(--accent)} .i-warn{background:var(--warn)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--rule-soft);vertical-align:top;white-space:nowrap}
+/* The header stays put while a long table scrolls: 24 series × several
+   columns is past the point where a reader can hold the column names. */
+th{position:sticky;top:0;z-index:2;background:var(--surface);font-weight:600;color:var(--muted);
+   font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--rule)}
+td.num,th.num{text-align:right}
+tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+tbody tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;min-width:22ch;max-width:52ch}
+/* First column pinned on the wide tables, so a row never loses its name. */
+table.pin td:first-child,table.pin th:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+table.pin tbody tr:nth-child(even) td:first-child{background:color-mix(in srgb,var(--ink) 3%,var(--surface))}
+table.pin th:first-child{z-index:3}
+/* A cell holding a whole parameter set: one column instead of ten. */
+td.params{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+td.params b{color:var(--ink);font-weight:600}
+.scrollhint{font-size:.78rem;color:var(--muted);margin-top:.35rem}
+.chart{width:100%;overflow-x:auto}
+.chart svg{display:block;width:100%;height:auto;font-family:var(--mono);font-size:11px}
+.chart .axis{stroke:var(--rule);stroke-width:1}
+.chart .grid{stroke:var(--rule-soft);stroke-width:1}
+.chart text{fill:var(--muted)}
+.chart .bar-loss{fill:var(--loss)} .chart .bar-gain{fill:var(--gain)} .chart .bar-accent{fill:var(--accent)} .chart .bar-warn{fill:var(--warn)}
+.chart .marker{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+.chart .marker-text{fill:var(--ink);font-weight:500}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem 2rem}
+.small h3{margin-bottom:.35rem}
+.heat{display:grid;gap:2px;font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+.heat .c{padding:.35rem .4rem;text-align:right;border-radius:3px;min-width:4.5em;line-height:1.2}
+.heat .c small{display:block;font-size:.66rem;opacity:.75}
+.heat .h{color:var(--muted);text-align:right;padding:.35rem .4rem;font-size:.7rem}
+.heat .rh{color:var(--muted);text-align:left;padding:.35rem .4rem;font-size:.7rem}
+.heatwrap{overflow-x:auto}
+.heat-title{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;flex-wrap:wrap}
+.bullets{margin:0;padding-left:1.2rem;display:grid;gap:.5rem;max-width:75ch}
+.bullets li::marker{color:var(--accent)}
+.assume{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.25rem 1.5rem}
+.assume ol{margin:0;padding-left:1.2rem;display:grid;gap:.6rem;max-width:80ch}
+pre{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1rem;overflow-x:auto;font-family:var(--mono);font-size:.8rem;line-height:1.5}
+.pill{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.72rem;font-weight:600;letter-spacing:.03em;border:1px solid currentColor}
+.pill.fail,.pill.weak{color:var(--loss)} .pill.pass{color:var(--gain)} .pill.partial{color:var(--warn)} .pill.open{color:var(--muted)}
+.tabs{display:flex;gap:.5rem;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:.85rem;border:1px solid var(--rule);background:var(--surface);color:var(--ink);padding:.3rem .75rem;border-radius:6px;cursor:pointer}
+.tabs button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;font-size:.9rem;align-items:baseline}
+.pagenav{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:-2rem}
+.pagenav a{font-size:.8rem;text-decoration:none;color:var(--muted);border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:.2rem .7rem}
+.pagenav a:hover,.pagenav a:focus-visible{color:var(--accent);border-color:var(--accent)}
+.answer{border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--surface)}
+.answer .row{display:grid;grid-template-columns:1fr 7.5rem 6rem 6rem;gap:.35rem 1rem;padding:.8rem 1.25rem;border-bottom:1px solid var(--rule-soft);align-items:baseline}
+.answer .row:last-child{border-bottom:0}
+.answer .row.head{background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.answer .row.head span:not(:first-child){text-align:right}
+.answer .who{font-weight:600;font-size:.95rem}
+.answer .who small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:.1rem}
+.answer .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.05rem;text-align:right}
+.answer .v.sub{font-size:.9rem;color:var(--muted)}
+.answer .v small{display:block;font-size:.72rem;font-weight:400;color:var(--muted);margin-top:.15rem;letter-spacing:.01em}
+.answer .row{grid-template-columns:1fr 9.5rem 6rem 6rem}
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.1rem 2rem;margin:0}
+.gloss>div{display:grid;gap:.15rem;align-content:start}
+.gloss dt{font-weight:600;font-size:.9rem;margin:0}
+.gloss dd{margin:0;font-size:.85rem;color:var(--muted);max-width:48ch}
+@media (max-width:620px){.answer .row{grid-template-columns:1fr max-content}.answer .row .v.sub{display:none}.answer .row.head span:nth-child(3),.answer .row.head span:nth-child(4){display:none}}
+.kv dt{color:var(--muted);margin:0} .kv dd{margin:0}
+footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);padding-top:1rem}
+@media (prefers-reduced-motion:no-preference){.seg button,.tabs button{transition:background .15s,color .15s}}
+/* The marginal cards carry 8 columns each: one per row, or everything past
+   the fourth is reachable only by scrolling inside the card. */
+#mgGrid{grid-template-columns:1fr}
+</style>
+<div class="topbar"><div class="in">
+  <span class="name" data-i18n="title"></span>
+  <span class="muted" style="font-size:.8rem" id="windowLabel"></span>
+  <div class="seg" id="windowSeg" role="group"></div>
+  <div class="seg" id="langSeg" role="group" aria-label="language">
+    <button type="button" data-lang="vi" aria-pressed="true">Tiếng Việt</button>
+    <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+  </div>
+</div></div>
+
+<main>
+  <section class="verdict" id="verdict">
+    <div class="eyebrow" data-i18n="verdict_eyebrow"></div>
+    <h1 id="vHeadline"></h1>
+    <p id="vLede"></p>
+    <div class="figures" id="vFigures"></div>
+    <p class="note" id="vNote"></p>
+  </section>
+
+  <nav class="pagenav" aria-label="sections">
+    <a href="#where" data-i18n="nav_where"></a>
+    <a href="#symbols" data-i18n="nav_symbols"></a>
+    <a href="#series" data-i18n="nav_series"></a>
+    <a href="#trades" data-i18n="nav_trades"></a>
+    <a href="#cmp" data-i18n="nav_cmp"></a>
+    <a href="#grid" data-i18n="nav_grid"></a>
+    <a href="#method" data-i18n="nav_method"></a>
+  </nav>
+
+  <section id="where">
+    <header>
+      <div class="eyebrow" data-i18n="where_eyebrow"></div>
+      <h2 data-i18n="where_h"></h2>
+      <p data-i18n="where_p"></p>
+    </header>
+    <div class="chart" id="cohortChart"></div>
+    <div class="legend">
+      <span><i class="i-accent"></i><span data-i18n="lg_rule"></span></span>
+      <span><i class="i-warn"></i><span data-i18n="lg_ht"></span></span>
+    </div>
+    <div class="tablewrap"><table class="pin" id="cohortTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+    <p class="note" id="whereRead"></p>
+  </section>
+
+  <section id="symbols">
+    <header>
+      <div class="eyebrow" data-i18n="sym_eyebrow"></div>
+      <h2 data-i18n="sym_h"></h2>
+      <p data-i18n="sym_p"></p>
+    </header>
+    <div class="chart" id="scatterChart"></div>
+    <div class="legend">
+      <span><i class="i-accent"></i><span data-i18n="lg_added"></span></span>
+      <span><i class="i-gain"></i><span data-i18n="lg_base"></span></span>
+    </div>
+    <div class="tablewrap"><table class="pin" id="symTable"></table></div>
+    <p class="note" id="symPinned"></p>
+    <p class="note" id="symRead"></p>
+  </section>
+
+  <section id="series">
+    <header>
+      <div class="eyebrow" data-i18n="ser_eyebrow"></div>
+      <h2 data-i18n="ser_h"></h2>
+      <p data-i18n="ser_p"></p>
+    </header>
+    <div class="tabs" id="serTabs" role="group"></div>
+    <div class="tablewrap"><table class="pin" id="serTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+    <div class="grid2">
+      <div class="small">
+        <h3 data-i18n="ref_h"></h3>
+        <div class="tablewrap"><table id="refTable"></table></div>
+      </div>
+      <div class="small">
+        <h3 data-i18n="venue_h"></h3>
+        <div class="tablewrap"><table id="venueTable"></table></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="trades">
+    <header>
+      <div class="eyebrow" data-i18n="tr_eyebrow"></div>
+      <h2 data-i18n="tr_h"></h2>
+      <p data-i18n="tr_p"></p>
+    </header>
+    <div class="figures" id="trFigures"></div>
+    <div class="grid2">
+      <div class="small">
+        <h3 data-i18n="tr_reason_h"></h3>
+        <div class="tablewrap"><table id="reasonTable"></table></div>
+      </div>
+      <div class="small">
+        <h3 data-i18n="tr_extreme_h"></h3>
+        <div class="tablewrap"><table id="extremeTable"></table></div>
+      </div>
+    </div>
+    <p class="note" id="trRead"></p>
+  </section>
+
+  <section id="cmp">
+    <header>
+      <div class="eyebrow" data-i18n="cmp_eyebrow"></div>
+      <h2 data-i18n="cmp_h"></h2>
+      <p id="cmpIntro"></p>
+    </header>
+    <div id="cmpBlocks" style="display:grid;gap:2rem"></div>
+  </section>
+
+  <section id="grid">
+    <header>
+      <div class="eyebrow" data-i18n="gr_eyebrow"></div>
+      <h2 data-i18n="gr_h"></h2>
+      <p id="grIntro"></p>
+    </header>
+    <div class="answer" id="grAnswer"></div>
+    <p class="note" id="grRead"></p>
+    <h3 data-i18n="gr_marg_h"></h3>
+    <div class="grid2" id="mgGrid"></div>
+    <h3 data-i18n="gr_top_h"></h3>
+    <div class="tablewrap"><table class="pin" id="topTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+  </section>
+
+  <section id="method">
+    <header>
+      <div class="eyebrow" data-i18n="me_eyebrow"></div>
+      <h2 data-i18n="me_h"></h2>
+    </header>
+    <div class="assume"><ol id="meList"></ol></div>
+    <h3 data-i18n="me_engine_h"></h3>
+    <pre id="mePre"></pre>
+    <dl class="gloss" id="meGloss"></dl>
+  </section>
+
+  <footer><span id="footText"></span></footer>
+</main>
+
+<script>
+const DATA = /*__DATA__*/;
+const META = /*__META__*/;
+const WINS = DATA.window_order || Object.keys(DATA.windows);
+const AXES = DATA.axes;
+const REASONS = ["window_end", "basis", "sign_flip", "decay", "liquidation", "unpriceable", "hedge_gone", "other"];
+const COHORTS = ["all", "baseline", "added", "usdt_quoted", "bridged", "hyperliquid", "added_hyperliquid", "added_usdt", "deep_corpus"];
+const SHORT = { min_rate_per_8h_bps: "rate", persistence_periods: "pers", min_net_apr_frac: "minNet", exit_net_apr_frac: "floor",
+  exit_persistence_periods: "N", exit_negative_min_bps: "X", exit_negative_periods: "negN", exit_negative_cum_cost_frac: "C",
+  min_hold_recovered_cost_frac: "M", notional_quote: "size", holding_days: "hold",
+  max_basis_pct: "basis", max_basis_widen_pct: "widen", min_trailing_mean_bps: "trail", trailing_mean_days: "trailD" };
+
+const T = {
+vi: {
+  title: "Bộ ngưỡng đã áp dụng",
+  verdict_eyebrow: "Phán quyết",
+  w12: "12 tháng", w6: "6 tháng", w3: "3 tháng",
+  nav_where: "Ăn ở đâu", nav_symbols: "Từng cặp", nav_series: "Từng chuỗi", nav_trades: "Từng lệnh", nav_grid: "Lưới ngưỡng", nav_method: "Cách đo",
+  fig_rule: "Bộ đã áp dụng, trên vốn / chuỗi", fig_ht: "Giữ suốt, trên vốn / chuỗi", fig_series: "Chuỗi chạy được",
+  fig_positive: "Chuỗi có lãi", fig_trades: "Lệnh mỗi chuỗi", fig_dd: "Sụt vốn trung bình", fig_calmar: "Lãi / sụt vốn",
+  where_eyebrow: "Ăn ở đâu", where_h: "Cùng một bộ ngưỡng, chín nhóm chuỗi",
+  where_p: "Không luật nào trong internal/strategy chọn chuỗi, nên mỗi dòng dưới đây là “bộ ngưỡng này nếu chỉ chĩa vào nhóm đó”, không phải một chiến lược chạy được hôm nay. Cột giữ suốt là mốc chuẩn của chính nhóm ấy.",
+  lg_rule: "Bộ ngưỡng đã áp dụng", lg_ht: "Giữ suốt cửa sổ, một vòng phí",
+  lg_added: "9 cặp mới", lg_base: "4 cặp cũ",
+  sym_eyebrow: "Từng cặp", sym_h: "Funding của chuỗi quyết định, không phải ngưỡng",
+  sym_p: "Mỗi chấm là một chuỗi (cặp × sàn perp): trục ngang là funding trung bình của chính chuỗi đó trong cửa sổ, trục dọc là thứ bộ ngưỡng thu được trên vốn.",
+  ser_eyebrow: "Từng chuỗi", ser_h: "Bảng đầy đủ",
+  ser_p: "Mọi con số lợi nhuận ở đây tính trên VỐN (2× notional, vì chân spot không đòn bẩy được). Cột chi phí là trên notional — đó là giá một vòng vào/ra, không phải suất sinh lời.",
+  ref_h: "Chuỗi bị từ chối, nêu tên", venue_h: "Theo sàn perp",
+  tr_eyebrow: "Từng lệnh", tr_h: "Bộ ngưỡng đã mở những lệnh nào",
+  tr_p: "Toàn bộ lệnh của bộ đã áp dụng trong cửa sổ này, gộp mọi chuỗi.",
+  tr_reason_h: "Lý do đóng", tr_extreme_h: "Lệnh lãi nhất và lỗ nhất",
+  gr_eyebrow: "Lưới ngưỡng", gr_h: "Còn bộ nào tốt hơn trên vũ trụ mới không",
+  gr_marg_h: "Từng trục một", gr_top_h: "20 bộ tốt nhất",
+  me_eyebrow: "Cách đo", me_h: "Điều kiện và giới hạn của trang này", me_engine_h: "Khối giả định engine tự in ra",
+  scrollhint: "Bảng cuộn ngang.",
+  th_cohort: "Nhóm", th_n: "Chuỗi", th_rule: "Bộ áp dụng", th_ht: "Giữ suốt", th_gap: "Chênh", th_beat: "Thắng giữ suốt",
+  th_dd: "Sụt vốn", th_calmar: "Lãi/sụt", th_trades: "Lệnh/chuỗi", th_worst: "Chuỗi tệ nhất", th_pos: "Chuỗi lãi",
+  th_symbol: "Cặp", th_venues: "Sàn", th_bps: "Funding TB", th_series: "Chuỗi", th_perp: "Sàn perp", th_spot: "Chân spot",
+  th_days: "Corpus", th_cost: "Vòng phí", th_apr: "APR vốn", th_exp: "Thời gian giữ", th_liq: "Thanh lý", th_basis: "Mốc thiếu basis",
+  th_reason: "Lý do", th_count: "Số lệnh", th_be: "Hoà vốn", th_held: "Ngày giữ", th_net: "Ròng TB",
+  th_set: "Bộ ngưỡng", th_rank: "Hạng", th_value: "Giá trị", th_sets: "Số bộ", th_mean: "Trung bình", th_best: "Tốt nhất",
+  th_open: "Mở", th_close: "Đóng", th_result: "Ròng",
+  tab_all: "Tất cả", tab_added: "9 cặp mới", tab_base: "4 cặp cũ", tab_bridged: "Ghép khác quote", tab_usdt: "Cùng quote USDT",
+  co_all: "Cả 13 cặp", co_baseline: "4 cặp cũ", co_added: "9 cặp mới", co_usdt_quoted: "Perp quote USDT",
+  co_bridged: "Perp quote USD (ghép cầu)", co_hyperliquid: "Hyperliquid", co_added_hyperliquid: "9 cặp mới trên Hyperliquid",
+  co_added_usdt: "9 cặp mới, sàn USDT", co_deep_corpus: "Corpus ≥ 300 ngày",
+  r_window_end: "Hết cửa sổ", r_basis: "Basis vượt hạn", r_sign_flip: "Funding đảo dấu", r_decay: "Suy giảm N kỳ",
+  r_liquidation: "Thanh lý", r_unpriceable: "Không định giá được", r_hedge_gone: "Mất chân hedge", r_other: "Khác",
+  v_head_above: "Bộ ngưỡng đã áp dụng làm ra {rule} trên vốn mỗi chuỗi trong {days} ngày, VƯỢT mốc giữ suốt {ht}.",
+  v_head_below: "Bộ ngưỡng đã áp dụng làm ra {rule} trên vốn mỗi chuỗi trong {days} ngày, vẫn DƯỚI mốc giữ suốt {ht}.",
+  v_lede: "Đây là khối strategy: của config.yaml sau khi người vận hành áp dụng bộ đề xuất của lưới vốn–rủi ro ngày 2026-09-09 (basis 1,0/0,5 → 2,0/2,0, sàn giữ tối thiểu M 0 → 1), chạy lại trên 13 cặp: {n} chuỗi chạy được, {refused} chuỗi bị từ chối nêu tên. Con số dẫn đầu là TRUNG BÌNH MỖI CHUỖI trên VỐN — vốn là {k}× notional vì chân spot không đòn bẩy được — không phải tổng. 4 cặp cũ trung bình {base} trên {nbase} chuỗi, 9 cặp mới {added} trên {nadded} chuỗi.",
+  v_note: "Bộ ngưỡng: {set}. Cửa sổ {from} → {to}. Thắng mốc giữ suốt ở {beat}/{n} chuỗi. Mọi số ở đây là replay trên corpus đã lưu, không phải giao dịch thật.",
+  win_label: "{from} → {to} · {n} chuỗi",
+  where_read: "Ăn nhất là {best} ({bestv}), tệ nhất là {worst} ({worstv}). Nhóm mà bộ ngưỡng vượt được mốc giữ suốt của chính nhóm đó: {beats}.",
+  none: "không nhóm nào",
+  pill_added: "mới", pill_bridged: "ghép cầu",
+  sym_read: "Ngưỡng funding cần để một chuỗi trả xong vòng phí và còn 5%/năm trên vốn là {need} bps/8h ở cửa sổ này; {above}/{n} chuỗi đạt ({list}). Cặp tốt nhất là {best} với {bestv} trên vốn.",
+  fig_ntrades: "Số lệnh", fig_be: "Lệnh hoà vốn", fig_held: "Ngày giữ trung vị",
+  fig_net: "Ròng trung bình / lệnh", fig_fund: "Funding thu / lệnh", fig_cost: "Chi phí / lệnh",
+  tr_read: "{n} lệnh, {be} lệnh về đích không lỗ, trung vị {held} ngày. Lý do đóng: {end} hết cửa sổ, {flip} đảo dấu, {decay} suy giảm, {basis} basis. Lệnh tệ nhất {worst}, tốt nhất {best} (trên notional).",
+  tr_read_none: "Bộ ngưỡng không mở lệnh nào trong cửa sổ này.",
+  gr_intro: "{sets} bộ ngưỡng chạy trên đúng {series} chuỗi này, cửa sổ {window}, mọi trục xoay quanh bộ đã áp dụng — kể cả hai ngưỡng basis và sàn giữ tối thiểu, hai trục mà lưới của các trang trước không có. {dropped} bộ bị loại vì không chạy đủ mọi chuỗi — thiếu một chuỗi là một vũ trụ khác, không phải một bộ tốt hơn.",
+  gr_shipped: "Bộ đã áp dụng", gr_best: "Bộ tốt nhất của lưới", gr_ht: "Giữ suốt cửa sổ", gr_ht_sub: "vào mốc đầu, ra mốc cuối, một vòng phí",
+  gr_read: "Bộ đã áp dụng xếp hạng {rank}/{sets}; bộ tốt nhất hơn nó {gap} điểm. {positive} bộ có lãi trung bình dương, trung vị cả lưới {median}, và {beat} bộ vượt mốc giữ suốt.",
+  me_1: "Mẫu số là VỐN = {k}× notional. Chân spot không đòn bẩy được nên giữ một vị thế N phải khoá 2N. Mọi con số lợi nhuận trên trang là trung bình MỖI CHUỖI, không phải tổng — tổng 78 chuỗi không phải suất sinh lời của một ví.",
+  me_2: "Mốc chuẩn “giữ suốt” là: vào ở mốc settle đầu tiên của cửa sổ, ra ở mốc cuối, trả đúng một vòng phí. Nó không phải một luật — nó là thứ mà một luật phải thắng.",
+  me_3: "{n} chuỗi, {from} → {to} ({days} ngày). Mỗi chuỗi là một cặp trên một sàn perp, ghép với chân spot rẻ nhất đã kiểm phí.",
+  me_4: "{refused} chuỗi bị TỪ CHỐI NÊU TÊN thay vì chạy với chi phí 0 — biểu phí chưa kiểm, không có sổ, hoặc không có mốc settle nào.",
+  me_5: "{short} chuỗi có corpus ngắn hơn cửa sổ (OKX giữ ~3 tháng, Gate 180 ngày). Chúng vẫn được replay trên phần corpus có thật, và cột corpus nói rõ số ngày.",
+  me_6: "{bridged} chuỗi ghép perp quote USD với spot USDT. Vị thế trung tính theo coin nhưng MỞ theo USDT/USD, và không con số nào trên trang trừ rủi ro đó.",
+  me_7: "{nobasis} chuỗi còn mốc settle không định giá được basis (nến giờ không phủ hết corpus funding). Ở những mốc đó lối thoát basis không được xét, chứ không phải được coi là an toàn.",
+  me_8: "Chi phí vòng vào/ra tính từ MỘT lần đo sổ lệnh, giữ cố định cho cả lần replay: depth không thể backfill. Sổ đo ngày dựng báo cáo, không phải sổ của quá khứ.",
+  gl_cap: "Trên vốn", gl_cap_d: "Lợi nhuận chia cho vốn phải khoá (2× notional), không phải chia cho notional.",
+  gl_ht: "Giữ suốt", gl_ht_d: "Vào mốc đầu, ra mốc cuối cửa sổ, một vòng phí duy nhất.",
+  gl_calmar: "Lãi / sụt vốn", gl_calmar_d: "Trung bình lãi chia trung bình sụt vốn tối đa, cả hai trên vốn — không phải trung bình của các tỷ số.",
+  gl_bps: "bps/8h", gl_bps_d: "Funding quy về chu kỳ 8 giờ để so chéo sàn; 1 bps = 0,01%.",
+  gl_bridge: "Ghép cầu quote", gl_bridge_d: "Perp quote USD ghép spot USDT: trung tính theo coin, mở theo USDT/USD.",
+  gl_set: "Đọc bộ ngưỡng", gl_set_d: "rate/pers · sàn giữ/N · X, negN, C (cổng đảo dấu) · M (sàn giữ tối thiểu) · B basis/dịch · số ngày khấu hao.",
+  v_head_loss: "Bộ ngưỡng đã áp dụng LỖ {rule} trên vốn mỗi chuỗi trong {days} ngày, trong khi chỉ giữ suốt cửa sổ đã là {ht}.",
+  me_9: "Khối “ba phép so” là các lượt chạy thường cạnh nhau, mỗi lượt chỉ khác bộ đã áp dụng ở điều được nêu tên, qua một bản sao config (bộ cũ lấy từ git, hai lượt kia sửa đúng một khoá); không lượt nào tính lại luật. Cột tham số của CSV nói bộ kia là gì, còn nhãn là do người chạy khai.",
+  sc_pinned: "(ghim ở mép trục)",
+  sc_pinned_note: "{n} chuỗi nằm ngoài trục dọc và được ghim ở mép, vẽ rỗng ruột: {list}.",
+  foot: "Dựng từ {commit} lúc {generated}. Dữ liệu do cmd/backtest ghi ra; trang này chỉ đọc.",
+  v_old: "Bộ cũ mà nó thay ({oldset}) làm {old} trên cùng {n} chuỗi với {oldtrades} lệnh/chuỗi và {oldpos}/{n} chuỗi dương; bộ đã áp dụng hơn nó {gain} điểm với {trades} lệnh/chuỗi.",
+  nav_cmp: "Ba phép so",
+  cmp_eyebrow: "Ba phép so", cmp_h: "Chạy lại đúng vũ trụ đó, mỗi lần đổi đúng một thứ",
+  cmp_intro: "Mỗi khối dưới đây là một lượt chạy thường trên cùng {n} chuỗi, cùng cửa sổ, cùng sổ lệnh, chỉ khác điều được nêu tên trong một bản sao config; hai bên trừ nhau. Chênh là “bộ đã áp dụng trừ bộ kia”: dương nghĩa là bộ đã áp dụng hơn.",
+  cmp_fig_this: "Bộ đã áp dụng", cmp_fig_other: "Bộ kia", cmp_fig_delta: "Chênh", cmp_fig_trades: "Số lệnh (này → kia)",
+  cmp_fig_pos: "Chuỗi dương (này → kia)", cmp_fig_dd: "Sụt vốn TB (này → kia)",
+  cmp_coh_h: "Theo nhóm chuỗi", cmp_ser_h: "10 chuỗi đổi nhiều nhất", cmp_set: "Bộ kia:",
+  cmp_read: "So với {what}: bộ đã áp dụng chênh {delta} trên vốn mỗi chuỗi, số lệnh {on} so với {off}, {moved} chuỗi bị đổi. Nhóm ghép cầu chênh {bridged}, nhóm cùng quote USDT chênh {usdt}. Chuỗi đổi nhiều nhất là {series}: {sdelta}, {strades} lệnh.",
+  cmp_none: "Không có phép so nào cho cửa sổ này.",
+},
+zh: {
+  title: "已采用的阈值组",
+  verdict_eyebrow: "结论",
+  w12: "12 个月", w6: "6 个月", w3: "3 个月",
+  nav_where: "赚在哪里", nav_symbols: "按币种", nav_series: "按序列", nav_trades: "按交易", nav_grid: "阈值网格", nav_method: "测量方法",
+  fig_rule: "已采用组，按资金/序列", fig_ht: "持有到底，按资金/序列", fig_series: "可回放序列",
+  fig_positive: "盈利序列", fig_trades: "每序列交易数", fig_dd: "平均回撤", fig_calmar: "收益/回撤",
+  where_eyebrow: "赚在哪里", where_h: "同一组阈值，九个序列子集",
+  where_p: "internal/strategy 里没有任何规则会挑选序列，所以下面每一行都是“把这组阈值只对准该子集”的假设，而不是今天就能跑的策略。持有到底一列是该子集自己的基准。",
+  lg_rule: "已采用的阈值组", lg_ht: "持有整个窗口，一次手续费",
+  lg_added: "9 个新增对", lg_base: "4 个原有对",
+  sym_eyebrow: "按币种", sym_h: "决定结果的是序列的资金费，不是阈值",
+  sym_p: "每个点是一个序列（币种 × 永续交易所）：横轴是该序列窗口内的平均资金费，纵轴是这组阈值在资金上取得的收益。",
+  ser_eyebrow: "按序列", ser_h: "完整表格",
+  ser_p: "这里所有收益都按资金计（2× 名义，因为现货腿无法加杠杆）。成本列按名义计——那是一次开平的价格，不是收益率。",
+  ref_h: "被点名拒绝的序列", venue_h: "按永续交易所",
+  tr_eyebrow: "按交易", tr_h: "这组阈值开了哪些仓",
+  tr_p: "该窗口内已采用阈值组的全部交易，合并所有序列。",
+  tr_reason_h: "平仓原因", tr_extreme_h: "最赚与最亏的一笔",
+  gr_eyebrow: "阈值网格", gr_h: "在新的宇宙里还有更好的组吗",
+  gr_marg_h: "逐个轴", gr_top_h: "最好的 20 组",
+  me_eyebrow: "测量方法", me_h: "本页的条件与边界", me_engine_h: "引擎自己打印的假设块",
+  scrollhint: "表格可横向滚动。",
+  th_cohort: "子集", th_n: "序列", th_rule: "已采用组", th_ht: "持有到底", th_gap: "差额", th_beat: "胜过持有",
+  th_dd: "回撤", th_calmar: "收益/回撤", th_trades: "交易/序列", th_worst: "最差序列", th_pos: "盈利序列",
+  th_symbol: "币种", th_venues: "交易所", th_bps: "平均资金费", th_series: "序列", th_perp: "永续所", th_spot: "现货腿",
+  th_days: "语料", th_cost: "一次开平", th_apr: "资金年化", th_exp: "持仓时间", th_liq: "强平", th_basis: "缺基差的结算",
+  th_reason: "原因", th_count: "笔数", th_be: "回本", th_held: "持仓天数", th_net: "平均净额",
+  th_set: "阈值组", th_rank: "排名", th_value: "取值", th_sets: "组数", th_mean: "平均", th_best: "最好",
+  th_open: "开仓", th_close: "平仓", th_result: "净额",
+  tab_all: "全部", tab_added: "9 个新增", tab_base: "4 个原有", tab_bridged: "跨报价配对", tab_usdt: "同为 USDT",
+  co_all: "全部 13 对", co_baseline: "4 个原有对", co_added: "9 个新增对", co_usdt_quoted: "USDT 计价永续",
+  co_bridged: "USD 计价永续（跨报价）", co_hyperliquid: "Hyperliquid", co_added_hyperliquid: "新增对在 Hyperliquid",
+  co_added_usdt: "新增对，USDT 交易所", co_deep_corpus: "语料 ≥ 300 天",
+  r_window_end: "窗口结束", r_basis: "基差越界", r_sign_flip: "资金费转负", r_decay: "连续 N 期衰减",
+  r_liquidation: "强平", r_unpriceable: "无法定价", r_hedge_gone: "对冲腿消失", r_other: "其他",
+  v_head_above: "已采用的阈值组在 {days} 天里按资金每序列做出 {rule}，高于持有到底的 {ht}。",
+  v_head_below: "已采用的阈值组在 {days} 天里按资金每序列做出 {rule}，仍低于持有到底的 {ht}。",
+  v_lede: "这是操作者于 2026-09-09 采纳资金–风险网格建议之后 config.yaml 的 strategy: 块（基差 1.0/0.5 → 2.0/2.0，最低持有 M 0 → 1），在 13 个交易对上重跑：{n} 条序列可回放，{refused} 条被点名拒绝。标题数字是每序列的平均值、按资金计——资金是名义的 {k} 倍，因为现货腿无法加杠杆——而不是求和。4 个原有对平均 {base}（{nbase} 条），9 个新增对 {added}（{nadded} 条）。",
+  v_note: "阈值组：{set}。窗口 {from} → {to}。在 {beat}/{n} 条序列上胜过持有到底。全部数字来自已存语料的回放，不是真实交易。",
+  win_label: "{from} → {to} · {n} 条序列",
+  where_read: "最好的子集是 {best}（{bestv}），最差的是 {worst}（{worstv}）。阈值组胜过该子集自身持有到底基准的子集：{beats}。",
+  none: "没有",
+  pill_added: "新增", pill_bridged: "跨报价",
+  sym_read: "在本窗口，一条序列要还清一次开平并还剩按资金 5%/年，平均资金费需达到 {need} bps/8h；{above}/{n} 条达到（{list}）。最好的币种是 {best}，按资金 {bestv}。",
+  fig_ntrades: "交易笔数", fig_be: "回本笔数", fig_held: "持仓天数中位",
+  fig_net: "每笔平均净额", fig_fund: "每笔收到资金费", fig_cost: "每笔成本",
+  tr_read: "{n} 笔交易，{be} 笔不亏收场，中位持仓 {held} 天。平仓原因：{end} 窗口结束、{flip} 资金费转负、{decay} 衰减、{basis} 基差。最差 {worst}，最好 {best}（按名义）。",
+  tr_read_none: "该阈值组在本窗口没有开过仓。",
+  gr_intro: "{sets} 组阈值跑在同样这 {series} 条序列上，窗口 {window}，各轴围绕已采用组展开——包括两个基差阈值和最低持有，这两个轴是此前各页的网格所没有的。{dropped} 组因未能跑完全部序列而被剔除——少一条序列是另一个宇宙，不是更好的组。",
+  gr_shipped: "已采用组", gr_best: "网格最优组", gr_ht: "持有整个窗口", gr_ht_sub: "首个结算进，最后结算出，一次手续费",
+  gr_read: "已采用组排名 {rank}/{sets}；最优组高出 {gap} 个百分点。{positive} 组平均为正，全网格中位 {median}，{beat} 组胜过持有到底。",
+  me_1: "分母是资金 = 名义的 {k} 倍。现货腿无法加杠杆，所以持有 N 的仓位要锁 2N。页面上所有收益都是每序列平均值，不是求和——78 条序列的和不是一个钱包的收益率。",
+  me_2: "“持有到底”基准是：在窗口首个结算进场，最后一个结算出场，只付一次开平费用。它不是一条规则——它是规则必须战胜的对象。",
+  me_3: "{n} 条序列，{from} → {to}（{days} 天）。每条序列是一个币种在一个永续交易所上，与费率已核验的最便宜现货腿配对。",
+  me_4: "{refused} 条序列被点名拒绝，而不是以 0 成本跑完——费率未核验、没有盘口，或根本没有结算点。",
+  me_5: "{short} 条序列的语料短于窗口（OKX 只保留约 3 个月，Gate 180 天）。它们仍在真实语料上回放，语料列写明天数。",
+  me_6: "{bridged} 条序列把 USD 计价永续与 USDT 现货配对。仓位在币上中性，但在 USDT/USD 上敞口，页面没有任何数字扣除这一风险。",
+  me_7: "{nobasis} 条序列仍有无法定价基差的结算点（小时线未覆盖全部资金费语料）。那些点上基差退出未被评估，而不是被当作安全。",
+  me_8: "一次开平的成本来自对盘口的一次测量，并在整个回放中保持不变：深度无法回补。用的是生成报告当天的盘口，不是历史盘口。",
+  gl_cap: "按资金", gl_cap_d: "收益除以必须锁定的资金（2× 名义），而不是除以名义。",
+  gl_ht: "持有到底", gl_ht_d: "窗口首个结算进，最后一个结算出，只付一次费用。",
+  gl_calmar: "收益 / 回撤", gl_calmar_d: "平均收益除以平均最大回撤，两者都按资金——不是各序列比值的平均。",
+  gl_bps: "bps/8h", gl_bps_d: "把资金费折算到 8 小时周期以便跨所比较；1 bps = 0.01%。",
+  gl_bridge: "跨报价配对", gl_bridge_d: "USD 计价永续配 USDT 现货：币上中性，USDT/USD 上敞口。",
+  gl_set: "阈值组读法", gl_set_d: "入场阈值/持续期 · 持有下限/N · X、negN、C（转负闸门）· M（最低持有）· B 基差/漂移 · 摊销天数。",
+  v_head_loss: "已采用的阈值组在 {days} 天里按资金每序列亏损 {rule}，而只是持有整个窗口就有 {ht}。",
+  me_9: "「三组对比」一节是并排的几次普通回放，每次只在所点名的一项上与已采用组不同，通过一份 config 副本实现（旧组取自 git，另外两次各改一个键）；没有任何一次重算规则。CSV 的参数列说明另一组是什么，标签由运行者声明。",
+  sc_pinned: "（已钉在轴边）",
+  sc_pinned_note: "{n} 条序列超出纵轴范围，以空心点钉在边缘：{list}。",
+  foot: "由 {commit} 于 {generated} 生成。数据由 cmd/backtest 写出；本页只读。",
+  v_old: "它所取代的旧组（{oldset}）在同样 {n} 条序列上做出 {old}，每序列 {oldtrades} 笔，{oldpos}/{n} 条为正；已采用组高出 {gain} 个百分点，每序列 {trades} 笔。",
+  nav_cmp: "三组对比",
+  cmp_eyebrow: "三组对比", cmp_h: "同一个宇宙重跑，每次只改一件事",
+  cmp_intro: "下面每一块都是在同样 {n} 条序列、同一窗口、同一盘口上的一次普通回放，只在一份 config 副本里改了所点名的那一项；两边相减。差额是“已采用组减另一组”：正数表示已采用组更好。",
+  cmp_fig_this: "已采用组", cmp_fig_other: "另一组", cmp_fig_delta: "差额", cmp_fig_trades: "交易笔数（本 → 另）",
+  cmp_fig_pos: "盈利序列（本 → 另）", cmp_fig_dd: "平均回撤（本 → 另）",
+  cmp_coh_h: "按子集", cmp_ser_h: "变化最大的 10 条序列", cmp_set: "另一组：",
+  cmp_read: "与{what}相比：已采用组按资金每序列相差 {delta}，交易 {on} 对 {off}，{moved} 条序列受影响。跨报价子集相差 {bridged}，同为 USDT 的子集相差 {usdt}。变化最大的序列是 {series}：{sdelta}，交易 {strades}。",
+  cmp_none: "本窗口没有对比。",
+}};
+
+let lang = "vi", win = WINS[0], serTab = "all";
+const t = (k, vars) => { let s = T[lang][k]; if (s === undefined) s = T.vi[k]; if (s === undefined) return k;
+  return vars ? s.replace(/\{(\w+)\}/g, (m, p) => vars[p] !== undefined ? vars[p] : m) : s; };
+const loc = () => lang === "zh" ? "zh-CN" : "vi-VN";
+const num = (v, d = 0) => v == null || Number.isNaN(v) ? "—" : new Intl.NumberFormat(loc(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+const pct = (v, d = 2, sign = false) => v == null ? "—" : (sign && v > 0 ? "+" : "") + num(v, d) + "%";
+const cls = v => v == null ? "" : v < 0 ? "loss" : v > 0 ? "gain" : "";
+const day = ms => new Date(ms).toISOString().slice(0, 10);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const vshort = s => s.replace("_futures", "").replace("_spot", "");
+const sname = (sym, perp) => sym.replace("USDT", "") + "·" + vshort(perp);
+const g = v => num(v, Number.isInteger(v) ? 0 : (Math.abs(v) < 0.1 ? 3 : 2));
+const fmtSet = p => `${g(p.min_rate_per_8h_bps)}/${g(p.persistence_periods)} · ${num(p.exit_net_apr_frac * 100, 2)}%/${g(p.exit_persistence_periods)} · X${g(p.exit_negative_min_bps)} N${g(p.exit_negative_periods)} C${g(p.exit_negative_cum_cost_frac)} · M${g(p.min_hold_recovered_cost_frac)} · B${g(p.max_basis_pct)}/${g(p.max_basis_widen_pct)} · ${g(p.holding_days)}d`;
+const W = () => DATA.windows[win];
+
+function tbl(head, rows) {
+  const th = head.map(h => `<th class="${h.num ? "num" : ""}">${esc(h.label)}</th>`).join("");
+  const tr = rows.map(r => "<tr>" + r.map((c, i) => {
+    const cell = (c && typeof c === "object") ? c : { v: c };
+    return `<td class="${head[i].num ? "num " : ""}${cell.cls || ""}">${cell.v == null ? "—" : cell.v}</td>`;
+  }).join("") + "</tr>").join("");
+  return `<thead><tr>${th}</tr></thead><tbody>${tr}</tbody>`;
+}
+
+function svg(w, h) { return `<svg viewBox="0 0 ${w} ${h}" role="img">`; }
+
+/* Grouped bars: for each cohort the rule and its own hold-through benchmark,
+   both on capital, so the pair is comparable inside a row and across rows. */
+function cohortChart(rows) {
+  const W0 = 900, rowH = 34, top = 26, left = 210, bot = 28;
+  const h = top + rows.length * rowH + bot;
+  const vals = rows.flatMap(r => [r.rule, r.ht]).filter(v => v != null);
+  const lo = Math.min(0, ...vals), hi = Math.max(0, ...vals);
+  const pad = (hi - lo) * 0.12 || 1;
+  const x0 = lo - pad, x1 = hi + pad;
+  const X = v => left + (v - x0) / (x1 - x0) * (W0 - left - 24);
+  let s = svg(W0, h);
+  s += `<line class="axis" x1="${X(0)}" y1="${top - 6}" x2="${X(0)}" y2="${top + rows.length * rowH}"/>`;
+  rows.forEach((r, i) => {
+    const y = top + i * rowH;
+    s += `<text x="${left - 10}" y="${y + 16}" text-anchor="end" fill="var(--ink)">${esc(r.label)}</text>`;
+    [["rule", "bar-accent", 2], ["ht", "bar-warn", 14]].forEach(([k, c, dy]) => {
+      const v = r[k];
+      if (v == null) return;
+      const a = X(Math.min(0, v)), b = X(Math.max(0, v));
+      s += `<rect class="${c}" x="${a}" y="${y + dy}" width="${Math.max(1, b - a)}" height="10" rx="2"/>`;
+      s += `<text x="${b + 5}" y="${y + dy + 9}">${pct(v, 2, true)}</text>`;
+    });
+    s += `<text x="${W0 - 4}" y="${y + 16}" text-anchor="end">${r.n}</text>`;
+  });
+  s += `<text x="${X(0)}" y="${h - 8}" text-anchor="middle">0</text></svg>`;
+  return s;
+}
+
+/* One dot per series: the corpus's own funding level against what the rule
+   made of it. The vertical line is the level a series needs before a 0.30%
+   round trip can be paid back inside a year at K=2. */
+function scatterChart(pts, needBps) {
+  const W0 = 900, H = 340, left = 56, right = 18, top = 18, bot = 40;
+  const xs = pts.map(p => p.x);
+  const x0 = Math.min(0, ...xs), x1 = Math.max(...xs, needBps) * 1.05;
+  // One series can sit 30 points below the rest (a venue whose basis exit
+  // fires every fortnight), and letting it set the scale flattens the other
+  // seventy. The axis holds the middle 95%; anything outside is PINNED to
+  // the edge as a hollow marker and counted in the caption, never dropped.
+  const sorted = pts.map(p => p.y).sort((a, b) => a - b);
+  const q = f => sorted[Math.min(sorted.length - 1, Math.max(0, Math.round((sorted.length - 1) * f)))];
+  const lo = Math.min(0, q(0.025)), hi = Math.max(q(0.975), 0);
+  const padY = (hi - lo) * 0.12 || 0.5;
+  const y0 = lo - padY, y1 = hi + padY;
+  const X = v => left + (v - x0) / (x1 - x0) * (W0 - left - right);
+  const Y = v => H - bot - (Math.min(y1, Math.max(y0, v)) - y0) / (y1 - y0) * (H - top - bot);
+  let s = svg(W0, H);
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + (y1 - y0) * i / 4;
+    s += `<line class="grid" x1="${left}" y1="${Y(v)}" x2="${W0 - right}" y2="${Y(v)}"/>`;
+    s += `<text x="${left - 8}" y="${Y(v) + 4}" text-anchor="end">${pct(v, 1)}</text>`;
+  }
+  s += `<line class="axis" x1="${left}" y1="${Y(0)}" x2="${W0 - right}" y2="${Y(0)}"/>`;
+  s += `<line class="marker" x1="${X(needBps)}" y1="${top}" x2="${X(needBps)}" y2="${H - bot}"/>`;
+  s += `<text class="marker-text" x="${X(needBps) - 5}" y="${H - bot - 6}" text-anchor="end">${num(needBps, 2)} bps/8h</text>`;
+  for (let i = 0; i <= 5; i++) {
+    const v = x0 + (x1 - x0) * i / 5;
+    s += `<text x="${X(v)}" y="${H - bot + 16}" text-anchor="middle">${num(v, 2)}</text>`;
+  }
+  s += `<text x="${(left + W0) / 2}" y="${H - 6}" text-anchor="middle">bps/8h</text>`;
+  pts.forEach(p => {
+    const out = p.y < y0 || p.y > y1;
+    const fill = out ? "none" : (p.added ? "var(--accent)" : "var(--gain)");
+    s += `<circle cx="${X(p.x)}" cy="${Y(p.y)}" r="4.5" fill="${fill}" fill-opacity=".85" stroke="${p.added ? "var(--accent)" : "var(--gain)"}" stroke-width="${out ? 1.5 : 0}"><title>${esc(p.label)}: ${num(p.x, 3)} bps/8h → ${pct(p.y, 2, true)}${out ? " " + t("sc_pinned") : ""}</title></circle>`;
+  });
+  pts.filter(p => p.tag).forEach(p => {
+    const rightHalf = X(p.x) > left + (W0 - left - right) * 0.7;
+    s += `<text x="${X(p.x) + (rightHalf ? -7 : 7)}" y="${Y(p.y) - 8}" text-anchor="${rightHalf ? "end" : "start"}" fill="var(--ink)">${esc(p.label)}</text>`;
+  });
+  s += "</svg>";
+  return s;
+}
+
+function renderStatic() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.querySelectorAll("#langSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  document.querySelectorAll("#windowSeg button").forEach(b => {
+    b.setAttribute("aria-pressed", String(b.dataset.win === win));
+    b.textContent = t("w" + b.dataset.win);
+  });
+}
+
+function figures(el, items) {
+  el.innerHTML = items.map(i => `<div class="fig"><div class="v ${i.cls || ""}">${i.v}</div><div class="l">${esc(i.l)}</div></div>`).join("");
+}
+
+/* The funding a series must average before a round trip and a 5%/yr target on
+   capital are both covered — computed from THIS window's median cost, not
+   carried over from another page. */
+function needBps(w) {
+  const costs = w.series.map(s => s.cost_pct).filter(v => v != null).sort((a, b) => a - b);
+  const medCost = costs.length ? costs[Math.floor(costs.length / 2)] : 0.3;
+  return (0.05 * w.capital_per_notional + medCost / 100) / 1095 * 1e4;
+}
+
+function renderVerdict() {
+  const w = W(), all = w.cohorts.all, ht = all.ht;
+  const gapv = all.mean_cap_pct - ht.mean_cap_pct;
+  const key = all.mean_cap_pct < 0 ? "v_head_loss" : gapv >= 0 ? "v_head_above" : "v_head_below";
+  document.getElementById("vHeadline").textContent =
+    t(key, { rule: pct(all.mean_cap_pct, 2, true), ht: pct(ht.mean_cap_pct, 2, true), n: all.series, days: num(w.days, 0) });
+  document.getElementById("vLede").textContent = t("v_lede", {
+    n: all.series, refused: w.refused.length, k: num(w.capital_per_notional, 1),
+    base: pct(w.cohorts.baseline.mean_cap_pct, 2, true), added: pct(w.cohorts.added.mean_cap_pct, 2, true),
+    nbase: w.cohorts.baseline.series, nadded: w.cohorts.added.series });
+  figures(document.getElementById("vFigures"), [
+    { v: pct(all.mean_cap_pct, 2, true), l: t("fig_rule"), cls: cls(all.mean_cap_pct) },
+    { v: pct(ht.mean_cap_pct, 2, true), l: t("fig_ht"), cls: cls(ht.mean_cap_pct) },
+    { v: num(all.series, 0), l: t("fig_series") },
+    { v: `${all.positive}/${all.series}`, l: t("fig_positive") },
+    { v: num(all.trades_per_series, 1), l: t("fig_trades") },
+    { v: pct(all.mean_dd_cap_pct, 2), l: t("fig_dd") },
+    { v: all.calmar == null ? "—" : num(all.calmar, 2), l: t("fig_calmar") },
+  ]);
+  let note = t("v_note", { beat: all.beat_ht, n: all.series, from: day(w.from_ms), to: day(w.to_ms),
+    set: fmtSet(DATA.shipped) });
+  const old = (w.compares || []).find(c => c.key === "old");
+  if (old) {
+    note += " " + t("v_old", { oldset: fmtSet(old.params), old: pct(old.mean_other_cap_pct, 2, true), n: old.series_other,
+      oldtrades: num(old.trades_per_series_other, 1), oldpos: old.positive_other,
+      gain: num(all.mean_cap_pct - old.mean_other_cap_pct, 3), trades: num(all.trades_per_series, 1) });
+  }
+  document.getElementById("vNote").textContent = note;
+}
+
+function renderWhere() {
+  const w = W();
+  const rows = COHORTS.filter(c => w.cohorts[c] && w.cohorts[c].series).map(c => ({
+    key: c, label: t("co_" + c), n: w.cohorts[c].series,
+    rule: w.cohorts[c].mean_cap_pct, ht: w.cohorts[c].ht.mean_cap_pct }));
+  document.getElementById("cohortChart").innerHTML = cohortChart(rows);
+  const head = [{ label: t("th_cohort") }, { label: t("th_n"), num: 1 }, { label: t("th_rule"), num: 1 },
+    { label: t("th_ht"), num: 1 }, { label: t("th_gap"), num: 1 }, { label: t("th_beat"), num: 1 },
+    { label: t("th_dd"), num: 1 }, { label: t("th_calmar"), num: 1 }, { label: t("th_trades"), num: 1 },
+    { label: t("th_pos"), num: 1 }, { label: t("th_worst"), num: 1 }];
+  document.getElementById("cohortTable").innerHTML = tbl(head, rows.map(r => {
+    const c = w.cohorts[r.key];
+    const gapv = c.mean_cap_pct - c.ht.mean_cap_pct;
+    return [r.label, num(c.series, 0),
+      { v: pct(c.mean_cap_pct, 2, true), cls: cls(c.mean_cap_pct) },
+      { v: pct(c.ht.mean_cap_pct, 2, true), cls: cls(c.ht.mean_cap_pct) },
+      { v: pct(gapv, 2, true), cls: cls(gapv) },
+      `${c.beat_ht}/${c.series}`, pct(c.mean_dd_cap_pct, 2), c.calmar == null ? "—" : num(c.calmar, 2),
+      num(c.trades_per_series, 1), `${c.positive}/${c.series}`,
+      { v: pct(c.worst_cap_pct, 2, true), cls: cls(c.worst_cap_pct) }];
+  }));
+  const ranked = rows.slice().sort((a, b) => b.rule - a.rule);
+  const beats = rows.filter(r => r.rule > r.ht);
+  document.getElementById("whereRead").textContent = t("where_read", {
+    best: ranked[0].label, bestv: pct(ranked[0].rule, 2, true),
+    worst: ranked[ranked.length - 1].label, worstv: pct(ranked[ranked.length - 1].rule, 2, true),
+    beats: beats.length ? listVI(beats.map(b => b.label)) : t("none"),
+  });
+}
+
+const listVI = xs => xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + (lang === "zh" ? "、" : " và ") + xs[xs.length - 1];
+
+function renderSymbols() {
+  const w = W(), need = needBps(w);
+  const top = w.series.slice().sort((a, b) => b.cap_pct - a.cap_pct).slice(0, 3).map(s => s.key);
+  const pts = w.series.filter(s => s.mean_bps != null).map(s => ({
+    x: s.mean_bps, y: s.cap_pct, added: s.added, label: sname(s.symbol, s.perp), tag: top.includes(s.key) }));
+  document.getElementById("scatterChart").innerHTML = scatterChart(pts, need);
+  const head = [{ label: t("th_symbol") }, { label: t("th_series"), num: 1 }, { label: t("th_bps"), num: 1 },
+    { label: t("th_rule"), num: 1 }, { label: t("th_ht"), num: 1 }, { label: t("th_beat"), num: 1 },
+    { label: t("th_dd"), num: 1 }, { label: t("th_trades"), num: 1 }, { label: t("th_pos"), num: 1 }];
+  document.getElementById("symTable").innerHTML = tbl(head, w.by_symbol.map(r => [
+    `${r.name.replace("USDT", "")}${r.added ? ` <span class="pill open">${t("pill_added")}</span>` : ""}`,
+    num(r.series, 0), num(r.mean_funding_bps, 3),
+    { v: pct(r.mean_cap_pct, 2, true), cls: cls(r.mean_cap_pct) },
+    { v: pct(r.ht_mean_cap_pct, 2, true), cls: cls(r.ht_mean_cap_pct) },
+    `${r.beat_ht}/${r.series}`, pct(r.mean_dd_cap_pct, 2), num(r.trades_per_series, 1),
+    `${r.positive}/${r.series}`]));
+  const above = w.series.filter(s => s.mean_bps != null && s.mean_bps >= need);
+  const bestSym = w.by_symbol[0];
+  const ys = pts.map(p => p.y).sort((a, b) => a - b);
+  const qq = f => ys[Math.min(ys.length - 1, Math.max(0, Math.round((ys.length - 1) * f)))];
+  const loY = Math.min(0, qq(0.025)), hiY = Math.max(qq(0.975), 0), padY = (hiY - loY) * 0.12 || 0.5;
+  const outside = pts.filter(p => p.y < loY - padY || p.y > hiY + padY);
+  document.getElementById("symPinned").textContent = outside.length
+    ? t("sc_pinned_note", { n: outside.length, list: listVI(outside.map(p => `${p.label} ${pct(p.y, 2, true)}`)) }) : "";
+  document.getElementById("symRead").textContent = t("sym_read", {
+    need: num(need, 2), above: above.length, n: w.series.length,
+    list: above.length ? listVI(above.slice(0, 6).map(s => sname(s.symbol, s.perp))) : t("none"),
+    best: bestSym.name.replace("USDT", ""), bestv: pct(bestSym.mean_cap_pct, 2, true),
+  });
+}
+
+const SER_TABS = [["all", s => true], ["added", s => s.added], ["base", s => !s.added],
+  ["bridged", s => s.quote_bridged], ["usdt", s => !s.quote_bridged]];
+
+function renderSeries() {
+  const w = W();
+  document.getElementById("serTabs").innerHTML = SER_TABS.map(([k]) =>
+    `<button type="button" data-tab="${k}" aria-pressed="${k === serTab}">${t("tab_" + k)}</button>`).join("");
+  document.querySelectorAll("#serTabs button").forEach(b => b.onclick = () => { serTab = b.dataset.tab; renderSeries(); });
+  const keep = SER_TABS.find(([k]) => k === serTab)[1];
+  const rows = w.series.filter(keep);
+  const head = [{ label: t("th_series") }, { label: t("th_spot") }, { label: t("th_days"), num: 1 },
+    { label: t("th_bps"), num: 1 }, { label: t("th_cost"), num: 1 }, { label: t("th_trades"), num: 1 },
+    { label: t("th_rule"), num: 1 }, { label: t("th_apr"), num: 1 }, { label: t("th_ht"), num: 1 },
+    { label: t("th_gap"), num: 1 }, { label: t("th_dd"), num: 1 }, { label: t("th_exp"), num: 1 },
+    { label: t("th_basis"), num: 1 }, { label: t("th_liq"), num: 1 }];
+  document.getElementById("serTable").innerHTML = tbl(head, rows.map(s => {
+    const gapv = s.ht_cap_pct == null ? null : s.cap_pct - s.ht_cap_pct;
+    return [
+      `${sname(s.symbol, s.perp)}${s.quote_bridged ? ` <span class="pill partial">${t("pill_bridged")}</span>` : ""}`,
+      vshort(s.spot), num(s.covered_days, 0), num(s.mean_bps, 3), pct(s.cost_pct, 3),
+      num(s.trades, 0),
+      { v: pct(s.cap_pct, 2, true), cls: cls(s.cap_pct) },
+      { v: pct(s.apr_cap_pct, 2, true), cls: cls(s.apr_cap_pct) },
+      { v: pct(s.ht_cap_pct, 2, true), cls: cls(s.ht_cap_pct) },
+      { v: pct(gapv, 2, true), cls: cls(gapv) },
+      pct(s.dd_cap_pct, 2), pct(s.exposure * 100, 0),
+      num(s.basis_not_evaluable, 0), num(s.liquidations, 0)];
+  }));
+  document.getElementById("refTable").innerHTML = tbl(
+    [{ label: t("th_series") }, { label: t("th_reason") }],
+    w.refused.map(r => [sname(r.symbol, r.perp), { v: esc(r.reason_vi), cls: "wrap" }]));
+  document.getElementById("venueTable").innerHTML = tbl(
+    [{ label: t("th_perp") }, { label: t("th_n"), num: 1 }, { label: t("th_rule"), num: 1 },
+     { label: t("th_ht"), num: 1 }, { label: t("th_beat"), num: 1 }, { label: t("th_trades"), num: 1 }],
+    w.by_venue.map(v => [vshort(v.name), num(v.series, 0),
+      { v: pct(v.mean_cap_pct, 2, true), cls: cls(v.mean_cap_pct) },
+      { v: pct(v.ht_mean_cap_pct, 2, true), cls: cls(v.ht_mean_cap_pct) },
+      `${v.beat_ht}/${v.series}`, num(v.trades_per_series, 1)]));
+}
+
+function renderTrades() {
+  const w = W(), T0 = w.trades;
+  figures(document.getElementById("trFigures"), [
+    { v: num(T0.n, 0), l: t("fig_ntrades") },
+    { v: T0.n ? `${T0.be}/${T0.n}` : "—", l: t("fig_be") },
+    { v: T0.n ? num(T0.median_held_days, 0) : "—", l: t("fig_held") },
+    { v: T0.n ? pct(T0.mean_net_pct, 3, true) : "—", l: t("fig_net"), cls: cls(T0.mean_net_pct) },
+    { v: T0.n ? pct(T0.mean_funding_pct, 3) : "—", l: t("fig_fund") },
+    { v: T0.n ? pct(T0.mean_cost_pct, 3) : "—", l: t("fig_cost") },
+  ]);
+  document.getElementById("reasonTable").innerHTML = tbl(
+    [{ label: t("th_reason") }, { label: t("th_count"), num: 1 }],
+    REASONS.filter(r => (T0.reasons || {})[r]).map(r => [t("r_" + r), num(T0.reasons[r], 0)]));
+  const all = w.series.flatMap(s => s.trade_list.map(x => Object.assign({ key: s.key }, x)));
+  all.sort((a, b) => b.net_frac - a.net_frac);
+  const pick = all.length <= 8 ? all : all.slice(0, 4).concat(all.slice(-4));
+  document.getElementById("extremeTable").innerHTML = tbl(
+    [{ label: t("th_series") }, { label: t("th_open") }, { label: t("th_held"), num: 1 },
+     { label: t("th_result"), num: 1 }, { label: t("th_reason") }],
+    pick.map(x => [sname(x.symbol, x.perp), day(x.open_ms), num(x.held_days, 0),
+      { v: pct(x.net_frac * 100, 3, true), cls: cls(x.net_frac) }, t("r_" + x.reason)]));
+  const rs = T0.reasons || {};
+  document.getElementById("trRead").textContent = T0.n ? t("tr_read", {
+    n: T0.n, be: T0.be, held: num(T0.median_held_days, 0),
+    end: rs.window_end || 0, flip: rs.sign_flip || 0, decay: rs.decay || 0, basis: rs.basis || 0,
+    worst: pct(T0.worst_pct, 3, true), best: pct(T0.best_pct, 3, true),
+  }) : t("tr_read_none");
+}
+
+function renderCmp() {
+  const w = W(), list = w.compares || [], box = document.getElementById("cmp");
+  box.hidden = false;
+  document.getElementById("cmpIntro").textContent = t("cmp_intro", { n: w.series.length });
+  const label = c => lang === "zh" ? (c.label_zh || c.label_vi) : c.label_vi;
+  document.getElementById("cmpBlocks").innerHTML = list.length ? list.map((I, i) => {
+    const all = I.cohorts.all, worst = I.series[0];
+    const figs = [
+      { v: pct(all.mean_cap_pct, 2, true), l: t("cmp_fig_this"), cls: cls(all.mean_cap_pct) },
+      { v: pct(all.mean_off_pct, 2, true), l: t("cmp_fig_other"), cls: cls(all.mean_off_pct) },
+      { v: pct(all.delta_pct, 2, true), l: t("cmp_fig_delta"), cls: cls(all.delta_pct) },
+      { v: `${num(I.trades, 0)} → ${num(I.trades_off, 0)}`, l: t("cmp_fig_trades") },
+      { v: `${w.cohorts.all.positive} → ${I.positive_other}`, l: t("cmp_fig_pos") },
+      { v: `${pct(w.cohorts.all.mean_dd_cap_pct, 2)} → ${pct(I.mean_dd_other_cap_pct, 2)}`, l: t("cmp_fig_dd") },
+    ];
+    const coh = tbl(
+      [{ label: t("th_cohort") }, { label: t("th_n"), num: 1 }, { label: t("cmp_fig_this"), num: 1 },
+       { label: t("cmp_fig_other"), num: 1 }, { label: t("th_gap"), num: 1 }, { label: t("th_count"), num: 1 }],
+      COHORTS.filter(c => I.cohorts[c]).map(c => {
+        const v = I.cohorts[c];
+        return [t("co_" + c), num(v.series, 0),
+          { v: pct(v.mean_cap_pct, 2, true), cls: cls(v.mean_cap_pct) },
+          { v: pct(v.mean_off_pct, 2, true), cls: cls(v.mean_off_pct) },
+          { v: pct(v.delta_pct, 2, true), cls: cls(v.delta_pct) },
+          `${num(v.trades, 0)} → ${num(v.trades_off, 0)}`];
+      }));
+    const ser = tbl(
+      [{ label: t("th_series") }, { label: t("cmp_fig_this"), num: 1 }, { label: t("cmp_fig_other"), num: 1 },
+       { label: t("th_gap"), num: 1 }, { label: t("th_count"), num: 1 }],
+      I.series.slice(0, 10).map(r => [sname(r.symbol, r.perp),
+        { v: pct(r.cap_pct, 2, true), cls: cls(r.cap_pct) },
+        { v: pct(r.cap_off_pct, 2, true), cls: cls(r.cap_off_pct) },
+        { v: pct(r.delta_pct, 2, true), cls: cls(r.delta_pct) },
+        `${num(r.trades, 0)} → ${num(r.trades_off, 0)}`]));
+    const read = t("cmp_read", {
+      what: label(I), delta: pct(all.delta_pct, 2, true), on: num(I.trades, 0), off: num(I.trades_off, 0), moved: num(I.moved, 0),
+      series: worst ? sname(worst.symbol, worst.perp) : "—",
+      sdelta: worst ? pct(worst.delta_pct, 2, true) : "—",
+      strades: worst ? `${num(worst.trades, 0)} → ${num(worst.trades_off, 0)}` : "—",
+      bridged: pct((I.cohorts.bridged || {}).delta_pct, 2, true),
+      usdt: pct((I.cohorts.usdt_quoted || {}).delta_pct, 2, true) });
+    return `<div style="display:grid;gap:1rem">
+      <h3 style="margin:0">${i + 1}. ${esc(label(I))}<br><span class="muted params" style="font-weight:400;font-size:.82rem">${esc(t("cmp_set"))} ${esc(fmtSet(I.params))}</span></h3>
+      <div class="figures">${figs.map(f => `<div class="fig"><div class="v ${f.cls || ""}">${f.v}</div><div class="l">${esc(f.l)}</div></div>`).join("")}</div>
+      <div class="grid2">
+        <div class="small"><h3>${esc(t("cmp_coh_h"))}</h3><div class="tablewrap"><table>${coh}</table></div></div>
+        <div class="small"><h3>${esc(t("cmp_ser_h"))}</h3><div class="tablewrap"><table>${ser}</table></div></div>
+      </div>
+      <p class="note">${esc(read)}</p>
+    </div>`;
+  }).join("") : `<p class="note">${esc(t("cmp_none"))}</p>`;
+}
+
+function renderGrid() {
+  const S = DATA.sweep, box = document.getElementById("grid");
+  if (!S) { box.hidden = true; return; }
+  box.hidden = false;
+  document.getElementById("grIntro").textContent = t("gr_intro", {
+    sets: num(S.sets, 0), series: S.series, window: t("w" + S.window), dropped: num(S.dropped_partial, 0) });
+  const rows = [
+    { who: t("gr_shipped"), sub: fmtSet(DATA.shipped), row: S.shipped },
+    { who: t("gr_best"), sub: S.best ? fmtSet(S.best) : "", row: S.best },
+  ];
+  document.getElementById("grAnswer").innerHTML =
+    `<div class="row head"><span>${t("th_set")}</span><span>${t("th_rule")}</span><span>${t("th_trades")}</span><span>${t("th_rank")}</span></div>` +
+    rows.filter(r => r.row).map(r => `<div class="row"><div class="who">${esc(r.who)}<small>${esc(r.sub)}</small></div>` +
+      `<div class="v ${cls(r.row.mean_cap_pct)}">${pct(r.row.mean_cap_pct, 2, true)}<small>${r.row.positive}/${r.row.series} ${t("fig_positive").toLowerCase()}</small></div>` +
+      `<div class="v sub">${num(r.row.trades_per_series, 1)}</div>` +
+      `<div class="v sub">${num(r.row.rank, 0)}</div></div>`).join("") +
+    (S.ht_mean_cap_pct == null ? "" : `<div class="row"><div class="who">${t("gr_ht")}<small>${t("gr_ht_sub")}</small></div>` +
+      `<div class="v ${cls(S.ht_mean_cap_pct)}">${pct(S.ht_mean_cap_pct, 2, true)}</div><div class="v sub">1,0</div><div class="v sub">—</div></div>`);
+  document.getElementById("grRead").textContent = t("gr_read", {
+    rank: num(S.shipped ? S.shipped.rank : 0, 0), sets: num(S.sets, 0),
+    gap: S.shipped && S.best ? num(S.best.mean_cap_pct - S.shipped.mean_cap_pct, 3) : "—",
+    beat: num(S.beat_ht, 0), positive: num(S.positive_sets, 0),
+    median: pct(S.median_cap_pct, 2, true) });
+  const cards = [];
+  for (const a of AXES) {
+    const m = S.marginals[a];
+    if (!m || m.length < 2) continue;
+    cards.push(`<div class="small"><h3>${SHORT[a]} — <span class="muted" style="font-weight:400">${esc(a)}</span></h3>` +
+      `<div class="tablewrap"><table>` + tbl(
+        [{ label: t("th_value"), num: 1 }, { label: t("th_sets"), num: 1 }, { label: t("th_mean"), num: 1 },
+         { label: t("th_best"), num: 1 }, { label: t("th_trades"), num: 1 }, { label: t("th_be"), num: 1 },
+         { label: t("r_sign_flip"), num: 1 }, { label: t("r_decay"), num: 1 }],
+        m.map(v => [g(v.value), num(v.n, 0),
+          { v: pct(v.mean_cap_pct, 2, true), cls: cls(v.mean_cap_pct) },
+          { v: pct(v.best_cap_pct, 2, true), cls: cls(v.best_cap_pct) },
+          num(v.trades_per_series, 1),
+          v.be_share == null ? "—" : pct(v.be_share * 100, 0),
+          v.flip_share == null ? "—" : pct(v.flip_share * 100, 0),
+          v.decay_share == null ? "—" : pct(v.decay_share * 100, 0)])) +
+      `</table></div></div>`);
+  }
+  document.getElementById("mgGrid").innerHTML = cards.join("");
+  document.getElementById("topTable").innerHTML = tbl(
+    [{ label: t("th_rank"), num: 1 }, { label: t("th_set") }, { label: t("th_rule"), num: 1 },
+     { label: t("th_pos"), num: 1 }, { label: t("th_trades"), num: 1 }, { label: t("th_dd"), num: 1 },
+     { label: t("th_calmar"), num: 1 }, { label: t("th_be"), num: 1 }],
+    S.top.map(r => [num(r.rank, 0), { v: fmtSet(r), cls: "params" },
+      { v: pct(r.mean_cap_pct, 2, true), cls: cls(r.mean_cap_pct) },
+      `${r.positive}/${r.series}`, num(r.trades_per_series, 1),
+      r.mean_dd_cap_pct == null ? "—" : pct(r.mean_dd_cap_pct, 2),
+      r.calmar == null ? "—" : num(r.calmar, 2),
+      r.be_share == null ? "—" : pct(r.be_share * 100, 0)]));
+}
+
+function renderMethod() {
+  const w = W();
+  const bridged = w.series.filter(s => s.quote_bridged).length;
+  const shortCov = w.series.filter(s => s.coverage_short).length;
+  const noBasis = w.series.filter(s => s.basis_not_evaluable > 0).length;
+  const items = [
+    t("me_1", { k: num(w.capital_per_notional, 1) }),
+    t("me_2"),
+    t("me_3", { n: w.series.length, from: day(w.from_ms), to: day(w.to_ms), days: num(w.days, 0) }),
+    t("me_4", { refused: w.refused.length }),
+    t("me_5", { short: shortCov }),
+    t("me_6", { bridged: bridged }),
+    t("me_7", { nobasis: noBasis }),
+    t("me_8"),
+    t("me_9"),
+  ];
+  document.getElementById("meList").innerHTML = items.map(x => `<li>${esc(x)}</li>`).join("");
+  document.getElementById("mePre").textContent = w.assumptions_vi;
+  const gl = [["gl_cap", "gl_cap_d"], ["gl_ht", "gl_ht_d"], ["gl_calmar", "gl_calmar_d"],
+    ["gl_bps", "gl_bps_d"], ["gl_bridge", "gl_bridge_d"], ["gl_set", "gl_set_d"]];
+  document.getElementById("meGloss").innerHTML = gl.map(([k, d]) =>
+    `<div><dt>${esc(t(k))}</dt><dd>${esc(t(d))}</dd></div>`).join("");
+  document.getElementById("footText").textContent = t("foot", META);
+}
+
+function render() {
+  renderStatic();
+  document.getElementById("windowLabel").textContent = t("win_label", {
+    from: day(W().from_ms), to: day(W().to_ms), n: W().series.length });
+  renderVerdict(); renderWhere(); renderSymbols(); renderSeries(); renderTrades(); renderCmp(); renderGrid(); renderMethod();
+}
+
+document.getElementById("windowSeg").innerHTML = WINS.map(k =>
+  `<button type="button" data-win="${k}"></button>`).join("");
+document.querySelectorAll("#windowSeg button").forEach(b => b.onclick = () => { win = b.dataset.win; render(); });
+document.querySelectorAll("#langSeg button").forEach(b => b.onclick = () => { lang = b.dataset.lang; render(); });
+render();
+</script>
