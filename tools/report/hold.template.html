@@ -1,0 +1,668 @@
+<title>Chân trời hoà vốn</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ground:#F4F6F3; --surface:#FFFFFF; --ink:#1A2024; --muted:#5F6B72; --rule:#D6DCD8; --rule-soft:#E6EAE7;
+  --accent:#35507A; --accent-ink:#FFFFFF; --loss:#B4552D; --gain:#1E7A6C; --warn:#B8891E;
+  --loss-rgb:180,85,45; --gain-rgb:30,122,108; --accent-rgb:53,80,122;
+  --display:"Bricolage Grotesque","IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+    --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+    --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+  --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+  --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+:lang(zh) body, body:lang(zh){font-family:"Noto Sans SC","IBM Plex Sans",sans-serif}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:700}
+h3{font-size:1.05rem;font-weight:600}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mono,.num,td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.loss{color:var(--loss)} .gain{color:var(--gain)} .warn{color:var(--warn)}
+.topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--rule)}
+.topbar .in{max-width:1040px;margin:0 auto;padding:.6rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.topbar .name{font-family:var(--display);font-weight:700;font-size:1rem;margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:2px;gap:2px;background:var(--surface)}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:500;padding:.25rem .7rem;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:1040px;margin:0 auto;padding:2rem 1.25rem 4rem;display:grid;gap:3rem}
+section{display:grid;gap:1rem}
+section>header{display:grid;gap:.35rem;max-width:70ch}
+p{margin:0;max-width:70ch}
+.verdict{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.5rem;display:grid;gap:1.25rem}
+.verdict h1{font-size:clamp(1.5rem,3.2vw,2.3rem)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;border-top:1px solid var(--rule-soft);padding-top:1rem}
+.fig{display:grid;gap:.15rem}
+.fig .v{font-family:var(--mono);font-size:1.6rem;font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums}
+.fig .l{font-size:.8rem;color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);max-width:none}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em}
+.i-loss{background:var(--loss)} .i-gain{background:var(--gain)} .i-accent{background:var(--accent)} .i-warn{background:var(--warn)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--rule-soft);vertical-align:top;white-space:nowrap}
+/* The header stays put while a long table scrolls: 24 series × several
+   columns is past the point where a reader can hold the column names. */
+th{position:sticky;top:0;z-index:2;background:var(--surface);font-weight:600;color:var(--muted);
+   font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--rule)}
+td.num,th.num{text-align:right}
+tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+tbody tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;min-width:22ch;max-width:52ch}
+/* First column pinned on the wide tables, so a row never loses its name. */
+table.pin td:first-child,table.pin th:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+table.pin tbody tr:nth-child(even) td:first-child{background:color-mix(in srgb,var(--ink) 3%,var(--surface))}
+table.pin th:first-child{z-index:3}
+/* A cell holding a whole parameter set: one column instead of ten. */
+td.params{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+td.params b{color:var(--ink);font-weight:600}
+.scrollhint{font-size:.78rem;color:var(--muted);margin-top:.35rem}
+.chart{width:100%;overflow-x:auto}
+.chart svg{display:block;width:100%;height:auto;font-family:var(--mono);font-size:11px}
+.chart .axis{stroke:var(--rule);stroke-width:1}
+.chart .grid{stroke:var(--rule-soft);stroke-width:1}
+.chart text{fill:var(--muted)}
+.chart .bar-loss{fill:var(--loss)} .chart .bar-gain{fill:var(--gain)} .chart .bar-accent{fill:var(--accent)} .chart .bar-warn{fill:var(--warn)}
+.chart .marker{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+.chart .marker-text{fill:var(--ink);font-weight:500}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem 2rem}
+.small h3{margin-bottom:.35rem}
+.heat{display:grid;gap:2px;font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+.heat .c{padding:.35rem .4rem;text-align:right;border-radius:3px;min-width:4.5em;line-height:1.2}
+.heat .c small{display:block;font-size:.66rem;opacity:.75}
+.heat .h{color:var(--muted);text-align:right;padding:.35rem .4rem;font-size:.7rem}
+.heat .rh{color:var(--muted);text-align:left;padding:.35rem .4rem;font-size:.7rem}
+.heatwrap{overflow-x:auto}
+.heat-title{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;flex-wrap:wrap}
+.bullets{margin:0;padding-left:1.2rem;display:grid;gap:.5rem;max-width:75ch}
+.bullets li::marker{color:var(--accent)}
+.assume{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.25rem 1.5rem}
+.assume ol{margin:0;padding-left:1.2rem;display:grid;gap:.6rem;max-width:80ch}
+pre{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1rem;overflow-x:auto;font-family:var(--mono);font-size:.8rem;line-height:1.5}
+.pill{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.72rem;font-weight:600;letter-spacing:.03em;border:1px solid currentColor}
+.pill.fail,.pill.weak{color:var(--loss)} .pill.pass{color:var(--gain)} .pill.partial{color:var(--warn)} .pill.open{color:var(--muted)}
+.tabs{display:flex;gap:.5rem;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:.85rem;border:1px solid var(--rule);background:var(--surface);color:var(--ink);padding:.3rem .75rem;border-radius:6px;cursor:pointer}
+.tabs button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;font-size:.9rem;align-items:baseline}
+.pagenav{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:-2rem}
+.pagenav a{font-size:.8rem;text-decoration:none;color:var(--muted);border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:.2rem .7rem}
+.pagenav a:hover,.pagenav a:focus-visible{color:var(--accent);border-color:var(--accent)}
+.answer{border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--surface)}
+.answer .row{display:grid;grid-template-columns:1fr 7.5rem 6rem 6rem;gap:.35rem 1rem;padding:.8rem 1.25rem;border-bottom:1px solid var(--rule-soft);align-items:baseline}
+.answer .row:last-child{border-bottom:0}
+.answer .row.head{background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.answer .row.head span:not(:first-child){text-align:right}
+.answer .who{font-weight:600;font-size:.95rem}
+.answer .who small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:.1rem}
+.answer .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.05rem;text-align:right}
+.answer .v.sub{font-size:.9rem;color:var(--muted)}
+.answer .v small{display:block;font-size:.72rem;font-weight:400;color:var(--muted);margin-top:.15rem;letter-spacing:.01em}
+.answer .row{grid-template-columns:1fr 9.5rem 6rem 6rem}
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.1rem 2rem;margin:0}
+.gloss>div{display:grid;gap:.15rem;align-content:start}
+.gloss dt{font-weight:600;font-size:.9rem;margin:0}
+.gloss dd{margin:0;font-size:.85rem;color:var(--muted);max-width:48ch}
+@media (max-width:620px){.answer .row{grid-template-columns:1fr max-content}.answer .row .v.sub{display:none}.answer .row.head span:nth-child(3),.answer .row.head span:nth-child(4){display:none}}
+.kv dt{color:var(--muted);margin:0} .kv dd{margin:0}
+footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);padding-top:1rem}
+@media (prefers-reduced-motion:no-preference){.seg button,.tabs button{transition:background .15s,color .15s}}
+/* The one-axis and marginal tables carry 8–10 columns: two per row at most,
+   and the marginals one per row, or the columns past the fourth are only
+   reachable by scrolling inside each card. */
+#oaGrid{grid-template-columns:repeat(auto-fit,minmax(480px,1fr))}
+#mgGrid{grid-template-columns:1fr}
+#oaDiffTable td.wrap{min-width:16ch}
+</style>
+
+<div class="topbar"><div class="in">
+  <span class="name" data-i18n="title"></span>
+  <span class="muted" style="font-size:.8rem" id="windowLabel"></span>
+  <div class="seg" id="windowSeg" role="group"></div>
+  <div class="seg" id="langSeg" role="group" aria-label="language">
+    <button type="button" data-lang="vi" aria-pressed="true">Tiếng Việt</button>
+    <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+  </div>
+</div></div>
+
+<main>
+  <section class="verdict" id="verdict">
+    <div class="eyebrow" data-i18n="verdict_eyebrow"></div>
+    <h1 id="verdictHeadline"></h1>
+    <p id="verdictSub" class="note"></p>
+    <div class="figures" id="figures"></div>
+    <p class="note" data-i18n="cap_note"></p>
+  </section>
+
+  <nav class="pagenav" id="pageNav"></nav>
+
+  <section id="answer">
+    <header><div class="eyebrow" data-i18n="ans_eyebrow"></div><h2 data-i18n="ans_title"></h2><p class="note" data-i18n="ans_caption"></p></header>
+    <div class="tablewrap"><table class="pin" id="answerTable"></table></div>
+    <p id="ansRead1"></p>
+    <p id="ansRead2"></p>
+    <p id="ansRead3"></p>
+    <h3 data-i18n="ans_rec_title"></h3>
+    <dl class="kv" id="ansRec"></dl>
+    <p class="note" id="ansRecNote"></p>
+  </section>
+
+  <section id="oneaxis">
+    <header><div class="eyebrow" data-i18n="oa_eyebrow"></div><h2 data-i18n="oa_title"></h2><p class="note" data-i18n="oa_caption"></p></header>
+    <p id="oaRead"></p>
+    <p id="oaDiff"></p>
+    <div class="tablewrap"><table id="oaDiffTable"></table></div>
+    <div class="grid2" id="oaGrid"></div>
+  </section>
+
+  <section id="horizon">
+    <header><div class="eyebrow" data-i18n="hz_eyebrow"></div><h2 data-i18n="hz_title"></h2><p class="note" data-i18n="hz_caption"></p></header>
+    <p id="hzRead"></p>
+    <div class="chart" id="hzChart"></div>
+    <div class="legend"><span><i class="i-gain"></i><span data-i18n="hz_leg_gain"></span></span><span><i class="i-loss"></i><span data-i18n="hz_leg_loss"></span></span><span class="muted" data-i18n="hz_leg_band"></span></div>
+    <div class="tablewrap"><table class="pin" id="hzTable"></table></div>
+    <p class="note" data-i18n="hz_censor"></p>
+  </section>
+
+  <section id="ledger">
+    <header><div class="eyebrow" data-i18n="lg_eyebrow"></div><h2 id="lgTitle"></h2><p class="note" id="lgCaption"></p></header>
+    <div class="tablewrap"><table id="lgReasons"></table></div>
+    <p id="lgRead"></p>
+    <div class="tablewrap"><table class="pin" id="lgTable"></table></div>
+  </section>
+
+  <section id="marginals">
+    <header><div class="eyebrow" data-i18n="mg_eyebrow"></div><h2 data-i18n="mg_title"></h2><p class="note" id="mgCaption"></p></header>
+    <p id="mgRead"></p>
+    <div class="grid2" id="mgGrid"></div>
+  </section>
+
+  <section id="heat">
+    <header><div class="eyebrow" data-i18n="ht_eyebrow"></div><h2 data-i18n="ht_title"></h2><p class="note" data-i18n="ht_caption"></p></header>
+    <div class="grid2" id="heatGrid"></div>
+  </section>
+
+  <section id="top">
+    <header><div class="eyebrow" data-i18n="top_eyebrow"></div><h2 data-i18n="top_title"></h2><p class="note" id="topCaption"></p></header>
+    <div class="tablewrap"><table class="pin" id="topTable"></table></div>
+    <h3 data-i18n="clean_title"></h3><p class="note" id="cleanCaption"></p>
+    <div class="tablewrap"><table class="pin" id="cleanTable"></table></div>
+    <h3 data-i18n="be_title"></h3><p class="note" data-i18n="be_caption"></p>
+    <div class="tablewrap"><table class="pin" id="beTable"></table></div>
+  </section>
+
+  <section id="method">
+    <header><div class="eyebrow" data-i18n="me_eyebrow"></div><h2 data-i18n="me_title"></h2></header>
+    <div class="assume"><ol id="methodList"></ol></div>
+    <p class="note" id="genNote"></p>
+  </section>
+</main>
+
+<script>
+const DATA = /*__DATA__*/;
+const META = /*__META__*/;
+const WINS = DATA.window_order || Object.keys(DATA.windows);
+const AXES = DATA.axes;
+const SHORT = { min_rate_per_8h_bps: "rate", persistence_periods: "pers", min_net_apr_frac: "minNet", exit_net_apr_frac: "floor",
+  exit_persistence_periods: "N", exit_negative_min_bps: "X", exit_negative_periods: "negN", exit_negative_cum_cost_frac: "C",
+  min_hold_recovered_cost_frac: "M", notional_quote: "notional", holding_days: "hold" };
+const REASONS = ["window_end", "basis", "sign_flip", "decay", "liquidation", "unpriceable", "hedge_gone", "other"];
+
+const T = {
+vi: {
+  title: "Chân trời hoà vốn",
+  months: "{n} tháng",
+  window_label: "{from} → {to} · {series} chuỗi × {sets} bộ tham số · {trades} lệnh",
+  verdict_eyebrow: "Câu hỏi: giữ mỗi lệnh bao lâu để nó hoà vốn, và bộ tham số nào làm được việc đó",
+  cap_note: "Mọi con số lợi nhuận trên trang là RÒNG (đã trừ phí taker bốn lệnh và slippage từ sổ đo được) và tính trên VỐN — cả hai chân, {cap}× notional vì chân spot không dùng đòn bẩy được. Nhãn “/notional” chỉ dành cho chi phí đầu vào.",
+  fig_ship: "bộ đang ship, trên vốn/năm", fig_best: "bộ tốt nhất trên trục giữ", fig_ht: "giữ suốt, một vòng phí",
+  fig_be: "lệnh hoà vốn của bộ ship", fig_flip: "lệnh thoát vì đảo dấu / suy giảm (bộ ship)", fig_sets: "bộ vượt được giữ suốt",
+  nav_answer: "Trả lời", nav_horizon: "Chân trời hoà vốn", nav_ledger: "Sổ lệnh bộ ship", nav_marginals: "Từng trục",
+  nav_heat: "Giữ × cửa sổ", nav_top: "Bộ tốt nhất", nav_method: "Cách đo",
+  ans_eyebrow: "Trả lời thẳng", ans_title: "Bốn cách giữ một lệnh, đặt cạnh nhau",
+  ans_caption: "Bộ đang ship, bộ tốt nhất toàn lưới, bộ tốt nhất mà lối thoát vì LỢI SUẤT (đảo dấu + suy giảm) đóng dưới 10% số lệnh, bộ có tỷ lệ lệnh hoà vốn cao nhất — và mốc chuẩn giữ suốt cửa sổ trả đúng một vòng phí.",
+  col_what: "Cách giữ", col_params: "Tham số (rate/pers · floor/N · X negN C · M · hold)", col_cap: "Trên vốn /năm", col_pos: "Chuỗi dương",
+  col_tr: "Lệnh / chuỗi", col_be: "Lệnh hoà vốn", col_flip: "Thoát đảo dấu", col_decay: "Thoát suy giảm", col_basis: "Thoát basis", col_end: "Giữ đến cuối",
+  col_held: "Giữ TB (ngày)", col_rank: "Hạng",
+  row_ship: "Bộ đang ship (config.yaml)", row_best: "Tốt nhất toàn lưới", row_clean: "Tốt nhất khi thoát lợi suất ≤ 10% số lệnh",
+  row_be: "Tỷ lệ hoà vốn cao nhất (≥ 1 lệnh/chuỗi)", row_ht: "Giữ suốt cửa sổ, một vòng phí",
+  ans_rec_title: "Bộ tham số đề xuất cho trục giữ",
+  rec_hold: "holding_days", rec_N: "exit_persistence_periods", rec_M: "min_hold_recovered_cost_frac", rec_floor: "exit_net_apr_frac",
+  rec_gates: "exit_negative_min_bps / periods / cum_cost_frac", rec_entry: "min_rate_per_8h_bps / persistence_periods",
+  rec_same: "Giữ nguyên bộ đang ship: {p}. Lưới {sets} bộ trên trục giữ không tìm được bộ nào hơn nó quá {gap} điểm trên vốn/năm, và {n_better} bộ xếp trên nó chỉ khác ở lối vào.",
+  rec_change: "Đổi sang {p}: {best} trên vốn/năm so với {ship} của bộ đang ship (+{gap} điểm), {pos}/{series} chuỗi dương, {be} lệnh hoà vốn.",
+  rec_note: "Ba trục giữ đọc theo đơn vị của chúng: holding_days là số ngày KHẤU HAO chi phí vòng (nó đặt ngưỡng thật của lối vào và của lối thoát suy giảm, không phải ngày giữ tối đa); exit_persistence_periods là số MỐC settle — {n8} ngày ở nhịp 8h nhưng {n1} ngày ở nhịp 1h cho cùng một giá trị; min_hold_recovered_cost_frac là phân số chi phí vòng mà lệnh phải thu lại trước khi hai lối thoát lợi suất được phép nổ.",
+  nav_oneaxis: "Đổi một trục",
+  oa_eyebrow: "Từ bộ đang ship, đổi đúng MỘT trục", oa_title: "Mỗi trục giữ, giữ nguyên mọi thứ khác",
+  oa_caption: "Đây là phép đo thao tác viên thật sự làm: lấy bộ đang ship, đổi một khoá trong config.yaml, xem điều gì đổi. Trung bình lưới (mục Từng trục) trộn mọi bộ khác vào; bảng này thì không.",
+  oa_read: "Cổng giữ tối thiểu M={m_on} — “không được thoát vì lợi suất trước khi lệnh đã thu lại chi phí vòng” — là nút bấm đúng cho câu hỏi: từ bộ ship, tỷ lệ lệnh hoà vốn {be0} → {be1}, lệnh thoát vì đảo dấu/suy giảm {ye0} → {ye1}, lệnh mỗi chuỗi {tr0} → {tr1}, và lợi nhuận trên vốn/năm {r0} → {r1} ({dr} điểm). holding_days từ {h_lo} tới {h_hi} ngày dịch kết quả {h_span} điểm; exit_persistence_periods từ {n_lo} tới {n_hi} mốc dịch {n_span} điểm — hai trục đó đã bão hoà ở bộ ship.",
+  oa_diff: "Đọc sổ lệnh để thấy M làm gì thật: nó chỉ đổi {n} chuỗi ({list}) và không cứu lệnh nào. Nó chặn {k0} lệnh thoát vì đảo dấu đang lỗ, nên các chuỗi đó đi từ {k_off} lệnh (tổng {s0} trên vốn) thành {k_on} lệnh (tổng {s1}): {worse} chuỗi lỗ nặng hơn, {better} chuỗi lỗ nhẹ hơn, cộng lại chênh {d} trên vốn cho cả nhóm. Tỷ lệ hoà vốn tăng vì MẪU SỐ giảm, không vì có thêm lệnh lời. Trên một chuỗi funding âm có hệ thống, “giữ tới khi hoà vốn” là giữ tới vô hạn.",
+  oa_diff_none: "Bật M={m} không đổi một lệnh nào của bộ ship: ba lối thoát đã im nên không còn gì để chặn.",
+  oa_d_series: "Chuỗi", oa_d_off: "M tắt: lệnh (ròng /vốn, lý do)", oa_d_on: "M={m} bật: lệnh (ròng /vốn, lý do)", oa_d_sum0: "Tổng /vốn, tắt", oa_d_sum1: "Tổng /vốn, bật",
+  oa_col_val: "Giá trị", oa_col_cap: "Trên vốn /năm", oa_col_pos: "Chuỗi dương", oa_col_tr: "Lệnh/chuỗi", oa_col_be: "Hoà vốn", oa_col_ye: "Thoát lợi suất", oa_col_held: "Giữ TB", oa_ship: "← đang ship",
+  hz_eyebrow: "Đo trên corpus, không qua luật nào", hz_title: "Một lệnh cần bao nhiêu ngày để hoà vốn",
+  hz_caption: "Với MỖI mốc settle trong cửa sổ làm điểm vào, đếm số ngày cho tới khi funding thu được từ đó trở đi bằng chi phí vòng vào/ra Go đã định giá cho chuỗi (ở 50k). Đây là thứ mọi luật giữ phải đối mặt: nó không phụ thuộc tham số nào.",
+  hz_read: "Ở nhịp 8h trên BTC/ETH, trung vị là {med8} ngày và phần tư trên là {p75_8} ngày; ở nhịp 1h của hyperliquid, {med1} ngày. Với những điểm vào mà luật vào đang ship chọn (≥ {bps} bps/8h qua {pers} mốc), trung vị rút còn {medrule} ngày. Trên {n_neg} chuỗi funding trung bình cả năm không đủ trả chi phí ({neg_list}) {cens} điểm vào không bao giờ hoà vốn trước khi cửa sổ đóng: không luật giữ nào cứu được một lệnh ở đó, chỉ có không vào.",
+  hz_leg_gain: "giữ suốt cửa sổ có lãi", hz_leg_loss: "giữ suốt cửa sổ lỗ", hz_leg_band: "dải = phần tư dưới → phần tư trên, vạch = trung vị, mọi điểm vào; chấm = trung vị các điểm vào theo luật",
+  hz_days: "ngày tới khi hoà vốn",
+  hz_col_series: "Chuỗi", hz_col_iv: "Nhịp", hz_col_cost: "Vòng phí /notional", hz_col_mean: "Funding TB bps/8h", hz_col_ht: "Giữ suốt /vốn",
+  hz_col_med: "Trung vị (ngày)", hz_col_p75: "P75", hz_col_p90: "P90", hz_col_w30: "≤ 30 ngày", hz_col_w90: "≤ 90 ngày", hz_col_w180: "≤ 180 ngày",
+  hz_col_rn: "Điểm vào theo luật", hz_col_rmed: "Trung vị", hz_col_rw90: "≤ 90 ngày",
+  hz_any: "Mọi điểm vào", hz_rule: "Điểm vào theo luật đang ship",
+  hz_censor: "“≤ D ngày” chỉ đếm những điểm vào còn ít nhất D ngày cửa sổ phía trước, ở cả tử số lẫn mẫu số — nếu không, chuỗi ngắn (okx 96 ngày) báo hơn 100%. Trung vị/P75 tính trên các điểm vào ĐÃ hoà vốn; chuỗi có nhiều điểm vào không bao giờ hoà vốn thì trung vị đó là lạc quan.",
+  lg_eyebrow: "Từng lệnh một", lg_title: "Sổ lệnh của bộ đang ship: {n} lệnh, {be} hoà vốn",
+  lg_caption: "Mỗi lệnh bộ đang ship mở trong cửa sổ, vì sao nó đóng, và nó có hoà vốn không. Trả lời “thoát vì đảo dấu / suy giảm có đang cắt mất lệnh tốt không” bằng cách đọc từng dòng.",
+  lg_col_reason: "Lý do đóng", lg_col_n: "Lệnh", lg_col_be: "Hoà vốn", lg_col_held: "Giữ TB (ngày)", lg_col_net: "Ròng TB /vốn", lg_col_loss: "Tổng ròng /vốn",
+  lg_read_end: "{end} lệnh giữ đến cuối cửa sổ ({end_be} hoà vốn — đó là những chuỗi giữ suốt có lãi).",
+  lg_read_flip: " {flip} lệnh thoát vì đảo dấu, trên {flip_series}, {flip_be} trong số đó hoà vốn.",
+  lg_read_noflip: " Không lệnh nào thoát vì đảo dấu.",
+  lg_read_decay: " {decay} lệnh thoát vì suy giảm.",
+  lg_read_nodecay: " Không lệnh nào thoát vì suy giảm.",
+  lg_read_basis: " {basis} lệnh thoát vì basis, tất cả trên {basis_series}, {basis_be} hoà vốn: đây là lối thoát RỦI RO, ngoài phạm vi của cổng giữ.",
+  lg_read_loss: " Trong {lossn} lệnh lỗ, {loss_end} lệnh là giữ-đến-cuối trên chuỗi mà giữ suốt vốn đã lỗ — không phải luật thoát cắt sai, mà là vào sai chuỗi.",
+  lg_read_noloss: " Không lệnh nào lỗ.",
+  lg_col_series: "Chuỗi", lg_col_open: "Mở", lg_col_close: "Đóng", lg_col_days: "Ngày", lg_col_settle: "Mốc", lg_col_fund: "Funding /vốn", lg_col_cost: "Vòng phí /vốn", lg_col_netc: "Ròng /vốn", lg_col_why: "Đóng vì",
+  r_window_end: "cuối cửa sổ", r_basis: "basis", r_sign_flip: "đảo dấu", r_decay: "suy giảm", r_liquidation: "thanh lý", r_unpriceable: "không định giá được", r_hedge_gone: "mất chân hedge", r_other: "khác",
+  mg_eyebrow: "Từng trục một", mg_title: "Mỗi trục giữ đổi kết quả thế nào",
+  mg_caption: "Với mỗi giá trị của một trục, trung bình / trung vị / tốt nhất của “trên vốn/năm, trung bình {series} chuỗi” qua mọi bộ có giá trị đó; tỷ lệ lệnh hoà vốn; phần lệnh thoát vì đảo dấu, suy giảm, basis; số lệnh mỗi chuỗi.",
+  mg_read: "Trục quyết định là {top_axis}: từ {a_lo} lên {a_hi}, trung vị bộ đi từ {v_lo} tới {v_hi} trên vốn/năm.{flat_sentence}",
+  mg_flat: " Trục {flat_axes} dịch trung vị chưa tới 0,02 điểm — khi các lối thoát đã được đặt để im lặng thì không còn lệnh nào để một cổng giữ chặn.",
+  mg_col_val: "Giá trị", mg_col_mean: "TB", mg_col_med: "Trung vị", mg_col_best: "Tốt nhất", mg_col_be: "Hoà vốn", mg_col_flip: "Đảo dấu", mg_col_decay: "Suy giảm", mg_col_basis: "Basis", mg_col_tr: "Lệnh/chuỗi", mg_col_held: "Giữ TB",
+  ax_holding_days: "holding_days — ngày khấu hao chi phí vòng", ax_exit_persistence_periods: "exit_persistence_periods — N mốc dưới sàn trước khi thoát suy giảm",
+  ax_min_hold_recovered_cost_frac: "min_hold_recovered_cost_frac — M × chi phí vòng phải thu lại trước khi cho thoát lợi suất",
+  ax_exit_net_apr_frac: "exit_net_apr_frac — sàn APR ròng của lối thoát suy giảm", ax_exit_negative_min_bps: "exit_negative_min_bps — X, mốc mới nhất ≤ −X bps/8h",
+  ax_exit_negative_periods: "exit_negative_periods — N mốc âm liên tiếp", ax_exit_negative_cum_cost_frac: "exit_negative_cum_cost_frac — C × chi phí vòng đã trả trong đợt âm",
+  ax_min_rate_per_8h_bps: "min_rate_per_8h_bps — ngưỡng vào", ax_persistence_periods: "persistence_periods — mốc liên tiếp trên ngưỡng vào",
+  ht_eyebrow: "Hai trục cùng lúc", ht_title: "Ngày khấu hao × cửa sổ suy giảm, và × cổng giữ tối thiểu",
+  ht_caption: "Mỗi ô là bộ TỐT NHẤT trên vốn/năm có đúng cặp giá trị đó, mọi trục khác tự do; dòng nhỏ là tỷ lệ lệnh hoà vốn và số lệnh mỗi chuỗi của bộ đó.",
+  ht_x: "holding_days →", ht_y_N: "N mốc ↓", ht_y_M: "M ↓", ht_y_C: "C ↓", ht_x_M: "M →",
+  top_eyebrow: "Xếp hạng", top_title: "Các bộ tốt nhất trên vốn/năm",
+  top_caption: "Trung bình {series} chuỗi, trên vốn, cửa sổ {days} ngày. Mốc chuẩn giữ suốt: {ht}; {n_ht} / {sets} bộ đạt tới.",
+  clean_title: "Tốt nhất khi lối thoát lợi suất im lặng", clean_caption: "{n} bộ có (đảo dấu + suy giảm) ≤ 10% số lệnh — thứ câu hỏi yêu cầu; xếp theo lợi nhuận trên vốn.",
+  be_title: "Tỷ lệ lệnh hoà vốn cao nhất", be_caption: "Chỉ bộ có ít nhất một lệnh mỗi chuỗi, để một bộ không vào lệnh nào không thể xếp đầu.",
+  me_eyebrow: "Cách đo", me_title: "Giả định và ba cái bẫy",
+  me_1: "Lưới: {sets} bộ × {series} chuỗi, cửa sổ {days} ngày kết thúc {to}. Trục quét: {grid}. Sổ lệnh mới nhất của từng cặp sàn, một phép đo cho cả cửa sổ, nên slippage là hằng số theo thời gian. Binary từ commit {commit}.",
+  me_2: "“Trên vốn” chia lợi nhuận mỗi chuỗi cho {cap}× notional: cả hai chân, chân spot không dùng đòn bẩy. Giữ suốt = vào ở mốc đầu tiên trong cửa sổ, ra ở mốc cuối, trả một vòng phí; nó là mốc chuẩn, không phải luật. Con số của mỗi bộ là TRUNG BÌNH {series} chuỗi — 6 dòng BTC là 6 cách diễn đạt một giao dịch, nên cỡ mẫu thật để phán quyết là 4 coin, không phải 24.",
+  me_3: "Chân trời hoà vốn đọc thẳng corpus funding_history (model discrete, bỏ rate_type Special, chỉ hàng đã ghi trước khi cửa sổ đóng) và chi phí vòng Go đã định giá — không có luật nào ở giữa. Nó nói “từ điểm này, nếu giữ thì bao lâu hoà vốn”, không nói “nên vào không”.",
+  me_4: "BẪY 1 — exit_persistence_periods là số MỐC, không phải số ngày: N=48 là 16 ngày ở Binance/Bybit/Gate/OKX (8h) nhưng 2 ngày ở Hyperliquid/Kraken (1h). Một giá trị trong lưới là hai luật khác nhau trên hai nhóm sàn. Cổng M viết bằng phân số chi phí chính để tránh bẫy này.",
+  me_5: "BẪY 2 — holding_days không ép đóng lệnh. Nó là mẫu số khấu hao trong NetAPR: ở 30 ngày một mốc 8h phải đạt 0,335 bps thì APR ròng mới ≥ 0, ở 90 ngày chỉ cần 0,112 — nên nó đặt ngưỡng THẬT của lối vào và của lối thoát suy giảm. Lệnh giữ thật bao lâu là do lối thoát và cửa sổ quyết định.",
+  me_6: "BẪY 3 — 8 chuỗi hyperliquid/kraken là cặp quote-bridged (perp USD, spot USDT): trung tính về coin, MỞ về USDT/USD, và không con số nào ở đây trừ rủi ro đó. Chúng cũng là nơi lối thoát basis nổ nhiều nhất (kraken).",
+  me_7: "Chi phí trừ: phí taker bốn lệnh và slippage từ sổ đo được. Chưa trừ: lãi vay/ký quỹ spot, dịch basis giữa vào và ra, sổ lệnh lúc ra, phí chuyển, và cửa sổ mất hedge sau thanh lý. Mọi kết quả là gộp của những thứ ấy.",
+  gen_note: "Dựng bởi tools/report/hold_build.py từ tools/report/hold.py, {when}. Python chỉ đọc: mọi con số lợi nhuận là cột do internal/backtest (gọi internal/strategy) ghi ra; trang này không tính lại luật nào.",
+  verdict_same: "Trục giữ đã tới hạn: bộ đang ship đứng hạng {rank}/{sets}, và không bộ nào trong lưới hơn nó quá {gap} điểm",
+  verdict_change: "Lưới tìm được bộ giữ hơn bộ đang ship {gap} điểm trên vốn/năm — nhưng vẫn {vs_ht} giữ suốt",
+  verdict_sub_same: "Bộ đang ship đã có {decay} lệnh thoát vì suy giảm và {flip} lệnh thoát vì đảo dấu trên {n} lệnh{flip_where}. {be} lệnh hoà vốn. Trong {lossn} lệnh lỗ: {loss_end} là giữ-đến-cuối trên chuỗi mà giữ suốt cũng lỗ, {loss_basis} là thoát basis (rủi ro, ngoài phạm vi cổng giữ), {loss_flip} là thoát đảo dấu — thứ một cổng giữ không sửa được, chỉ lối vào sửa được. {ht_line}",
+  verdict_sub_change: "Bộ tốt nhất: {p}. {ht_line}",
+  ht_none: "Không bộ nào trong {sets} bộ đạt tới giữ suốt ({ht} trên vốn/năm, {htpos}/{series} chuỗi dương).",
+  ht_some: "{n} / {sets} bộ đạt tới giữ suốt ({ht} trên vốn/năm).",
+  below_ht: "dưới", above_ht: "trên",
+  ans_read1: "Đọc dòng “giữ suốt” trước. Nó cho {ht} trên vốn/năm với {htpos}/{series} chuỗi dương và {n_ht} / {sets} bộ trong lưới đạt tới nó: một luật giữ có giá trị phải hơn dòng đó, không phải chỉ dương. Bộ đang ship cho {ship} ({rank_ship}/{sets}).{gap_sentence}",
+  ans_gap_below: " Nó kém giữ suốt {gap_ht} điểm, và khoảng cách đó nằm ở {basis_n} lệnh thoát basis trên {basis_where} cùng {n_neg} chuỗi funding âm mà giữ suốt cũng lỗ.",
+  ans_gap_above: " Nó hơn giữ suốt {gap_ht} điểm — không phải nhờ luật thoát ({yield_n} lệnh thoát lợi suất) mà nhờ vào MUỘN hơn mốc đầu cửa sổ trên {n_neg} chuỗi funding âm, nên bỏ qua một phần đợt lỗ mà giữ suốt phải chịu.",
+  ans_read2: "Bộ tốt nhất toàn lưới cho {best} — hơn bộ ship {gap_best} điểm — với tham số {best_p}. Bộ tốt nhất mà lối thoát lợi suất im lặng (≤ 10% số lệnh) cho {clean}, và bộ có tỷ lệ hoà vốn cao nhất cho {be_cap} với {be_share} lệnh hoà vốn. Ba con số này nằm trong {spread} điểm của nhau: trên trục giữ, lưới đã phẳng.",
+  ans_read3: "Vì sao phẳng: với N={n_ship} lối thoát suy giảm đã im ({decay_ship} lệnh), với C={c_ship} lối thoát đảo dấu chỉ nổ khi đợt âm ĐÃ tốn {c_ship} vòng phí ({flip_ship} lệnh, đều trên chuỗi funding âm có hệ thống), nên cổng M={m_best} không còn lệnh nào để chặn. Ép giữ tiếp một lệnh trên {neg_names} tới khi hoà vốn là giữ tới cuối cửa sổ và lỗ nhiều hơn — chân trời hoà vốn của những chuỗi đó là vô hạn.",
+},
+zh: {
+  title: "回本视界",
+  months: "{n} 个月",
+  window_label: "{from} → {to} · {series} 个序列 × {sets} 组参数 · {trades} 笔",
+  verdict_eyebrow: "问题：每笔要持有多久才能回本，哪组参数做得到",
+  cap_note: "页面上所有收益数字均为净值（已扣四笔 taker 手续费和按实测订单簿估算的滑点），并按资本计算——两条腿共 {cap}× 名义，因为现货腿无法加杠杆。“/notional” 仅用于成本输入。",
+  fig_ship: "实盘参数组，按资本年化", fig_best: "持有轴上最佳组", fig_ht: "全程持有，一轮费用",
+  fig_be: "实盘组回本的笔数", fig_flip: "因反号 / 衰减退出的笔数（实盘组）", fig_sets: "达到全程持有的参数组",
+  nav_answer: "回答", nav_horizon: "回本视界", nav_ledger: "实盘组账本", nav_marginals: "逐轴", nav_heat: "持有 × 窗口", nav_top: "最佳参数组", nav_method: "测量方法",
+  ans_eyebrow: "直接回答", ans_title: "四种持有方式并排",
+  ans_caption: "实盘组、全网格最佳、收益类退出（反号 + 衰减）不超过 10% 笔数的最佳、回本比例最高的组——以及全程持有窗口、只付一轮费用的基准。",
+  col_what: "持有方式", col_params: "参数（rate/pers · floor/N · X negN C · M · hold）", col_cap: "按资本 /年", col_pos: "为正的序列",
+  col_tr: "笔 / 序列", col_be: "回本笔数", col_flip: "反号退出", col_decay: "衰减退出", col_basis: "基差退出", col_end: "持至窗口末",
+  col_held: "平均持有（天）", col_rank: "排名",
+  row_ship: "实盘参数组（config.yaml）", row_best: "全网格最佳", row_clean: "收益类退出 ≤ 10% 时的最佳", row_be: "回本比例最高（≥ 1 笔/序列）", row_ht: "全程持有，一轮费用",
+  ans_rec_title: "持有轴的推荐参数",
+  rec_hold: "holding_days", rec_N: "exit_persistence_periods", rec_M: "min_hold_recovered_cost_frac", rec_floor: "exit_net_apr_frac",
+  rec_gates: "exit_negative_min_bps / periods / cum_cost_frac", rec_entry: "min_rate_per_8h_bps / persistence_periods",
+  rec_same: "保持实盘组：{p}。持有轴上的 {sets} 组网格找不到比它高出 {gap} 点以上的组，排在它前面的 {n_better} 组只在入场上不同。",
+  rec_change: "改为 {p}：按资本年化 {best}，实盘组为 {ship}（+{gap} 点），{pos}/{series} 个序列为正，{be} 的笔回本。",
+  rec_note: "三条持有轴各按自己的单位读：holding_days 是摊销一轮费用的天数（它决定入场和衰减退出的真实门槛，不是最长持有天数）；exit_persistence_periods 是结算期数——同一数值在 8h 节奏是 {n8} 天、在 1h 节奏是 {n1} 天；min_hold_recovered_cost_frac 是两类收益退出被允许触发前，这笔必须收回的一轮费用的比例。",
+  nav_oneaxis: "改一条轴",
+  oa_eyebrow: "从实盘组出发，只改一条轴", oa_title: "每条持有轴，其余全部不变",
+  oa_caption: "这是操作者真正会做的测量：拿实盘组，改 config.yaml 里的一个键，看什么变了。网格平均（逐轴一节）把所有其他组混在一起；这张表不混。",
+  oa_read: "最短持有门槛 M={m_on}——“这笔收回一轮费用之前不得因收益退出”——正是这个问题的旋钮：从实盘组出发，回本笔数占比 {be0} → {be1}，反号/衰减退出 {ye0} → {ye1}，每序列笔数 {tr0} → {tr1}，按资本年化 {r0} → {r1}（{dr} 点）。holding_days 从 {h_lo} 到 {h_hi} 天只移动 {h_span} 点；exit_persistence_periods 从 {n_lo} 到 {n_hi} 期只移动 {n_span} 点——这两条轴在实盘组上已饱和。",
+  oa_diff: "看账本才知道 M 真正做了什么：它只改变了 {n} 个序列（{list}），一笔也没救。它挡住了 {k0} 笔正在亏损的反号退出，于是这些序列从 {k_off} 笔（合计按资本 {s0}）变成 {k_on} 笔（合计 {s1}）：{worse} 个序列亏得更多，{better} 个序列亏得更少，整组合计相差 {d}（按资本）。回本比例上升是因为分母变小，不是多了盈利的笔。在系统性负 funding 的序列上，“持到回本”就是持到无穷。",
+  oa_diff_none: "开启 M={m} 没有改变实盘组的任何一笔：三类退出已静默，无物可挡。",
+  oa_d_series: "序列", oa_d_off: "M 关：各笔（净值 /资本，原因）", oa_d_on: "M={m} 开：各笔（净值 /资本，原因）", oa_d_sum0: "合计 /资本，关", oa_d_sum1: "合计 /资本，开",
+  oa_col_val: "取值", oa_col_cap: "按资本 /年", oa_col_pos: "为正的序列", oa_col_tr: "笔/序列", oa_col_be: "回本", oa_col_ye: "收益类退出", oa_col_held: "平均持有", oa_ship: "← 实盘",
+  hz_eyebrow: "直接测量语料，不经任何规则", hz_title: "一笔需要多少天回本",
+  hz_caption: "以窗口内每一个结算点为入场点，数到此后累计 funding 等于 Go 为该序列定价的一轮进出成本（50k）所需的天数。这是任何持有规则都要面对的现实：与任何参数无关。",
+  hz_read: "在 BTC/ETH 的 8h 节奏上，中位数 {med8} 天、上四分位 {p75_8} 天；hyperliquid 的 1h 节奏 {med1} 天。仅看实盘入场规则选中的入场点（≥ {bps} bps/8h 连续 {pers} 期），中位数缩到 {medrule} 天。在 {n_neg} 个全年平均 funding 付不起成本的序列上（{neg_list}），{cens} 个入场点在窗口结束前从未回本：那里没有持有规则能救一笔，只有不进。",
+  hz_leg_gain: "全程持有盈利", hz_leg_loss: "全程持有亏损", hz_leg_band: "条 = 下四分位 → 上四分位，线 = 中位数（所有入场点）；点 = 规则入场点的中位数",
+  hz_days: "回本所需天数",
+  hz_col_series: "序列", hz_col_iv: "节奏", hz_col_cost: "一轮费用 /notional", hz_col_mean: "平均 funding bps/8h", hz_col_ht: "全程持有 /资本",
+  hz_col_med: "中位数（天）", hz_col_p75: "P75", hz_col_p90: "P90", hz_col_w30: "≤ 30 天", hz_col_w90: "≤ 90 天", hz_col_w180: "≤ 180 天",
+  hz_col_rn: "规则入场点", hz_col_rmed: "中位数", hz_col_rw90: "≤ 90 天",
+  hz_any: "所有入场点", hz_rule: "实盘规则入场点",
+  hz_censor: "“≤ D 天”只统计前方至少还有 D 天窗口的入场点，分子分母都是——否则短序列（okx 96 天）会报出超过 100%。中位数/P75 只在已回本的入场点上计算；很多入场点从未回本的序列，其中位数偏乐观。",
+  lg_eyebrow: "逐笔", lg_title: "实盘组账本：{n} 笔，{be} 笔回本",
+  lg_caption: "实盘组在窗口内开的每一笔、为何平仓、是否回本。逐行读，回答“反号 / 衰减退出是否在砍掉好单”。",
+  lg_col_reason: "平仓原因", lg_col_n: "笔", lg_col_be: "回本", lg_col_held: "平均持有（天）", lg_col_net: "平均净值 /资本", lg_col_loss: "合计净值 /资本",
+  lg_read_end: "{end} 笔持至窗口末（{end_be} 笔回本——即全程持有盈利的序列）。",
+  lg_read_flip: "{flip} 笔因反号退出，在 {flip_series}，其中 {flip_be} 笔回本。",
+  lg_read_noflip: "没有笔因反号退出。",
+  lg_read_decay: "{decay} 笔因衰减退出。",
+  lg_read_nodecay: "没有笔因衰减退出。",
+  lg_read_basis: "{basis} 笔因基差退出，全部在 {basis_series}，{basis_be} 笔回本：这是风险类退出，不在持有门槛的管辖内。",
+  lg_read_loss: "{lossn} 笔亏损中，{loss_end} 笔是全程持有本就亏损的序列上的持至窗口末——不是退出规则砍错，而是进错了序列。",
+  lg_read_noloss: "没有亏损的笔。",
+  lg_col_series: "序列", lg_col_open: "开", lg_col_close: "平", lg_col_days: "天", lg_col_settle: "期", lg_col_fund: "Funding /资本", lg_col_cost: "一轮费用 /资本", lg_col_netc: "净值 /资本", lg_col_why: "平仓原因",
+  r_window_end: "窗口末", r_basis: "基差", r_sign_flip: "反号", r_decay: "衰减", r_liquidation: "强平", r_unpriceable: "无法定价", r_hedge_gone: "对冲腿丢失", r_other: "其他",
+  mg_eyebrow: "逐轴", mg_title: "每条持有轴如何改变结果",
+  mg_caption: "对一条轴的每个取值：所有含该值的参数组“按资本年化、{series} 序列平均”的均值 / 中位数 / 最佳；回本笔数占比；因反号、衰减、基差退出的笔数占比；每序列笔数。",
+  mg_read: "决定性的轴是 {top_axis}：从 {a_lo} 到 {a_hi}，参数组中位数从 {v_lo} 到 {v_hi}。{flat_sentence}",
+  mg_flat: " 轴 {flat_axes} 对中位数的影响不到 0.02 点——退出已被设成静默时，持有门槛无笔可挡。",
+  mg_col_val: "取值", mg_col_mean: "均值", mg_col_med: "中位数", mg_col_best: "最佳", mg_col_be: "回本", mg_col_flip: "反号", mg_col_decay: "衰减", mg_col_basis: "基差", mg_col_tr: "笔/序列", mg_col_held: "平均持有",
+  ax_holding_days: "holding_days — 摊销一轮费用的天数", ax_exit_persistence_periods: "exit_persistence_periods — 衰减退出前低于下限的连续期数 N",
+  ax_min_hold_recovered_cost_frac: "min_hold_recovered_cost_frac — 允许收益类退出前须收回 M × 一轮费用",
+  ax_exit_net_apr_frac: "exit_net_apr_frac — 衰减退出的净年化下限", ax_exit_negative_min_bps: "exit_negative_min_bps — X，最新一期 ≤ −X bps/8h",
+  ax_exit_negative_periods: "exit_negative_periods — 连续 N 期为负", ax_exit_negative_cum_cost_frac: "exit_negative_cum_cost_frac — 负期已付 ≥ C × 一轮费用",
+  ax_min_rate_per_8h_bps: "min_rate_per_8h_bps — 入场门槛", ax_persistence_periods: "persistence_periods — 连续高于门槛的期数",
+  ht_eyebrow: "两轴同看", ht_title: "摊销天数 × 衰减窗口，以及 × 最短持有门槛",
+  ht_caption: "每格是恰好取该对值、其余轴任意的按资本年化最佳组；小字为该组的回本比例和每序列笔数。",
+  ht_x: "holding_days →", ht_y_N: "N 期 ↓", ht_y_M: "M ↓", ht_y_C: "C ↓", ht_x_M: "M →",
+  top_eyebrow: "排名", top_title: "按资本年化最佳的参数组",
+  top_caption: "{series} 序列平均，按资本，{days} 天窗口。全程持有基准：{ht}；{n_ht} / {sets} 组达到。",
+  clean_title: "收益类退出静默时的最佳", clean_caption: "{n} 组满足（反号 + 衰减）≤ 10% 笔数——即问题所要求的；按资本收益排序。",
+  be_title: "回本比例最高", be_caption: "仅含每序列至少一笔的组，以免一笔不开的组排第一。",
+  me_eyebrow: "测量方法", me_title: "假设与三个陷阱",
+  me_1: "网格：{sets} 组 × {series} 序列，{days} 天窗口，止于 {to}。扫描轴：{grid}。每对交易所用最新一次订单簿，整个窗口一次测量，因此滑点不随时间变化。二进制来自 commit {commit}。",
+  me_2: "“按资本”把每序列收益除以 {cap}× 名义：两条腿，现货腿无杠杆。全程持有 = 在窗口首个结算点进、末个结算点出、付一轮费用；它是基准，不是规则。每组数字是 {series} 序列的平均——6 行 BTC 是同一笔交易的 6 种表述，判断的真实样本量是 4 个币，不是 24。",
+  me_3: "回本视界直接读 funding_history 语料（discrete 模型，剔除 Special，仅取窗口关闭前已写入的行）和 Go 定价的一轮费用——中间没有任何规则。它说的是“从这点起若持有，多久回本”，不是“该不该进”。",
+  me_4: "陷阱 1 — exit_persistence_periods 是期数不是天数：N=48 在 Binance/Bybit/Gate/OKX（8h）是 16 天，在 Hyperliquid/Kraken（1h）是 2 天。网格里的一个值在两组交易所上是两条规则。M 门槛以费用比例书写正是为了避开这个陷阱。",
+  me_5: "陷阱 2 — holding_days 不强制平仓。它是 NetAPR 的摊销分母：30 天时一期 8h 须达 0.335 bps 净年化才 ≥ 0，90 天时只需 0.112——所以它决定入场和衰减退出的真实门槛。实际持有多久由退出和窗口决定。",
+  me_6: "陷阱 3 — hyperliquid/kraken 的 8 个序列是 quote-bridged 对（perp 计价 USD、现货 USDT）：币上中性，在 USDT/USD 上敞口，这里没有任何数字扣除该风险。它们也是基差退出触发最多的地方（kraken）。",
+  me_7: "已扣：四笔 taker 手续费和按实测订单簿的滑点。未扣：现货借贷/保证金利息、进出之间的基差漂移、出场时的订单簿、转账费、强平后失去对冲的窗口。所有结果都未扣这些。",
+  gen_note: "由 tools/report/hold_build.py 根据 tools/report/hold.py 生成，{when}。Python 只读：所有收益数字都是 internal/backtest（调用 internal/strategy）写出的列；本页不重算任何规则。",
+  verdict_same: "持有轴已到极限：实盘组排 {rank}/{sets}，网格里没有组比它高出 {gap} 点以上",
+  verdict_change: "网格找到比实盘组高 {gap} 点（按资本年化）的持有参数——但仍{vs_ht}全程持有",
+  verdict_sub_same: "实盘组 {n} 笔中，{decay} 笔因衰减退出、{flip} 笔因反号退出{flip_where}。{be} 笔回本。{lossn} 笔亏损中：{loss_end} 笔是全程持有本就亏损的序列上的持至窗口末，{loss_basis} 笔是基差退出（风险类，不在持有门槛管辖内），{loss_flip} 笔是反号退出——持有门槛修不了，只有入场能修。{ht_line}",
+  verdict_sub_change: "最佳组：{p}。{ht_line}",
+  ht_none: "{sets} 组中没有一组达到全程持有（按资本年化 {ht}，{htpos}/{series} 个序列为正）。",
+  ht_some: "{n} / {sets} 组达到全程持有（按资本年化 {ht}）。",
+  below_ht: "低于", above_ht: "高于",
+  ans_read1: "先读“全程持有”行。它按资本年化 {ht}，{htpos}/{series} 个序列为正，网格中 {n_ht} / {sets} 组达到它：有价值的持有规则必须高于这一行，而不只是为正。实盘组为 {ship}（第 {rank_ship}/{sets}）。{gap_sentence}",
+  ans_gap_below: "它比全程持有低 {gap_ht} 点，差距在 {basis_where} 的 {basis_n} 笔基差退出和 {n_neg} 个全程持有也亏损的负 funding 序列上。",
+  ans_gap_above: "它比全程持有高 {gap_ht} 点——不是靠退出规则（{yield_n} 笔收益类退出），而是在 {n_neg} 个负 funding 序列上比窗口首个结算点晚进场，避开了全程持有必须承受的一段亏损。",
+  ans_read2: "全网格最佳为 {best}——比实盘组高 {gap_best} 点——参数 {best_p}。收益类退出静默（≤ 10% 笔数）时的最佳为 {clean}，回本比例最高的组为 {be_cap}、{be_share} 的笔回本。这三个数字彼此相差不到 {spread} 点：在持有轴上，网格已经平了。",
+  ans_read3: "为何平：N={n_ship} 时衰减退出已静默（{decay_ship} 笔），C={c_ship} 时反号退出只在负期已花掉 {c_ship} 轮费用时触发（{flip_ship} 笔，全在系统性负 funding 的序列上），于是 M={m_best} 门槛无笔可挡。把 {neg_names} 上的一笔硬持到回本，就是持到窗口末并亏更多——那些序列的回本视界是无穷。",
+},
+};
+
+let lang = "vi", win = WINS[0];
+try { lang = localStorage.getItem("hold.lang") || lang; const w = localStorage.getItem("hold.win"); if (w && DATA.windows[w]) win = w; } catch (e) {}
+
+const t = (k, vars) => { let s = T[lang][k]; if (s === undefined) s = T.vi[k]; if (s === undefined) return k;
+  return vars ? s.replace(/\{(\w+)\}/g, (_, v) => vars[v] ?? "") : s; };
+const loc = () => lang === "zh" ? "zh-CN" : "vi-VN";
+const num = (v, d = 0) => v == null || Number.isNaN(v) ? "—" : new Intl.NumberFormat(loc(), { minimumFractionDigits: d, maximumFractionDigits: d }).format(v);
+const pct = (v, d = 2, sign = false) => v == null ? "—" : (sign && v > 0 ? "+" : "") + num(v, d) + "%";
+const cls = v => v == null ? "" : v < 0 ? "loss" : v > 0 ? "gain" : "";
+const day = ms => new Date(ms).toISOString().slice(0, 10);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const sname = (sym, perp) => sym.replace("USDT", "") + "·" + perp.replace("_futures", "");
+const g = v => num(v, Number.isInteger(v) ? 0 : (Math.abs(v) < 0.1 ? 3 : 2));
+const fmtSet = p => `${g(p.min_rate_per_8h_bps)}/${g(p.persistence_periods)} · ${num(p.exit_net_apr_frac * 100, 2)}%/${g(p.exit_persistence_periods)} · X${g(p.exit_negative_min_bps)} N${g(p.exit_negative_periods)} C${g(p.exit_negative_cum_cost_frac)} · M${g(p.min_hold_recovered_cost_frac)} · ${g(p.holding_days)}d`;
+const listVI = xs => xs.length <= 1 ? xs.join("") : xs.slice(0, -1).join(", ") + (lang === "zh" ? "、" : " và ") + xs[xs.length - 1];
+
+function svg(w, h) { return `<svg viewBox="0 0 ${w} ${h}" role="img">`; }
+
+function horizonChart(rows, ht) {
+  // One row per series: p25→p75 band and median (any entry); a dot for the
+  // rule-entry median. Reference lines at the holding_days values the grid
+  // swept, so the reader sees which of them covers which quantile.
+  const W = 760, rowH = 22, L = 150, R = 30, Tp = 22, B = 30;
+  const H = Tp + rows.length * rowH + B;
+  const maxD = Math.max(120, ...rows.map(r => r.any_entry.p75 || 0), ...rows.map(r => r.rule_entry.median || 0)) * 1.05;
+  const x = d => L + (W - L - R) * Math.min(d, maxD) / maxD;
+  let s = svg(W, H);
+  const refs = (DATA.grid.holding_days || []).filter(d => d <= maxD);
+  for (const d of [0, 30, 60, 90, 120, 150, 180, 240, 300, 365].filter(d => d <= maxD)) {
+    s += `<line class="grid" x1="${x(d)}" x2="${x(d)}" y1="${Tp - 4}" y2="${H - B}"/><text x="${x(d)}" y="${H - B + 14}" text-anchor="middle">${d}</text>`;
+  }
+  for (const d of refs) s += `<line class="marker" x1="${x(d)}" x2="${x(d)}" y1="${Tp - 8}" y2="${H - B}"/><text class="marker-text" x="${x(d) + 3}" y="${Tp - 10}">hold ${d}</text>`;
+  rows.forEach((r, i) => {
+    const y = Tp + i * rowH, a = r.any_entry, ru = r.rule_entry;
+    const good = (ht[`${r.symbol}|${r.perp}`] || 0) > 0;
+    const c = good ? "bar-gain" : "bar-loss";
+    s += `<text x="${L - 8}" y="${y + rowH / 2 + 4}" text-anchor="end">${esc(sname(r.symbol, r.perp))} <tspan style="font-size:9px">${r.interval_sec / 3600}h</tspan></text>`;
+    if (a.p25 != null && a.p75 != null) {
+      s += `<rect class="${c}" opacity=".35" x="${x(a.p25)}" y="${y + 5}" width="${Math.max(1, x(a.p75) - x(a.p25))}" height="${rowH - 10}"><title>${esc(sname(r.symbol, r.perp))} P25 ${num(a.p25, 1)} → P75 ${num(a.p75, 1)}</title></rect>`;
+    }
+    if (a.median != null) s += `<line x1="${x(a.median)}" x2="${x(a.median)}" y1="${y + 3}" y2="${y + rowH - 3}" style="stroke:var(--${good ? "gain" : "loss"});stroke-width:2"><title>${t("hz_any")}: ${num(a.median, 1)}</title></line>`;
+    else s += `<text x="${L + 4}" y="${y + rowH / 2 + 4}" class="loss" style="font-size:10px">∞</text>`;
+    if (ru.median != null) s += `<circle cx="${x(ru.median)}" cy="${y + rowH / 2}" r="3.5" style="fill:var(--ink)"><title>${t("hz_rule")}: ${num(ru.median, 1)}</title></circle>`;
+  });
+  s += `<line class="axis" x1="${L}" x2="${W - R}" y1="${H - B}" y2="${H - B}"/>`;
+  s += `<text x="${(L + W - R) / 2}" y="${H - 4}" text-anchor="middle">${esc(t("hz_days"))}</text>`;
+  return s + "</svg>";
+}
+
+function heatBlock(h, xLabel, yLabel) {
+  const vals = h.cells.flat().filter(Boolean).map(c => c.best);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const bg = v => { if (v == null) return ""; const a = v >= 0 ? Math.min(1, v / (hi || 1)) : Math.min(1, v / (lo || -1)); return `background:rgba(var(--${v >= 0 ? "gain" : "loss"}-rgb),${0.12 + 0.55 * a})`; };
+  let s = `<div class="heatwrap"><div class="heat" style="grid-template-columns:max-content repeat(${h.x.length},1fr)">`;
+  s += `<div class="rh">${esc(yLabel)} \\ ${esc(xLabel)}</div>` + h.x.map(v => `<div class="h">${g(v)}</div>`).join("");
+  h.y.forEach((yv, i) => {
+    s += `<div class="rh">${g(yv)}</div>`;
+    h.cells[i].forEach(c => { s += c ? `<div class="c" style="${bg(c.best)}">${pct(c.best, 3, true)}<small>${pct(c.be_share * 100, 0)} · ${num(c.trades_per_series, 1)}</small></div>` : `<div class="c">—</div>`; });
+  });
+  return s + "</div></div>";
+}
+
+function setTable(rows) {
+  const head = `<thead><tr><th>${t("col_rank")}</th><th>${t("col_params")}</th><th class="num">${t("col_cap")}</th><th class="num">${t("col_pos")}</th><th class="num">${t("col_tr")}</th><th class="num">${t("col_be")}</th><th class="num">${t("col_flip")}</th><th class="num">${t("col_decay")}</th><th class="num">${t("col_basis")}</th><th class="num">${t("col_held")}</th></tr></thead>`;
+  const body = rows.map(r => { const R = r.reasons || {}; return `<tr><td class="num">${r.rank}</td><td class="params">${esc(fmtSet(r))}</td><td class="num ${cls(r.mean_cap_pct)}">${pct(r.mean_cap_pct, 3, true)}</td><td class="num">${r.positive}/${r.series}</td><td class="num">${num(r.trades_per_series, 2)}</td><td class="num">${pct((r.be_share ?? 0) * 100, 0)}</td><td class="num">${R.sign_flip ?? 0}</td><td class="num">${R.decay ?? 0}</td><td class="num">${R.basis ?? 0}</td><td class="num">${num(r.mean_held_days, 0)}</td></tr>`; }).join("");
+  return head + `<tbody>${body}</tbody>`;
+}
+
+function renderStatic() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-i18n]").forEach(el => { const v = t(el.dataset.i18n); if (typeof v === "string") el.textContent = v; });
+  document.title = t("title");
+  document.querySelectorAll("#langSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  const seg = document.getElementById("windowSeg"); seg.innerHTML = "";
+  WINS.forEach(k => { const b = document.createElement("button"); b.type = "button"; b.textContent = t("months", { n: k });
+    b.setAttribute("aria-pressed", String(k === win)); b.onclick = () => { win = k; try { localStorage.setItem("hold.win", k); } catch (e) {} render(); }; seg.appendChild(b); });
+  document.getElementById("pageNav").innerHTML = ["answer", "oneaxis", "horizon", "ledger", "marginals", "heat", "top", "method"].map(id => `<a href="#${id}">${t("nav_" + id)}</a>`).join("");
+}
+
+function render() {
+  renderStatic();
+  const W = DATA.windows[win], cap = W.capital_per_notional, HT = W.hold_through, S = W.series;
+  const ship = W.shipped, sr = ship && ship.row, best = W.best.row, clean = W.clean_best[0], beb = W.be_best[0];
+  const capPct = f => f * 100 / cap; // per-trade fractions of notional → capital
+  document.querySelectorAll("[data-i18n='cap_note']").forEach(el => el.textContent = t("cap_note", { cap: num(cap, 1) }));
+  document.getElementById("windowLabel").textContent = t("window_label", { from: day(W.window_from_ms), to: day(W.window_to_ms), series: S, sets: num(W.sets), trades: num(W.trades_total) });
+
+  // --- verdict ---
+  const gapBest = sr ? best.mean_cap_pct - sr.mean_cap_pct : null;
+  const same = sr && gapBest < 0.05;
+  const htLine = HT.sets_at_or_above > 0 ? t("ht_some", { n: num(HT.sets_at_or_above), sets: num(W.sets), ht: pct(HT.mean_cap_pct, 2, true) })
+    : t("ht_none", { sets: num(W.sets), ht: pct(HT.mean_cap_pct, 2, true), htpos: HT.positive, series: S });
+  const flipSeries = sr ? [...new Set(ship.ledger.filter(x => x.reason === "sign_flip").map(x => sname(x.symbol, x.perp)))] : [];
+  const lossEnd = sr ? ship.ledger.filter(x => x.reason === "window_end" && x.net_frac < 0 && (HT.by_series[`${x.symbol}|${x.perp}`] || 0) <= 0).length : 0;
+  const lossN = sr ? ship.ledger.filter(x => x.net_frac < 0).length : 0;
+  const beShip = sr ? Object.values(sr.be_by_reason).reduce((a, b) => a + b, 0) : 0;
+  if (sr && same) {
+    document.getElementById("verdictHeadline").textContent = t("verdict_same", { rank: sr.rank, sets: num(W.sets), gap: num(gapBest, 3) });
+    document.getElementById("verdictSub").textContent = t("verdict_sub_same", { decay: sr.reasons.decay, flip: sr.reasons.sign_flip, n: sr.trades,
+      flip_where: flipSeries.length ? (lang === "zh" ? "，全部在 " : ", toàn bộ trên ") + listVI(flipSeries) : "",
+      be: `${beShip}/${sr.trades}`, lossn: lossN, loss_end: lossEnd, loss_basis: ship.ledger.filter(x => x.reason === "basis" && x.net_frac < 0).length, loss_flip: ship.ledger.filter(x => x.reason === "sign_flip" && x.net_frac < 0).length, ht_line: htLine });
+  } else {
+    document.getElementById("verdictHeadline").textContent = t("verdict_change", { gap: num(gapBest ?? best.mean_cap_pct, 3), vs_ht: best.mean_cap_pct >= HT.mean_cap_pct ? t("above_ht") : t("below_ht") });
+    document.getElementById("verdictSub").textContent = t("verdict_sub_change", { p: fmtSet(best), ht_line: htLine });
+  }
+  const fig = (v, l, c) => `<div class="fig"><div class="v ${c || ""}">${v}</div><div class="l">${l}</div></div>`;
+  document.getElementById("figures").innerHTML =
+    (sr ? fig(pct(sr.mean_cap_pct, 2, true), t("fig_ship"), cls(sr.mean_cap_pct)) : "") +
+    fig(pct(best.mean_cap_pct, 2, true), t("fig_best"), cls(best.mean_cap_pct)) +
+    fig(pct(HT.mean_cap_pct, 2, true), t("fig_ht"), cls(HT.mean_cap_pct)) +
+    (sr ? fig(`${beShip}/${sr.trades}`, t("fig_be")) : "") +
+    (sr ? fig(`${sr.reasons.sign_flip} / ${sr.reasons.decay}`, t("fig_flip")) : "") +
+    fig(`${num(HT.sets_at_or_above)} / ${num(W.sets)}`, t("fig_sets"), HT.sets_at_or_above ? "gain" : "loss");
+
+  // --- answer table ---
+  const rowOf = (label, r, rank) => { const R = r.reasons || {}; return `<tr><td style="white-space:normal;min-width:18ch">${label}</td><td class="params">${r.params ? esc(fmtSet(r.params)) : "—"}</td><td class="num ${cls(r.mean_cap_pct)}">${pct(r.mean_cap_pct, 3, true)}</td><td class="num">${r.positive}/${S}</td><td class="num">${r.trades_per_series == null ? "1" : num(r.trades_per_series, 2)}</td><td class="num">${r.be_share == null ? "—" : pct(r.be_share * 100, 0)}</td><td class="num">${R.sign_flip ?? "—"}</td><td class="num">${R.decay ?? "—"}</td><td class="num">${R.basis ?? "—"}</td><td class="num">${R.window_end ?? "—"}</td><td class="num">${r.mean_held_days == null ? "—" : num(r.mean_held_days, 0)}</td><td class="num">${rank ?? "—"}</td></tr>`; };
+  const asRow = r => Object.assign({ params: r }, r);
+  const htRow = { mean_cap_pct: HT.mean_cap_pct, positive: HT.positive, trades_per_series: null, be_share: HT.positive / S, reasons: null, mean_held_days: W.window_days };
+  document.getElementById("answerTable").innerHTML = `<thead><tr><th>${t("col_what")}</th><th>${t("col_params")}</th><th class="num">${t("col_cap")}</th><th class="num">${t("col_pos")}</th><th class="num">${t("col_tr")}</th><th class="num">${t("col_be")}</th><th class="num">${t("col_flip")}</th><th class="num">${t("col_decay")}</th><th class="num">${t("col_basis")}</th><th class="num">${t("col_end")}</th><th class="num">${t("col_held")}</th><th class="num">${t("col_rank")}</th></tr></thead><tbody>` +
+    (sr ? rowOf(t("row_ship"), asRow(sr), sr.rank) : "") + rowOf(t("row_best"), asRow(best), best.rank) +
+    (clean ? rowOf(t("row_clean"), asRow(clean), clean.rank) : "") + (beb ? rowOf(t("row_be"), asRow(beb), beb.rank) : "") +
+    rowOf(t("row_ht"), htRow, null) + `</tbody>`;
+  const negSeries = Object.values(HT.by_series).filter(v => v <= 0).length;
+  document.getElementById("ansRead1").textContent = t("ans_read1", { ht: pct(HT.mean_cap_pct, 2, true), htpos: HT.positive, series: S, n_ht: num(HT.sets_at_or_above), sets: num(W.sets),
+    ship: sr ? pct(sr.mean_cap_pct, 2, true) : "—", rank_ship: sr ? sr.rank : "—",
+    gap_sentence: !sr ? "" : (sr.mean_cap_pct < HT.mean_cap_pct
+      ? t("ans_gap_below", { gap_ht: num(HT.mean_cap_pct - sr.mean_cap_pct, 3), basis_n: sr.reasons.basis, basis_where: [...new Set(ship.ledger.filter(x => x.reason === "basis").map(x => x.perp.replace("_futures", "")))].join(", ") || "—", n_neg: negSeries })
+      : t("ans_gap_above", { gap_ht: num(sr.mean_cap_pct - HT.mean_cap_pct, 3), yield_n: sr.reasons.sign_flip + sr.reasons.decay, n_neg: negSeries })) });
+  const three = [best.mean_cap_pct, clean ? clean.mean_cap_pct : best.mean_cap_pct, beb ? beb.mean_cap_pct : best.mean_cap_pct];
+  document.getElementById("ansRead2").textContent = t("ans_read2", { best: pct(best.mean_cap_pct, 3, true), gap_best: num(gapBest, 3), best_p: fmtSet(best),
+    clean: clean ? pct(clean.mean_cap_pct, 3, true) : "—", be_cap: beb ? pct(beb.mean_cap_pct, 3, true) : "—", be_share: beb ? pct(beb.be_share * 100, 0) : "—",
+    spread: num(Math.max(...three) - Math.min(...three), 3) });
+  document.getElementById("ansRead3").textContent = t("ans_read3", { decay_ship: sr ? sr.reasons.decay : "—", flip_ship: sr ? sr.reasons.sign_flip : "—", n_ship: sr ? g(sr.exit_persistence_periods) : "—", c_ship: sr ? g(sr.exit_negative_cum_cost_frac) : "—", m_best: g(best.min_hold_recovered_cost_frac),
+    neg_names: [...new Set(Object.entries(HT.by_series).filter(([k, v]) => v <= 0).map(([k]) => k.split("|")[0].replace("USDT", "")))].join("/") || "—" });
+  const rec = same ? sr : best;
+  const kv = [["rec_entry", `${g(rec.min_rate_per_8h_bps)} / ${g(rec.persistence_periods)}`], ["rec_hold", `${g(rec.holding_days)}`], ["rec_floor", `${g(rec.exit_net_apr_frac)}`],
+    ["rec_N", `${g(rec.exit_persistence_periods)}`], ["rec_gates", `${g(rec.exit_negative_min_bps)} / ${g(rec.exit_negative_periods)} / ${g(rec.exit_negative_cum_cost_frac)}`], ["rec_M", `${g(rec.min_hold_recovered_cost_frac)}`]];
+  document.getElementById("ansRec").innerHTML = kv.map(([k, v]) => `<dt>${t(k)}</dt><dd class="mono">${v}</dd>`).join("");
+  const nBetter = sr ? W.top.filter(r => r.rank < sr.rank).length : 0;
+  document.getElementById("ansRecNote").textContent = (same
+    ? t("rec_same", { p: fmtSet(sr), sets: num(W.sets), gap: num(gapBest, 3), n_better: nBetter })
+    : t("rec_change", { p: fmtSet(best), best: pct(best.mean_cap_pct, 3, true), ship: sr ? pct(sr.mean_cap_pct, 3, true) : "—", gap: num(gapBest ?? 0, 3), pos: best.positive, series: S, be: pct((best.be_share || 0) * 100, 0) }))
+    + " " + t("rec_note", { n8: num(rec.exit_persistence_periods * 8 / 24, 0), n1: num(rec.exit_persistence_periods / 24, 0) });
+
+  // --- one axis at a time ---
+  const OA = W.one_axis || {};
+  const oaOrder = ["min_hold_recovered_cost_frac", "holding_days", "exit_persistence_periods", "exit_negative_cum_cost_frac", "exit_negative_min_bps", "exit_negative_periods", "exit_net_apr_frac", "min_rate_per_8h_bps", "persistence_periods"].filter(a => OA[a]);
+  document.getElementById("oneaxis").hidden = !sr || oaOrder.length === 0;
+  if (sr && oaOrder.length) {
+    const isShip = (r, a) => Math.abs(r[a] - sr[a]) < 1e-9;
+    document.getElementById("oaGrid").innerHTML = oaOrder.map(a => `<div class="small"><h3>${esc(t("ax_" + a))}</h3><div class="tablewrap"><table><thead><tr><th class="num">${t("oa_col_val")}</th><th class="num">${t("oa_col_cap")}</th><th class="num">${t("oa_col_pos")}</th><th class="num">${t("oa_col_tr")}</th><th class="num">${t("oa_col_be")}</th><th class="num">${t("oa_col_ye")}</th><th class="num">${t("oa_col_held")}</th><th></th></tr></thead><tbody>` +
+      OA[a].map(r => `<tr><td class="num"><b>${g(r[a])}</b></td><td class="num ${cls(r.mean_cap_pct)}">${pct(r.mean_cap_pct, 3, true)}</td><td class="num">${r.positive}/${S}</td><td class="num">${num(r.trades_per_series, 2)}</td><td class="num">${pct((r.be_share || 0) * 100, 0)}</td><td class="num">${pct((r.yield_exit_share || 0) * 100, 0)}</td><td class="num">${num(r.mean_held_days, 0)}</td><td class="muted">${isShip(r, a) ? t("oa_ship") : ""}</td></tr>`).join("") + "</tbody></table></div></div>").join("");
+    const mrows = OA.min_hold_recovered_cost_frac || [], m0 = mrows.find(r => r.min_hold_recovered_cost_frac === 0), m1 = mrows.find(r => r.min_hold_recovered_cost_frac >= 1) || mrows[mrows.length - 1];
+    const span = rs => rs && rs.length ? Math.max(...rs.map(r => r.mean_cap_pct)) - Math.min(...rs.map(r => r.mean_cap_pct)) : null;
+    const hr = OA.holding_days || [], nr = OA.exit_persistence_periods || [];
+    document.getElementById("oaRead").textContent = (m0 && m1) ? t("oa_read", { m_on: g(m1.min_hold_recovered_cost_frac), be0: pct(m0.be_share * 100, 0), be1: pct(m1.be_share * 100, 0),
+      ye0: `${Math.round(m0.yield_exit_share * m0.trades_per_series * S)}`, ye1: `${Math.round(m1.yield_exit_share * m1.trades_per_series * S)}`, tr0: num(m0.trades_per_series, 2), tr1: num(m1.trades_per_series, 2),
+      r0: pct(m0.mean_cap_pct, 3, true), r1: pct(m1.mean_cap_pct, 3, true), dr: num(m1.mean_cap_pct - m0.mean_cap_pct, 3),
+      h_lo: hr.length ? g(hr[0].holding_days) : "—", h_hi: hr.length ? g(hr[hr.length - 1].holding_days) : "—", h_span: num(span(hr), 3),
+      n_lo: nr.length ? g(nr[0].exit_persistence_periods) : "—", n_hi: nr.length ? g(nr[nr.length - 1].exit_persistence_periods) : "—", n_span: num(span(nr), 3) }) : "";
+  }
+
+  const MD = W.m_diff;
+  if (sr && MD) {
+    const ch = MD.changed || [];
+    const sum = xs => xs.reduce((a, x) => a + x.net_frac, 0);
+    const s0 = ch.reduce((a, c) => a + sum(c.off), 0), s1 = ch.reduce((a, c) => a + sum(c.on), 0);
+    // Blocked = a yield exit the shipped set took that no longer exists once
+    // the floor is on (same open, same close). A profitable one above the
+    // floor is not blocked and must not be counted.
+    const k0 = ch.reduce((a, c) => a + c.off.filter(x => (x.reason === "sign_flip" || x.reason === "decay") && !c.on.some(y => y.open_ms === x.open_ms && y.close_ms === x.close_ms)).length, 0);
+    const kOff = ch.reduce((a, c) => a + c.off.length, 0), kOn = ch.reduce((a, c) => a + c.on.length, 0);
+    document.getElementById("oaDiff").textContent = ch.length ? t("oa_diff", { n: ch.length, list: ch.map(c => sname(...c.series.split("|"))).join(", "), k0, k_off: kOff, s0: pct(capPct(s0), 3, true), k_on: kOn, s1: pct(capPct(s1), 3, true), worse: ch.filter(c => sum(c.on) < sum(c.off)).length, better: ch.filter(c => sum(c.on) > sum(c.off)).length, d: pct(capPct(s1 - s0), 3, true) }) : t("oa_diff_none", { m: g(MD.m) });
+    const cell = xs => xs.map(x => `<span class="${cls(x.net_frac)}">${pct(capPct(x.net_frac), 3, true)}</span> <small class="muted">${t("r_" + x.reason)}, ${num(x.held_days, 0)}d</small>`).join("<br>");
+    document.getElementById("oaDiffTable").innerHTML = ch.length ? `<thead><tr><th>${t("oa_d_series")}</th><th>${t("oa_d_off")}</th><th class="num">${t("oa_d_sum0")}</th><th>${t("oa_d_on", { m: g(MD.m) })}</th><th class="num">${t("oa_d_sum1")}</th></tr></thead><tbody>` +
+      ch.map(c => `<tr><td>${esc(sname(...c.series.split("|")))}</td><td class="wrap">${cell(c.off)}</td><td class="num ${cls(sum(c.off))}">${pct(capPct(sum(c.off)), 3, true)}</td><td class="wrap">${cell(c.on)}</td><td class="num ${cls(sum(c.on))}">${pct(capPct(sum(c.on)), 3, true)}</td></tr>`).join("") + "</tbody>" : "";
+    document.getElementById("oaDiffTable").parentElement.hidden = !ch.length;
+  } else { document.getElementById("oaDiff").textContent = ""; document.getElementById("oaDiffTable").parentElement.hidden = true; }
+
+  // --- horizon ---
+  const C = W.corpus;
+  document.getElementById("hzChart").innerHTML = horizonChart(C, HT.by_series);
+  const majors8 = C.filter(r => ["BTCUSDT", "ETHUSDT"].includes(r.symbol) && r.interval_sec === 28800 && r.any_entry.median != null);
+  const hl = C.filter(r => ["BTCUSDT", "ETHUSDT"].includes(r.symbol) && r.perp === "hyperliquid_futures" && r.any_entry.median != null);
+  const rng = (xs, f) => xs.length ? `${num(Math.min(...xs.map(f)), 0)}–${num(Math.max(...xs.map(f)), 0)}` : "—";
+  const negC = C.filter(r => (HT.by_series[`${r.symbol}|${r.perp}`] || 0) <= 0);
+  const cens = negC.reduce((a, r) => a + r.any_entry.censored, 0), tot = negC.reduce((a, r) => a + r.any_entry.entries, 0);
+  document.getElementById("hzRead").textContent = t("hz_read", { med8: rng(majors8, r => r.any_entry.median), p75_8: rng(majors8, r => r.any_entry.p75), med1: rng(hl, r => r.any_entry.median),
+    bps: g(DATA.shipped.min_rate_per_8h_bps), pers: g(DATA.shipped.persistence_periods), medrule: rng(majors8.concat(hl).filter(r => r.rule_entry.median != null), r => r.rule_entry.median),
+    n_neg: negC.length, neg_list: negC.map(r => sname(r.symbol, r.perp)).join(", "), cens: `${num(cens)}/${num(tot)}` });
+  const wv = (o, k) => pct(o.within[k] * 100, 0);
+  document.getElementById("hzTable").innerHTML = `<thead><tr><th>${t("hz_col_series")}</th><th>${t("hz_col_iv")}</th><th class="num">${t("hz_col_cost")}</th><th class="num">${t("hz_col_mean")}</th><th class="num">${t("hz_col_ht")}</th><th class="num">${t("hz_any")}: ${t("hz_col_med")}</th><th class="num">${t("hz_col_p75")}</th><th class="num">${t("hz_col_p90")}</th><th class="num">${t("hz_col_w30")}</th><th class="num">${t("hz_col_w90")}</th><th class="num">${t("hz_col_w180")}</th><th class="num">${t("hz_col_rn")}</th><th class="num">${t("hz_rule")}: ${t("hz_col_rmed")}</th><th class="num">${t("hz_col_p75")}</th><th class="num">${t("hz_col_rw90")}</th></tr></thead><tbody>` +
+    C.map(r => { const a = r.any_entry, ru = r.rule_entry, h = HT.by_series[`${r.symbol}|${r.perp}`]; return `<tr><td>${esc(sname(r.symbol, r.perp))}</td><td>${r.interval_sec / 3600}h</td><td class="num">${pct(r.cost_frac * 100, 3)}</td><td class="num ${cls(r.mean_rate_per_8h_bps)}">${num(r.mean_rate_per_8h_bps, 3)}</td><td class="num ${cls(h)}">${pct(h, 2, true)}</td><td class="num">${a.median == null ? "∞" : num(a.median, 0)}</td><td class="num">${a.p75 == null ? "∞" : num(a.p75, 0)}</td><td class="num">${a.p90 == null ? "∞" : num(a.p90, 0)}</td><td class="num">${wv(a, "30")}</td><td class="num">${wv(a, "90")}</td><td class="num">${a.eligible["180"] ? wv(a, "180") : "—"}</td><td class="num">${num(ru.entries)}</td><td class="num">${ru.median == null ? "∞" : num(ru.median, 0)}</td><td class="num">${ru.p75 == null ? "∞" : num(ru.p75, 0)}</td><td class="num">${ru.eligible["90"] ? wv(ru, "90") : "—"}</td></tr>`; }).join("") + "</tbody>";
+
+  // --- ledger ---
+  if (sr) {
+    document.getElementById("ledger").hidden = false;
+    const L = ship.ledger, beN = L.filter(x => x.net_frac >= 0).length;
+    document.getElementById("lgTitle").textContent = t("lg_title", { n: L.length, be: beN });
+    document.getElementById("lgCaption").textContent = t("lg_caption");
+    const byR = REASONS.filter(r => sr.reasons[r]).map(r => { const xs = L.filter(x => x.reason === r); return { r, n: xs.length, be: xs.filter(x => x.net_frac >= 0).length, held: xs.reduce((a, x) => a + x.held_days, 0) / xs.length, net: xs.reduce((a, x) => a + x.net_frac, 0) / xs.length, sum: xs.reduce((a, x) => a + x.net_frac, 0) }; });
+    document.getElementById("lgReasons").innerHTML = `<thead><tr><th>${t("lg_col_reason")}</th><th class="num">${t("lg_col_n")}</th><th class="num">${t("lg_col_be")}</th><th class="num">${t("lg_col_held")}</th><th class="num">${t("lg_col_net")}</th><th class="num">${t("lg_col_loss")}</th></tr></thead><tbody>` +
+      byR.map(x => `<tr><td>${t("r_" + x.r)}</td><td class="num">${x.n}</td><td class="num">${x.be}</td><td class="num">${num(x.held, 1)}</td><td class="num ${cls(x.net)}">${pct(capPct(x.net), 3, true)}</td><td class="num ${cls(x.sum)}">${pct(capPct(x.sum), 3, true)}</td></tr>`).join("") + "</tbody>";
+    const basisSeries = [...new Set(L.filter(x => x.reason === "basis").map(x => x.perp.replace("_futures", "")))];
+    const endBe = L.filter(x => x.reason === "window_end" && x.net_frac >= 0).length;
+    const R = sr.reasons;
+    document.getElementById("lgRead").textContent = t("lg_read_end", { end: R.window_end, end_be: endBe })
+      + (R.sign_flip ? t("lg_read_flip", { flip: R.sign_flip, flip_series: listVI(flipSeries), flip_be: L.filter(x => x.reason === "sign_flip" && x.net_frac >= 0).length }) : t("lg_read_noflip"))
+      + (R.decay ? t("lg_read_decay", { decay: R.decay }) : t("lg_read_nodecay"))
+      + (R.basis ? t("lg_read_basis", { basis: R.basis, basis_series: listVI(basisSeries), basis_be: L.filter(x => x.reason === "basis" && x.net_frac >= 0).length }) : "")
+      + (lossN ? t("lg_read_loss", { lossn: lossN, loss_end: lossEnd }) : t("lg_read_noloss"));
+    document.getElementById("lgTable").innerHTML = `<thead><tr><th>${t("lg_col_series")}</th><th>${t("lg_col_open")}</th><th>${t("lg_col_close")}</th><th class="num">${t("lg_col_days")}</th><th class="num">${t("lg_col_settle")}</th><th class="num">${t("lg_col_fund")}</th><th class="num">${t("lg_col_cost")}</th><th class="num">${t("lg_col_netc")}</th><th>${t("lg_col_why")}</th></tr></thead><tbody>` +
+      L.map(x => `<tr><td>${esc(sname(x.symbol, x.perp))}</td><td class="mono">${day(x.open_ms)}</td><td class="mono">${day(x.close_ms)}</td><td class="num">${num(x.held_days, 1)}</td><td class="num">${num(x.settlements)}</td><td class="num ${cls(x.funding_frac)}">${pct(capPct(x.funding_frac), 3, true)}</td><td class="num">${pct(capPct(x.cost_frac), 3)}</td><td class="num ${cls(x.net_frac)}"><b>${pct(capPct(x.net_frac), 3, true)}</b></td><td><span class="pill ${x.reason === "window_end" ? "open" : x.reason === "basis" ? "partial" : "fail"}">${t("r_" + x.reason)}</span></td></tr>`).join("") + "</tbody>";
+  } else {
+    document.getElementById("ledger").hidden = true;
+  }
+
+  // --- marginals ---
+  document.getElementById("mgCaption").textContent = t("mg_caption", { series: S });
+  const M = W.marginals, order = ["holding_days", "exit_persistence_periods", "min_hold_recovered_cost_frac", "exit_net_apr_frac", "exit_negative_min_bps", "exit_negative_periods", "exit_negative_cum_cost_frac", "min_rate_per_8h_bps", "persistence_periods"].filter(a => M[a]);
+  const spreadOf = a => { const m = M[a].map(v => v.median_cap_pct); return Math.max(...m) - Math.min(...m); };
+  const ranked = order.slice().sort((a, b) => spreadOf(b) - spreadOf(a));
+  const top = ranked[0], tv = M[top];
+  const lo = tv.reduce((a, b) => a.median_cap_pct < b.median_cap_pct ? a : b), hi = tv.reduce((a, b) => a.median_cap_pct > b.median_cap_pct ? a : b);
+  const flat = ranked.filter(a => spreadOf(a) < 0.02).map(a => SHORT[a]);
+  document.getElementById("mgRead").textContent = t("mg_read", { top_axis: top, a_lo: g(lo.value), a_hi: g(hi.value), v_lo: pct(lo.median_cap_pct, 3, true), v_hi: pct(hi.median_cap_pct, 3, true), flat_sentence: flat.length ? t("mg_flat", { flat_axes: flat.join(", ") }) : "" });
+  document.getElementById("mgGrid").innerHTML = order.map(a => `<div class="small"><h3>${esc(t("ax_" + a))}</h3><div class="tablewrap"><table><thead><tr><th class="num">${t("mg_col_val")}</th><th class="num">${t("mg_col_mean")}</th><th class="num">${t("mg_col_med")}</th><th class="num">${t("mg_col_best")}</th><th class="num">${t("mg_col_be")}</th><th class="num">${t("mg_col_flip")}</th><th class="num">${t("mg_col_decay")}</th><th class="num">${t("mg_col_basis")}</th><th class="num">${t("mg_col_tr")}</th><th class="num">${t("mg_col_held")}</th></tr></thead><tbody>` +
+    M[a].map(v => `<tr><td class="num"><b>${g(v.value)}</b></td><td class="num ${cls(v.mean_cap_pct)}">${pct(v.mean_cap_pct, 3, true)}</td><td class="num ${cls(v.median_cap_pct)}">${pct(v.median_cap_pct, 3, true)}</td><td class="num ${cls(v.best_cap_pct)}">${pct(v.best_cap_pct, 3, true)}</td><td class="num">${pct((v.be_share || 0) * 100, 0)}</td><td class="num">${pct((v.flip_share || 0) * 100, 0)}</td><td class="num">${pct((v.decay_share || 0) * 100, 0)}</td><td class="num">${pct((v.basis_share || 0) * 100, 0)}</td><td class="num">${num(v.trades_per_series, 2)}</td><td class="num">${num(v.mean_held_days, 0)}</td></tr>`).join("") + "</tbody></table></div></div>").join("");
+
+  // --- heat ---
+  const heats = [[W.heat_hold_N, t("ht_x"), t("ht_y_N")], [W.heat_hold_M, t("ht_x"), t("ht_y_M")], [W.heat_M_C, t("ht_x_M"), t("ht_y_C")]].filter(([h]) => h && h.x.length > 1 && h.y.length > 1);
+  document.getElementById("heatGrid").innerHTML = heats.map(([h, xl, yl]) => `<div class="small"><h3>${esc(yl)} × ${esc(xl)}</h3>${heatBlock(h, xl, yl)}</div>`).join("");
+  document.getElementById("heat").hidden = heats.length === 0;
+
+  // --- top ---
+  document.getElementById("topCaption").textContent = t("top_caption", { series: S, days: num(W.window_days, 0), ht: pct(HT.mean_cap_pct, 2, true), n_ht: num(HT.sets_at_or_above), sets: num(W.sets) });
+  document.getElementById("topTable").innerHTML = setTable(W.top.slice(0, 15));
+  document.getElementById("cleanCaption").textContent = t("clean_caption", { n: num(W.clean_count) });
+  document.getElementById("cleanTable").innerHTML = setTable(W.clean_best.slice(0, 8));
+  document.getElementById("beTable").innerHTML = setTable(W.be_best.slice(0, 8));
+
+  // --- method ---
+  const gridTxt = AXES.filter(a => (DATA.grid[a] || []).length > 1).map(a => `${SHORT[a]} ∈ {${DATA.grid[a].map(g).join(", ")}}`).join("; ");
+  const items = [t("me_1", { sets: num(W.sets), series: S, days: num(W.window_days, 0), to: day(W.window_to_ms), grid: gridTxt, commit: META.commit }),
+    t("me_2", { cap: num(cap, 1), series: S }), t("me_3"), t("me_4"), t("me_5"), t("me_6"), t("me_7")];
+  document.getElementById("methodList").innerHTML = items.map(x => `<li>${esc(x)}</li>`).join("");
+  document.getElementById("genNote").textContent = t("gen_note", { when: META.generated });
+}
+
+document.querySelectorAll("#langSeg button").forEach(b => b.onclick = () => { lang = b.dataset.lang; try { localStorage.setItem("hold.lang", lang); } catch (e) {} render(); });
+render();
+</script>

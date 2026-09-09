@@ -2159,6 +2159,46 @@ Ba cái bẫy của chính bộ script dựng báo cáo được ghi trong
 thành 824 triệu; và `sorted()` trên một `set` cần khoá toàn phần, nếu không hai
 lần build cùng dữ liệu ra hai câu khác nhau.
 
+#### Lượt đo trục giữ ✅ (2026-09-09, từ `4d7f15f`)
+
+Câu hỏi của người dùng: *giữ mỗi lệnh bao nhiêu ngày thì hoà vốn, và bộ tham số
+nào làm được việc đó — giảm lệnh thoát vì đảo dấu và vì suy giảm dưới sàn N kỳ*.
+Trả lời bằng ba phép đo, tất cả trong
+[docs/reports/backtest-hold-2026-09-09.html](reports/backtest-hold-2026-09-09.html)
+(script mới `tools/report/hold.py` + `hold_build.py`, cùng ranh giới đọc-only):
+
+**① Chân trời hoà vốn, đo thẳng trên corpus, không qua luật.** Lấy MỖI mốc
+settle trong cửa sổ 12 tháng làm điểm vào, đếm số ngày tới khi funding thu được
+từ đó bằng chi phí vòng Go đã định giá (50k). BTC/ETH ở nhịp 8h: trung vị
+**21–52 ngày**, phần tư trên 26–91; hyperliquid 15–17; riêng các điểm vào mà
+luật vào đang ship chọn: 12–50. Trên 6 chuỗi funding trung bình cả năm dưới chi
+phí (SOL·binance/bybit/gate/kraken, XRP·binance/kraken) **40% điểm vào không
+bao giờ hoà vốn** trước khi cửa sổ đóng — không luật giữ nào cứu được một lệnh ở
+đó, chỉ có không vào.
+
+**② Lưới trục giữ: 3.200 bộ × 24 chuỗi × 12 và 6 tháng** — `holding_days`
+30/60/90/180/365, N 12/48/96/192, M 0/0,5/1/1,5/2, sàn 0/0,005, cổng đảo dấu
+X 0/2 · N 1/2 · C 0/1, lối vào 0,3/6 và 0,5/6. Trên 12 tháng bộ đang ship đứng
+**31/3.200 với +0,562%/năm trên vốn** và không bộ nào hơn nó quá 0,013 điểm.
+Đổi đúng một khoá từ bộ ship: `holding_days` 30→365 dịch 0,010 điểm, N 12→192
+dịch 0,007 — hai trục đã bão hoà vì N=48 để lại **0 lệnh thoát suy giảm** và
+C=1 để lại 6 lệnh thoát đảo dấu, tất cả trên SOL. Trục quyết định của cả lưới
+vẫn là C (0→1: trung vị −0,10% → +0,53%). Giữ suốt +0,613% (18/24), **0/3.200
+bộ đạt tới** trên 12 tháng; trên 6 tháng 1.002 bộ đạt nhờ vào muộn hơn đầu cửa
+sổ.
+
+**③ M=1 là câu trả lời "đen" cho câu hỏi, và nó làm xấu đi.** Bật
+`min_hold_recovered_cost_frac: 1` (không thoát vì lợi suất trước khi lệnh thu
+lại một vòng phí) trên bộ ship: tỷ lệ lệnh hoà vốn 56% → 62%, lệnh thoát lợi
+suất 6 → 2, nhưng lợi nhuận trên vốn +0,562% → +0,542%. Sổ lệnh cho thấy vì
+sao: 4 lệnh nó chặn đều là lệnh SOL đang lỗ, chặn xong thì giữ tới cuối cửa sổ
+và lỗ nhiều hơn (SOL·binance −1,12% → −2,15% notional; nhóm 3 chuỗi bị đổi lỗ
+thêm 0,49% trên vốn). Tỷ lệ hoà vốn tăng vì **mẫu số giảm**, không vì cứu được
+lệnh nào. Kết luận: giữ nguyên bộ ship (90 / 48 / 2·2·1 / M=0); phần lỗ còn
+lại nằm ở 11 lệnh thoát basis trên kraken (lối thoát rủi ro) và ở việc VÀO các
+chuỗi mà giữ suốt cũng lỗ — thứ chỉ lối vào (chọn cặp/sàn) sửa được, không phải
+trục giữ.
+
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.

@@ -69,6 +69,35 @@ phân biệt được trang nào là lượt đo nào.
 `--leverage` và `--isolation` đều tuỳ chọn; thiếu thì mục tương ứng biến mất
 thay vì hiện số rỗng.
 
+## Báo cáo trục giữ (`hold.py` + `hold_build.py`)
+
+Một cặp script riêng, cùng ranh giới đọc-only, trả lời một câu hỏi hẹp: *giữ
+mỗi lệnh bao lâu thì hoà vốn, và trục giữ nào (holding_days, cửa sổ suy giảm N,
+cổng giữ tối thiểu M, cổng đảo dấu) làm được việc đó*. Nó đo thêm một thứ lưới
+chính không đo: **chân trời hoà vốn** đọc thẳng từ `funding_history` — với mỗi
+mốc settle làm điểm vào, bao nhiêu ngày cho tới khi funding thu được bằng chi
+phí vòng Go đã định giá. Đó là phép đo corpus, không phải luật, và nó nói mọi
+luật giữ phải đối mặt với cái gì.
+
+```bash
+$S/backtest -sweep -months 12 \
+  -min-rate-bps 0.3,0.5 -persist 6 -min-net-apr 0.02 \
+  -exit-net-apr 0,0.005 -exit-persist 12,48,96,192 -notional 50000 -hold-days 30,60,90,180,365 \
+  -exit-neg-bps 0,2.0 -exit-neg-periods 1,2 -exit-neg-cum 0,1.0 -min-hold 0,0.5,1.0,1.5,2.0 \
+  -top 40 -csv $S/hold12.csv -trades-csv $S/holdtrades12.csv > $S/hold12.txt 2> $S/hold12.err
+# (lặp với -months 6 nếu muốn cửa sổ thứ hai; hold.py đọc CSV thô, không cần prep.py)
+python3 tools/report/hold.py --db data/scanner.db --config config.yaml \
+  --window 12=$S/hold12.csv:$S/holdtrades12.csv --window 6=$S/hold6.csv:$S/holdtrades6.csv \
+  --out $S/hold.json
+python3 tools/report/hold_build.py --json $S/hold.json --commit $(git rev-parse --short HEAD) \
+  --title "Chân trời hoà vốn <ngày>" --out docs/reports/backtest-hold-<ngày>.html
+```
+
+`hold.py` lấy bộ đang ship từ khối `strategy:` của `config.yaml` (đọc theo
+dòng, không PyYAML) và đặt nó vào lưới: trang có bảng "đổi đúng MỘT trục từ bộ
+ship", là phép đo thao tác viên thật sự làm, bên cạnh trung bình lưới. Lưới
+phải CHỨA bộ ship trên mọi trục, nếu không mục đó và sổ lệnh của nó biến mất.
+
 ## Ba cái bẫy đã mắc, ghi lại để khỏi mắc lại
 
 **1. `{series}` là placeholder ĐÃ ĐƯỢC ĐẶT TRƯỚC trong template.** `withSeries()`

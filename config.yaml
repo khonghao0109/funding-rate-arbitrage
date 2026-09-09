@@ -211,6 +211,12 @@ strategy:
   # vẫn là M=0 (+30,68%), bộ tốt nhất có cổng là M=2,0 (+30,27%).
   # Kết luận: đây là BẢO HIỂM cho một luật thoát đặt sai, không phải nguồn lợi
   # nhuận. Giữ 0 ở bộ hiện tại; bật khi thử một luật thoát nhạy hơn.
+  # Đo lại 2026-09-09 (docs/reports/backtest-hold-2026-09-09.html, 3.200 bộ ×
+  # 24 chuỗi × 12 tháng, đổi đúng khoá này từ bộ ship): M=1 nâng tỷ lệ lệnh
+  # hoà vốn 56% → 62% và giảm lệnh thoát lợi suất 6 → 2, nhưng lợi nhuận trên
+  # vốn +0,562% → +0,542%/năm — 4 lệnh nó chặn đều là lệnh SOL đang lỗ, chặn
+  # xong thì giữ tới cuối cửa sổ và lỗ nhiều hơn (SOL·binance −1,12% → −2,15%
+  # notional). Tỷ lệ hoà vốn tăng vì mẫu số giảm, không phải vì cứu được lệnh.
   min_hold_recovered_cost_frac: 0
   # Mô hình ký quỹ chân perp (thêm 2026-09-07). Vị thế trung tính về COIN
   # nhưng chân perp thì KHÔNG: khoản lãi của chân spot nằm ở tài khoản khác,

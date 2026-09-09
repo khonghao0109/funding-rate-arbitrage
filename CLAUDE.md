@@ -301,6 +301,32 @@ count of sets beating hold-through is 0 at BTC/ETH on hyperliquid and bybit,
 negative. The rule wins only where holding loses. Anything proposing to trade
 this must beat hold-through on the 365-day series, not merely turn positive.
 
+**The hold side is saturated (measured 2026-09-09, 3,200 sets × 24 series ×
+12 and 6 months, `tools/report/hold.py`).** The question was how long a trade
+must be held to break even and which of `holding_days`, the decay window N,
+the min-hold floor M and the sign-flip gates keep it open until it has. Read
+straight from the corpus with no rule in between — every settlement as an
+entry, days until the funding collected since it reaches the priced round
+trip — BTC/ETH at the 8h venues break even in a median **21–52 days** (P75
+26–91), hyperliquid in 15–17, and the shipped entry rule's own entries in
+12–50; on 6 series (SOL at binance/bybit/gate/kraken, XRP at binance/kraken)
+**40% of entries never break even inside the window** because mean funding is
+below cost, so no hold rule can save a trade there. On the grid: the shipped
+set ranks 31/3,200 at +0.562%/yr on capital and nothing beats it by more than
+0.013 points; moving `holding_days` 30→365 shifts it 0.010 and N 12→192 shifts
+0.007 — both already flat at the shipped values, because N=48 leaves 0 decay
+exits and C=1 leaves 6 sign-flip exits, all on SOL. **M=1 (do not take a yield
+exit before the trade has earned its round trip back) is the literal answer to
+the question and it makes things worse**: break-even share 56%→62% and yield
+exits 6→2, but return +0.562%→+0.542%, because the 4 exits it blocks were
+losing SOL trades that then hold to the window end and lose more (SOL/binance
+−1.12% → −2.15% on notional). The share rises because the DENOMINATOR falls,
+not because any trade was saved — a count-based target is the wrong target on
+a series whose break-even horizon is infinite. Hold-through stays unreached
+(+0.613%, 0 of 3,200 on 12 months; on 6 months 1,002 sets reach it by entering
+later than the window start). Report:
+`docs/reports/backtest-hold-2026-09-09.html`.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
 `.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
