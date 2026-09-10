@@ -227,3 +227,51 @@ func TestEvaluateEntry_CostCrossingPer8hDoesNotDependOnTheCadence(t *testing.T) 
 		t.Errorf("reported crossing differs by cadence: %.4f (8h) vs %.4f (1h)", g8, g1)
 	}
 }
+
+// --- what a decision was made ON (2026-09-10, for the step-3.5 comparison) ---
+
+// Both evaluators record the newest settlement they decided on and how many
+// usable rows they saw, so a journal row and a replay decision at the same
+// instant can tell "the live side had not received the newest settlement
+// yet" (history arrived late) from a rule that drifted.
+func TestEvaluate_RecordsTheNewestSettlementDecidedOn(t *testing.T) {
+	c := goodCandidate()
+	d := EvaluateEntry(evalAt, c, entryParams())
+	newest := c.Settled[len(c.Settled)-1].SettledAtMs
+	if d.NewestSettledAtMs != newest || d.SettledRows != len(c.Settled) {
+		t.Errorf("entry: newest %d rows %d, want %d rows %d", d.NewestSettledAtMs, d.SettledRows, newest, len(c.Settled))
+	}
+	x := EvaluateExit(evalAt, openPosition(), c, entryParams())
+	if x.NewestSettledAtMs != newest || x.SettledRows != len(c.Settled) {
+		t.Errorf("exit: newest %d rows %d, want %d rows %d", x.NewestSettledAtMs, x.SettledRows, newest, len(c.Settled))
+	}
+	c.Settled = nil
+	if d := EvaluateEntry(evalAt, c, entryParams()); d.NewestSettledAtMs != 0 || d.SettledRows != 0 {
+		t.Errorf("no history: want zero values, got %+v", d)
+	}
+}
+
+// Params.Map is the ONE rendering of a parameter set under its config key
+// names: the journal writes it and the step-3.5 comparison reads it back
+// against the block cmd/backtest ran, so the two cannot disagree about which
+// keys exist or what the effective value of a gate is.
+func TestParams_MapUsesConfigKeysAndEffectiveValues(t *testing.T) {
+	p := entryParams()
+	p.ExitNegativePeriods = 0 // effective value is 1 (the 3.2 rule)
+	p.TrailingMeanMinCostFrac = 1.5
+	m := p.Map()
+	for _, k := range []string{"min_rate_per_8h_bps", "persistence_periods", "min_net_apr_frac", "notional_quote",
+		"holding_days", "exit_net_apr_frac", "exit_persistence_periods", "exit_negative_min_bps", "exit_negative_periods",
+		"exit_negative_cum_cost_frac", "min_hold_recovered_cost_frac", "max_basis_pct", "max_basis_widen_pct",
+		"min_trailing_mean_bps", "trailing_mean_days", "trailing_mean_min_cost_frac", "max_book_age_min"} {
+		if _, ok := m[k]; !ok {
+			t.Errorf("Map lacks %q", k)
+		}
+	}
+	if m["exit_negative_periods"] != 1 {
+		t.Errorf("the gate must be rendered at its EFFECTIVE value 1, got %v", m["exit_negative_periods"])
+	}
+	if m["trailing_mean_min_cost_frac"] != 1.5 || m["min_rate_per_8h_bps"] != 0.8 {
+		t.Errorf("values not carried: %v", m)
+	}
+}

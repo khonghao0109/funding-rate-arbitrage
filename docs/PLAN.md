@@ -2683,7 +2683,8 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > basis 2,0/2,0, `min_trailing_mean_bps`, `trailing_mean_min_cost_frac` = 0)
 > — tức nhật ký mới so với `cmd/backtest` trên khối config hiện tại chứ
 > không còn phải dựng lại `2328307`; ghi trạng thái phí và khoá vào `.paper/`
-> lúc lên như ③ yêu cầu. Đoạn `2026-09-07 → 09-10` vẫn là 4.004 hàng dữ liệu
+> lúc lên như ③ yêu cầu (từ lần chạy 2 nhật ký tự mang trạng thái phí, xem
+> ④). Đoạn `2026-09-07 → 09-10` vẫn là 4.004 hàng dữ liệu
 > đối chiếu hợp lệ cho một phép so 2,6 ngày, nhưng không phải phán quyết.
 
 > **Khởi động (2026-09-07).** Phần làm được trong một phiên là ba việc, phán
@@ -2752,7 +2753,13 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > Nếu tiến trình chết và lên lại từ working tree, nửa sau cửa sổ sẽ chạy biểu
 > phí mới — cửa sổ tính lại từ lần lên cuối (bước 1) và phải ghi kèm trạng
 > thái phí. Nợ tooling: ghi `fee_verified` và taker bps của hai chân vào
-> `params_json` (hoặc cột riêng) để bước 2 bắt được lệch phí bằng máy.
+> `params_json` (hoặc cột riêng) để bước 2 bắt được lệch phí bằng máy —
+> **trả 2026-09-10, trước khi chạy lại:** mỗi hàng nhật ký mang
+> `params_json.fees = {spot: {source, taker_bps, verified} | null, perp:
+> {…}}` đúng biểu phí hàng đó được định giá, và log lúc lên in trạng thái
+> phí của mọi nguồn; `paperBook.seed` giải mã `params_json` như `any` nên
+> khối lồng không làm mất `notional_quote` (có test). Hàng của lần chạy 1
+> không có khoá này — đọc như "phí của `2328307`".
 >
 > **Đầu vào lệch thứ năm — ba khoá `exit_negative_*` (ghi 2026-09-07 chiều):**
 > khoá VẮNG ≡ 0 ≡ `exit_negative_periods: 1` ≡ luật 3.2 (code ép < 1 thành 1

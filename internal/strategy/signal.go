@@ -165,6 +165,16 @@ type Decision struct {
 	// Cost is what the round trip was priced at, kept so an alert can say what
 	// has been deducted without recomputing it.
 	Cost RoundTrip
+
+	// NewestSettledAtMs and SettledRows say what the decision was made ON:
+	// the newest usable settlement and how many usable rows the evaluator
+	// saw (added 2026-09-10 for the step-3.5 comparison). The live journal
+	// and the replay decide at the same instant on histories that can differ
+	// — the hourly top-up delivers a settlement up to an hour late — and
+	// without the stamp a row that skipped for lack of the newest print
+	// reads exactly like a rule that drifted (PLAN 3.5 ③ step 4, "lịch sử").
+	NewestSettledAtMs int64
+	SettledRows       int
 }
 
 // LogLines renders the decision for a log or an alert, verdict first.
@@ -406,6 +416,28 @@ func (p Params) EffectiveExitNegativePeriods() int {
 	return p.ExitNegativePeriods
 }
 
+// Map renders the parameter set under its config.yaml key names, at the
+// values the rule actually reads (the sign-flip period gate at its effective
+// value). It is the ONE rendering: cmd/scanner's journal writes it into
+// params_json and cmd/backtest's journal comparison reads it back against
+// the block it replayed, so the two cannot disagree about which keys exist
+// or what a gate means (PLAN 3.5 ③ step 2). MaxBookAge is included for the
+// journal's sake; a replay has no book age and skips that key by name.
+func (p Params) Map() map[string]any {
+	return map[string]any{
+		"min_rate_per_8h_bps": p.MinRatePer8hBps, "persistence_periods": p.PersistencePeriods,
+		"min_net_apr_frac": p.MinNetAPRFrac, "notional_quote": p.NotionalQuote, "holding_days": p.HoldingDays,
+		"max_book_age_min": p.MaxBookAge.Minutes(), "exit_net_apr_frac": p.ExitNetAPRFrac,
+		"exit_persistence_periods": p.ExitPersistencePeriods,
+		"exit_negative_min_bps":    p.ExitNegativeMinBps, "exit_negative_periods": p.EffectiveExitNegativePeriods(),
+		"exit_negative_cum_cost_frac":  p.ExitNegativeCumCostFrac,
+		"min_hold_recovered_cost_frac": p.MinHoldRecoveredCostFrac,
+		"max_basis_pct":                p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
+		"min_trailing_mean_bps": p.MinTrailingMeanBps, "trailing_mean_days": p.TrailingMeanDays,
+		"trailing_mean_min_cost_frac": p.TrailingMeanMinCostFrac,
+	}
+}
+
 // EvaluateEntry decides whether to open a position, and reports every condition.
 //
 // `at` is passed in and never read from a clock: the backtest evaluates
@@ -420,6 +452,10 @@ func EvaluateEntry(at time.Time, c Candidate, p Params) Decision {
 	d := Decision{At: at, Symbol: c.Symbol, PerpSource: c.PerpSource, SpotSource: c.SpotSource, Action: ActionSkip}
 
 	usable, droppedSpecial := UsableSettled(c.Settled)
+	d.SettledRows = len(usable)
+	if n, ok := newestOf(usable); ok {
+		d.NewestSettledAtMs = n.SettledAtMs
+	}
 	hedge := checkHedgeLeg(c)
 
 	// The cost is only priced when there IS a hedge leg. Without one there is
@@ -482,6 +518,10 @@ func EvaluateExit(at time.Time, pos Position, c Candidate, p Params) Decision {
 
 	usable, _ := UsableSettled(c.Settled)
 	newest, haveNewest := newestOf(usable)
+	d.SettledRows = len(usable)
+	if haveNewest {
+		d.NewestSettledAtMs = newest.SettledAtMs
+	}
 
 	hedgeGone := exitHedgeGone(c)
 	if !hedgeGone.Passed {

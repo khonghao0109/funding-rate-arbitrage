@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"sort"
 	"strings"
@@ -62,6 +63,9 @@ func startSignals(ctx context.Context, cfg config.Config, s *scanner.Scanner, db
 	log.Printf("strategy: evaluating every %s · %.2f bps/8h held %d · net APR ≥ %.2f%% · %.0f quote · hold %.0f days · exit < %.2f%% for %d",
 		every, params.MinRatePer8hBps, params.PersistencePeriods, params.MinNetAPRFrac*100,
 		params.NotionalQuote, params.HoldingDays, params.ExitNetAPRFrac*100, params.ExitPersistencePeriods)
+	// The schedules are loaded ONCE, here, and never re-read (PLAN 3.5 ④):
+	// the log's first lines are the record of what this run priced with.
+	log.Printf("strategy: fee state at launch (taker bps, verified): %s", feeStateVI(cfg))
 
 	book := newPaperBook()
 	if err := book.seed(ctx, db); err != nil {
@@ -105,7 +109,7 @@ func evaluateOnce(ctx context.Context, cfg config.Config, params strategy.Params
 				book.open(c, at, params)
 			}
 		}
-		records = append(records, journalRecord(d, params))
+		records = append(records, journalRecord(d, c, params))
 		log.Printf("strategy:\n  %s", strings.Join(d.LogLines(), "\n  "))
 	}
 	if _, err := db.PutSignalDecisions(ctx, records); err != nil {
@@ -222,12 +226,44 @@ func schedule(cfg config.Config, source string) fees.Schedule {
 		TakerFeeBps: src.Fee.TakerBps, Verified: src.Fee.Verified}
 }
 
+// feeStateVI lists every configured source's taker fee and whether it was
+// verified, for the launch log.
+func feeStateVI(cfg config.Config) string {
+	parts := make([]string, 0, len(cfg.Sources))
+	for _, src := range cfg.Sources {
+		mark := "chưa xác minh"
+		if src.Fee.Verified {
+			mark = "đã xác minh"
+		}
+		parts = append(parts, fmt.Sprintf("%s %g bps %s", src.Source, src.Fee.TakerBps, mark))
+	}
+	return strings.Join(parts, " · ")
+}
+
+// feeJSON is one leg's fee state for the journal; nil when the leg does not
+// exist, never a zero-fee schedule. It records the SCHEDULE's source, not the
+// leg's: schedule() sets the two equal, and if a caller ever paired a leg
+// with another venue's schedule the journal would show it rather than hide it.
+func feeJSON(source string, fee fees.Schedule) map[string]any {
+	if source == "" {
+		return nil
+	}
+	return map[string]any{"source": fee.Source, "taker_bps": fee.TakerFeeBps, "verified": fee.Verified}
+}
+
 func key(symbol, source string) string { return symbol + "|" + source }
 
 func paramsFrom(st config.Strategy) strategy.Params { return st.StrategyParams() }
 
 // journalRecord flattens a decision for the store, reasoning included.
-func journalRecord(d strategy.Decision, p strategy.Params) store.SignalRecord {
+//
+// params_json carries, beside the strategy parameters, the FEE STATE of the
+// two legs the decision was priced with (PLAN 3.5 ④): the process loads its
+// schedules once at start-up and never re-reads the file, so a venue verified
+// on disk after launch would otherwise leave no trace in the journal, and the
+// gate's step 2 could not catch the drift by machine. Nested under "fees",
+// which paperBook.seed tolerates: it reads the flat numeric keys only.
+func journalRecord(d strategy.Decision, c strategy.Candidate, p strategy.Params) store.SignalRecord {
 	type checkJSON struct {
 		Name     string `json:"name"`
 		Passed   bool   `json:"passed"`
@@ -238,18 +274,16 @@ func journalRecord(d strategy.Decision, p strategy.Params) store.SignalRecord {
 		checks = append(checks, checkJSON{c.Name, c.Passed, c.DetailVI})
 	}
 	checksJSON, _ := json.Marshal(checks)
-	paramsJSON, _ := json.Marshal(map[string]any{
-		"min_rate_per_8h_bps": p.MinRatePer8hBps, "persistence_periods": p.PersistencePeriods,
-		"min_net_apr_frac": p.MinNetAPRFrac, "notional_quote": p.NotionalQuote, "holding_days": p.HoldingDays,
-		"max_book_age_min": p.MaxBookAge.Minutes(), "exit_net_apr_frac": p.ExitNetAPRFrac,
-		"exit_persistence_periods": p.ExitPersistencePeriods,
-		"exit_negative_min_bps":    p.ExitNegativeMinBps, "exit_negative_periods": p.EffectiveExitNegativePeriods(),
-		"exit_negative_cum_cost_frac":  p.ExitNegativeCumCostFrac,
-		"min_hold_recovered_cost_frac": p.MinHoldRecoveredCostFrac,
-		"max_basis_pct":                p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
-		"min_trailing_mean_bps": p.MinTrailingMeanBps, "trailing_mean_days": p.TrailingMeanDays,
-		"trailing_mean_min_cost_frac": p.TrailingMeanMinCostFrac,
-	})
+	// The parameters through the ONE rendering cmd/backtest's comparison
+	// reads back (strategy.Params.Map), plus two things a parameter set
+	// cannot say: the fee state the row was priced with, and what it was
+	// decided ON — the newest settlement and the row count — so a row that
+	// skipped because the top-up had not delivered the newest settlement is
+	// distinguishable from a rule that drifted (PLAN 3.5 ③ step 4).
+	params := p.Map()
+	params["fees"] = map[string]any{"spot": feeJSON(c.SpotSource, c.SpotFee), "perp": feeJSON(c.PerpSource, c.PerpFee)}
+	params["inputs"] = map[string]any{"newest_settled_at_ms": d.NewestSettledAtMs, "settled_rows": d.SettledRows}
+	paramsJSON, _ := json.Marshal(params)
 	rec := store.SignalRecord{
 		EvaluatedAtMs: d.At.UnixMilli(), Symbol: d.Symbol, PerpSource: d.PerpSource, SpotSource: d.SpotSource,
 		Action: string(d.Action), ChecksJSON: string(checksJSON), ParamsJSON: string(paramsJSON),
@@ -293,11 +327,22 @@ func (b *paperBook) seed(ctx context.Context, db *store.Store) error {
 	defer b.mu.Unlock()
 	for k, r := range latest {
 		if r.Action == string(strategy.ActionEnter) || r.Action == string(strategy.ActionHold) {
-			var params map[string]float64
-			_ = json.Unmarshal([]byte(r.ParamsJSON), &params)
+			// Decoded as `any`: params_json also carries non-numeric values
+			// (the fee state), and a typed map would report a type error
+			// this code never read — the numeric keys still decoded, by
+			// encoding/json's best-effort rule, but relying on that is how
+			// a reseeded position ends up with a notional of 0 one day.
+			var params map[string]any
+			if err := json.Unmarshal([]byte(r.ParamsJSON), &params); err != nil {
+				log.Printf("strategy: paper position %s: params_json unreadable (%v) — reseeding with notional 0, which the exit rule will refuse to price", k, err)
+			}
+			notional, _ := params["notional_quote"].(float64)
+			if notional <= 0 {
+				log.Printf("strategy: paper position %s: no notional_quote in the journal row that opened it — the exit rule will refuse to price it", k)
+			}
 			b.positions[k] = strategy.Position{
 				Symbol: r.Symbol, PerpSource: r.PerpSource, SpotSource: r.SpotSource,
-				OpenedAtMs: opened[k], NotionalQuote: params["notional_quote"],
+				OpenedAtMs: opened[k], NotionalQuote: notional,
 			}
 		}
 	}

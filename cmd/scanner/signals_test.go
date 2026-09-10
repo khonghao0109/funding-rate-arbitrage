@@ -10,6 +10,7 @@ import (
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/depth"
+	"futures-arbitrage-scanner/internal/fees"
 	"futures-arbitrage-scanner/internal/scanner"
 	"futures-arbitrage-scanner/internal/store"
 	"futures-arbitrage-scanner/internal/strategy"
@@ -120,7 +121,7 @@ func TestJournalRecord_KeepsEveryCheckAndTheParams(t *testing.T) {
 	}
 	p := strategy.Params{MinRatePer8hBps: 0.5, PersistencePeriods: 3}
 
-	rec := journalRecord(d, p)
+	rec := journalRecord(d, strategy.Candidate{}, p)
 	if rec.EvaluatedAtMs != at.UnixMilli() || rec.Action != "skip" || rec.NetAPRFrac != 0.0571 || rec.CostTotalPct != 0.301 {
 		t.Errorf("record lost a field: %+v", rec)
 	}
@@ -141,7 +142,7 @@ func TestJournalRecord_KeepsEveryCheckAndTheParams(t *testing.T) {
 func TestJournalRecord_RefusedNetAPRIsZeroNotANumber(t *testing.T) {
 	d := strategy.Decision{At: time.Unix(1, 0), Action: strategy.ActionSkip,
 		NetAPR: strategy.NetAPRResult{OK: false, NetAPRFrac: 0.99}}
-	rec := journalRecord(d, strategy.Params{})
+	rec := journalRecord(d, strategy.Candidate{}, strategy.Params{})
 	if rec.NetAPROK || rec.NetAPRFrac != 0 {
 		t.Errorf("refused net APR leaked as a number: %+v", rec)
 	}
@@ -203,10 +204,81 @@ func TestJournalRecord_CarriesEverySelectionKey(t *testing.T) {
 		PerpSource: "binance_futures", SpotSource: "binance_spot", Action: strategy.ActionSkip}
 	p := strategy.Params{MinTrailingMeanBps: 0.5, TrailingMeanDays: 90, TrailingMeanMinCostFrac: 1.0}
 	var params map[string]any
-	if err := json.Unmarshal([]byte(journalRecord(d, p).ParamsJSON), &params); err != nil {
+	if err := json.Unmarshal([]byte(journalRecord(d, strategy.Candidate{}, p).ParamsJSON), &params); err != nil {
 		t.Fatal(err)
 	}
 	if params["min_trailing_mean_bps"] != 0.5 || params["trailing_mean_days"] != 90.0 || params["trailing_mean_min_cost_frac"] != 1.0 {
 		t.Errorf("params_json must carry the three selection keys: %v", params)
+	}
+	// And what the row was decided on (2026-09-10): the newest settlement
+	// stamp and the usable row count the evaluator saw.
+	d.NewestSettledAtMs, d.SettledRows = 1_757_000_000_000, 42
+	if err := json.Unmarshal([]byte(journalRecord(d, strategy.Candidate{}, p).ParamsJSON), &params); err != nil {
+		t.Fatal(err)
+	}
+	in, _ := params["inputs"].(map[string]any)
+	if in["newest_settled_at_ms"] != 1_757_000_000_000.0 || in["settled_rows"] != 42.0 {
+		t.Errorf("params_json.inputs must carry the newest stamp and the row count: %v", params["inputs"])
+	}
+}
+
+// PLAN 3.5 ④: the journal process loads its fee schedules ONCE at start-up
+// and the strategy parameters alone cannot show that the file on disk has
+// since verified a venue. So every row carries the fee state of BOTH legs it
+// was judged with — source, taker bps, verified — under params_json.fees,
+// and the gate's step 2 can catch a fee drift by machine.
+func TestJournalRecord_CarriesTheFeeStateOfBothLegs(t *testing.T) {
+	d := strategy.Decision{At: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC), Symbol: "BTCUSDT",
+		PerpSource: "bybit_futures", SpotSource: "binance_spot", Action: strategy.ActionSkip}
+	c := strategy.Candidate{Symbol: "BTCUSDT", PerpSource: "bybit_futures", SpotSource: "binance_spot",
+		SpotFee: fees.Schedule{Source: "binance_spot", TakerFeeBps: 10, Verified: true},
+		PerpFee: fees.Schedule{Source: "bybit_futures", TakerFeeBps: 5.5, Verified: false}}
+	var params map[string]any
+	if err := json.Unmarshal([]byte(journalRecord(d, c, strategy.Params{}).ParamsJSON), &params); err != nil {
+		t.Fatal(err)
+	}
+	fs, ok := params["fees"].(map[string]any)
+	if !ok {
+		t.Fatalf("params_json must carry a fees object: %v", params)
+	}
+	spot, perp := fs["spot"].(map[string]any), fs["perp"].(map[string]any)
+	if spot["source"] != "binance_spot" || spot["taker_bps"] != 10.0 || spot["verified"] != true {
+		t.Errorf("spot leg fee state lost: %v", spot)
+	}
+	if perp["source"] != "bybit_futures" || perp["taker_bps"] != 5.5 || perp["verified"] != false {
+		t.Errorf("perp leg fee state lost: %v", perp)
+	}
+
+	// No spot leg → no spot schedule: null, never a zero-fee schedule.
+	c.SpotSource, c.SpotFee = "", fees.Schedule{}
+	d.SpotSource = ""
+	if err := json.Unmarshal([]byte(journalRecord(d, c, strategy.Params{}).ParamsJSON), &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["fees"].(map[string]any)["spot"] != nil {
+		t.Errorf("a missing spot leg must journal null, got %v", params["fees"])
+	}
+}
+
+// The seed reads params_json for the notional it re-opens a position with;
+// since 2026-09-10 that JSON also carries a nested fees object and booleans.
+// encoding/json's best-effort decode kept the notional even into the old
+// map[string]float64 (the object was skipped with an ignored error), so this
+// guards the shape against a stricter decoder rather than pinning a fix.
+func TestPaperBook_SeedReadsTheNotionalBesideNonNumericParams(t *testing.T) {
+	db := openTempStore(t)
+	ctx := context.Background()
+	rows := []store.SignalRecord{{EvaluatedAtMs: 1_757_000_000_000, Symbol: "BTCUSDT", PerpSource: "binance_futures",
+		SpotSource: "binance_spot", Action: "enter", ChecksJSON: "[]",
+		ParamsJSON: `{"notional_quote":50000,"fees":{"spot":{"source":"binance_spot","taker_bps":10,"verified":true},"perp":null}}`}}
+	if _, err := db.PutSignalDecisions(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+	book := newPaperBook()
+	if err := book.seed(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if pos, open := book.position("BTCUSDT", "binance_futures"); !open || pos.NotionalQuote != 50000 {
+		t.Errorf("the notional must survive non-numeric siblings: open=%v %+v", open, pos)
 	}
 }

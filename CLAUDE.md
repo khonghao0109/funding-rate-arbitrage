@@ -607,7 +607,11 @@ means — the window restarts from the next launch, 14 unbroken days, no
 stitching — and a process launched from today's working tree runs the
 verified fees and every key added since `2328307`, so its journal compares
 against `cmd/backtest` on the CURRENT block; record the fee and key state in
-`.paper/` at launch. The "alert-only mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
+`.paper/` at launch. Since 2026-09-10 every journal row also carries the fee
+state of both legs it was priced with (`params_json.fees`, PLAN 3.5 ④), and
+the launch log prints every source's taker bps and verified flag — the
+first run's rows lack the key and mean "the fees of `2328307`". The
+"alert-only mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
 every hedge leg every 10 minutes with the SAME `strategy.Candidate` the
 backtest builds — settled history from the store, fees from config (loaded ONCE at start-up: the 3.5 process still holds the pre-verification fees of `2328307`, see PLAN 3.5 ③), the newest
 measured books — plus live spot/perp prices, which is why the basis exit is
