@@ -194,3 +194,19 @@ func openTempStore(t *testing.T) *store.Store {
 	t.Cleanup(func() { db.Close() })
 	return db
 }
+
+// The journal's params_json is the authority on which rule a row was judged
+// by (PLAN 3.5 ③), so every selection key is in it — the absolute floor, its
+// horizon, and the cost-crossing fraction added 2026-09-10.
+func TestJournalRecord_CarriesEverySelectionKey(t *testing.T) {
+	d := strategy.Decision{At: time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC), Symbol: "BTCUSDT",
+		PerpSource: "binance_futures", SpotSource: "binance_spot", Action: strategy.ActionSkip}
+	p := strategy.Params{MinTrailingMeanBps: 0.5, TrailingMeanDays: 90, TrailingMeanMinCostFrac: 1.0}
+	var params map[string]any
+	if err := json.Unmarshal([]byte(journalRecord(d, p).ParamsJSON), &params); err != nil {
+		t.Fatal(err)
+	}
+	if params["min_trailing_mean_bps"] != 0.5 || params["trailing_mean_days"] != 90.0 || params["trailing_mean_min_cost_frac"] != 1.0 {
+		t.Errorf("params_json must carry the three selection keys: %v", params)
+	}
+}

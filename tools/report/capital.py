@@ -35,7 +35,7 @@ import tempfile
 import expand
 import hold
 
-CAP_AXES = ["min_trailing_mean_bps", "trailing_mean_days", "max_basis_pct", "max_basis_widen_pct",
+CAP_AXES = ["min_trailing_mean_bps", "trailing_mean_days", "trailing_mean_min_cost_frac", "max_basis_pct", "max_basis_widen_pct",
             "min_hold_recovered_cost_frac", "min_rate_per_8h_bps"]
 
 
@@ -216,7 +216,9 @@ def window(name, runs_paths, trades_paths, db, ship, facts, tmpdir):
         r["pf_final_cap_pct"] = pf[k]["final_cap_pct"]
         r["pf_dd_cap_pct"] = pf[k]["max_dd_cap_pct"]
         r["pf_calmar"] = pf[k]["final_cap_pct"] / pf[k]["max_dd_cap_pct"] if pf[k]["max_dd_cap_pct"] > 0 else None
-        r["selection_on"] = r["min_trailing_mean_bps"] > 0
+        # Either selection floor (the absolute one, or since 2026-09-10 the
+        # series' own cost-crossing) makes a set a selecting set.
+        r["selection_on"] = r["min_trailing_mean_bps"] > 0 or r["trailing_mean_min_cost_frac"] > 0
     rows.sort(key=lambda r: -r["mean_cap_pct"])
     for i, r in enumerate(rows):
         r["rank"] = i + 1

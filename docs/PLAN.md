@@ -99,7 +99,7 @@
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
-| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 đang chạy** | Tín hiệu có kiểm chứng lịch sử |
+| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 gián đoạn 09-10, chờ chạy lại** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Basis Trade | 4 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot hỗ trợ 2 chiến lược |
@@ -2604,10 +2604,87 @@ trước mọi số: mẫu in-sample có sống sót (12 cặp sàng ngày 2026-
 niêm yết từ 2023), chi phí một lần đo sổ hôm nay áp cho cả 2023, và nhóm
 trả cao nhất là perp USD ghép spot USDT với rủi ro USDT/USD chưa trừ.
 
-#### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY (khởi động 2026-09-07 09:39:52)
+#### Luật 1 — chọn chuỗi theo điểm cắt chi phí của chính chuỗi ✅ (2026-09-10, `docs/reports/costcross-2026-09-10.html`)
+
+Quy luật 2 ở trên nói ngưỡng đáng một vòng phí là chi phí của CHÍNH chuỗi
+chia cho số mốc trong kỳ giữ. Luật đó nay là code production:
+`strategy.Params.TrailingMeanMinCostFrac` (khoá `trailing_mean_min_cost_frac`,
+trục sweep `-trail-cost`, cột CSV cùng tên ở cả hai file, khoá trong
+`params_json` của nhật ký). Xét trong `checkTrailingMean` cùng sàn tuyệt đối
+`min_trailing_mean_bps` và cùng chân trời `trailing_mean_days`: funding trung
+bình D ngày, giữ `holding_days` ở nhịp settle của sàn, phải trả được k lần
+vòng phí ĐÃ ĐỊNH GIÁ của chuỗi. Điểm cắt đọc từ chính `NetAPR` (rate đơn vị
+→ số mốc trong kỳ giữ, kể cả mô hình liên tục) rồi quy về 8h qua
+`exchanges.DeriveFundingRates`, nên k = 1 đúng bằng "NetAPR của trung bình
+trượt ≥ 0" và điểm cắt theo 8h không phụ thuộc nhịp sàn (có test 8h/1h).
+Không có chân hedge hay không định giá được vòng phí thì điều kiện báo "chưa
+đánh giá" thay vì bịa lý do thứ hai. `0` là tắt và tái tạo bộ đang ship
+bit-for-bit (binary HEAD `91c2140` và binary mới, 85 chuỗi × 12 tháng, 83
+lệnh: chỉ khác mốc "bây giờ" của cửa sổ). Review đối kháng ở ngữ cảnh sạch
+không tìm được lỗi chặn; ba điểm nên sửa đã sửa (quy đổi 8h qua một hàm
+chung, `capital.py` biết trục mới, `costcross.py` chỉ nhận đúng một bộ tắt
+= khối config).
+
+**Đo trên bản sao corpus ba năm** (dựng lại 2026-09-10 sau khi máy khởi động
+lại xoá `/tmp`; 5 cửa sổ ghim lịch, funding nạp 200 ngày trước cửa sổ; bộ
+đang ship × điểm cắt k = 0,5/1,0/1,5/2,0 × D = 30/60/90 ngày, cạnh sàn tuyệt
+đối 0,3/0,5/0,8 × 30/90; xếp trên VỐN DANH MỤC, ô luật không mở tính 0;
+tool `tools/report/costcross.py`):
+- **2024-09 → 2025-09 (32 chuỗi, có lịch sử trước):** bộ đang ship +4,181;
+  bộ điểm cắt tốt nhất 0,5 × 30 ngày +4,184 (+0,003); luật như phát biểu
+  (1,0 × 90) +4,165 (−0,016). **Không bộ điểm cắt nào loại được chuỗi nào**:
+  mọi chuỗi đều vượt điểm cắt của mình ở một lúc nào đó trong năm, luật chỉ
+  còn quyết định vào MUỘN hơn. Giữ suốt +4,196.
+- **2025-09 → 2026-09 (48 chuỗi):** bộ đang ship +1,204 (39/48 dương, sụt
+  vốn danh mục 0,227%); **1,5 × 90 ngày +1,241 (+0,037)** — loại đúng 4
+  chuỗi, cả 4 đều lỗ ở bộ ship (tổng −6,17 điểm notional-chuỗi = +0,13 trên
+  vốn danh mục), nhưng vào muộn tốn −4,39 điểm trên 44 chuỗi vẫn mở (−0,10
+  mỗi chuỗi: trên đúng các chuỗi đó bộ ship làm +1,453, luật làm +1,354);
+  2,0 × 90 +1,225; 1,0 × 90 +1,182 (−0,022, loại 2 chuỗi lỗ); sàn tuyệt đối
+  0,5 × 90 +1,214 (loại 11: 6 lỗ, 5 lãi); 0,8 × 90 chỉ mở 16 chuỗi, +2,416
+  trên vốn đã dùng nhưng +0,805 trên vốn danh mục. Giữ suốt +1,237.
+- **2023-09 → 2024-09, 2023-09 → 2025-09, 36 tháng:** cửa sổ bắt đầu đúng ở
+  đầu corpus nên mọi luật trượt mù D ngày đầu (không có lịch sử trước để
+  nạp); các bộ 90 ngày −1,60 điểm, toàn bộ là vào muộn (0 chuỗi bị loại) —
+  cột này thiệt cho luật một cách cấu trúc, không đọc làm bằng chứng.
+- **Walk-forward (19 bộ/cửa sổ):** học 2023–24 → kiểm 2024–25 chọn bộ TẮT
+  (+4,181, hạng 2/19, hơn nhất +4,184); học 2024–25 → kiểm 2025–26 chọn
+  0,5 × 30 và trên cửa sổ kiểm nó làm +1,133 (hạng 13/19) kém bộ ship +1,204
+  (hạng 4) và giữ suốt +1,237; học 2023–25 → kiểm 2025–26 chọn bộ TẮT. Bộ
+  duy nhất thắng bộ ship (1,5 × 90 ở 2025–26) không được cửa sổ học nào chọn.
+
+**Phán quyết: luật 1 chạy được, đo được, và trên vũ trụ này không thêm lợi
+nhuận — `config.yaml` giữ `trailing_mean_min_cost_frac: 0`.** Lý do cấu
+trúc, không phải lỗi luật: danh sách cặp đã được sàng ngày 2026-09-09 trên
+funding 12 tháng (≥ 0,40 bps/8h) — bản thân nó là một sàng điểm cắt TĨNH —
+nên chuỗi thua có hệ thống gần như đã bị loại trước, và phần còn lại của luật
+là canh THỜI ĐIỂM vào, đúng thứ quy luật 1 (mức trong chuỗi không bền) và
+quy luật 5 (canh thời điểm bị chặn trần) đã nói. Khoá này đáng bật khi danh
+sách cặp mở rộng chưa qua sàng, hoặc khi năm hiện tại có nhóm chuỗi lỗ có hệ
+thống như alt kraken 2025–26: ở đó 1,5 × 90 ngày loại đúng 4 chuỗi lỗ và 0
+chuỗi lãi với giá −0,10 điểm/năm vào muộn trên phần còn lại. Luật 2 (chuyển
+vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyết.
+
+#### Bước 3.5 — Cổng quyết định 🚦 GIÁN ĐOẠN (chạy 2026-09-07 09:39:52 → 2026-09-10 01:10 +07; chờ quyết định chạy lại)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.
 - **Nghiệm thu:** kết quả mô phỏng khớp với backtest trong sai số chấp nhận được. **Không khớp → quay lại Bước 3.2, không được sang GĐ 4.**
+
+> **Gián đoạn (ghi 2026-09-10).** Máy khởi động lại lúc ≈01:13 +07 ngày
+> 2026-09-10 (`uptime`); tiến trình nhật ký (PID 58422, cổng 8085) ghi hàng
+> `signal_journal` cuối lúc **2026-09-09 18:08:49 UTC** (01:08 +07), mẫu giá
+> cuối 18:10 UTC, tổng **4.004 hàng** — được **2 ngày 15,5 giờ** trên 14 ngày
+> cần. Tiến trình soak GĐ1 (cổng 8082, đã quá hạn từ 09-07) chết cùng lúc, và
+> `/tmp` bị xoá (bản sao corpus 3 năm dựng lại từ đầu). **Không tiến trình
+> nào được khởi động lại** — đó là quyết định của người vận hành. Theo ③ bước
+> 1: cửa sổ tính lại từ lần lên kế tiếp, đủ 14 ngày liên tục, không cộng dồn
+> hai mảnh; và một tiến trình lên từ working tree hôm nay chạy biểu phí ĐÃ xác
+> minh cùng các khoá mới (`exit_negative_*`, `min_hold_recovered_cost_frac`,
+> basis 2,0/2,0, `min_trailing_mean_bps`, `trailing_mean_min_cost_frac` = 0)
+> — tức nhật ký mới so với `cmd/backtest` trên khối config hiện tại chứ
+> không còn phải dựng lại `2328307`; ghi trạng thái phí và khoá vào `.paper/`
+> lúc lên như ③ yêu cầu. Đoạn `2026-09-07 → 09-10` vẫn là 4.004 hàng dữ liệu
+> đối chiếu hợp lệ cho một phép so 2,6 ngày, nhưng không phải phán quyết.
 
 > **Khởi động (2026-09-07).** Phần làm được trong một phiên là ba việc, phán
 > quyết là phiên sau (sớm nhất **2026-09-21 09:39**, đủ 14 ngày liên tục):
@@ -2763,6 +2840,34 @@ trả cao nhất là perp USD ghép spot USDT với rủi ro USDT/USD chưa tr�
 #### Bước 5.4 — Phân bổ vốn & giới hạn
 - Giới hạn cứng: vốn tối đa/cặp, vốn tối đa/sàn, đòn bẩy tối đa, số vị thế đồng thời.
 - Không bao giờ all-in vào một sàn (rủi ro đối tác).
+- **Luật 2 của nghiên cứu ba năm — chuyển vốn giữa các chuỗi theo funding
+  trượt** (ghi 2026-09-10, làm ở bước này chứ không sớm hơn; nguồn: quy luật
+  6 trong `docs/reports/regime-3y-2026-09-09.html`). Dạng đã đo: cân lại mỗi
+  90 ngày tỷ lệ với funding trượt 90 ngày, trần 2× phần chia đều, nửa vòng
+  phí trên phần vốn di chuyển, trọng số đều khi lịch sử chưa phủ 90 ngày.
+  Mốc chuẩn Python trên 32 chuỗi phủ đủ ba năm: **+15,55% so với +13,56%
+  chia đều** (+1,99 điểm cho cả ba năm; gán ngẫu nhiên +12,86 ± 0,25), trong
+  đó ≈ +1,4 là nghiêng TĨNH sang hyperliquid — perp USD ghép spot USDT, ký
+  quỹ USDC, không có chân spot cùng sàn, sổ alt từ chối 50k — và chỉ
+  **+0,46 (≈ 0,15%/năm) là chọn coin bên trong sàn** (bỏ hyperliquid: +11,15
+  so với +10,69). Với tài khoản 1–2 vị thế luật này thu về "100% vào chuỗi
+  hyperliquid trả nhiều nhất quý trước" (top-1 là hyperliquid 13/13 quý).
+  Ba việc phải có TRƯỚC khi viết luật, theo thứ tự: (1) `internal/backtest`
+  cần chế độ replay **danh mục** — hiện engine replay từng chuỗi độc lập ở
+  một notional cố định, nên số +1,99 là của Python chứ chưa có số Go nào;
+  (2) một đối tượng vốn/vị thế trong Go — chưa tồn tại ở đâu: `strategy`
+  đánh giá từng ứng viên với một `notional_quote` chung, vị thế giấy của
+  `cmd/scanner` mang notional cố định, `internal/risk` mới có mô hình ký
+  quỹ; (3) quyết định của người vận hành về tỷ trọng tối đa trên một sàn
+  ghép cầu, vì phần lớn giá trị đo được mâu thuẫn trực tiếp với gạch đầu
+  dòng "không all-in vào một sàn" ngay trên. Bản TĨNH — chọn cặp/sàn và
+  notional theo cặp trong `config.yaml` — làm được không cần code, nhưng
+  không phải tái cân bằng và không phải luật này.
+- **Nghiệm thu (luật 2):** replay danh mục Go trên bản sao corpus ba năm tái
+  tạo được +1,99 điểm của mốc chuẩn Python trong sai số nêu trước; tổng vốn
+  mỗi sàn không vượt giới hạn cứng ở bất kỳ ngày nào của replay; và kết quả
+  không có hyperliquid được báo cáo cạnh kết quả có, vì đó là hai quyết định
+  rủi ro khác nhau chứ không phải một con số.
 
 #### Bước 5.5 — Vận hành production
 - Deploy VPS gần vùng máy chủ sàn, systemd/Docker, auto-restart.
@@ -3035,7 +3140,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
-[  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY từ 2026-09-07 09:39, phán quyết ≥ 09-21   ← ĐANG LÀM
+[  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 GIÁN ĐOẠN 2026-09-10 01:10 (máy khởi động lại) — chạy lại là 14 ngày mới   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Basis Trade                   0/4 bước

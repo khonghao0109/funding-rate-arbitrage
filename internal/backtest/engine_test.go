@@ -597,3 +597,21 @@ func containsAny(lines []string, want string) bool {
 	}
 	return false
 }
+
+// The cost-crossing selection changes what a 0-trade series MEANS in a run —
+// refused at the door, not "no signal" — so a run carrying it says so, and a
+// run without it does not claim it.
+func TestRun_ACostCrossingSelectionIsNamedInTheAssumptions(t *testing.T) {
+	entries := discreteSeries("binance_futures", secPer8h, 2, 2, 2, 2, 2, 2, 2, 2)
+	series, window := seriesOf(entries), fullWindow(entries)
+
+	p := testParams()
+	if got := Run(series, window, p); containsAny(got.AssumptionsVI, "ĐIỂM CẮT CHI PHÍ") {
+		t.Errorf("an unselected run must not claim the selection:\n%s", strings.Join(got.AssumptionsVI, "\n"))
+	}
+	p.TrailingMeanMinCostFrac, p.TrailingMeanDays = 1.0, 1
+	got := Run(series, window, p)
+	if !containsAny(got.AssumptionsVI, "ĐIỂM CẮT CHI PHÍ") {
+		t.Fatalf("a selecting run must name the rule:\n%s", strings.Join(got.AssumptionsVI, "\n"))
+	}
+}

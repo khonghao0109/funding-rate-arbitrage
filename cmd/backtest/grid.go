@@ -43,6 +43,9 @@ const (
 	// off, exactly as every run before the condition existed.
 	defaultTrailBps  = "0"
 	defaultTrailDays = "0"
+	// The cost-crossing selection (strategy.Params.TrailingMeanMinCostFrac,
+	// 2026-09-10): off, exactly as every run before it existed.
+	defaultTrailCost = "0"
 )
 
 // gridSpec is every axis of a sweep, named as strategy.Params names them.
@@ -67,8 +70,9 @@ type gridSpec struct {
 	MaxBasisPct      []float64
 	MaxBasisWidenPct []float64
 
-	MinTrailingMeanBps []float64
-	TrailingMeanDays   []float64
+	MinTrailingMeanBps      []float64
+	TrailingMeanDays        []float64
+	TrailingMeanMinCostFrac []float64
 }
 
 func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hold string) (gridSpec, error) {
@@ -102,6 +106,7 @@ func parseGridSpec(minRate, persist, minNet, exitNet, exitPersist, notional, hol
 	spec.PerpMarginFrac, spec.MinLiquidationBufferPct = []float64{0}, []float64{0}
 	spec.MaxBasisPct, spec.MaxBasisWidenPct = []float64{1.0}, []float64{0.5}
 	spec.MinTrailingMeanBps, spec.TrailingMeanDays = []float64{0}, []float64{0}
+	spec.TrailingMeanMinCostFrac = []float64{0}
 	return spec, nil
 }
 
@@ -117,16 +122,20 @@ func (g gridSpec) withBasis(maxBasis, maxWiden string) (gridSpec, error) {
 	return g, nil
 }
 
-// withSelection sets the two series-selection axes. They move together like
-// the margin pair: a floor on a mean with no horizon is refused by check(),
-// as config.Strategy refuses the same block.
-func (g gridSpec) withSelection(trailBps, trailDays string) (gridSpec, error) {
+// withSelection sets the three series-selection axes: the absolute floor,
+// the horizon both floors share, and the cost-crossing fraction. A floor
+// with no horizon is refused by check(), as config.Strategy refuses the
+// same block.
+func (g gridSpec) withSelection(trailBps, trailDays, trailCost string) (gridSpec, error) {
 	var err error
 	if g.MinTrailingMeanBps, err = parseFloatList(trailBps); err != nil {
 		return g, fmt.Errorf("-trail-bps: %w", err)
 	}
 	if g.TrailingMeanDays, err = parseFloatList(trailDays); err != nil {
 		return g, fmt.Errorf("-trail-days: %w", err)
+	}
+	if g.TrailingMeanMinCostFrac, err = parseFloatList(trailCost); err != nil {
+		return g, fmt.Errorf("-trail-cost: %w", err)
 	}
 	return g, nil
 }
@@ -193,7 +202,8 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 						dropped += len(g.MinRatePer8hBps) * len(g.PersistencePeriods) * len(g.ExitPersistencePeriods) *
 							len(g.ExitNegativeMinBps) * len(g.ExitNegativePeriods) * len(g.ExitNegativeCumCostFrac) *
 							len(g.MinHoldRecoveredCostFrac) * len(g.PerpMarginFrac) * len(g.MinLiquidationBufferPct) *
-							len(g.MaxBasisPct) * len(g.MaxBasisWidenPct) * len(g.MinTrailingMeanBps) * len(g.TrailingMeanDays)
+							len(g.MaxBasisPct) * len(g.MaxBasisWidenPct) * len(g.MinTrailingMeanBps) * len(g.TrailingMeanDays) *
+							len(g.TrailingMeanMinCostFrac)
 						continue
 					}
 					for _, minBps := range g.MinRatePer8hBps {
@@ -209,23 +219,26 @@ func (g gridSpec) params() ([]strategy.Params, int, error) {
 															for _, maxWiden := range g.MaxBasisWidenPct {
 																for _, trailBps := range g.MinTrailingMeanBps {
 																	for _, trailDays := range g.TrailingMeanDays {
-																		p := baseParams(notional, hold)
-																		p.MinRatePer8hBps = minBps
-																		p.PersistencePeriods = periods
-																		p.MinNetAPRFrac = minNet
-																		p.ExitNetAPRFrac = exitNet
-																		p.ExitPersistencePeriods = exitPeriods
-																		p.ExitNegativeMinBps = negBps
-																		p.ExitNegativePeriods = negPeriods
-																		p.ExitNegativeCumCostFrac = negCum
-																		p.MinHoldRecoveredCostFrac = minHold
-																		p.PerpMarginFrac = marginFrac
-																		p.MinLiquidationBufferPct = buffer
-																		p.MaxBasisPct = maxBasis
-																		p.MaxBasisWidenPct = maxWiden
-																		p.MinTrailingMeanBps = trailBps
-																		p.TrailingMeanDays = trailDays
-																		grid = append(grid, p)
+																		for _, trailCost := range g.TrailingMeanMinCostFrac {
+																			p := baseParams(notional, hold)
+																			p.MinRatePer8hBps = minBps
+																			p.PersistencePeriods = periods
+																			p.MinNetAPRFrac = minNet
+																			p.ExitNetAPRFrac = exitNet
+																			p.ExitPersistencePeriods = exitPeriods
+																			p.ExitNegativeMinBps = negBps
+																			p.ExitNegativePeriods = negPeriods
+																			p.ExitNegativeCumCostFrac = negCum
+																			p.MinHoldRecoveredCostFrac = minHold
+																			p.PerpMarginFrac = marginFrac
+																			p.MinLiquidationBufferPct = buffer
+																			p.MaxBasisPct = maxBasis
+																			p.MaxBasisWidenPct = maxWiden
+																			p.MinTrailingMeanBps = trailBps
+																			p.TrailingMeanDays = trailDays
+																			p.TrailingMeanMinCostFrac = trailCost
+																			grid = append(grid, p)
+																		}
 																	}
 																}
 															}
@@ -360,6 +373,22 @@ func (g gridSpec) check() error {
 			}
 		}
 	}
+	for _, v := range g.TrailingMeanMinCostFrac {
+		if v < 0 {
+			return fmt.Errorf("-trail-cost %g: a fraction of the round trip cannot be negative", v)
+		}
+	}
+	for _, frac := range g.TrailingMeanMinCostFrac {
+		if frac <= 0 {
+			continue
+		}
+		for _, d := range g.TrailingMeanDays {
+			if d <= 0 {
+				return fmt.Errorf("-trail-cost %g with -trail-days 0: the crossing is tested on a mean, and a "+
+					"mean needs the horizon it is taken over", frac)
+			}
+		}
+	}
 	return nil
 }
 
@@ -398,11 +427,11 @@ func parseIntList(s string) ([]int, error) {
 // sweepOnlyFlagsTouched reports whether a flag only -sweep reads was given a
 // non-default value, so a plain run can refuse it instead of ignoring it.
 func sweepOnlyFlagsTouched(minRate, persist, minNet, exitNet, exitPersist, negBps, negPeriods, negCum, minHold,
-	perpMargin, liqBuffer, maxBasis, maxWiden, trailBps, trailDays string, top int) bool {
+	perpMargin, liqBuffer, maxBasis, maxWiden, trailBps, trailDays, trailCost string, top int) bool {
 	return minRate != defaultMinRateBps || persist != defaultPersist || minNet != defaultMinNetAPR ||
 		exitNet != defaultExitNetAPR || exitPersist != defaultExitPersist ||
 		negBps != defaultExitNegBps || negPeriods != defaultExitNegPeriods || negCum != defaultExitNegCum ||
 		minHold != defaultMinHold || perpMargin != defaultPerpMargin || liqBuffer != defaultLiqBuffer ||
 		maxBasis != defaultMaxBasis || maxWiden != defaultMaxBasisWiden ||
-		trailBps != defaultTrailBps || trailDays != defaultTrailDays || top != 0
+		trailBps != defaultTrailBps || trailDays != defaultTrailDays || trailCost != defaultTrailCost || top != 0
 }

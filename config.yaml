@@ -311,6 +311,29 @@ strategy:
   # trước khi khoá này tồn tại, và là thứ tiến trình 3.5 đang chạy.
   min_trailing_mean_bps: 0
   trailing_mean_days: 0
+  # Chọn chuỗi theo ĐIỂM CẮT CHI PHÍ CỦA CHÍNH CHUỖI (thêm 2026-09-10, quy
+  # luật 2 của docs/reports/regime-3y-2026-09-09.html): funding trung bình qua
+  # `trailing_mean_days`, giữ `holding_days` ở đúng nhịp settle của sàn (đếm
+  # mốc y như NetAPR), phải trả được `trailing_mean_min_cost_frac` lần vòng
+  # phí ĐÃ ĐỊNH GIÁ của chuỗi (phí taker + slippage từ sổ đã lưu; năm khoản
+  # chưa trừ của NetAPR vẫn chưa trừ). 1.0 là "đủ trả đúng vòng phí đó" —
+  # "không mở chuỗi mà funding trượt chưa trả nổi vòng phí của chính nó".
+  # Khác min_trailing_mean_bps ở
+  # chỗ ngưỡng là của TỪNG chuỗi: ≈0,33 bps/8h ở BTC/ETH (vòng 0,30%), ≈0,8
+  # ở NEAR (0,74%), thay vì một con số chung. Hai sàn có thể bật cùng lúc và
+  # cùng dùng trailing_mean_days. 0 là TẮT — đúng luật mọi lượt chạy trước
+  # khi khoá này tồn tại, và tái tạo bộ này bit-for-bit (đối chiếu binary).
+  # ĐO 2026-09-10 trên bản sao corpus 3 năm, 5 cửa sổ ghim lịch, xếp trên
+  # vốn danh mục (docs/reports/costcross-2026-09-10.html): năm 2024–25 (32
+  # chuỗi) không bộ k × D nào loại được chuỗi nào — mọi chuỗi đều vượt điểm
+  # cắt của mình ở một lúc nào đó, luật chỉ vào MUỘN hơn — tốt nhất +0,003
+  # so với bộ này; năm 2025–26 (48 chuỗi) 1,5 × 90 ngày +1,241 so với +1,204
+  # nhờ loại đúng 4 chuỗi lỗ (alt kraken), trừ −0,10/chuỗi vào muộn; 1,0 × 90
+  # −0,022. Walk-forward chọn TẮT ở 2/3 cặp. Giữ 0: danh sách cặp đã sàng
+  # ngày 2026-09-09 (≥ 0,40 bps/8h qua 12 tháng) là một sàng điểm cắt tĩnh
+  # rồi; bật (1,5 / 90) khi mở rộng danh sách chưa sàng hoặc khi năm hiện tại
+  # có nhóm chuỗi lỗ có hệ thống.
+  trailing_mean_min_cost_frac: 0
 
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }

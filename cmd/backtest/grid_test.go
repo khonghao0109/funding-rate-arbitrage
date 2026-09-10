@@ -152,13 +152,13 @@ func TestPlainRun_ChecksItsAxesAndRefusesSweepOnlyFlags(t *testing.T) {
 	if err := spec.check(); err == nil {
 		t.Error("-hold-days 0 must be refused by name before the engine sees it")
 	}
-	if sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, 0) {
+	if sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, defaultTrailCost, 0) {
 		t.Error("defaults must not count as touched")
 	}
-	if !sweepOnlyFlagsTouched("1.2", defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, 0) {
+	if !sweepOnlyFlagsTouched("1.2", defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, defaultTrailCost, 0) {
 		t.Error("-min-rate-bps 1.2 without -sweep must be refused, not silently ignored")
 	}
-	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, 40) {
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, defaultTrailCost, 40) {
 		t.Error("-top without -sweep must be refused")
 	}
 }
@@ -188,7 +188,7 @@ func TestGrid_NegativeGatesDefaultToTheOldRuleAndMultiplyWhenSet(t *testing.T) {
 	if err != nil || dropped != 0 || len(grid) != 24*8 {
 		t.Errorf("with gates: %d sets, %d dropped, %v — want 192", len(grid), dropped, err)
 	}
-	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, "0.5", defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, 0) {
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR, defaultExitPersist, "0.5", defaultExitNegPeriods, defaultExitNegCum, defaultMinHold, defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, defaultTrailCost, 0) {
 		t.Error("-exit-neg-bps without -sweep must be refused, not ignored")
 	}
 	for _, bad := range [][3]string{{"-0.5", "1", "0"}, {"0", "0", "0"}, {"0", "1", "-1"}} {
@@ -260,7 +260,7 @@ func TestGrid_MinHoldDefaultsToOffAndMultipliesWhenSet(t *testing.T) {
 		t.Errorf("with the floor: %d sets, %d dropped, %v — want 72", len(grid), dropped, err)
 	}
 	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
-		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, "1", defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, 0) {
+		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, "1", defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, defaultTrailCost, 0) {
 		t.Error("-min-hold without -sweep must be refused, not ignored")
 	}
 	if bad, err := spec.withMinHold("-1"); err == nil {
@@ -307,7 +307,7 @@ func TestGrid_MarginAxesRefuseAMarginWithNoBuffer(t *testing.T) {
 	}
 	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
 		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold,
-		"0.1", defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, 0) {
+		"0.1", defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, defaultTrailCost, 0) {
 		t.Error("-perp-margin without -sweep must be refused, not ignored")
 	}
 }
@@ -328,7 +328,7 @@ func TestGrid_BasisAndSelectionAxesDefaultToTheOldRuleAndMultiplyWhenSet(t *test
 		t.Fatalf("defaults: %d sets, %v", len(grid), err)
 	}
 	for _, p := range grid {
-		if p.MaxBasisPct != 1.0 || p.MaxBasisWidenPct != 0.5 || p.MinTrailingMeanBps != 0 || p.TrailingMeanDays != 0 {
+		if p.MaxBasisPct != 1.0 || p.MaxBasisWidenPct != 0.5 || p.MinTrailingMeanBps != 0 || p.TrailingMeanDays != 0 || p.TrailingMeanMinCostFrac != 0 {
 			t.Fatalf("the new axes must default to the old rule: %+v", p)
 		}
 	}
@@ -341,7 +341,7 @@ func TestGrid_BasisAndSelectionAxesDefaultToTheOldRuleAndMultiplyWhenSet(t *test
 	if err != nil || dropped != 0 || len(grid) != 24*2*3 {
 		t.Errorf("with the basis axes: %d sets, %d dropped, %v — want 144", len(grid), dropped, err)
 	}
-	sel, err := wide.withSelection("0.5,0.9", "30,90")
+	sel, err := wide.withSelection("0.5,0.9", "30,90", defaultTrailCost)
 	if err != nil {
 		t.Fatalf("withSelection: %v", err)
 	}
@@ -352,12 +352,12 @@ func TestGrid_BasisAndSelectionAxesDefaultToTheOldRuleAndMultiplyWhenSet(t *test
 
 	// A floor on a mean with no horizon is refused, the way the live block
 	// refuses it; a floor of 0 with any horizon is simply off.
-	if bad, err := spec.withSelection("0.5", "0"); err == nil {
+	if bad, err := spec.withSelection("0.5", "0", defaultTrailCost); err == nil {
 		if _, _, err := bad.params(); err == nil {
 			t.Error("-trail-bps 0.5 with -trail-days 0 must be refused")
 		}
 	}
-	if off, err := spec.withSelection("0", "90"); err == nil {
+	if off, err := spec.withSelection("0", "90", defaultTrailCost); err == nil {
 		if _, _, err := off.params(); err != nil {
 			t.Errorf("-trail-bps 0 with a horizon is off, not an error: %v", err)
 		}
@@ -371,12 +371,56 @@ func TestGrid_BasisAndSelectionAxesDefaultToTheOldRuleAndMultiplyWhenSet(t *test
 	}
 	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
 		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold,
-		defaultPerpMargin, defaultLiqBuffer, "2", defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, 0) {
+		defaultPerpMargin, defaultLiqBuffer, "2", defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, defaultTrailCost, 0) {
 		t.Error("-max-basis without -sweep must be refused, not ignored")
 	}
 	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
 		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold,
-		defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, "0.5", "90", 0) {
+		defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, "0.5", "90", defaultTrailCost, 0) {
 		t.Error("-trail-* without -sweep must be refused, not ignored")
+	}
+}
+
+// The cost-crossing selection is one more axis (2026-09-10). Left alone it is
+// off, so the default grid stays the step-3.3 grid and every archived sweep
+// still replays; it needs the horizon the absolute floor needs; and it
+// multiplies the grid when set.
+func TestGrid_CostCrossingAxisDefaultsToOffAndMultipliesWhenSet(t *testing.T) {
+	spec, err := parseGridSpec(defaultMinRateBps, defaultPersist, defaultMinNetAPR,
+		defaultExitNetAPR, defaultExitPersist, defaultNotional, defaultHoldDays)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	grid, _, err := spec.params()
+	if err != nil || len(grid) != 24 {
+		t.Fatalf("defaults: %d sets, %v", len(grid), err)
+	}
+	for _, p := range grid {
+		if p.TrailingMeanMinCostFrac != 0 {
+			t.Fatalf("the axis must default to off: %+v", p)
+		}
+	}
+	on, err := spec.withSelection("0", "30,90", "0.5,1.0")
+	if err != nil {
+		t.Fatalf("withSelection: %v", err)
+	}
+	grid, dropped, err := on.params()
+	if err != nil || dropped != 0 || len(grid) != 24*2*2 {
+		t.Errorf("with the cost-crossing axis: %d sets, %d dropped, %v — want 96", len(grid), dropped, err)
+	}
+	if bad, err := spec.withSelection("0", "0", "1.0"); err == nil {
+		if _, _, err := bad.params(); err == nil {
+			t.Error("-trail-cost 1.0 with -trail-days 0 must be refused")
+		}
+	}
+	if bad, err := spec.withSelection("0", "90", "-1"); err == nil {
+		if _, _, err := bad.params(); err == nil {
+			t.Error("-trail-cost -1 must be refused")
+		}
+	}
+	if !sweepOnlyFlagsTouched(defaultMinRateBps, defaultPersist, defaultMinNetAPR, defaultExitNetAPR,
+		defaultExitPersist, defaultExitNegBps, defaultExitNegPeriods, defaultExitNegCum, defaultMinHold,
+		defaultPerpMargin, defaultLiqBuffer, defaultMaxBasis, defaultMaxBasisWiden, defaultTrailBps, defaultTrailDays, "1.0", 0) {
+		t.Error("-trail-cost without -sweep must be refused, not ignored")
 	}
 }

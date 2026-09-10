@@ -25,7 +25,7 @@ import sys
 import hold
 
 SHOW = ("min_rate_per_8h_bps", "persistence_periods", "exit_negative_cum_cost_frac",
-        "min_hold_recovered_cost_frac", "min_trailing_mean_bps", "trailing_mean_days")
+        "min_hold_recovered_cost_frac", "min_trailing_mean_bps", "trailing_mean_days", "trailing_mean_min_cost_frac")
 
 
 def load_window(paths, full_only):

@@ -1,0 +1,514 @@
+<title>Điểm cắt chi phí của từng chuỗi</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --ground:#F4F6F3; --surface:#FFFFFF; --ink:#1A2024; --muted:#5F6B72; --rule:#D6DCD8; --rule-soft:#E6EAE7;
+  --accent:#35507A; --accent-ink:#FFFFFF; --loss:#B4552D; --gain:#1E7A6C; --warn:#B8891E;
+  --loss-rgb:180,85,45; --gain-rgb:30,122,108; --accent-rgb:53,80,122;
+  --display:"Bricolage Grotesque","IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --body:"IBM Plex Sans","Noto Sans SC","Helvetica Neue",Arial,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+    --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+    --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --ground:#131719; --surface:#1B2124; --ink:#E8ECE7; --muted:#98A3A9; --rule:#2C353A; --rule-soft:#232B2F;
+  --accent:#93B4E6; --accent-ink:#0F141A; --loss:#E5865E; --gain:#52B8A5; --warn:#D9B052;
+  --loss-rgb:229,134,94; --gain-rgb:82,184,165; --accent-rgb:147,180,230; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--ground);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+:lang(zh) body, body:lang(zh){font-family:"Noto Sans SC","IBM Plex Sans",sans-serif}
+a{color:var(--accent)}
+h1,h2,h3{font-family:var(--display);text-wrap:balance;margin:0;line-height:1.15}
+h1{font-size:2rem;font-weight:700;letter-spacing:-.01em}
+h2{font-size:1.35rem;font-weight:700}
+h3{font-size:1.05rem;font-weight:600}
+.eyebrow{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.mono,.num,td.num,th.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.loss{color:var(--loss)} .gain{color:var(--gain)} .warn{color:var(--warn)}
+.topbar{position:sticky;top:0;z-index:5;background:color-mix(in srgb,var(--ground) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--rule)}
+.topbar .in{max-width:1040px;margin:0 auto;padding:.6rem 1.25rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+.topbar .name{font-family:var(--display);font-weight:700;font-size:1rem;margin-right:auto}
+.seg{display:inline-flex;border:1px solid var(--rule);border-radius:999px;padding:2px;gap:2px;background:var(--surface)}
+.seg button{border:0;background:transparent;color:var(--muted);font:inherit;font-weight:500;padding:.25rem .7rem;border-radius:999px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+main{max-width:1040px;margin:0 auto;padding:2rem 1.25rem 4rem;display:grid;gap:3rem}
+section{display:grid;gap:1rem}
+section>header{display:grid;gap:.35rem;max-width:70ch}
+p{margin:0;max-width:70ch}
+.verdict{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.5rem;display:grid;gap:1.25rem}
+.verdict h1{font-size:clamp(1.5rem,3.2vw,2.3rem)}
+.figures{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem;border-top:1px solid var(--rule-soft);padding-top:1rem}
+.fig{display:grid;gap:.15rem}
+.fig .v{font-family:var(--mono);font-size:1.6rem;font-weight:500;line-height:1.1;font-variant-numeric:tabular-nums}
+.fig .l{font-size:.8rem;color:var(--muted)}
+.note{font-size:.85rem;color:var(--muted);max-width:none}
+.legend{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.8rem;color:var(--muted)}
+.legend i{display:inline-block;width:.8em;height:.8em;border-radius:2px;vertical-align:-1px;margin-right:.35em}
+.i-loss{background:var(--loss)} .i-gain{background:var(--gain)} .i-accent{background:var(--accent)} .i-warn{background:var(--warn)}
+.tablewrap{overflow-x:auto;border:1px solid var(--rule);border-radius:10px;background:var(--surface)}
+table{border-collapse:separate;border-spacing:0;width:100%;font-size:.86rem}
+th,td{text-align:left;padding:.5rem .7rem;border-bottom:1px solid var(--rule-soft);vertical-align:top;white-space:nowrap}
+/* The header stays put while a long table scrolls: 24 series × several
+   columns is past the point where a reader can hold the column names. */
+th{position:sticky;top:0;z-index:2;background:var(--surface);font-weight:600;color:var(--muted);
+   font-size:.72rem;letter-spacing:.06em;text-transform:uppercase;border-bottom:1px solid var(--rule)}
+td.num,th.num{text-align:right}
+tbody tr:nth-child(even) td{background:color-mix(in srgb,var(--ink) 3%,transparent)}
+tbody tr:hover td{background:color-mix(in srgb,var(--accent) 8%,transparent)}
+tbody tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;min-width:22ch;max-width:52ch}
+/* First column pinned on the wide tables, so a row never loses its name. */
+table.pin td:first-child,table.pin th:first-child{position:sticky;left:0;z-index:1;background:var(--surface)}
+table.pin tbody tr:nth-child(even) td:first-child{background:color-mix(in srgb,var(--ink) 3%,var(--surface))}
+table.pin th:first-child{z-index:3}
+/* A cell holding a whole parameter set: one column instead of ten. */
+td.params{font-family:var(--mono);font-size:.78rem;color:var(--muted)}
+td.params b{color:var(--ink);font-weight:600}
+.scrollhint{font-size:.78rem;color:var(--muted);margin-top:.35rem}
+.chart{width:100%;overflow-x:auto}
+.chart svg{display:block;width:100%;height:auto;font-family:var(--mono);font-size:11px}
+.chart .axis{stroke:var(--rule);stroke-width:1}
+.chart .grid{stroke:var(--rule-soft);stroke-width:1}
+.chart text{fill:var(--muted)}
+.chart .bar-loss{fill:var(--loss)} .chart .bar-gain{fill:var(--gain)} .chart .bar-accent{fill:var(--accent)} .chart .bar-warn{fill:var(--warn)}
+.chart .marker{stroke:var(--ink);stroke-width:1;stroke-dasharray:3 3}
+.chart .marker-text{fill:var(--ink);font-weight:500}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:1.5rem 2rem}
+.small h3{margin-bottom:.35rem}
+.heat{display:grid;gap:2px;font-family:var(--mono);font-size:.78rem;font-variant-numeric:tabular-nums}
+.heat .c{padding:.35rem .4rem;text-align:right;border-radius:3px;min-width:4.5em;line-height:1.2}
+.heat .c small{display:block;font-size:.66rem;opacity:.75}
+.heat .h{color:var(--muted);text-align:right;padding:.35rem .4rem;font-size:.7rem}
+.heat .rh{color:var(--muted);text-align:left;padding:.35rem .4rem;font-size:.7rem}
+.heatwrap{overflow-x:auto}
+.heat-title{display:flex;justify-content:space-between;gap:1rem;align-items:baseline;flex-wrap:wrap}
+.bullets{margin:0;padding-left:1.2rem;display:grid;gap:.5rem;max-width:75ch}
+.bullets li::marker{color:var(--accent)}
+.assume{background:var(--surface);border:1px solid var(--rule);border-radius:12px;padding:1.25rem 1.5rem}
+.assume ol{margin:0;padding-left:1.2rem;display:grid;gap:.6rem;max-width:80ch}
+pre{margin:0;background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:1rem;overflow-x:auto;font-family:var(--mono);font-size:.8rem;line-height:1.5}
+.pill{display:inline-block;padding:.05rem .5rem;border-radius:999px;font-size:.72rem;font-weight:600;letter-spacing:.03em;border:1px solid currentColor}
+.pill.fail,.pill.weak{color:var(--loss)} .pill.pass{color:var(--gain)} .pill.partial{color:var(--warn)} .pill.open{color:var(--muted)}
+.tabs{display:flex;gap:.5rem;flex-wrap:wrap}
+.tabs button{font:inherit;font-size:.85rem;border:1px solid var(--rule);background:var(--surface);color:var(--ink);padding:.3rem .75rem;border-radius:6px;cursor:pointer}
+.tabs button[aria-pressed="true"]{border-color:var(--accent);color:var(--accent);font-weight:600}
+.tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:.35rem 1.25rem;font-size:.9rem;align-items:baseline}
+.pagenav{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:-2rem}
+.pagenav a{font-size:.8rem;text-decoration:none;color:var(--muted);border:1px solid var(--rule);background:var(--surface);border-radius:999px;padding:.2rem .7rem}
+.pagenav a:hover,.pagenav a:focus-visible{color:var(--accent);border-color:var(--accent)}
+.answer{border:1px solid var(--rule);border-radius:12px;overflow:hidden;background:var(--surface)}
+.answer .row{display:grid;grid-template-columns:1fr 7.5rem 6rem 6rem;gap:.35rem 1rem;padding:.8rem 1.25rem;border-bottom:1px solid var(--rule-soft);align-items:baseline}
+.answer .row:last-child{border-bottom:0}
+.answer .row.head{background:color-mix(in srgb,var(--accent) 8%,transparent);font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.answer .row.head span:not(:first-child){text-align:right}
+.answer .who{font-weight:600;font-size:.95rem}
+.answer .who small{display:block;font-weight:400;font-size:.8rem;color:var(--muted);line-height:1.4;margin-top:.1rem}
+.answer .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.05rem;text-align:right}
+.answer .v.sub{font-size:.9rem;color:var(--muted)}
+.answer .v small{display:block;font-size:.72rem;font-weight:400;color:var(--muted);margin-top:.15rem;letter-spacing:.01em}
+.answer .row{grid-template-columns:1fr 9.5rem 6rem 6rem}
+.gloss{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1.1rem 2rem;margin:0}
+.gloss>div{display:grid;gap:.15rem;align-content:start}
+.gloss dt{font-weight:600;font-size:.9rem;margin:0}
+.gloss dd{margin:0;font-size:.85rem;color:var(--muted);max-width:48ch}
+@media (max-width:620px){.answer .row{grid-template-columns:1fr max-content}.answer .row .v.sub{display:none}.answer .row.head span:nth-child(3),.answer .row.head span:nth-child(4){display:none}}
+.kv dt{color:var(--muted);margin:0} .kv dd{margin:0}
+footer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--rule);padding-top:1rem}
+@media (prefers-reduced-motion:no-preference){.seg button,.tabs button{transition:background .15s,color .15s}}
+/* The marginal cards carry 8 columns each: one per row, or everything past
+   the fourth is reachable only by scrolling inside the card. */
+</style>
+<div class="topbar"><div class="in">
+  <span class="name" data-i18n="title"></span>
+  <span class="muted" style="font-size:.8rem" id="windowLabel"></span>
+  <div class="seg" id="windowSeg" role="group"></div>
+  <div class="seg" id="langSeg" role="group" aria-label="language">
+    <button type="button" data-lang="vi" aria-pressed="true">Tiếng Việt</button>
+    <button type="button" data-lang="zh" aria-pressed="false">中文</button>
+  </div>
+</div></div>
+
+<main>
+  <section class="verdict" id="verdict">
+    <div class="eyebrow" data-i18n="verdict_eyebrow"></div>
+    <h1 id="vHeadline"></h1>
+    <p id="vLede"></p>
+    <div class="figures" id="vFigures"></div>
+    <p class="note" id="vNote"></p>
+  </section>
+
+  <nav class="pagenav" aria-label="sections">
+    <a href="#answer" data-i18n="nav_answer"></a>
+    <a href="#years" data-i18n="nav_years"></a>
+    <a href="#grid" data-i18n="nav_grid"></a>
+    <a href="#excluded" data-i18n="nav_excluded"></a>
+    <a href="#wf" data-i18n="nav_wf"></a>
+    <a href="#method" data-i18n="nav_method"></a>
+  </nav>
+
+  <section id="answer">
+    <header>
+      <div class="eyebrow" data-i18n="an_eyebrow"></div>
+      <h2 data-i18n="an_h"></h2>
+      <p id="anIntro"></p>
+    </header>
+    <div class="answer" id="anBlock"></div>
+    <p class="note" id="anRead"></p>
+  </section>
+
+  <section id="years">
+    <header>
+      <div class="eyebrow" data-i18n="yr_eyebrow"></div>
+      <h2 data-i18n="yr_h"></h2>
+      <p data-i18n="yr_p"></p>
+    </header>
+    <div class="tablewrap"><table class="pin" id="yearTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+    <p class="note" id="yrRead"></p>
+  </section>
+
+  <section id="grid">
+    <header>
+      <div class="eyebrow" data-i18n="gr_eyebrow"></div>
+      <h2 data-i18n="gr_h"></h2>
+      <p id="grIntro"></p>
+    </header>
+    <div class="grid2">
+      <div class="small">
+        <div class="heat-title"><h3 data-i18n="gr_heat_h"></h3><span class="muted" data-i18n="gr_heat_sub"></span></div>
+        <div class="heatwrap"><div class="heat" id="heatUniv"></div></div>
+      </div>
+      <div class="small">
+        <div class="heat-title"><h3 data-i18n="gr_heat2_h"></h3><span class="muted" data-i18n="gr_heat2_sub"></span></div>
+        <div class="heatwrap"><div class="heat" id="heatTraded"></div></div>
+      </div>
+    </div>
+    <div class="tablewrap"><table class="pin" id="gridTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+    <p class="note" id="grRead"></p>
+  </section>
+
+  <section id="excluded">
+    <header>
+      <div class="eyebrow" data-i18n="ex_eyebrow"></div>
+      <h2 data-i18n="ex_h"></h2>
+      <p data-i18n="ex_p"></p>
+    </header>
+    <div class="tabs" id="exTabs" role="group"></div>
+    <p class="note" id="exSummary"></p>
+    <div class="tablewrap"><table class="pin" id="exTable"></table></div>
+    <p class="scrollhint" data-i18n="scrollhint"></p>
+  </section>
+
+  <section id="wf">
+    <header>
+      <div class="eyebrow" data-i18n="wf_eyebrow"></div>
+      <h2 data-i18n="wf_h"></h2>
+      <p data-i18n="wf_p"></p>
+    </header>
+    <div class="tablewrap"><table id="wfTable"></table></div>
+    <p class="note" id="wfRead"></p>
+  </section>
+
+  <section id="method">
+    <header>
+      <div class="eyebrow" data-i18n="me_eyebrow"></div>
+      <h2 data-i18n="me_h"></h2>
+    </header>
+    <div class="assume"><ol id="meList"></ol></div>
+    <dl class="gloss" id="meGloss"></dl>
+  </section>
+
+  <footer><span id="footText"></span></footer>
+</main>
+
+<script>
+const DATA = /*__DATA__*/;
+const META = /*__META__*/;
+const WINS = DATA.window_order || Object.keys(DATA.windows);
+// The sets the cross-window table follows: the unselected run, the rule as
+// the study phrased it (one round trip over 90 days), its neighbours, and the
+// absolute floor the 2026-09-09 grid measured.
+const FOLLOW = [
+  {kind:"off"},
+  {kind:"cost", cost:1.0, days:30}, {kind:"cost", cost:1.0, days:60}, {kind:"cost", cost:1.0, days:90},
+  {kind:"cost", cost:0.5, days:90}, {kind:"cost", cost:1.5, days:90}, {kind:"cost", cost:2.0, days:90},
+  {kind:"abs", bps:0.5, days:30}, {kind:"abs", bps:0.5, days:90},
+];
+
+const T = {
+vi: {
+  title: "Điểm cắt chi phí của từng chuỗi",
+  verdict_eyebrow: "Phán quyết", scrollhint: "Bảng rộng: cuộn ngang trong khung.",
+  nav_answer: "Câu trả lời", nav_years: "Theo cửa sổ", nav_grid: "Lưới", nav_excluded: "Chuỗi bị loại", nav_wf: "Walk-forward", nav_method: "Cách đo",
+  wname_year1: "2023-09 → 2024-09", wname_year2: "2024-09 → 2025-09", wname_year3: "2025-09 → 2026-09", wname_train24: "2023-09 → 2025-09", wname_full36: "36 tháng", wname_m12: "12 tháng",
+  v_head_worse: "Luật 1 chạy được, và trên cửa sổ này nó KÉM bộ đang ship {gap} điểm trên vốn danh mục",
+  v_head_better: "Luật 1 chạy được, và trên cửa sổ này nó HƠN bộ đang ship {gap} điểm trên vốn danh mục",
+  v_lede: "Luật 1 — chỉ mở chuỗi mà funding trung bình trượt D ngày trả được k lần vòng phí ĐÃ ĐỊNH GIÁ của chính chuỗi — nay là khoá trailing_mean_min_cost_frac trong internal/strategy, replay bằng cmd/backtest trên {series} chuỗi × {days} ngày ({wname}), cửa sổ ghim lịch, funding nạp 200 ngày trước cửa sổ. Bộ đang ship (chọn chuỗi tắt) làm {off} trên vốn danh mục; luật đúng như bài nghiên cứu phát biểu (1,0 × vòng phí, 90 ngày) làm {lit} ({lit_delta}); bộ tốt nhất trong {n_cost} bộ điểm cắt là {best} ({best_delta}, {best_set}); giữ suốt {ht}.",
+  v_fig_off: "Bộ đang ship, vốn danh mục", v_fig_lit: "1,0 × vòng phí, 90 ngày", v_fig_best: "Bộ điểm cắt tốt nhất", v_fig_depl: "…trên vốn ĐÃ dùng của nó", v_fig_ex: "Chuỗi nó loại (thua / thắng)", v_fig_late: "Giá của việc vào muộn",
+  v_note: "Vốn danh mục = {series} ô × 2 notional, ô bị luật từ chối tính 0; “vốn đã dùng” chỉ tính các chuỗi luật đã mở. Luật này CHỈ có thể hạ số đầu và nâng số sau; cái nó mua là chuỗi KHÔNG giao dịch. Mọi số là replay Go (cmd/backtest), trừ giữ suốt là mốc chuẩn Python từ corpus.",
+  an_eyebrow: "Câu trả lời", an_h: "Bốn bộ và giữ suốt, cùng {series} chuỗi",
+  an_intro: "Một dòng một bộ. Cột đầu là trung bình mỗi chuỗi trên VỐN DANH MỤC (ô không mở tính 0); cột hai là trên VỐN ĐÃ DÙNG (chỉ chuỗi đã mở); cột ba là sụt vốn danh mục lớn nhất trên đường vốn ngày.",
+  an_off: "Bộ đang ship", an_off_sub: "chọn chuỗi tắt — khối strategy: của config.yaml", an_lit: "Luật 1 như phát biểu", an_lit_sub: "1,0 × vòng phí của chính chuỗi, trượt 90 ngày",
+  an_best: "Bộ điểm cắt tốt nhất", an_abs: "Sàn tuyệt đối tốt nhất", an_abs_sub: "min_trailing_mean_bps, một con số cho mọi chuỗi", an_ht: "Giữ suốt", an_ht_sub: "vào mốc đầu, ra mốc cuối, một vòng phí",
+  th_univ: "Vốn danh mục", th_depl: "Vốn đã dùng", th_pfdd: "Sụt vốn DM",
+  an_read: "Trên {series} chuỗi của cửa sổ này, {n_beat}/{n_cost} bộ điểm cắt hơn bộ đang ship trên vốn danh mục và {n_beat_ht}/{n_cost} hơn giữ suốt. Trên vốn đã dùng, bộ điểm cắt tốt nhất làm {best_depl} nhưng bộ đang ship trên ĐÚNG các chuỗi đó làm {off_on_traded}: phần chênh là giá của việc chờ cửa sổ trượt rồi mới vào.",
+  yr_eyebrow: "Theo cửa sổ", yr_h: "Cùng một bộ trên từng cửa sổ lịch",
+  yr_p: "Trung bình mỗi chuỗi trên vốn danh mục, cửa sổ ghim lịch (cmd/backtest -from/-to). Số của cửa sổ dài là tích luỹ, chia số năm trước khi so với dải 5–15%/năm. Cửa sổ bắt đầu đúng ở đầu corpus (2023-09) mù D ngày đầu cho mọi luật trượt — không có lịch sử trước đó để nạp — nên cột đó thiệt cho luật một cách cấu trúc.",
+  th_set: "Bộ", th_ht: "Giữ suốt",
+  yr_read: "Luật 1,0 × 90 ngày so với bộ đang ship: {deltas}. Số chuỗi mỗi cửa sổ: {sizes}.",
+  gr_eyebrow: "Lưới", gr_h: "{n} bộ trên cửa sổ này",
+  gr_intro: "Điểm cắt k × vòng phí (k = 0,5 / 1,0 / 1,5 / 2,0) trên trượt 30 / 60 / 90 ngày, cạnh sàn tuyệt đối 0,3 / 0,5 / 0,8 bps/8h trên 30 / 90 ngày, mọi trục khác đúng bộ đang ship. Cột “vào muộn” là tổng (bộ − bộ đang ship) trên các chuỗi bộ đó VẪN mở: phần luật mất vì chờ; cột “đã loại” là tổng lợi nhuận bộ đang ship làm được trên các chuỗi bộ đó KHÔNG mở: phần luật tránh được (âm là tránh được lỗ).",
+  gr_heat_h: "Vốn danh mục theo k × D", gr_heat_sub: "trung bình mỗi chuỗi, %", gr_heat2_h: "Số chuỗi được mở", gr_heat2_sub: "trong {series}",
+  th_rank: "Hạng", th_kind: "Loại", th_k: "k × vòng", th_days: "Ngày", th_bps: "Sàn bps/8h", th_delta: "So ship", th_pos: "Dương", th_traded: "Đã mở", th_htOn: "Giữ suốt trên chuỗi đã mở", th_offOn: "Ship trên chuỗi đã mở", th_sdd: "Sụt TB/chuỗi", th_worst: "Chuỗi tệ nhất", th_tps: "Lệnh/chuỗi", th_exN: "Đã loại", th_exSum: "Ship làm trên chuỗi đã loại", th_late: "Vào muộn (tổng)",
+  kind_off: "tắt", kind_cost: "điểm cắt", kind_abs: "tuyệt đối",
+  gr_read: "Trục ngày quyết định nhiều hơn trục k: trung bình lưới theo ngày {by_days}; theo k {by_k}. Ở 30 ngày luật loại {ex30} chuỗi (nó là luật THỜI ĐIỂM vào), ở 90 ngày loại {ex90}.",
+  ex_eyebrow: "Chuỗi bị loại", ex_h: "Luật đã giữ vốn ra khỏi chuỗi nào, và bộ đang ship làm gì ở đó",
+  ex_p: "Chọn một bộ. Bảng là các chuỗi bộ đang ship có mở mà bộ này không mở suốt cửa sổ, cùng lợi nhuận của bộ đang ship trên chúng (dương = luật bỏ lỡ, âm = luật tránh được), funding trung bình của corpus, chi phí vòng, và giữ suốt.",
+  ex_summary: "{set}: loại {n} chuỗi ({neg} chuỗi bộ ship lỗ, {pos} chuỗi bộ ship lãi), tổng {sum} điểm trên notional-chuỗi = {mean_univ} điểm trên vốn danh mục; trên {kept} chuỗi vẫn mở, vào muộn tốn {late} điểm tổng ({late_mean} mỗi chuỗi).",
+  ex_none: "{set}: không loại chuỗi nào — bộ đang ship mở ở đâu thì bộ này cũng mở, chỉ muộn hơn.",
+  th_series: "Chuỗi", th_bridged: "Ghép cầu", th_cost: "Vòng phí", th_mean_bps: "Funding TB", th_share: "Mốc dương", th_off: "Bộ ship", th_off_trades: "Lệnh ship", th_ht2: "Giữ suốt", yes: "có", no: "—",
+  wf_eyebrow: "Walk-forward", wf_h: "Chọn trên cửa sổ này, đọc trên cửa sổ kia",
+  wf_p: "Bộ tốt nhất (trên vốn danh mục) của cửa sổ học, đọc trên cửa sổ kiểm, cạnh giữ suốt và bộ tốt nhất mà cửa sổ kiểm tự chọn. Cùng {n} bộ ở mọi cửa sổ, nên “chọn được bộ tắt” là một kết quả hợp lệ.",
+  th_train: "Học", th_chosen: "Chọn được", th_test: "Kiểm", th_ontest: "Kết quả kiểm", th_rank2: "Hạng", th_testbest: "Tốt nhất của kiểm", th_ship_test: "Ship trên kiểm",
+  wf_read: "{reads}",
+  wf_pair: "{train} → {test}: chọn {chosen}; trên cửa sổ kiểm nó làm {on_test} (hạng {rank}/{sets}) so với bộ đang ship {ship} và giữ suốt {ht}.",
+  me_eyebrow: "Cách đo", me_h: "Điều kiện và giới hạn",
+  me_1: "Luật là code production: strategy.Params.TrailingMeanMinCostFrac, xét trong checkTrailingMean cùng sàn tuyệt đối; điểm cắt đọc từ chính NetAPR (rate đơn vị → số mốc trong holding_days ở nhịp sàn), nên k = 1 đúng bằng “NetAPR của trung bình trượt ≥ 0”. cmd/backtest gọi hàm đó (hai test AST); 0 = tắt tái tạo bộ đang ship bit-for-bit (đối chiếu binary HEAD và binary mới trên 85 chuỗi, 83 lệnh: chỉ khác mốc “bây giờ” của cửa sổ).",
+  me_2: "Vốn = 2 × notional. “Vốn danh mục” chia đều cho mọi chuỗi replay được, ô luật không mở tính 0 — mẫu số duy nhất đúng cho một luật CHỌN; “vốn đã dùng” là trung bình trên các chuỗi đã mở và không so được giữa hai bộ mở số chuỗi khác nhau.",
+  me_3: "Cửa sổ ghim lịch trên bản sao corpus 3 năm (dựng lại 2026-09-10 sau khi máy khởi động lại và xoá /tmp; công thức trong tools/report/README.md). binance/bybit/hyperliquid phủ đủ 3 năm, kraken từ 2025-09, gate 180 ngày, okx ~3 tháng; lựa chọn “full” chỉ xếp trên chuỗi có corpus phủ ≥ 95% cửa sổ, nên số chuỗi đổi theo cửa sổ và cột cửa sổ không so ngang được với nhau bằng tuyệt đối.",
+  me_4: "Funding nạp 200 ngày TRƯỚC cửa sổ nên trượt 90 ngày đánh giá được từ mốc đầu — trừ cửa sổ bắt đầu đúng ở đầu corpus (2023-09-09), mù D ngày đầu cho mọi luật trượt. Chi phí vòng là MỘT lần đo sổ mới nhất ở 50k áp cho cả ba năm; vì thế điểm cắt của mỗi chuỗi cũng cố định suốt cửa sổ.",
+  me_5: "Giữ suốt là mốc chuẩn Python (hold.corpus, một vòng phí mỗi cửa sổ); sụt vốn danh mục là đường vốn NGÀY dựng lại từ lệnh Go theo số học của engine (capital.daily_portfolio). Hyperliquid/kraken là perp USD ghép spot USDT: trung tính theo coin, mở theo USDT/USD, không con số nào trừ.",
+  me_6: "Danh sách cặp sàng ngày 2026-09-09 trên 12 tháng gần nhất và phải đã niêm yết từ 2023: mẫu in-sample có sống sót. Walk-forward ở đây chỉ chọn giữa {n} bộ, không phải bằng chứng ngoài mẫu về mức lợi nhuận.",
+  gl_k: "k × vòng phí", gl_k_d: "Funding ở mức trung bình trượt, giữ holding_days, phải trả được k lần vòng phí đã định giá của chuỗi; k = 1 là hoà vốn.", gl_late: "Vào muộn", gl_late_d: "Luật chờ cửa sổ trượt đủ tốt rồi mới mở, nên trên chuỗi nó VẪN mở, lệnh vào muộn hơn bộ đang ship và thu ít funding hơn.", gl_univ: "Vốn danh mục", gl_univ_d: "Mọi ô chuỗi × 2 notional, ô không mở tính 0.",
+  foot: "Dựng từ {commit} lúc {generated}. Dữ liệu do cmd/backtest ghi; trang này chỉ đọc (tools/report/costcross.py).",
+},
+zh: {
+  title: "每条序列自己的成本盈亏点",
+  verdict_eyebrow: "结论", scrollhint: "表格较宽：在框内横向滚动。",
+  nav_answer: "答案", nav_years: "按窗口", nav_grid: "网格", nav_excluded: "被排除的序列", nav_wf: "前推检验", nav_method: "测量方法",
+  wname_year1: "2023-09 → 2024-09", wname_year2: "2024-09 → 2025-09", wname_year3: "2025-09 → 2026-09", wname_train24: "2023-09 → 2025-09", wname_full36: "36 个月", wname_m12: "12 个月",
+  v_head_worse: "规则 1 可运行，但在此窗口它比现行参数组在组合资本上少 {gap} 个点",
+  v_head_better: "规则 1 可运行，且在此窗口它比现行参数组在组合资本上多 {gap} 个点",
+  v_lede: "规则 1——只开仓于 D 日滚动平均资金费能付清自身已定价往返成本 k 倍的序列——现已是 internal/strategy 的 trailing_mean_min_cost_frac，由 cmd/backtest 在 {series} 条序列 × {days} 天（{wname}）上回放，日历固定窗口，窗口前加载 200 天资金费。现行参数组（不选序列）组合资本 {off}；研究原文的规则（1.0 × 往返，90 天）{lit}（{lit_delta}）；{n_cost} 个盈亏点参数组中最好者 {best}（{best_delta}，{best_set}）；持有到底 {ht}。",
+  v_fig_off: "现行参数组，组合资本", v_fig_lit: "1.0 × 往返，90 天", v_fig_best: "最佳盈亏点参数组", v_fig_depl: "…在其已用资本上", v_fig_ex: "被排除序列（亏 / 赚）", v_fig_late: "晚进场的代价",
+  v_note: "组合资本 = {series} 格 × 2 名义，被规则拒绝的格计 0；“已用资本”只计规则开仓的序列。此规则只可能降低前者、抬高后者；它买到的是不交易哪些序列。全部数字为 Go 回放（cmd/backtest），持有到底为语料的 Python 基准。",
+  an_eyebrow: "答案", an_h: "四个参数组与持有到底，同 {series} 条序列",
+  an_intro: "一行一个参数组。第一列是组合资本上的每序列均值（未开仓格计 0）；第二列是已用资本；第三列是日度组合资本曲线的最大回撤。",
+  an_off: "现行参数组", an_off_sub: "不选序列——config.yaml 的 strategy: 块", an_lit: "规则 1 原文", an_lit_sub: "1.0 × 序列自身往返成本，滚动 90 天",
+  an_best: "最佳盈亏点参数组", an_abs: "最佳绝对下限", an_abs_sub: "min_trailing_mean_bps，所有序列一个数", an_ht: "持有到底", an_ht_sub: "首个结算进、末个结算出、一次往返",
+  th_univ: "组合资本", th_depl: "已用资本", th_pfdd: "组合回撤",
+  an_read: "在本窗口的 {series} 条序列上，{n_beat}/{n_cost} 个盈亏点参数组在组合资本上超过现行组，{n_beat_ht}/{n_cost} 超过持有到底。在已用资本上最佳盈亏点组为 {best_depl}，而现行组在同样这些序列上为 {off_on_traded}：差额是等待滚动窗口再进场的代价。",
+  yr_eyebrow: "按窗口", yr_h: "同一参数组在各日历窗口",
+  yr_p: "组合资本上的每序列均值，日历固定窗口（cmd/backtest -from/-to）。长窗口为累计值，与 5–15%/年比较前先除以年数。从语料起点（2023-09）开始的窗口对任何滚动规则都有 D 天盲区——之前没有历史可加载——该列在结构上不利于规则。",
+  th_set: "参数组", th_ht: "持有到底",
+  yr_read: "规则 1.0 × 90 天相对现行组：{deltas}。各窗口序列数：{sizes}。",
+  gr_eyebrow: "网格", gr_h: "本窗口 {n} 个参数组",
+  gr_intro: "盈亏点 k × 往返（k = 0.5 / 1.0 / 1.5 / 2.0）× 滚动 30 / 60 / 90 天，旁边是绝对下限 0.3 / 0.5 / 0.8 bps/8h × 30 / 90 天，其余轴与现行组相同。“晚进场”列是该组仍开仓的序列上（该组 − 现行组）之和：规则因等待而失去的；“已排除”列是现行组在该组未开仓序列上的收益之和：规则避开的（负数 = 避开亏损）。",
+  gr_heat_h: "组合资本按 k × D", gr_heat_sub: "每序列均值，%", gr_heat2_h: "开仓序列数", gr_heat2_sub: "共 {series}",
+  th_rank: "名次", th_kind: "类型", th_k: "k × 往返", th_days: "天", th_bps: "下限 bps/8h", th_delta: "对现行", th_pos: "为正", th_traded: "已开仓", th_htOn: "已开仓序列的持有到底", th_offOn: "现行组在已开仓序列", th_sdd: "均回撤/序列", th_worst: "最差序列", th_tps: "笔/序列", th_exN: "已排除", th_exSum: "现行组在已排除序列", th_late: "晚进场（合计）",
+  kind_off: "关", kind_cost: "盈亏点", kind_abs: "绝对",
+  gr_read: "天数轴比 k 轴影响更大：网格按天均值 {by_days}；按 k {by_k}。30 天时规则排除 {ex30} 条序列（它是进场时机规则），90 天时排除 {ex90} 条。",
+  ex_eyebrow: "被排除的序列", ex_h: "规则把资本挡在哪些序列之外，现行组在那里做了什么",
+  ex_p: "选一个参数组。表中是现行组开仓而该组整个窗口未开仓的序列，附现行组在其上的收益（正 = 规则错过，负 = 规则避开）、语料平均资金费、往返成本与持有到底。",
+  ex_summary: "{set}：排除 {n} 条（现行组亏损 {neg} 条、盈利 {pos} 条），合计 {sum} 点（序列名义）= 组合资本 {mean_univ} 点；在仍开仓的 {kept} 条上晚进场共损失 {late} 点（每序列 {late_mean}）。",
+  ex_none: "{set}：未排除任何序列——现行组开仓处该组也开仓，只是更晚。",
+  th_series: "序列", th_bridged: "跨计价", th_cost: "往返成本", th_mean_bps: "平均资金费", th_share: "正结算占比", th_off: "现行组", th_off_trades: "现行组笔数", th_ht2: "持有到底", yes: "是", no: "—",
+  wf_eyebrow: "前推检验", wf_h: "在此窗口选择，在彼窗口读取",
+  wf_p: "训练窗口（组合资本）最佳参数组在测试窗口的结果，旁边是持有到底与测试窗口自选的最佳组。各窗口都是同样 {n} 个参数组，因此“选到关闭组”是合法结果。",
+  th_train: "训练", th_chosen: "选中", th_test: "测试", th_ontest: "测试结果", th_rank2: "名次", th_testbest: "测试窗口最佳", th_ship_test: "现行组在测试",
+  wf_read: "{reads}",
+  wf_pair: "{train} → {test}：选中 {chosen}；在测试窗口做到 {on_test}（{rank}/{sets}），现行组 {ship}，持有到底 {ht}。",
+  me_eyebrow: "测量方法", me_h: "条件与限制",
+  me_1: "规则即生产代码：strategy.Params.TrailingMeanMinCostFrac，在 checkTrailingMean 中与绝对下限一同判定；盈亏点由 NetAPR 本身得出（单位费率 → holding_days 内按场所节奏的结算数），故 k = 1 恰为“滚动平均的 NetAPR ≥ 0”。cmd/backtest 调用同一函数（两个 AST 测试）；0 = 关闭与现行组逐位一致（HEAD 与新二进制在 85 条序列、83 笔上对照：仅窗口“现在”时间戳不同）。",
+  me_2: "资本 = 2 × 名义。“组合资本”均分到每条可回放序列，规则未开仓格计 0——这是选择规则唯一正确的分母；“已用资本”是已开仓序列的均值，开仓数不同的两组之间不可比。",
+  me_3: "三年语料副本上的日历固定窗口（2026-09-10 机器重启清空 /tmp 后重建；配方见 tools/report/README.md）。binance/bybit/hyperliquid 覆盖 3 年，kraken 自 2025-09，gate 180 天，okx 约 3 个月；“full”只在语料覆盖 ≥ 95% 窗口的序列上排名，各窗口序列数不同，列之间不能按绝对值横向比较。",
+  me_4: "资金费在窗口前 200 天加载，90 天滚动从首个结算即可判定——从语料起点（2023-09-09）开始的窗口除外，任何滚动规则前 D 天盲。往返成本为 50k 下最新一次订单簿测量，套用整整三年；因此每条序列的盈亏点在窗口内也是固定的。",
+  me_5: "持有到底为 Python 基准（hold.corpus，每窗口一次往返）；组合回撤为按引擎算术从 Go 成交重建的日度资本曲线（capital.daily_portfolio）。Hyperliquid/kraken 为 USD 永续配 USDT 现货：币中性、USDT/USD 敞口开放，无任何数字扣除。",
+  me_6: "交易对名单于 2026-09-09 按最近 12 个月筛选且须 2023 年已上市：带幸存者的样本内。这里的前推只在 {n} 个参数组中选择，不是收益水平的样本外证据。",
+  gl_k: "k × 往返", gl_k_d: "滚动平均水平的资金费，持有 holding_days，须付清序列已定价往返成本的 k 倍；k = 1 为盈亏平衡。", gl_late: "晚进场", gl_late_d: "规则等滚动窗口足够好才开仓，故在仍开仓的序列上比现行组进得晚、收的资金费更少。", gl_univ: "组合资本", gl_univ_d: "所有序列格 × 2 名义，未开仓格计 0。",
+  foot: "由 {commit} 于 {generated} 生成。数据由 cmd/backtest 写出；本页只读（tools/report/costcross.py）。",
+}};
+
+// Open on the most recent one-year window: it has the widest universe and a
+// 200-day history before it, so every trailing rule is evaluable from its
+// first settlement — the windows that start at the corpus start are not.
+let lang = "vi", win = WINS.includes("year3") ? "year3" : WINS[WINS.length - 1], exKey = null;
+const t = (k, vars) => { let s = T[lang][k]; if (s === undefined) s = T.vi[k]; if (s === undefined) return k;
+  return vars ? s.replace(/\{(\w+)\}/g, (m, v) => (vars[v] === undefined ? m : vars[v])) : s; };
+const loc = () => lang === "zh" ? "zh-CN" : "vi-VN";
+const num = (v, d = 3) => v === null || v === undefined ? "—" : Number(v).toLocaleString(loc(), { minimumFractionDigits: d, maximumFractionDigits: d });
+const pct = (v, d = 3) => v === null || v === undefined ? "—" : (v > 0 ? "+" : "") + num(v, d) + "%";
+const pts = (v, d = 3) => v === null || v === undefined ? "—" : (v > 0 ? "+" : "") + num(v, d);
+const cls = v => v === null || v === undefined ? "" : v < 0 ? "loss" : v > 0 ? "gain" : "";
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const W = () => DATA.windows[win];
+const wname = w => t("wname_" + w) === "wname_" + w ? w : t("wname_" + w);
+const setName = s => s.kind === "off" ? t("kind_off") : s.kind === "cost" ? `${num(s.trail_cost, 1)}× / ${s.trail_days}d` : `${num(s.trail_bps, 1)} bps / ${s.trail_days}d`;
+const find = (w, spec) => (w.sets || []).find(s => s.kind === spec.kind &&
+  (spec.kind !== "cost" || (Math.abs(s.trail_cost - spec.cost) < 1e-9 && Math.abs(s.trail_days - spec.days) < 1e-9)) &&
+  (spec.kind !== "abs" || (Math.abs(s.trail_bps - spec.bps) < 1e-9 && Math.abs(s.trail_days - spec.days) < 1e-9)));
+const offOf = w => find(w, {kind:"off"});
+const litOf = w => find(w, {kind:"cost", cost:1.0, days:90});
+const bestOf = (w, kind) => (w.sets || []).filter(s => s.kind === kind).sort((a, b) => b.mean_cap_pct - a.mean_cap_pct)[0];
+const table = (id, head, rows) => {
+  const el = document.getElementById(id);
+  el.innerHTML = "<thead><tr>" + head.map(h => `<th class="${h.num ? "num" : ""}">${esc(h.l)}</th>`).join("") + "</tr></thead><tbody>" +
+    rows.map(r => "<tr>" + r.map(c => `<td class="${c.cls || ""}">${c.html !== undefined ? c.html : esc(c.v)}</td>`).join("") + "</tr>").join("") + "</tbody>";
+};
+const N = (v, d, extra) => ({ v: v === null || v === undefined ? "—" : num(v, d), cls: "num " + (extra || "") });
+const P = (v, d) => ({ v: pct(v, d), cls: "num " + cls(v) });
+
+function renderVerdict() {
+  const w = W(), off = offOf(w), lit = litOf(w), best = bestOf(w, "cost"), nCost = w.sets.filter(s => s.kind === "cost").length;
+  const gap = best.mean_cap_pct - off.mean_cap_pct;
+  document.getElementById("vHeadline").textContent = t(gap < 0 ? "v_head_worse" : "v_head_better", { gap: num(Math.abs(gap)) });
+  document.getElementById("vLede").textContent = t("v_lede", { series: w.series, days: Math.round(w.window_days), wname: wname(win),
+    off: pct(off.mean_cap_pct), lit: lit ? pct(lit.mean_cap_pct) : "—", lit_delta: lit ? pts(lit.delta_vs_off_cap_pct) : "—",
+    n_cost: nCost, best: pct(best.mean_cap_pct), best_delta: pts(best.delta_vs_off_cap_pct), best_set: setName(best), ht: pct(w.hold_through.mean_cap_pct) });
+  const fig = (v, l, c) => `<div class="fig"><div class="v ${c || ""}">${v}</div><div class="l">${esc(l)}</div></div>`;
+  document.getElementById("vFigures").innerHTML =
+    fig(pct(off.mean_cap_pct), t("v_fig_off"), cls(off.mean_cap_pct)) +
+    fig(lit ? pct(lit.mean_cap_pct) : "—", t("v_fig_lit"), lit ? cls(lit.delta_vs_off_cap_pct) : "") +
+    fig(pct(best.mean_cap_pct), t("v_fig_best") + " · " + setName(best), cls(best.delta_vs_off_cap_pct)) +
+    fig(pct(best.deployed_cap_pct), t("v_fig_depl"), "") +
+    fig(`${best.excluded_negative} / ${best.excluded_positive}`, t("v_fig_ex"), "") +
+    fig(pts(best.kept_delta_cap_pct / Math.max(1, best.traded_series)), t("v_fig_late"), cls(best.kept_delta_cap_pct));
+  document.getElementById("vNote").textContent = t("v_note", { series: w.series });
+}
+
+function renderAnswer() {
+  const w = W(), off = offOf(w), lit = litOf(w), best = bestOf(w, "cost"), abs = bestOf(w, "abs"), ht = w.hold_through;
+  document.querySelector("#answer h2").textContent = t("an_h", { series: w.series });
+  document.getElementById("anIntro").textContent = t("an_intro");
+  const row = (who, sub, a, b, c) => `<div class="row"><div class="who">${esc(who)}<small>${esc(sub)}</small></div>` +
+    `<div class="v ${cls(a)}">${pct(a)}</div><div class="v sub">${pct(b)}</div><div class="v sub">${num(c)}%</div></div>`;
+  let html = `<div class="row head"><span>${esc(t("th_set"))}</span><span>${esc(t("th_univ"))}</span><span>${esc(t("th_depl"))}</span><span>${esc(t("th_pfdd"))}</span></div>`;
+  html += row(t("an_off"), t("an_off_sub"), off.mean_cap_pct, off.deployed_cap_pct, off.pf_dd_cap_pct);
+  if (lit) html += row(t("an_lit"), t("an_lit_sub"), lit.mean_cap_pct, lit.deployed_cap_pct, lit.pf_dd_cap_pct);
+  html += row(t("an_best"), setName(best), best.mean_cap_pct, best.deployed_cap_pct, best.pf_dd_cap_pct);
+  if (abs) html += row(t("an_abs"), setName(abs) + " — " + t("an_abs_sub"), abs.mean_cap_pct, abs.deployed_cap_pct, abs.pf_dd_cap_pct);
+  html += row(t("an_ht"), t("an_ht_sub"), ht.mean_cap_pct, ht.mean_cap_pct, ht.pf_dd_cap_pct);
+  document.getElementById("anBlock").innerHTML = html;
+  const costs = w.sets.filter(s => s.kind === "cost");
+  document.getElementById("anRead").textContent = t("an_read", { series: w.series, n_cost: costs.length,
+    n_beat: costs.filter(s => s.mean_cap_pct > off.mean_cap_pct).length, n_beat_ht: costs.filter(s => s.mean_cap_pct > ht.mean_cap_pct).length,
+    best_depl: pct(best.deployed_cap_pct), off_on_traded: pct(best.off_on_traded_cap_pct) });
+}
+
+function renderYears() {
+  const head = [{ l: t("th_set") }].concat(WINS.map(w => ({ l: wname(w), num: true })));
+  const rows = FOLLOW.map(spec => {
+    const cells = [{ v: spec.kind === "off" ? t("kind_off") : spec.kind === "cost" ? `${num(spec.cost, 1)}× / ${spec.days}d` : `${num(spec.bps, 1)} bps / ${spec.days}d` }];
+    WINS.forEach(wn => { const s = find(DATA.windows[wn], spec); cells.push(s ? P(s.mean_cap_pct) : { v: "—", cls: "num" }); });
+    return cells;
+  });
+  rows.push([{ v: t("th_ht") }].concat(WINS.map(wn => P(DATA.windows[wn].hold_through.mean_cap_pct))));
+  table("yearTable", head, rows);
+  const deltas = WINS.map(wn => { const w = DATA.windows[wn], l = litOf(w); return `${wname(wn)} ${l ? pts(l.delta_vs_off_cap_pct) : "—"}`; }).join("; ");
+  document.getElementById("yrRead").textContent = t("yr_read", { deltas, sizes: WINS.map(wn => `${wname(wn)} ${DATA.windows[wn].series}`).join("; ") });
+}
+
+function heat(id, cells, fmt, colorOf) {
+  const ks = [...new Set(cells.map(c => c.k))].sort((a, b) => a - b), ds = [...new Set(cells.map(c => c.d))].sort((a, b) => a - b);
+  const el = document.getElementById(id);
+  el.style.gridTemplateColumns = `auto repeat(${ds.length}, auto)`;
+  let html = `<div class="h"></div>` + ds.map(d => `<div class="h">${d}d</div>`).join("");
+  ks.forEach(k => { html += `<div class="rh">${num(k, 1)}×</div>`; ds.forEach(d => { const c = cells.find(x => x.k === k && x.d === d);
+    html += c ? `<div class="c" style="background:${colorOf(c.v)}">${fmt(c.v)}${c.sub !== undefined ? `<small>${c.sub}</small>` : ""}</div>` : `<div class="c">—</div>`; }); });
+  el.innerHTML = html;
+}
+
+function renderGrid() {
+  const w = W(), off = offOf(w);
+  document.querySelector("#grid h2").textContent = t("gr_h", { n: w.sets.length });
+  document.getElementById("grIntro").textContent = t("gr_intro");
+  document.querySelector('[data-i18n="gr_heat2_sub"]').textContent = t("gr_heat2_sub", { series: w.series });
+  const costs = w.sets.filter(s => s.kind === "cost");
+  const vals = costs.map(s => s.mean_cap_pct), lo = Math.min(...vals, off.mean_cap_pct), hi = Math.max(...vals, off.mean_cap_pct);
+  const shade = v => { const a = hi > lo ? (v - lo) / (hi - lo) : 0.5; return `color-mix(in srgb, var(--gain) ${Math.round(a * 45)}%, var(--surface))`; };
+  heat("heatUniv", costs.map(s => ({ k: s.trail_cost, d: s.trail_days, v: s.mean_cap_pct, sub: pts(s.delta_vs_off_cap_pct, 2) })), v => pct(v, 2), shade);
+  heat("heatTraded", costs.map(s => ({ k: s.trail_cost, d: s.trail_days, v: s.traded_series, sub: `${s.excluded_negative}↓ ${s.excluded_positive}↑` })), v => String(v),
+    v => `color-mix(in srgb, var(--accent) ${Math.round(v / w.series * 35)}%, var(--surface))`);
+  const head = [{ l: t("th_rank"), num: true }, { l: t("th_kind") }, { l: t("th_k"), num: true }, { l: t("th_days"), num: true }, { l: t("th_bps"), num: true },
+    { l: t("th_univ"), num: true }, { l: t("th_delta"), num: true }, { l: t("th_pos"), num: true }, { l: t("th_traded"), num: true }, { l: t("th_depl"), num: true },
+    { l: t("th_offOn"), num: true }, { l: t("th_htOn"), num: true }, { l: t("th_pfdd"), num: true }, { l: t("th_sdd"), num: true }, { l: t("th_worst"), num: true },
+    { l: t("th_tps"), num: true }, { l: t("th_exN"), num: true }, { l: t("th_exSum"), num: true }, { l: t("th_late"), num: true }];
+  table("gridTable", head, w.sets.map(s => [N(s.rank, 0), { v: t("kind_" + s.kind) }, N(s.kind === "cost" ? s.trail_cost : null, 1), N(s.trail_days || null, 0),
+    N(s.kind === "abs" ? s.trail_bps : null, 1), P(s.mean_cap_pct), P(s.delta_vs_off_cap_pct), N(s.positive, 0), N(s.traded_series, 0), P(s.deployed_cap_pct),
+    P(s.off_on_traded_cap_pct), P(s.ht_on_traded_cap_pct), N(s.pf_dd_cap_pct), N(s.mean_dd_cap_pct), P(s.worst_cap_pct), N(s.trades_per_series, 2),
+    { v: s.excluded.length ? `${s.excluded.length} (${s.excluded_negative}↓ ${s.excluded_positive}↑)` : "0", cls: "num" },
+    P(s.excluded_off_sum_cap_pct, 2), P(s.kept_delta_cap_pct, 2)]));
+  const by = (f, vs) => vs.map(v => { const g = costs.filter(s => Math.abs(f(s) - v) < 1e-9); return `${v} ${pct(g.reduce((a, s) => a + s.mean_cap_pct, 0) / g.length, 3)}`; }).join(", ");
+  const ex = d => { const g = costs.filter(s => s.trail_days === d); return g.length ? (g.reduce((a, s) => a + s.excluded.length, 0) / g.length).toFixed(1) : "—"; };
+  document.getElementById("grRead").textContent = t("gr_read", { by_days: by(s => s.trail_days, [...new Set(costs.map(s => s.trail_days))].sort((a, b) => a - b)),
+    by_k: by(s => s.trail_cost, [...new Set(costs.map(s => s.trail_cost))].sort((a, b) => a - b)), ex30: ex(30), ex90: ex(90) });
+}
+
+function renderExcluded() {
+  const w = W(), off = offOf(w);
+  const sets = w.sets.filter(s => s.kind !== "off");
+  if (!exKey || !sets.find(s => s.key === exKey)) { const l = litOf(w); exKey = (l || sets[0]).key; }
+  const s = sets.find(x => x.key === exKey);
+  document.getElementById("exTabs").innerHTML = sets.slice().sort((a, b) => a.kind.localeCompare(b.kind) || a.trail_days - b.trail_days || a.trail_cost - b.trail_cost || a.trail_bps - b.trail_bps)
+    .map(x => `<button type="button" data-key="${esc(x.key)}" aria-pressed="${x.key === exKey}">${esc(setName(x))}</button>`).join("");
+  document.querySelectorAll("#exTabs button").forEach(b => b.onclick = () => { exKey = b.dataset.key; renderExcluded(); });
+  const bySeries = Object.fromEntries(w.per_series.map(r => [r.key, r]));
+  if (!s.excluded.length) { document.getElementById("exSummary").textContent = t("ex_none", { set: setName(s) }); document.getElementById("exTable").innerHTML = ""; return; }
+  document.getElementById("exSummary").textContent = t("ex_summary", { set: setName(s), n: s.excluded.length, neg: s.excluded_negative, pos: s.excluded_positive,
+    sum: pts(s.excluded_off_sum_cap_pct, 2), mean_univ: pts(s.excluded_off_sum_cap_pct / w.series, 3), kept: s.traded_series,
+    late: pts(s.kept_delta_cap_pct, 2), late_mean: pts(s.kept_delta_cap_pct / Math.max(1, s.traded_series), 3) });
+  const head = [{ l: t("th_series") }, { l: t("th_bridged") }, { l: t("th_cost"), num: true }, { l: t("th_mean_bps"), num: true }, { l: t("th_share"), num: true },
+    { l: t("th_off"), num: true }, { l: t("th_off_trades"), num: true }, { l: t("th_ht2"), num: true }];
+  const rows = s.excluded.map(k => bySeries[k]).filter(Boolean).sort((a, b) => a.off_cap_pct - b.off_cap_pct);
+  table("exTable", head, rows.map(r => [{ v: `${r.symbol.replace(/USDT$/, "")} · ${r.perp.replace(/_futures$/, "")}` }, { v: r.quote_bridged ? t("yes") : t("no") },
+    N(r.cost_pct, 3), N(r.mean_bps, 3), N(r.positive_share === null ? null : r.positive_share * 100, 0), P(r.off_cap_pct), N(r.off_trades, 0), P(r.ht_cap_pct)]));
+}
+
+function renderWF() {
+  const pairs = DATA.pairs || [];
+  document.querySelector("#wf p[data-i18n='wf_p']").textContent = t("wf_p", { n: W().sets.length });
+  const head = [{ l: t("th_train") }, { l: t("th_chosen") }, { l: t("th_test") }, { l: t("th_ontest"), num: true }, { l: t("th_rank2"), num: true },
+    { l: t("th_ship_test"), num: true }, { l: t("th_ht"), num: true }, { l: t("th_testbest"), num: true }];
+  const nameOf = c => c.trailing_mean_min_cost_frac > 0 ? `${num(c.trailing_mean_min_cost_frac, 1)}× / ${c.trailing_mean_days}d` :
+    c.min_trailing_mean_bps > 0 ? `${num(c.min_trailing_mean_bps, 1)} bps / ${c.trailing_mean_days}d` : t("kind_off");
+  table("wfTable", head, pairs.map(p => [{ v: wname(p.train) }, { v: nameOf(p.chosen) }, { v: wname(p.test) },
+    P(p.chosen_on_test ? p.chosen_on_test.mean_cap_pct : null), N(p.chosen_on_test ? p.chosen_on_test.rank : null, 0),
+    P(p.applied_on_test ? p.applied_on_test.mean_cap_pct : null), P(p.test_hold_through.mean_cap_pct),
+    { v: `${pct(p.test_best.mean_cap_pct)} · ${nameOf(p.test_best)}`, cls: "num" }]));
+  document.getElementById("wfRead").textContent = pairs.map(p => t("wf_pair", { train: wname(p.train), test: wname(p.test), chosen: nameOf(p.chosen),
+    on_test: pct(p.chosen_on_test ? p.chosen_on_test.mean_cap_pct : null), rank: p.chosen_on_test ? p.chosen_on_test.rank : "—", sets: p.test_sets,
+    ship: pct(p.applied_on_test ? p.applied_on_test.mean_cap_pct : null), ht: pct(p.test_hold_through.mean_cap_pct) })).join(" ");
+}
+
+function renderMethod() {
+  document.getElementById("meList").innerHTML = ["me_1", "me_2", "me_3", "me_4", "me_5", "me_6"].map(k => `<li>${esc(t(k, { n: W().sets.length }))}</li>`).join("");
+  document.getElementById("meGloss").innerHTML = ["k", "late", "univ"].map(k => `<div><dt>${esc(t("gl_" + k))}</dt><dd>${esc(t("gl_" + k + "_d"))}</dd></div>`).join("");
+  document.getElementById("footText").textContent = t("foot", META);
+}
+
+function render() {
+  document.documentElement.lang = lang === "zh" ? "zh-CN" : "vi";
+  document.title = t("title");
+  document.querySelectorAll("[data-i18n]").forEach(el => { el.textContent = t(el.dataset.i18n); });
+  document.getElementById("windowSeg").innerHTML = WINS.map(w => `<button type="button" data-win="${esc(w)}" aria-pressed="${w === win}">${esc(wname(w))}</button>`).join("");
+  document.querySelectorAll("#windowSeg button").forEach(b => b.onclick = () => { win = b.dataset.win; render(); });
+  document.querySelectorAll("#langSeg button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  const w = W();
+  document.getElementById("windowLabel").textContent = `${new Date(w.from_ms).toISOString().slice(0, 10)} → ${new Date(w.to_ms).toISOString().slice(0, 10)} · ${w.series} ${t("th_series").toLowerCase()}`;
+  renderVerdict(); renderAnswer(); renderYears(); renderGrid(); renderExcluded(); renderWF(); renderMethod();
+}
+document.querySelectorAll("#langSeg button").forEach(b => b.onclick = () => { lang = b.dataset.lang; render(); });
+render();
+</script>

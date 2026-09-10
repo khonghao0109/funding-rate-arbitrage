@@ -207,3 +207,48 @@ strategy:
 		t.Errorf("a horizon with a zero floor is off, not an error: %v", err)
 	}
 }
+
+// The cost-crossing selection (trailing_mean_min_cost_frac, 2026-09-10) is
+// optional and zero is off — the block the 3.5 process loaded still parses to
+// the same parameters — and, like the absolute floor, a fraction needs the
+// horizon the mean is taken over. The two floors share that horizon.
+func TestStrategy_CostCrossingSelectionIsOptionalAndNeedsAHorizon(t *testing.T) {
+	base := `
+strategy:
+  enabled: true
+  min_rate_per_8h_bps: 0.5
+  persistence_periods: 3
+  min_net_apr_frac: 0.02
+  notional_quote: 50000
+  holding_days: 30
+  exit_net_apr_frac: 0.005
+  exit_persistence_periods: 3
+  max_basis_pct: 1.0
+  max_basis_widen_pct: 0.5
+`
+	cfg, err := loadStrategyFixture(t, base)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if p := cfg.Strategy.StrategyParams(); p.TrailingMeanMinCostFrac != 0 {
+		t.Errorf("an absent key must be off, got %+v", p)
+	}
+	cfg, err = loadStrategyFixture(t, base+"  trailing_mean_min_cost_frac: 1.0\n  trailing_mean_days: 90\n")
+	if err != nil {
+		t.Fatalf("load with the cost-crossing: %v", err)
+	}
+	if p := cfg.Strategy.StrategyParams(); p.TrailingMeanMinCostFrac != 1.0 || p.TrailingMeanDays != 90 {
+		t.Errorf("the fraction is not carried into Params: %+v", p)
+	}
+	for _, bad := range []string{
+		"  trailing_mean_min_cost_frac: -1\n",
+		"  trailing_mean_min_cost_frac: 1.0\n", // a fraction with no horizon
+	} {
+		if _, err := loadStrategyFixture(t, base+bad); err == nil {
+			t.Errorf("%q must be refused", bad)
+		}
+	}
+	if _, err := loadStrategyFixture(t, base+"  min_trailing_mean_bps: 0.5\n  trailing_mean_min_cost_frac: 1.0\n  trailing_mean_days: 90\n"); err != nil {
+		t.Errorf("both floors may share one horizon: %v", err)
+	}
+}

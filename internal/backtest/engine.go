@@ -331,6 +331,19 @@ func assumptions(series Series, params strategy.Params) []string {
 				"basis vượt hạn, không định giá được) KHÔNG bị chặn. Nên một phần số kỳ giữ dưới đây là giữ "+
 				"NGƯỢC lại phán quyết của chính luật.", params.MinHoldRecoveredCostFrac))
 	}
+	if params.TrailingMeanMinCostFrac > 0 && params.TrailingMeanDays > 0 {
+		// The same condition checkTrailingMean treats as "on": a fraction
+		// with no horizon is off there, so it must not be claimed here.
+		// Selection changes what a series with 0 trades MEANS: refused at
+		// the door, not "no signal". A reader averaging this run over the
+		// whole universe has to know an idle slot is the rule's own doing.
+		out = append(out, fmt.Sprintf(
+			"CHỌN CHUỖI THEO ĐIỂM CẮT CHI PHÍ của chính chuỗi: chỉ mở khi funding trung bình %g ngày gần nhất, "+
+				"giữ %.0f ngày ở nhịp settle của sàn, trả được %.2f× vòng phí đã định giá của chuỗi này "+
+				"(round_trip_cost_pct ở dòng CSV). Một chuỗi 0 lệnh có thể là BỊ TỪ CHỐI ở cửa chứ không phải "+
+				"không có tín hiệu, và trên vốn danh mục ô bị từ chối tính 0.",
+			params.TrailingMeanDays, params.HoldingDays, params.TrailingMeanMinCostFrac))
+	}
 	if series.QuoteBridged {
 		// Named FIRST for a bridged series: it is the one assumption that
 		// changes what the position IS, not just how precisely it is priced.

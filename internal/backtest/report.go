@@ -43,6 +43,8 @@ var csvHeader = []string{
 	// turned out to cost 0.94 points on 13 pairs) and the series-selection
 	// pair.
 	"max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days",
+	// Added 2026-09-10, same rule: the cost-crossing selection fraction.
+	"trailing_mean_min_cost_frac",
 	"coverage_short", "ok", "reason_vi", "assumptions_vi",
 }
 
@@ -72,6 +74,7 @@ func WriteCSV(w io.Writer, results []Result) error {
 			strconv.Itoa(r.Liquidations),
 			f(r.Params.PerpMarginFrac), f(r.Params.MinLiquidationBufferPct),
 			f(r.Params.MaxBasisPct), f(r.Params.MaxBasisWidenPct), f(r.Params.MinTrailingMeanBps), f(r.Params.TrailingMeanDays),
+			f(r.Params.TrailingMeanMinCostFrac),
 			strconv.FormatBool(r.CoverageShort),
 			strconv.FormatBool(r.OK), r.ReasonVI, strings.Join(r.AssumptionsVI, " | "),
 		}
@@ -179,6 +182,7 @@ var tradesCSVHeader = []string{
 	"open_at_ms", "close_at_ms", "held_days", "settlements",
 	"funding_frac", "cost_frac", "net_frac", "exit_reason_vi",
 	"max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days",
+	"trailing_mean_min_cost_frac",
 }
 
 // WriteTradesCSV writes a header and one row per trade of every run that
@@ -206,6 +210,7 @@ func WriteTradesCSV(w io.Writer, results []Result) error {
 				f(heldDays), strconv.Itoa(t.Settlements),
 				f(t.FundingFrac), f(t.CostFrac), f(t.NetFrac), t.ExitReasonVI,
 				f(r.Params.MaxBasisPct), f(r.Params.MaxBasisWidenPct), f(r.Params.MinTrailingMeanBps), f(r.Params.TrailingMeanDays),
+				f(r.Params.TrailingMeanMinCostFrac),
 			}
 			if err := out.Write(row); err != nil {
 				return fmt.Errorf("backtest: write trades csv row: %w", err)

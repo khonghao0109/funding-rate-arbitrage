@@ -177,3 +177,20 @@ func TestReport_BridgedSeriesIsVisibleWhereverTheReaderLooks(t *testing.T) {
 		t.Errorf("no bridged series, no line:\n%s", b)
 	}
 }
+
+// The cost-crossing selection axis (2026-09-10) is in BOTH CSVs, at the end
+// of the parameter columns like the 2026-09-09 axes: a reader keyed on names
+// finds it, and a reader written before it finds every older column in place.
+func TestWriteCSV_BothFilesCarryTheCostCrossingAxis(t *testing.T) {
+	for _, header := range [][]string{csvHeader, tradesCSVHeader} {
+		found := false
+		for _, name := range header {
+			if name == "trailing_mean_min_cost_frac" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("trailing_mean_min_cost_frac missing from %v", header[:3])
+		}
+	}
+}

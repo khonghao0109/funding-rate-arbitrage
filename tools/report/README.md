@@ -314,6 +314,55 @@ có** thay vì sổ trước ngày cuối cửa sổ — depth không backfill �
 sổ ở cuối một cửa sổ năm 2024 từ chối toàn bộ 832 dòng ("không định giá
 được"). `cost_book_sampled_at_ms` trong CSV nói sổ đó đo lúc nào.
 
+## Luật 1 — điểm cắt chi phí của từng chuỗi (`costcross.py`)
+
+Quy luật 2 của trang ba năm nói ngưỡng đáng một vòng phí là chi phí của
+CHÍNH chuỗi chia cho số mốc trong kỳ giữ. Ngày 2026-09-10 nó thành luật Go:
+`strategy.Params.TrailingMeanMinCostFrac` (khoá `trailing_mean_min_cost_frac`,
+trục sweep `-trail-cost`), xét trong `checkTrailingMean` cùng sàn tuyệt đối
+`min_trailing_mean_bps` và cùng chân trời `trailing_mean_days`; điểm cắt đọc
+từ chính `NetAPR` (rate đơn vị → số mốc trong `holding_days` ở nhịp sàn), nên
+`1.0` đúng bằng "NetAPR của trung bình trượt ≥ 0". `0` là tắt và tái tạo bộ
+đang ship bit-for-bit (đối chiếu binary HEAD với binary mới, 85 chuỗi).
+
+`costcross.py` đọc ba lượt sweep của MỖI cửa sổ — tắt, điểm cắt (k × ngày),
+sàn tuyệt đối (bps × ngày) — và giữ hai mẫu số tách bạch: **vốn danh mục**
+(mọi chuỗi replay được, ô luật không mở tính 0) và **vốn đã dùng** (chỉ
+chuỗi đã mở). Với mỗi bộ nó liệt kê chuỗi bộ đó KHÔNG mở mà bộ tắt có mở,
+cùng lợi nhuận của bộ tắt ở đó (phần luật tránh được hay bỏ lỡ), và cột "vào
+muộn": (bộ − tắt) trên các chuỗi bộ đó VẪN mở — vì luật chờ cửa sổ trượt đủ
+tốt rồi mới vào, nên trên corpus bắt đầu đúng ở đầu cửa sổ nó là luật THỜI
+ĐIỂM trước khi là luật CHỌN. Walk-forward dùng `forward.walk`.
+
+```bash
+L=/tmp/long                      # bản sao DB 3 năm (config-go.yaml cho Go, scanner.db cho Python), xem mục trên
+APPLIED=(-sweep -min-rate-bps 0.3 -persist 6 -min-net-apr 0.02 -exit-net-apr 0 -exit-persist 48 \
+         -exit-neg-bps 2.0 -exit-neg-periods 2 -exit-neg-cum 1.0 -min-hold 1.0 -notional 50000 -hold-days 90 \
+         -max-basis 2.0 -max-basis-widen 2.0)
+for w in "year1 2023-09-09 2024-09-09" "year2 2024-09-09 2025-09-09" "year3 2025-09-09 2026-09-09" \
+         "train24 2023-09-09 2025-09-09" "full36 2023-09-09 2026-09-09"; do set -- ${=w}
+  $L/backtest -config $L/config-go.yaml -from $2 -to $3 "${APPLIED[@]}" -trail-bps 0 -trail-days 0 -trail-cost 0 \
+    -csv $L/cc-$1-off.csv -trades-csv $L/cctrades-$1-off.csv
+  $L/backtest -config $L/config-go.yaml -from $2 -to $3 "${APPLIED[@]}" -trail-bps 0 -trail-days 30,60,90 -trail-cost 0.5,1.0,1.5,2.0 \
+    -csv $L/cc-$1-cost.csv -trades-csv $L/cctrades-$1-cost.csv
+  $L/backtest -config $L/config-go.yaml -from $2 -to $3 "${APPLIED[@]}" -trail-bps 0.3,0.5,0.8 -trail-days 30,90 -trail-cost 0 \
+    -csv $L/cc-$1-abs.csv -trades-csv $L/cctrades-$1-abs.csv
+done
+python3 tools/report/costcross.py --db $L/scanner.db --config config.yaml \
+  --window year1=$L/cc-year1-off.csv,$L/cc-year1-cost.csv,$L/cc-year1-abs.csv:$L/cctrades-year1-off.csv,$L/cctrades-year1-cost.csv,$L/cctrades-year1-abs.csv \
+  --window year2=... --window year3=... --window train24=... --window full36=... \
+  --pair year1:year2 --pair year2:year3 --pair train24:year3 --universe full --out $L/costcross.json
+python3 tools/report/hold_build.py --json $L/costcross.json --template tools/report/costcross.template.html \
+  --commit $(git rev-parse --short HEAD) --title "Điểm cắt chi phí của từng chuỗi" --out docs/reports/costcross-<ngày>.html
+```
+
+Hai bẫy gặp lại ngay lần chạy đầu: bản sao DB mà Go vừa chạy chuyển sang
+WAL và Python `mode=ro` không mở được khi thiếu `-shm` — `PRAGMA
+journal_mode=DELETE` trên bản sao Python đọc, Go dùng bản sao riêng; và
+cửa sổ bắt đầu đúng ở đầu corpus (2023-09-09, hoặc `-months 12` trên DB
+sống 12 tháng) mù D ngày đầu cho mọi luật trượt vì không có lịch sử trước
+đó để nạp, nên cột đó thiệt cho luật một cách cấu trúc — đọc year2/year3.
+
 ## Bộ ngưỡng vốn và rủi ro (`capital.py`)
 
 Xếp hạng một lưới theo hai thứ mà các trang trước không có: **vốn danh mục**

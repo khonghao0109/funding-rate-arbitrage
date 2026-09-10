@@ -565,10 +565,49 @@ funding clears that series' own cost-crossing, and move capital between
 series by trailing funding — knowing the second is mostly "hold more
 hyperliquid".
 
-**Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
-RUNNING** (started 2026-09-07 09:39:52, port **8085**, PID in
-`.paper/scanner.pid`, verdict no earlier than 2026-09-21). The "alert-only
-mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
+**Rule 1 was implemented and measured on 2026-09-10 (report
+`docs/reports/costcross-2026-09-10.html`, tool `tools/report/costcross.py`),
+and it ships OFF.** `strategy.Params.TrailingMeanMinCostFrac` (config
+`trailing_mean_min_cost_frac`, sweep `-trail-cost`, a column in both CSVs
+and a key in the journal's `params_json`): the trailing mean over
+`trailing_mean_days`, held for `holding_days` at the venue's cadence, must
+pay that fraction of the series' OWN priced round trip. The crossing is read
+off `NetAPR` with a unit rate and converted per 8h by
+`exchanges.DeriveFundingRates`, so 1.0 is exactly "NetAPR of the trailing
+mean ≥ 0" and the per-8h crossing does not depend on the cadence (pinned
+8h/1h); 0 reproduces the applied set bit for bit (HEAD vs new binary, 85
+series, 83 trades). Measured on the rebuilt 3-year copy, five pinned windows,
+k 0.5–2.0 × D 30/60/90 beside the absolute floor, ranked on UNIVERSE capital:
+on 2024-25 (32 series) no cost set excludes a single series — every series
+clears its own crossing at some point in the year, so the rule only enters
+LATER — and the best is +0.003 over the applied set; on 2025-26 (48 series)
+1.5 × 90d makes +1.241 vs +1.204 (+0.037) by excluding exactly 4 series, all
+losers (+0.13 on the universe), minus −0.10 per kept series of late entries;
+1.0 × 90d is −0.022; windows starting at the corpus start are blind for D
+days and read −1.6 at 90d, all of it late entry. Walk-forward picks the OFF
+set on two of three pairs and the one it picks (0.5 × 30d) ranks 13/19 on
+its test window. Structural reason, not a bug: the pair list was screened on
+2026-09-09 at ≥ 0.40 bps/8h over 12 months, itself a static cost-crossing
+screen, so what is left for the rule is entry TIMING, which regularities 1
+and 5 already bounded. Turn it on only for an unscreened list or a year with
+systematic losers (2025-26's kraken alts: 1.5 × 90d kept out 4 losers and 0
+winners). Rule 2 (moving capital between series) is recorded under PLAN step
+5.4 with its three prerequisites — a portfolio replay mode in
+`internal/backtest`, a capital/position object in Go, and the operator's
+decision on how much may sit on one quote-bridged venue.
+
+**Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 was
+RUNNING from 2026-09-07 09:39:52 +07 until the machine rebooted at about
+2026-09-10 01:13 +07** (port **8085**, PID 58422 in `.paper/scanner.pid`;
+last `signal_journal` row 2026-09-09 18:08:49 UTC, last price sample 18:10
+UTC, 4,004 rows — 2 days 15.5 hours of the 14 needed). The phase-1 soak
+process on 8082 died with it and `/tmp` was wiped. **Nothing was restarted:
+that is the operator's decision.** PLAN 3.5 ③ step 1 says what a relaunch
+means — the window restarts from the next launch, 14 unbroken days, no
+stitching — and a process launched from today's working tree runs the
+verified fees and every key added since `2328307`, so its journal compares
+against `cmd/backtest` on the CURRENT block; record the fee and key state in
+`.paper/` at launch. The "alert-only mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
 every hedge leg every 10 minutes with the SAME `strategy.Candidate` the
 backtest builds — settled history from the store, fees from config (loaded ONCE at start-up: the 3.5 process still holds the pre-verification fees of `2328307`, see PLAN 3.5 ③), the newest
 measured books — plus live spot/perp prices, which is why the basis exit is
@@ -576,8 +615,9 @@ evaluable here and nowhere else. Every decision lands in `signal_journal`
 (schema v4) with all its checks as JSON; paper positions reseed from it on
 restart. The `strategy:` block in `config.yaml` is the one parameter set both
 the live path and `cmd/backtest` run, and the comparison protocol for the gate
-is written in PLAN 3.5 — read it before delivering the verdict. **Do not
-restart that process casually**: the gate needs 14 UNBROKEN days.
+is written in PLAN 3.5 — read it before delivering the verdict. Once it is
+running again, **do not restart it casually**: the gate needs 14 UNBROKEN
+days.
 
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`

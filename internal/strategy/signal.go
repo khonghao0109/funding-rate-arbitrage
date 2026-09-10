@@ -261,6 +261,22 @@ type Params struct {
 	// refuses rather than averaging what it has.
 	MinTrailingMeanBps float64
 	TrailingMeanDays   float64
+	// TrailingMeanMinCostFrac (added 2026-09-10) is the same selection against
+	// the series' OWN cost-crossing instead of one number for every series:
+	// the funding the trailing mean would pay over HoldingDays, counted in
+	// settlements at the venue's cadence exactly as NetAPR counts them, must
+	// reach this fraction of the priced round trip. 1.0 is break-even — "do
+	// not open a series whose trailing funding has not been paying for its
+	// own round trip". 0 is off, which is every run before the field existed
+	// (pinned by test), and a fraction with no TrailingMeanDays is off too.
+	//
+	// Why a fraction of the cost and not a level: the three-year study
+	// (docs/reports/regime-3y-2026-09-09.html, regularity 2) found the level
+	// that pays a round trip is 0.33 bps/8h at BTC/ETH's 0.30% trip and 0.8
+	// at NEAR's 0.74%, and that it moved from ≈0.25 to ≈0.8 between years —
+	// a universal floor is wrong on every series but the one it was tuned
+	// on. Both floors may be set; the mean has to clear each.
+	TrailingMeanMinCostFrac float64
 
 	// --- exit ---
 	// ExitNetAPRFrac is lower than MinNetAPRFrac on purpose: entering costs a
@@ -438,7 +454,7 @@ func EvaluateEntry(at time.Time, c Candidate, p Params) Decision {
 		checkHistoryDepth(usable, droppedSpecial, p),
 		checkRateThreshold(newest, haveNewest, p),
 		checkPersistence(usable, p),
-		checkTrailingMean(at, usable, p),
+		checkTrailingMean(at, usable, c, d.Cost, hedge.Passed, p),
 		checkLiquidity(d.Cost, p, hedge.Passed),
 		checkNetAPR(d.NetAPR, p, hedge.Passed),
 		checkMarginKnown(c, p),
@@ -570,7 +586,11 @@ func checkPersistence(usable []exchanges.FundingHistoryEntry, p Params) Check {
 }
 
 // checkTrailingMean is the series-selection condition: the mean settled rate
-// over the last TrailingMeanDays, per 8h, must clear MinTrailingMeanBps.
+// over the last TrailingMeanDays, per 8h, must clear every floor configured —
+// MinTrailingMeanBps, one number for every series, and/or the series' OWN
+// cost-crossing (TrailingMeanMinCostFrac, 2026-09-10): the level at which
+// funding at that mean, held for HoldingDays at the venue's cadence, pays the
+// configured fraction of the priced round trip.
 //
 // The window is cut on the venue's stamps, never on a count, and it must be
 // COVERED: a history that starts inside the window would average a shorter
@@ -581,10 +601,29 @@ func checkPersistence(usable []exchanges.FundingHistoryEntry, p Params) Check {
 // The mean is of the per-8h rate across settlements, which is the figure the
 // pair screen ranks on (tools/report/pairscreen.py), so "0.94 bps/8h on the
 // screen" and "0.94 bps/8h here" are the same statement about the same series.
-func checkTrailingMean(at time.Time, usable []exchanges.FundingHistoryEntry, p Params) Check {
-	if p.MinTrailingMeanBps <= 0 || p.TrailingMeanDays <= 0 {
+//
+// The crossing is read off NetAPR rather than restated. NetAPR with a UNIT
+// per-interval rate returns, as its gross hold return, the settlements the
+// hold crosses (or the continuous model's time ratio) and, beside it, the
+// cost as a fraction of notional; the per-interval rate that pays `frac`
+// round trips is frac × cost ÷ that, and per 8h it is that × 8h ÷ interval.
+// One arithmetic serves the entry's net APR and this floor, which is the
+// point: at frac = 1 the floor is exactly "NetAPR of the trailing mean ≥ 0",
+// and both sides of the 3.5 gate take it from the same function. Per 8h the
+// crossing does not depend on the cadence — a 0.30% trip over 30 days is 90
+// settlements at 8h or 720 at 1h, the same money — which is the reason the
+// comparison unit is per 8h at all.
+//
+// It depends on a priced round trip, so without one — no hedge leg, or a
+// schedule that refuses to price — it reports NOT EVALUATED rather than a
+// second cause beside the hedge/liquidity check that already names the real
+// one; the absolute floor alone never needed the cost and still does not.
+func checkTrailingMean(at time.Time, usable []exchanges.FundingHistoryEntry, c Candidate, cost RoundTrip, hedged bool, p Params) Check {
+	absoluteOn := p.MinTrailingMeanBps > 0 && p.TrailingMeanDays > 0
+	crossingOn := p.TrailingMeanMinCostFrac > 0 && p.TrailingMeanDays > 0
+	if !absoluteOn && !crossingOn {
 		return Check{Name: "trailing_mean", Passed: true,
-			DetailVI: "Không xét funding trung bình của chuỗi (min_trailing_mean_bps = 0) — mọi chuỗi đủ điều kiện khác đều được vào."}
+			DetailVI: "Không xét funding trung bình của chuỗi (min_trailing_mean_bps = 0, trailing_mean_min_cost_frac = 0) — mọi chuỗi đủ điều kiện khác đều được vào."}
 	}
 	if len(usable) == 0 {
 		return Check{Name: "trailing_mean", Passed: false, DetailVI: "Không có mốc settle nào để tính funding trung bình."}
@@ -607,9 +646,69 @@ func checkTrailingMean(at time.Time, usable []exchanges.FundingHistoryEntry, p P
 			"Không có mốc settle nào trong %g ngày gần nhất.", p.TrailingMeanDays)}
 	}
 	meanBps := sum / float64(n) * bpsPerUnit
-	return Check{Name: "trailing_mean", Passed: meanBps >= p.MinTrailingMeanBps, DetailVI: fmt.Sprintf(
-		"Funding trung bình %.4f bps/8h qua %d mốc trong %g ngày, ngưỡng chọn chuỗi %.4f bps/8h.",
-		meanBps, n, p.TrailingMeanDays, p.MinTrailingMeanBps)}
+
+	floorPer8hBps, floors := 0.0, ""
+	if absoluteOn {
+		floorPer8hBps = p.MinTrailingMeanBps
+		floors += fmt.Sprintf("; ngưỡng chọn chuỗi %.4f bps/8h", p.MinTrailingMeanBps)
+	}
+	if crossingOn {
+		if !hedged {
+			return Check{Name: "trailing_mean", NotEvaluated: true, DetailVI: notEvaluatedVI}
+		}
+		if !cost.OK {
+			return Check{Name: "trailing_mean", NotEvaluated: true,
+				DetailVI: "Chưa đánh giá điểm cắt chi phí — không định giá được vòng vào/ra, xem điều kiện liquidity."}
+		}
+		// A UNIT per-interval rate: its gross hold return is the settlement
+		// count (or the continuous model's time ratio), with the same
+		// identity, hold and cadence checks the real rate gets.
+		unitRate := NetAPR(NetAPRInput{
+			Source: c.PerpSource, Symbol: c.Symbol,
+			Model:               newest.Model,
+			RatePerIntervalFrac: 1,
+			IntervalSec:         newest.IntervalSec,
+			HoldingDays:         p.HoldingDays,
+			Cost:                cost,
+		})
+		if !unitRate.OK {
+			return Check{Name: "trailing_mean", Passed: false, DetailVI: "Không tính được điểm cắt chi phí của chuỗi: " + unitRate.ReasonVI}
+		}
+		if unitRate.GrossReturnHoldFrac <= 0 {
+			return Check{Name: "trailing_mean", Passed: false, DetailVI: fmt.Sprintf(
+				"Giữ %g ngày không qua nổi một mốc settle ở nhịp %ds — không có điểm cắt chi phí để so.",
+				p.HoldingDays, newest.IntervalSec)}
+		}
+		crossingPerIntervalFrac := p.TrailingMeanMinCostFrac * unitRate.CostHoldFrac / unitRate.GrossReturnHoldFrac
+		// Per 8h through the ONE per-8h derivation the readings and the
+		// stored history share (GrossAPRFrac delegates to it for the same
+		// reason): a second copy of "× 8h ÷ interval" here would drift.
+		crossing, err := exchanges.DeriveFundingRates(exchanges.FundingData{
+			Source: c.PerpSource, Symbol: c.Symbol,
+			RatePerIntervalFrac: crossingPerIntervalFrac, IntervalSec: newest.IntervalSec,
+		})
+		if err != nil {
+			return Check{Name: "trailing_mean", Passed: false, DetailVI: "Không quy điểm cắt chi phí về 8h được: " + err.Error()}
+		}
+		crossingPer8hBps := crossing.RatePer8hFrac * bpsPerUnit
+		if crossingPer8hBps > floorPer8hBps {
+			floorPer8hBps = crossingPer8hBps
+		}
+		over := fmt.Sprintf("%d mốc", unitRate.SettlementsInHold)
+		if newest.Model == exchanges.FundingContinuous {
+			over = "mẫu liên tục, quy theo thời gian"
+		}
+		floors += fmt.Sprintf("; điểm cắt chi phí của chuỗi này %.4f bps/8h (= %.2f × vòng %.4f%% đã định giá chia cho %s của %g ngày giữ ở nhịp %ds)",
+			crossingPer8hBps, p.TrailingMeanMinCostFrac, cost.TotalPct, over, p.HoldingDays, newest.IntervalSec)
+	}
+	passed := meanBps >= floorPer8hBps
+	verdict := "đạt"
+	if !passed {
+		verdict = "KHÔNG đạt"
+	}
+	return Check{Name: "trailing_mean", Passed: passed, DetailVI: fmt.Sprintf(
+		"Funding trung bình %.4f bps/8h qua %d mốc trong %g ngày%s — %s.",
+		meanBps, n, p.TrailingMeanDays, floors, verdict)}
 }
 
 // checkMarginKnown refuses to OPEN a leveraged short whose liquidation price

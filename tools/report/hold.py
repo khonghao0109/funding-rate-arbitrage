@@ -33,17 +33,21 @@ AXES = ["min_rate_per_8h_bps", "persistence_periods", "min_net_apr_frac", "exit_
         # Written by cmd/backtest since 2026-09-09: the basis limits (until
         # then hardcoded, so every earlier CSV ran at 1.0 / 0.5) and the
         # series-selection pair (off before it existed).
-        "max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days"]
+        "max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days",
+        # Written since 2026-09-10: the cost-crossing selection (off before it existed).
+        "trailing_mean_min_cost_frac"]
 # Columns a CSV written before an axis existed may lack: the value the engine
 # used then, never 0 when 0 would mean something else (1 negative period is
 # the 3.2 rule; 0 is not a rule).
 AXIS_DEFAULT = {"exit_negative_min_bps": 0.0, "exit_negative_periods": 1, "exit_negative_cum_cost_frac": 0.0,
                 "min_hold_recovered_cost_frac": 0.0,
-                "max_basis_pct": 1.0, "max_basis_widen_pct": 0.5, "min_trailing_mean_bps": 0.0, "trailing_mean_days": 0.0}
+                "max_basis_pct": 1.0, "max_basis_widen_pct": 0.5, "min_trailing_mean_bps": 0.0, "trailing_mean_days": 0.0,
+                "trailing_mean_min_cost_frac": 0.0}
 CONFIG_KEYS = {"min_rate_per_8h_bps", "persistence_periods", "min_net_apr_frac", "exit_net_apr_frac",
                "exit_persistence_periods", "exit_negative_min_bps", "exit_negative_periods",
                "exit_negative_cum_cost_frac", "min_hold_recovered_cost_frac", "notional_quote", "holding_days",
-               "max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days"}
+               "max_basis_pct", "max_basis_widen_pct", "min_trailing_mean_bps", "trailing_mean_days",
+               "trailing_mean_min_cost_frac"}
 REASONS = ["window_end", "basis", "sign_flip", "decay", "liquidation", "unpriceable", "hedge_gone", "other"]
 HORIZONS = (7, 14, 30, 60, 90, 180)
 

@@ -176,6 +176,12 @@ type Strategy struct {
 	// a horizon: a positive floor with zero days is refused at load.
 	MinTrailingMeanBps float64 `yaml:"min_trailing_mean_bps"`
 	TrailingMeanDays   float64 `yaml:"trailing_mean_days"`
+	// TrailingMeanMinCostFrac (strategy.Params.TrailingMeanMinCostFrac, added
+	// 2026-09-10) selects on the series' OWN cost-crossing: the trailing
+	// mean over trailing_mean_days, held for holding_days, must pay this
+	// fraction of the priced round trip. OPTIONAL; 0 is off, and like the
+	// absolute floor it needs the horizon.
+	TrailingMeanMinCostFrac float64 `yaml:"trailing_mean_min_cost_frac"`
 }
 
 // Depth configures the periodic order book sampling (step 2.7b).
@@ -863,6 +869,11 @@ func (st Strategy) validate(d Depth) error {
 	case st.MinTrailingMeanBps > 0 && st.TrailingMeanDays <= 0:
 		return fmt.Errorf("strategy.min_trailing_mean_bps is set but trailing_mean_days is 0: a floor on a mean " +
 			"needs the horizon the mean is taken over")
+	case st.TrailingMeanMinCostFrac < 0:
+		return fmt.Errorf("strategy.trailing_mean_min_cost_frac must be >= 0 (a fraction of the round trip), got %g", st.TrailingMeanMinCostFrac)
+	case st.TrailingMeanMinCostFrac > 0 && st.TrailingMeanDays <= 0:
+		return fmt.Errorf("strategy.trailing_mean_min_cost_frac is set but trailing_mean_days is 0: the crossing is " +
+			"tested on a mean, and a mean needs the horizon it is taken over")
 	case d.Enabled && st.MaxBookAgeMin < d.RefreshEveryMin:
 		return fmt.Errorf("strategy.max_book_age_min (%d) is below depth.refresh_every_min (%d): every fill "+
 			"would be refused as stale before the next sweep", st.MaxBookAgeMin, d.RefreshEveryMin)
@@ -888,6 +899,7 @@ func (st Strategy) StrategyParams() strategy.Params {
 		MinLiquidationBufferPct:  st.MinLiquidationBufferPct,
 		MaxBasisPct:              st.MaxBasisPct, MaxBasisWidenPct: st.MaxBasisWidenPct,
 		MinTrailingMeanBps: st.MinTrailingMeanBps, TrailingMeanDays: st.TrailingMeanDays,
+		TrailingMeanMinCostFrac: st.TrailingMeanMinCostFrac,
 	}
 }
 
