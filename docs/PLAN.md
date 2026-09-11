@@ -3285,6 +3285,8 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q10** | **Giữ frontend vanilla JS.** Sửa backend broadcast trước, không đổi framework | 2026-08-28 |
 | **Q11** | **Bỏ Basis Trade khỏi lộ trình; GĐ 6 trở thành Crowding Reversal** — chiến lược định hướng port Go từ gói nghiên cứu Python, parity với fixture, qua cổng riêng 6.5. Giữ 6.4 portfolio manager. **Quyết định LỘ TRÌNH, có thể đảo ngược** — không phải kết luận "basis trade không hoạt động" | 2026-09-11 |
 | **Q12** | **Sổ paper có vốn ảo (4.3) làm SONG SONG với cổng 3.5, như tiến trình chỉ đọc `signal_journal` + store; không bao giờ khởi động lại tiến trình 3.5.** 3.5 so theo quyết định (③), 4.3 thêm góc nhìn tiền. 4.1/4.2/4.4–4.6 vẫn đứng sau cổng. Giao diện demo không có nút go-live | 2026-09-11 |
+| **Q1** | **Sàn chính cho execution: Binance.** Tài liệu tốt nhất, có testnet, thanh khoản sâu nhất trong 9 nguồn đã đo, và là sàn DUY NHẤT hôm nay có cả hai chân trên một venue (`binance_futures ← binance_spot`) — điều kiện của ký quỹ gộp ở GĐ 4. Chốt từ gợi ý §7.2 cũ | 2026-09-11 |
+| **Q5** | **Kênh alert: Telegram.** Discord là tuỳ chọn thêm sau, không phải kênh thứ hai bắt buộc. `internal/notify` ở Bước 3.4 (hoãn sau cổng 3.5) làm Telegram trước | 2026-09-11 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -3367,17 +3369,49 @@ FE hiện tại **đã tối ưu đúng cách** và không phải nút thắt: h
 
 Lãng phí nằm ở **backend** — xem §7.3. React/Vue giúp quản lý độ phức tạp ứng dụng, không giúp render dữ liệu tần suất cao; muốn đạt hiệu năng như hiện tại còn phải bypass cơ chế reconcile của chúng.
 
+#### Q1 — Vì sao Binance là sàn chính
+
+Ba lý do đo được, không phải cảm tính. (1) **Cùng venue cho cả hai chân**:
+trong bảng ánh xạ spot↔perp hiện tại chỉ có `binance_futures ← binance_spot`
+là hai chân nằm ở một sàn (bybit_spot cũng có nhưng bybit_futures ghép với
+binance_spot vì rẻ hơn theo `CheapestVerifiedSpot`), và ký quỹ gộp một tài
+khoản — thứ đưa hiệu quả vốn tới gần trần 2,00× mà không thêm rủi ro thanh lý
+(ghi ở CLAUDE.md, mục ký quỹ) — chỉ có khi cả hai chân ở một chỗ. (2) **Độ
+sâu**: ở mọi lượt đo từ 3.1 tới nay, binance là sàn duy nhất khớp được cả 12M
+notional trong cửa sổ 0,5% khi hyperliquid bị từ chối; giá của một round trip
+50k ở đây (0,30%) cũng là mức thấp nhất trong các sàn USDT. (3) **Testnet và
+tài liệu**: Binance có testnet USD-M và spot công khai, nên Bước 4.2 (lệnh
+testnet) làm được mà không chạm tiền thật; GĐ 6 cũng dùng dữ liệu
+`globalLongShortAccountRatio` chỉ Binance công bố.
+
+**Cái giá phải nói ra:** biểu ký quỹ duy trì của Binance (`leverageBracket`)
+cần API key nên hôm nay `margin.verified: false` và luật `margin_known` từ chối
+mở vị thế đòn bẩy ở đó; Bước 4.1 có key thì xác minh được, và cho tới lúc đó
+mọi backtest dùng ký quỹ trên binance đều bị từ chối ở cửa chứ không đoán.
+Quyết định này chọn sàn để **thực thi**, không phải sàn để **thu funding** —
+lượt sàng 2026-09-09 và quy luật 3 năm đều nói hyperliquid trả 2–3× các sàn
+USDT trên cùng coin, và việc đó thuộc phân bổ vốn (5.4), không thuộc Q1.
+
+#### Q5 — Vì sao Telegram
+
+Người vận hành xem trên điện thoại; Telegram có Bot API không cần máy chủ
+trung gian, một token qua env/.env (godotenv đã có) và giới hạn 30 msg/s
+thừa cho throttle theo khoá cơ hội của 3.4. Discord webhook đơn giản ngang
+nhưng là kênh thứ hai phải trông — giữ làm tuỳ chọn, không phải mặc định.
+Chốt sớm để 3.4 (hoãn sau cổng 3.5) không phải mở lại câu hỏi này khi tới
+lượt; nội dung alert vẫn theo quy tắc 2 của CLAUDE.md — mọi con số đẩy đi
+mang nhãn đã trừ gì.
+
 ### 7.2. Còn cần chốt
 
 | # | Câu hỏi | Cần trước | Gợi ý |
 |---|---|---|---|
-| Q1 | Sàn nào làm sàn chính cho execution? | GĐ 4.2 | Binance — tài liệu tốt nhất, có testnet, thanh khoản cao |
 | Q2 | Database: SQLite hay PostgreSQL/TimescaleDB? | GĐ 2.3 | SQLite là đủ ở quy mô này; đổi sau nếu cần |
 | Q3 | Vốn thật dự kiến cho GĐ 4.6? | GĐ 4.6 | $200–500 để kiểm chứng, không phải để kiếm lời |
-| Q5 | Kênh alert: Telegram hay Discord? | GĐ 3.4 | Telegram — tiện trên điện thoại hơn |
-| Q6 | Chấp nhận đòn bẩy tối đa bao nhiêu ở chân perp? | GĐ 5.4 | 2–3x; cao hơn thì rủi ro thanh lý vượt lợi ích |
+| Q6 | Chấp nhận đòn bẩy tối đa bao nhiêu ở chân perp? | GĐ 5.4 | 2–3x; cao hơn thì rủi ro thanh lý vượt lợi ích. Đo 2026-09-07 (CLAUDE.md, mục ký quỹ): toàn bộ phần thưởng trên vốn là +0,83 điểm ở 2×, âm từ 5× |
 
-> Q4 (framework FE) đã chuyển thành Q10 ở §7.1.
+> Q4 (framework FE) đã chuyển thành Q10 ở §7.1. **Q1 (sàn chính: Binance) và
+> Q5 (alert: Telegram) chốt 2026-09-11 và chuyển sang §7.1.**
 
 ### 7.3. Ngưỡng mở rộng của tầng broadcast
 
