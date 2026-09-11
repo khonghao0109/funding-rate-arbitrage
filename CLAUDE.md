@@ -610,7 +610,12 @@ against `cmd/backtest` on the CURRENT block; record the fee and key state in
 `.paper/` at launch. Since 2026-09-10 every journal row also carries the fee
 state of both legs it was priced with (`params_json.fees`, PLAN 3.5 ④), and
 the launch log prints every source's taker bps and verified flag — the
-first run's rows lack the key and mean "the fees of `2328307`". The
+first run's rows lack the key and mean "the fees of `2328307`". The first
+run had a worse hole than its death: the machine slept on lid-close many
+times a day (`pmset -g log`), so its journal holds ~55 rows a day per
+market instead of 144 and 16 of 32 settlements have no row within two
+hours — a relaunch needs AC power, an open lid and `caffeinate -i -s`
+(the relaunch script does the last). The
 "alert-only mode" is a **journal-only mode**: `cmd/scanner`'s `startSignals` evaluates
 every hedge leg every 10 minutes with the SAME `strategy.Candidate` the
 backtest builds — settled history from the store, fees from config (loaded ONCE at start-up: the 3.5 process still holds the pre-verification fees of `2328307`, see PLAN 3.5 ③), the newest
@@ -922,6 +927,11 @@ go run ./cmd/backtest -sweep -months 12 -min-rate-bps 0.3,0.5,0.8,1.2,2,3,5 \
 # config.yaml. PORT picks the port (8082 belongs to the phase-1 soak).
 PORT=8085 go run ./cmd/scanner
 sqlite3 data/scanner.db "SELECT datetime(evaluated_at_ms/1000,'unixepoch'), symbol, perp_source, action FROM signal_journal ORDER BY 1 DESC LIMIT 28"
+
+# The 3.5 verdict by machine (PLAN 3.5 ③ steps 2, 4, 5): the journal in the
+# run's window against a replay of config.yaml's block, decision by decision.
+# Exit 0 passed, 1 failed, 2 the journal was not written with this block.
+go run ./cmd/backtest -compare-journal -from 2026-09-10T07:40:00 -to 2026-09-24T07:40:00 -csv /tmp/compare.csv
 
 
 # Re-measure what a stored price sample costs on disk before changing

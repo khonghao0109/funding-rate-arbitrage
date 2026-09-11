@@ -358,8 +358,33 @@ func assumptions(series Series, params strategy.Params) []string {
 	return out
 }
 
-// Run replays one series over one window with one parameter set.
+// DecisionAt is one decision the replay made at one in-window settlement,
+// as the production rule returned it, for the step-3.5 comparison against
+// the live journal (PLAN 3.5 ③ step 4). Holding says which rule was asked:
+// EvaluateExit on an open position, EvaluateEntry when flat.
+type DecisionAt struct {
+	AtMs     int64
+	Holding  bool
+	Decision strategy.Decision
+}
+
+// Run replays one series through the production entry and exit rules.
 func Run(series Series, window Window, params strategy.Params) Result {
+	out, _ := run(series, window, params, false)
+	return out
+}
+
+// RunTraced is Run plus every decision the rules made inside the window, one
+// per in-window settlement (a liquidation closes without asking the rule).
+// The trace is a witness and changes nothing: Run and RunTraced return the
+// same Result, pinned by test. Sweeps never trace — a grid of thousands of
+// sets over hourly venues would hold billions of decisions.
+func RunTraced(series Series, window Window, params strategy.Params) (Result, []DecisionAt) {
+	return run(series, window, params, true)
+}
+
+func run(series Series, window Window, params strategy.Params, traced bool) (Result, []DecisionAt) {
+	var trace []DecisionAt
 	out := Result{
 		Symbol: series.Symbol, PerpSource: series.PerpSource, SpotSource: series.SpotSource,
 		Params: params, Window: window, AssumptionsVI: assumptions(series, params),
@@ -369,11 +394,11 @@ func Run(series Series, window Window, params strategy.Params) Result {
 
 	if window.ToMs <= window.FromMs {
 		out.ReasonVI = fmt.Sprintf("Cửa sổ rỗng hoặc ngược: [%d, %d).", window.FromMs, window.ToMs)
-		return out
+		return out, nil
 	}
 	if len(series.Settled) == 0 {
 		out.ReasonVI = "Chuỗi không có mốc settle nào để phát lại."
-		return out
+		return out, nil
 	}
 	// A continuous series is a sample of a funding INDEX, not a settlement
 	// list. This engine counts settlements, so it refuses by name rather than
@@ -384,7 +409,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 				"%s/%s là chuỗi model='continuous' — hàng của nó là MẪU chỉ số funding theo giờ, "+
 					"không phải mốc settle. Engine này đếm settle nên từ chối, thay vì ghi khống 8.760 kỳ/năm.",
 				series.PerpSource, series.Symbol)
-			return out
+			return out, nil
 		}
 	}
 
@@ -394,7 +419,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 	out.DroppedSpecial = droppedSpecial
 	if len(usable) == 0 {
 		out.ReasonVI = "Không còn mốc settle nào dùng được sau khi lọc."
-		return out
+		return out, nil
 	}
 	// Oldest-first is an INPUT contract, not something to sort into shape:
 	// the store and every fetcher deliver it, and a caller handing over a
@@ -402,7 +427,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 	for i := 1; i < len(usable); i++ {
 		if usable[i].SettledAtMs < usable[i-1].SettledAtMs {
 			out.ReasonVI = fmt.Sprintf("Chuỗi không theo thứ tự cũ→mới tại chỉ số %d — từ chối phát lại.", i)
-			return out
+			return out, nil
 		}
 	}
 
@@ -423,7 +448,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 		// would read like "the strategy found nothing here" — 12 of the 16
 		// shipped series (unverified fee schedules) used to look exactly that.
 		out.ReasonVI = "Không định giá được vòng vào/ra nên không phát lại: " + roundTrip.ReasonVI
-		return out
+		return out, nil
 	}
 	costFrac := roundTrip.TotalPct / 100
 	out.RoundTripCostPct = roundTrip.TotalPct
@@ -502,7 +527,11 @@ func Run(series Series, window Window, params strategy.Params) Result {
 		}
 
 		if !open {
-			if strategy.EvaluateEntry(at, candidate, params).Action == strategy.ActionEnter {
+			decision := strategy.EvaluateEntry(at, candidate, params)
+			if traced {
+				trace = append(trace, DecisionAt{AtMs: entry.SettledAtMs, Holding: false, Decision: decision})
+			}
+			if decision.Action == strategy.ActionEnter {
 				open = true
 				position = strategy.Position{
 					Symbol: series.Symbol, PerpSource: series.PerpSource, SpotSource: series.SpotSource,
@@ -577,6 +606,9 @@ func Run(series Series, window Window, params strategy.Params) Result {
 		lastCheckedMs = entry.SettledAtMs
 
 		decision := strategy.EvaluateExit(at, position, candidate, params)
+		if traced {
+			trace = append(trace, DecisionAt{AtMs: entry.SettledAtMs, Holding: true, Decision: decision})
+		}
 		for _, check := range decision.Checks {
 			if check.Name == "basis_widened" && check.NotEvaluated {
 				out.BasisNotEvaluable++
@@ -609,7 +641,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 
 	if out.Settlements == 0 {
 		out.ReasonVI = "Không có mốc settle nào trong cửa sổ."
-		return out
+		return out, nil
 	}
 
 	out.TotalReturnFrac = equity
@@ -636,7 +668,7 @@ func Run(series Series, window Window, params strategy.Params) Result {
 		out.PositiveFundingPeriodShare = float64(positivePeriods) / float64(paidPeriods)
 	}
 	out.OK = true
-	return out
+	return out, trace
 }
 
 // closeTrade charges the round trip once and finalises the trade, returning the

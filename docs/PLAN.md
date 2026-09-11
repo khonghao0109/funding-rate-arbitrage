@@ -2684,7 +2684,23 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > — tức nhật ký mới so với `cmd/backtest` trên khối config hiện tại chứ
 > không còn phải dựng lại `2328307`; ghi trạng thái phí và khoá vào `.paper/`
 > lúc lên như ③ yêu cầu (từ lần chạy 2 nhật ký tự mang trạng thái phí, xem
-> ④). Đoạn `2026-09-07 → 09-10` vẫn là 4.004 hàng dữ liệu
+> ④).
+>
+> **Lần chạy 1 còn một lỗ hổng lớn hơn cái chết của nó (đo 2026-09-10 bằng
+> `-compare-journal` trên chính nhật ký đó, khối `2328307`, 4 chuỗi binance,
+> 32 mốc settle):** 15 mốc (a) khớp, 1 mốc (c) — ETH 09-09 08:00, backtest
+> `enter` / sống `skip`, `persistence` khác ở cùng lịch sử vì hàng cũ chưa
+> có `inputs.newest_settled_at_ms` nên không đổ được cho top-up đến muộn —
+> và **16/32 mốc KHÔNG CÓ hàng nhật ký nào trong 2 giờ sau đó**. Nhật ký
+> BTC·binance chỉ có 143 hàng trong 2,6 ngày (≈55/ngày thay vì 144): 131
+> khoảng cách 10 phút và các khoảng 30, 63, 103, 125, 144, 170, 192, 204,
+> 405, 449, **611 phút**. `pmset -g log` giải thích: máy **ngủ vì gập màn
+> hình** ("Entering Sleep state due to 'Clamshell'") nhiều lần mỗi ngày rồi
+> chỉ dark-wake 15 phút một lần để bảo trì; `caffeinate -s` của soak GĐ1 chỉ
+> có hiệu lực khi cắm sạc. Điều kiện cho lần chạy 2, ngoài code: **máy cắm
+> sạc, không gập màn hình, `caffeinate -i -s` giữ tiến trình** (kịch bản chạy
+> lại làm việc này); một mốc settle không có hàng trong 2 giờ sau nó là
+> "thiếu hàng" trong bảng so sánh và không đếm vào (a)/(b)/(c). Đoạn `2026-09-07 → 09-10` vẫn là 4.004 hàng dữ liệu
 > đối chiếu hợp lệ cho một phép so 2,6 ngày, nhưng không phải phán quyết.
 
 > **Khởi động (2026-09-07).** Phần làm được trong một phiên là ba việc, phán
@@ -2735,8 +2751,12 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > 5. **Ngưỡng ĐẠT:** (c) = **0** — một lệch không giải thích được là hai bản
 >    đã trôi, đúng thứ cổng sinh ra để bắt (Q8); và (a) ≥ **95%** trên các mốc
 >    `enter`/`exit` của 4 chuỗi binance. Về tiền: tổng `net_apr_frac` các hàng
->    `enter` sống so với `RealizedAPRFrac` backtest chỉ được lệch trong phạm vi
->    chênh `cost_total_pct` sống−cố định cộng dồn — lệch lớn hơn là (c).
+>    `enter` sống so với tổng APR ròng DỰ PHÓNG tại các quyết định `enter` của
+>    backtest — cùng đơn vị, cùng thời điểm; `RealizedAPRFrac` của cả cửa sổ
+>    là số khác loại (đã trừ vòng phí của lệnh đóng cưỡng bức ở cuối) nên
+>    không đặt cạnh (sửa 2026-09-10 khi viết `-compare-journal`) — chỉ được
+>    lệch trong phạm vi chênh `cost_total_pct` sống−cố định cộng dồn quy ra APR
+>    (Δcost ÷ holding_days × 365) — lệch lớn hơn là (c).
 > 6. **Không đạt → quay lại 3.2, KHÔNG sang GĐ4.** Đạt → GĐ4 mở, và Bước 3.4
 >    (alert) làm ngay trước 4.1.
 >
@@ -2774,9 +2794,39 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > corpus vừa là nhật ký, và mỗi giờ nó bồi thêm depth thật, tức từ hôm nay
 > backtest tương lai bắt đầu có độ sâu lịch sử.
 >
-> **Nợ tooling cho phiên phán quyết:** `cmd/backtest -from/-to` theo ms; một
-> lệnh `cmd/backtest -compare-journal` in bảng (a)/(b)/(c) theo giao thức trên
-> thay vì so tay. Cả hai đọc-only, không đổi luật.
+> **Nợ tooling cho phiên phán quyết — trả 2026-09-10:** `-from/-to` nhận cả
+> mốc giờ (`YYYY-MM-DDTHH:MM:SS` UTC hoặc RFC3339 có múi giờ), và
+> `cmd/backtest -compare-journal -from … -to … [-csv cặp.csv]` làm bước 2,
+> 4, 5 bằng máy: đọc `signal_journal` trong cửa sổ, kiểm mọi hàng theo
+> `strategy.Params.Map()` của khối replay (khoá chung ở GIÁ TRỊ HIỆU LỰC,
+> khoá vắng ≡ luật cũ; `fees` so với biểu phí replay định giá; lệch → in và
+> DỪNG, mã thoát 2), replay từng chuỗi bằng `backtest.RunTraced` (đúng `Run`
+> cộng một quyết định mỗi mốc trong cửa sổ, có test bằng nhau), ghép mỗi mốc
+> với hàng nhật ký ĐẦU TIÊN sau nó (trước mốc kế hoặc tối đa 2 giờ — hơn
+> thế là tiến trình không chạy, đếm "thiếu hàng"), rồi phân loại: (a) cùng
+> hành động; (b) khác hành động mà giải thích được bằng ĐÚNG MỘT đầu vào —
+> *sổ lệnh* (`cost_total_pct` sống ≠ cố định và chỉ các điều kiện phụ thuộc
+> chi phí khác), *basis* (chỉ `basis_widened` khác), *lịch sử*
+> (`inputs.newest_settled_at_ms` của hàng sống khác mốc backtest quyết định
+> trên — chỉ đọc được từ lần chạy 2, hàng cũ không có thì không được đổ cho
+> lịch sử); (c) phần còn lại, kể cả hai đầu vào cùng lệch; riêng "hai bên
+> không cùng trạng thái vị thế" (hệ quả của một lệch trước) đếm cột trạng
+> thái, không phải (c) mới. `history_depth` không đem so vì backtest nạp 200
+> ngày trước cửa sổ còn đường sống nạp 30 ngày. Bước 5 in (c), tỷ lệ (a)
+> trên mốc enter/exit, và Σ `net_apr_frac` hàng enter sống so với Σ APR ròng
+> quyết định enter của replay cạnh biên chênh chi phí cộng dồn; mã thoát 0
+> đạt / 1 không đạt.
+>
+> **Nợ mới (ghi 2026-09-10):** đường sống không ghi gì khi máy ngủ và không
+> báo khoảng trống khi thức dậy — chỉ `pmset -g log` và mật độ hàng nhật ký
+> cho thấy; một dòng log "tick trễ N phút" lúc thức dậy và đếm số tick trễ
+> trong `source_status` là việc nhỏ nên làm trước lần chạy 3. Và:
+> `settledLookback` của đường sống là 30 ngày
+> (`cmd/scanner/signals.go`) nên `trailing_mean_days` > 30 sẽ bị điều kiện
+> `trailing_mean` TỪ CHỐI ở đường sống ("chưa phủ") trong khi backtest nạp
+> 200 ngày — hai khoá chọn chuỗi đang ở 0 nên lần chạy 2 không bị ảnh
+> hưởng; bật chúng lên là phải nâng lookback sống theo chân trời (sửa nhỏ,
+> làm khi cần).
 
 ---
 

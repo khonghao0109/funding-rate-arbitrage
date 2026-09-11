@@ -263,7 +263,8 @@ func TestParams_MapUsesConfigKeysAndEffectiveValues(t *testing.T) {
 	for _, k := range []string{"min_rate_per_8h_bps", "persistence_periods", "min_net_apr_frac", "notional_quote",
 		"holding_days", "exit_net_apr_frac", "exit_persistence_periods", "exit_negative_min_bps", "exit_negative_periods",
 		"exit_negative_cum_cost_frac", "min_hold_recovered_cost_frac", "max_basis_pct", "max_basis_widen_pct",
-		"min_trailing_mean_bps", "trailing_mean_days", "trailing_mean_min_cost_frac", "max_book_age_min"} {
+		"min_trailing_mean_bps", "trailing_mean_days", "trailing_mean_min_cost_frac", "max_book_age_min",
+		"perp_margin_frac", "min_liquidation_buffer_pct"} {
 		if _, ok := m[k]; !ok {
 			t.Errorf("Map lacks %q", k)
 		}

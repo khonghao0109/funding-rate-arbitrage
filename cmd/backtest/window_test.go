@@ -27,6 +27,17 @@ func TestReplayWindow_DefaultsToTheLastNMonthsAndPinsOnRequest(t *testing.T) {
 	if err != nil || w.FromMs != day(2023, 9, 9) || w.ToMs != day(2025, 9, 9) {
 		t.Fatalf("both pinned must ignore -months: %+v, %v", w, err)
 	}
+	// A run starts at an instant, not a midnight: date-times and zoned stamps
+	// are read too, and normalized to UTC.
+	w, err = replayWindow(now, 6, "2026-09-10T07:40:00", "2026-09-24T09:40:00+07:00")
+	if err != nil || w.FromMs != time.Date(2026, 9, 10, 7, 40, 0, 0, time.UTC).UnixMilli() ||
+		w.ToMs != time.Date(2026, 9, 24, 2, 40, 0, 0, time.UTC).UnixMilli() {
+		t.Fatalf("date-time edges: %+v, %v", w, err)
+	}
+	w, err = replayWindow(now, 6, "2026-09-07 09:39:52 +0700", "2026-09-21 09:39:52 +0700")
+	if err != nil || w.FromMs != time.Date(2026, 9, 7, 2, 39, 52, 0, time.UTC).UnixMilli() {
+		t.Fatalf(".paper/started_at's own format must be accepted: %+v, %v", w, err)
+	}
 	for _, bad := range [][2]string{{"2025-09-09", "2023-09-09"}, {"2025-09-09", "2025-09-09"}, {"09/09/2023", ""}, {"", "yesterday"}} {
 		if _, err := replayWindow(now, 6, bad[0], bad[1]); err == nil {
 			t.Errorf("-from %q -to %q must be refused", bad[0], bad[1])

@@ -35,8 +35,9 @@ import (
 func main() {
 	configPath := flag.String("config", "config.yaml", "configuration file")
 	months := flag.Int("months", 6, "how many months back to replay")
-	from := flag.String("from", "", "replay window start, YYYY-MM-DD UTC (default: -months before the end)")
-	to := flag.String("to", "", "replay window end, YYYY-MM-DD UTC, exclusive (default: now)")
+	from := flag.String("from", "", "replay window start, YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS UTC, or RFC3339 (default: -months before the end)")
+	to := flag.String("to", "", "replay window end, same forms, exclusive (default: now)")
+	compareJournal := flag.Bool("compare-journal", false, "compare the signal journal in [-from, -to) with a replay of config.yaml's strategy block, decision by decision (PLAN 3.5 ③); -csv then writes one row per paired decision. Exit 0 passed, 1 failed, 2 parameters mismatched")
 	only := flag.String("symbol", "", "replay one symbol only")
 	sweep := flag.Bool("sweep", false, "sweep the entry threshold and persistence grid")
 	csvPath := flag.String("csv", "", "also write the results to this CSV file")
@@ -86,6 +87,18 @@ func main() {
 	if err != nil {
 		log.Fatalf("configuration: %v", err)
 	}
+	if *compareJournal {
+		// Checked before the corpus is read: a wrong invocation must not
+		// cost minutes of loading first.
+		switch {
+		case *sweep:
+			log.Fatalf("-compare-journal compares ONE parameter set — config.yaml's block — not a grid")
+		case *from == "" || *to == "":
+			log.Fatalf("-compare-journal needs an explicit -from and -to: the window is the run's [started_at, verdict_at), PLAN 3.5 ③ step 1")
+		case !cfg.Strategy.Enabled:
+			log.Fatalf("-compare-journal replays config.yaml's strategy block, and it is disabled — the journal was not written by this file")
+		}
+	}
 	db, err := store.Open(cfg.Storage.Path)
 	if err != nil {
 		log.Fatalf("store: %v", err)
@@ -133,6 +146,12 @@ func main() {
 		}
 		grid = []strategy.Params{plainParams(cfg, spec.NotionalQuote[0], spec.HoldingDays[0],
 			*notional != defaultNotional, *holdDays != defaultHoldDays)}
+	}
+
+	if *compareJournal {
+		code := runCompare(ctx, db, series, window, grid[0], *csvPath)
+		db.Close()
+		os.Exit(code)
 	}
 
 	results := backtest.Sweep(series, window, grid)
@@ -503,6 +522,20 @@ func stamp(ms int64) string { return time.UnixMilli(ms).UTC().Format("2006-01-02
 // one-interval tolerance checkTrailingMean allows.
 const fundingHistoryLookbackDays = 200
 
+// parseStamp reads a window edge as a date, a UTC date-time, or an RFC3339
+// stamp with zone: the journal comparison's window is a run's start instant,
+// not a midnight.
+func parseStamp(s string) (time.Time, error) {
+	// The last layout is what .paper/started_at holds ("2026-09-07 09:39:52
+	// +0700"), so the run's own record can be pasted as -from.
+	for _, layout := range []string{"2006-01-02", "2006-01-02T15:04:05", time.RFC3339, "2006-01-02 15:04:05 -0700"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("want YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC), RFC3339, or 'YYYY-MM-DD HH:MM:SS -0700'")
+}
+
 func fundingLoadFrom(window backtest.Window) int64 {
 	return window.FromMs - int64(fundingHistoryLookbackDays)*24*3600*1000
 }
@@ -516,17 +549,17 @@ func fundingLoadFrom(window backtest.Window) int64 {
 func replayWindow(now time.Time, months int, from, to string) (backtest.Window, error) {
 	end := now
 	if to != "" {
-		t, err := time.Parse("2006-01-02", to)
+		t, err := parseStamp(to)
 		if err != nil {
-			return backtest.Window{}, fmt.Errorf("-to %q: want YYYY-MM-DD", to)
+			return backtest.Window{}, fmt.Errorf("-to %q: %w", to, err)
 		}
 		end = t
 	}
 	start := end.AddDate(0, -months, 0)
 	if from != "" {
-		t, err := time.Parse("2006-01-02", from)
+		t, err := parseStamp(from)
 		if err != nil {
-			return backtest.Window{}, fmt.Errorf("-from %q: want YYYY-MM-DD", from)
+			return backtest.Window{}, fmt.Errorf("-from %q: %w", from, err)
 		}
 		start = t
 	}

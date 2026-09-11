@@ -435,6 +435,7 @@ func (p Params) Map() map[string]any {
 		"max_basis_pct":                p.MaxBasisPct, "max_basis_widen_pct": p.MaxBasisWidenPct,
 		"min_trailing_mean_bps": p.MinTrailingMeanBps, "trailing_mean_days": p.TrailingMeanDays,
 		"trailing_mean_min_cost_frac": p.TrailingMeanMinCostFrac,
+		"perp_margin_frac":            p.PerpMarginFrac, "min_liquidation_buffer_pct": p.MinLiquidationBufferPct,
 	}
 }
 
