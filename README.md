@@ -103,7 +103,9 @@ Phát triển scanner này thành **bot Funding Rate Arbitrage**: giữ đồng 
 
 **Kỳ vọng lợi nhuận: 5–15%/năm.** Đây là chiến lược thu phí ổn định, không phải chiến lược lợi suất cao.
 
-Lộ trình chia **9 giai đoạn / 41 bước**:
+Giai đoạn 6 thêm chiến lược thứ hai, **Crowding Reversal**, là chiến lược **định hướng** (long/short perp BTC/ETH theo độ tập trung của đám đông), **không** delta-neutral. Nó thay Basis Trade theo quyết định Q11 (2026-09-11, có thể đảo ngược). Số liệu của nó là backtest một sàn sau phí giả định, không cộng vào 5–15% ở trên — chi tiết và giới hạn ở [docs/PLAN.md](docs/PLAN.md) GĐ 6.
+
+Lộ trình chia **9 giai đoạn / 42 bước**:
 
 | GĐ | Nội dung | Trạng thái |
 |---|---|---|
@@ -113,7 +115,7 @@ Lộ trình chia **9 giai đoạn / 41 bước**:
 | 3 | Signal, Alert & Backtest | ⬜ |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |
 | 5 | Risk & Vận hành production | ⬜ |
-| 6 | Basis Trade | ⬜ |
+| 6 | Crowding Reversal — chiến lược thứ hai, **định hướng**, port Go từ gói nghiên cứu Python, qua cổng riêng (thay Basis Trade — quyết định Q11, 2026-09-11) | ⬜ |
 | 7–8 | CEX-DEX, Cross-Chain, Statistical | 🔒 Khoá |
 
 Chi tiết từng bước kèm **tiêu chí nghiệm thu**: [docs/PLAN.md](docs/PLAN.md).
@@ -295,7 +297,7 @@ Dữ liệu công khai và credential nằm hai phía khác nhau của ranh gi�
 
 | File | Nội dung |
 |---|---|
-| [docs/PLAN.md](docs/PLAN.md) | Lộ trình 9 giai đoạn / 40 bước, tiêu chí nghiệm thu, sổ rủi ro, quyết định cần chốt |
+| [docs/PLAN.md](docs/PLAN.md) | Lộ trình 9 giai đoạn / 42 bước, tiêu chí nghiệm thu, sổ rủi ro, quyết định cần chốt |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | Quy trình code & review 9 pha, checklist review, quy tắc commit |
 | [docs/DATA-REQUIREMENTS.md](docs/DATA-REQUIREMENTS.md) | Dữ liệu cần từ sàn, khảo sát funding 7 sàn, thiết kế `FundingData`, các bẫy dữ liệu |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Quy ước đặt tên, cấu trúc, lỗi, đồng thời, test, luật phụ thuộc |
