@@ -596,18 +596,21 @@ winners). Rule 2 (moving capital between series) is recorded under PLAN step
 `internal/backtest`, a capital/position object in Go, and the operator's
 decision on how much may sit on one quote-bridged venue.
 
-**Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 was
-RUNNING from 2026-09-07 09:39:52 +07 until the machine rebooted at about
-2026-09-10 01:13 +07** (port **8085**, PID 58422 in `.paper/scanner.pid`;
-last `signal_journal` row 2026-09-09 18:08:49 UTC, last price sample 18:10
-UTC, 4,004 rows — 2 days 15.5 hours of the 14 needed). The phase-1 soak
-process on 8082 died with it and `/tmp` was wiped. **Nothing was restarted:
-that is the operator's decision.** PLAN 3.5 ③ step 1 says what a relaunch
-means — the window restarts from the next launch, 14 unbroken days, no
-stitching — and a process launched from today's working tree runs the
+**Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
+RUNNING AGAIN — run 2, launched 2026-09-11 14:15:50 +07 from a clean tree
+at `59d3707`** (port **8085**, PID in `.paper/scanner.pid`, log
+`.paper/scanner.log`, launch record `.paper/launch-state.txt`, verdict no
+earlier than 2026-09-25 14:15:50 +07; `caffeinate -i -s` holds the machine
+awake and the machine must stay on AC power with the lid open). Run 1 ran
+from 2026-09-07 09:39:52 +07 until the machine rebooted at about 2026-09-10
+01:13 +07 (its record is archived in `.paper/run1-2026-09-07/`; 4,004 rows,
+2 days 15.5 hours of the 14 needed, and the phase-1 soak on 8082 died with
+it). PLAN 3.5 ③ step 1 says what the relaunch means — the window restarts
+from the launch, 14 unbroken days, no stitching — and run 2 runs the
 verified fees and every key added since `2328307`, so its journal compares
-against `cmd/backtest` on the CURRENT block; record the fee and key state in
-`.paper/` at launch. Since 2026-09-10 every journal row also carries the fee
+against `cmd/backtest` on the CURRENT block with `-compare-journal -from
+"2026-09-11 14:15:50 +0700"`; the fee and key state are in the launch log,
+in `.paper/launch-state.txt`, and in every journal row. Since 2026-09-10 every journal row also carries the fee
 state of both legs it was priced with (`params_json.fees`, PLAN 3.5 ④), and
 the launch log prints every source's taker bps and verified flag — the
 first run's rows lack the key and mean "the fees of `2328307`". The first

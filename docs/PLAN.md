@@ -99,7 +99,7 @@
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
-| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 gián đoạn 09-10, chờ chạy lại** | Tín hiệu có kiểm chứng lịch sử |
+| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 2 từ 09-11** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Basis Trade | 4 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot hỗ trợ 2 chiến lược |
@@ -2665,11 +2665,28 @@ thống như alt kraken 2025–26: ở đó 1,5 × 90 ngày loại đúng 4 chu�
 chuỗi lãi với giá −0,10 điểm/năm vào muộn trên phần còn lại. Luật 2 (chuyển
 vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyết.
 
-#### Bước 3.5 — Cổng quyết định 🚦 GIÁN ĐOẠN (chạy 2026-09-07 09:39:52 → 2026-09-10 01:10 +07; chờ quyết định chạy lại)
+#### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY LẦN 2 (khởi động 2026-09-11 14:15:50 +07, phán quyết sớm nhất 2026-09-25 14:15:50 +07)
 - Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
 - Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.
 - **Nghiệm thu:** kết quả mô phỏng khớp với backtest trong sai số chấp nhận được. **Không khớp → quay lại Bước 3.2, không được sang GĐ 4.**
 
+> **Khởi động lại (2026-09-11 14:15:50 +07).** Theo quyết định của người
+> vận hành ngày 2026-09-11. Binary build từ working tree sạch ở `59d3707`
+> (`.paper/scanner-bin`), khối `strategy:` hiện tại của `config.yaml` (bộ
+> đã áp dụng 2026-09-09; `min_trailing_mean_bps`, `trailing_mean_days`,
+> `trailing_mean_min_cost_frac`, `perp_margin_frac` đều 0), biểu phí đã xác
+> minh ở cả 9 nguồn — cả hai được log lúc lên và mỗi hàng nhật ký tự mang
+> (`params_json.fees`, `params_json.inputs`). PID trong `.paper/scanner.pid`,
+> log `.paper/scanner.log`, hồ sơ lúc lên `.paper/launch-state.txt`; hồ sơ
+> lần 1 dời vào `.paper/run1-2026-09-07/` (kèm `ENDED`). Corpus thật đã
+> kéo lên 36 tháng ngay trước khi lên (binance/bybit/hyperliquid; kraken từ
+> 2025-09; nến binance/bybit đủ 3 năm), sổ giấy khởi động TRỐNG (nhật ký lần
+> 1 không để lại hàng enter/hold nào). `caffeinate -i -s -w <pid>` giữ máy
+> thức; điều kiện ngoài code: **cắm sạc và không gập màn hình suốt 14
+> ngày**. Phán quyết:
+> `go run ./cmd/backtest -compare-journal -from "2026-09-11 14:15:50 +0700"
+> -to <verdict_at>` (mã thoát 0/1/2), không sớm hơn 2026-09-25 14:15:50 +07.
+>
 > **Gián đoạn (ghi 2026-09-10).** Máy khởi động lại lúc ≈01:13 +07 ngày
 > 2026-09-10 (`uptime`); tiến trình nhật ký (PID 58422, cổng 8085) ghi hàng
 > `signal_journal` cuối lúc **2026-09-09 18:08:49 UTC** (01:08 +07), mẫu giá
@@ -3197,7 +3214,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
-[  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 GIÁN ĐOẠN 2026-09-10 01:10 (máy khởi động lại) — chạy lại là 14 ngày mới   ← ĐANG LÀM
+[  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 2 từ 2026-09-11 14:15 +07 (lần 1 đứt 09-10 vì máy khởi động lại), phán quyết ≥ 09-25   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Basis Trade                   0/4 bước
