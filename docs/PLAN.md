@@ -92,7 +92,7 @@
 
 ## 3. BẢNG TỔNG HỢP CÁC GIAI ĐOẠN
 
-**Tổng: 9 giai đoạn (GĐ 0 → GĐ 8), 41 bước.**
+**Tổng: 9 giai đoạn (GĐ 0 → GĐ 8), 42 bước** (GĐ 6 đổi từ Basis Trade 4 bước sang Crowding Reversal 5 bước — Q11, 2026-09-11).
 
 | GĐ | Tên | Số bước | Thời gian | Trạng thái | Kết quả bàn giao |
 |---|---|---|---|---|---|
@@ -102,7 +102,7 @@
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **2/5 bước** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
-| **6** | Basis Trade | 4 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot hỗ trợ 2 chiến lược |
+| **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | ⬜ Chưa bắt đầu — 6.1 làm ngay được | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
 | **8** | Cross-Chain / Statistical | 1 (phác thảo) | 12+ tháng | 🔒 Khoá | — |
 
@@ -1507,23 +1507,179 @@ Sửa:
 
 ---
 
-### GIAI ĐOẠN 6 — BASIS TRADE
+### GIAI ĐOẠN 6 — CROWDING REVERSAL *(thay Basis Trade — quyết định Q11, [§7.1](#71-đã-chốt))*
 
-**Mục tiêu:** Thêm chiến lược thứ hai, đa dạng hoá nguồn thu, tái dùng ~70% hạ tầng.
-**Thời gian:** 4–6 tuần · **4 bước**
+**Mục tiêu:** Thêm chiến lược thứ hai — **định hướng (long/short), KHÔNG delta-neutral** —
+port từ gói nghiên cứu Python `crowding-reversal-python-share-20260904` sang Go,
+chứng minh bằng parity với fixture của gói, rồi đi qua đúng các cổng mà track
+funding phải đi. Chạy trong cùng tiến trình Go, cùng ingestion / store / config
+(Q7, Q8), nhưng **vòng quyết định riêng**: nến 4h UTC, không phải sự kiện settle.
+**Thời gian:** 4–6 tuần cho 6.1–6.3 · **5 bước** · **chỉ 6.1 được làm ngay**;
+6.2 trở đi chờ track funding đóng GĐ 1 (kết luận soak) và 3.3–3.5, vì đó là ba
+cổng đang đứng giữa bot funding và quyết định 3.5, và một nhánh mới không được
+đẩy chúng ra sau.
 
-| Bước | Nội dung |
-|---|---|
-| 6.1 | Thu thập giá futures có đáo hạn (tuần/tháng/quý) — thêm `MarketType: future` + `ExpiryDate` |
-| 6.2 | Tính basis & lợi suất annualized theo thời gian còn lại đến đáo hạn |
-| 6.3 | Mở rộng execution xử lý hợp đồng có đáo hạn + **tự động rollover** trước ngày đáo hạn |
-| 6.4 | Portfolio manager: phân bổ vốn giữa Funding Rate và Basis theo APY ròng kỳ vọng |
+**Luật đóng băng của gói nghiên cứu (không đổi khi port):** BTCUSDT/ETHUSDT
+perp USD-M Binance; nến 4h UTC đóng-phải; z-score của `ln(tỉ lệ TÀI KHOẢN
+long/short toàn thị trường)` trên 90/180/360 nến × ngưỡng vào |z| 1,0/1,25 ×
+ngưỡng ra 0,25/0,50 = **12 thành viên đồng trọng số**; đám đông cực long → short,
+cực short → long; giữ đến khi |z| về dưới ngưỡng ra; lọc xu hướng momentum
+30/60/120 ngày cần ≥ 2 phiếu; phân bổ nghịch biến động với hiệp phương sai
+BTC/ETH, mục tiêu vol 24%/năm (hồ sơ paper: 20%), tổng |notional| ≤ 100% vốn;
+trễ 1 nến; thiếu dữ liệu → flat, không fill.
 
-**Kỳ vọng sau GĐ 6: 8–20%/năm.**
+**Con số của gói nghiên cứu, ghi đúng cơ sở để không ai đọc sai:** CAGR lãi kép
+dev 26,94% · validation 2024+ 36,84% · toàn mẫu 2021-07→2026-07 31,79%; MaxDD
+−9,05% (validation, đóng ngày) · −9,34% (toàn mẫu) · −9,84% (validation, đóng
+4h); bootstrap 95% CAGR 13–49%, đuôi MaxDD −13,8%; tuần dương 41,5%, tháng
+dương 66,7%, dưới nước dài nhất 105 ngày. **Đó là "sau phí GIẢ ĐỊNH 5 bps/chiều
++ funding lịch sử", không phải "ròng"** theo quy tắc 2: chưa có trượt giá đo từ
+sổ, chưa có thanh lý, sự cố sàn. Một sàn, 4,5 năm, đoạn validation đã được xem
+nhiều lần. Tác giả chỉ duyệt reference engine + paper trading ≥ 6 tháng luật
+đóng băng; **không duyệt vốn thật**. Con số 5–15% ở CLAUDE.md là của track
+funding và là APR đơn trên notional một chân; hai track **không cùng đơn vị và
+không cộng được**.
+
+| Bước | Nội dung | Phụ thuộc |
+|---|---|---|
+| 6.1 | Port toán học lõi & parity với fixture | Không — làm ngay được |
+| 6.2 | Ingestion: tỉ lệ long/short 5m + close theo quy ước biên đã chốt, schema v4 | GĐ 1 đóng; 3.3–3.5 xong |
+| 6.3 | Backtest crowding: vòng lặp nến 4h riêng trong `internal/backtest`, gọi hàm production | 6.1; 3.3 |
+| 6.4 | Portfolio manager: phân bổ vốn giữa Funding và Crowding theo lợi suất sau chi phí VÀ tương quan vị thế | 6.3; 3.5 |
+| 6.5 | Tái lập chéo sàn (chỉ dữ liệu) + paper trading ≥ 6 tháng luật đóng băng — cổng 🚦 | 6.2; 6.3 |
+
+#### Bước 6.1 — Port toán học lõi & parity (làm ngay được)
+- **Vị trí:** `internal/strategy/crowding` chỉ khi `internal/strategy/doc.go`
+  được sửa để nói gói này chứa một chiến lược delta-neutral và một chiến lược
+  định hướng; nếu không thì gói `internal/crowding` ngang hàng, có `doc.go`
+  riêng. Phần lag / P&L / equity của fixture là **backtest** (6.3), không nằm
+  trong gói strategy.
+- **Phạm vi thật, không phải "4 hàm":** fixture chỉ có đầu ra **trung bình 12
+  thành viên** (`expected_score`, `expected_signal` là bội của 1/12,
+  `expected_target` là trung bình rồi mới lọc xu hướng), không có cột nào là
+  đầu ra của một hàm đơn lẻ. Port cả đường đi 9 định nghĩa (192 dòng Python):
+  `rolling_zscore`, `crowding_scores`, `hysteresis_signal`, `causal_weights`,
+  `trend_confirmation_votes`, `apply_trend_confirmation`, `ensemble_targets`,
+  `StrategyConfig`, hằng số. Kích thước vol của mỗi thành viên = lookback của
+  chính nó.
+- **Ngữ nghĩa pandas phải tái hiện, ghi vào `doc.go` trước khi code:** `ln(ratio)`
+  chỉ khi ratio > 0, NaN không fill; `min_periods = max(20, int(0.8·lookback))`
+  đếm giá trị HỮU HẠN; std/var/cov MẪU (ddof = 1); score NaN → state 0 (reset,
+  không giữ); `scale = min(target_vol / vol, 1.0)`, `scale[:minimum] = 0`;
+  momentum `pct_change(days×6) > 0` với mask "đủ lịch sử" (thiếu ≠ phiếu giảm);
+  trung bình 12 rồi mới lọc xu hướng; `BarsPerYear = 6 × 365,25`.
+- **Định danh mang đơn vị (quy tắc 4):** `LookbackBars`, `EntryZ` / `ExitZ`
+  (không thứ nguyên), `TargetVolAnnualFrac`, `MaxGrossFrac`, `VolWindowBars`,
+  `MinPeriodsBars`, `BarsPerYear`, `FeeFracPerSide`. Đầu ra là *phần equity*
+  (`TargetFracOfEquity`), không bao giờ mang chữ `Net`.
+- **Fixture:** `rust_parity_fixture.csv.gz` (1,2 MB nén; bản thô 3,8 MB = 1,7×
+  toàn bộ repo, không commit thô) + `rust_reference_manifest.json` trong
+  `testdata/`; test kiểm SHA-256 (`fa9eae27…`) sau khi giải nén rồi mới đọc;
+  offline như mọi test khác.
+- **Nghiệm thu** (spike 2026-09-11 đã đo là đạt được, nên đây là ngưỡng, không
+  phải hy vọng): `expected_target` |err| ≤ 1e-10 (đo 1,6e-14); `expected_score`
+  có dung sai ghi rõ (đo 2,5e-13); `expected_signal` **bằng tuyệt đối** — nó là
+  bội của 1/12, lệch là máy trạng thái sai, không phải làm tròn; 0 / 10.957 dòng
+  vượt ngưỡng. **Không đòi bit-exact:** `math.Log` của Go lệch glibc đúng 1 ulp ở
+  8,4% giá trị ratio. Port 161 dòng test Python thành test bảng cho: NaN reset
+  state, đếm `min_periods`, mask availability, gross ≤ 1. Ba lỗi ngữ nghĩa đã đo
+  làm lệch target 0,18–0,40 equity ở 113–268 dòng — review nhìn vào đó, không
+  nhìn vào 1e-10.
+- **Giới hạn phải ghi trong doc.go:** parity chứng minh Go = Python trên đường
+  4h ĐÃ GỘP; không chứng minh tầng gộp nến (đổi quy ước biên làm CAGR
+  26,94/36,84 → 28,84/38,49 — xem 6.2), không chứng minh edge.
+- Cổng 1 (P1): commit `docs:` này đi trước; 6.1 là MỘT commit.
+
+#### Bước 6.2 — Ingestion cho crowding
+- **Chốt quy ước biên TRƯỚC khi viết bảng:** close của fixture tại T là close của
+  nến **1 phút MỞ tại T** (resample đóng-phải), lệch nến 4h của sàn từ −4 đến
+  +58 USDT ở các biên đã đo. Hoặc (a) giữ fixture → lưu klines 1m
+  (`interval_sec = 60`), quyết định chờ đến T + 60 s; hoặc (b) dùng nến 4h của
+  sàn → sinh lại fixture bằng `strict_completed_panel` và lấy số của biến thể
+  đó. Không được lẫn hai quy ước.
+- **Endpoint tỉ lệ:** `GET /futures/data/globalLongShortAccountRatio`
+  (**không phải** `/fapi/v1/…` — đường sai trả 404 và `FetchJSON` đọc thành
+  "không niêm yết", bảng lặng lẽ trống), `period=5m`, `limit ≤ 500`, **chỉ 30
+  ngày gần nhất**; trích dẫn tài liệu trong comment như `funding_rest.go`.
+  Lịch sử 5 năm chỉ có từ kho dump công khai `data.binance.vision`
+  (`futures/um/daily/metrics/<SYMBOL>/`, BTC từ 2020-09-01, ETH từ 2021-12-01,
+  cột `count_long_short_ratio`) — cần đường ingestion zip/CSV mà repo chưa có.
+  Hai nguồn cho một cột: **đo REST vs dump khớp trên 30 ngày chồng lấn** trước
+  khi tin.
+- **Hình dạng:** fetcher lịch sử (như `FundingHistoryFetchers`), **không có
+  `RecvAt`** — quy tắc 13, một mẫu 5 phút là sự kiện đã đóng, không có "độ tươi";
+  driver từ `internal/history` theo lịch biên. Không gắn vào poller `premiumIndex`.
+- **Schema v4:** `long_short_ratio_samples(source, symbol, period_sec,
+  period_end_at_ms, long_short_account_ratio, long_account_frac,
+  short_account_frac, raw_ratio_field, recorded_at_ms)`; klines với
+  `open_time_ms` / `close_time_ms` / `interval_sec`; mọi cột mang đơn vị; bump
+  version + migration.
+- **Đầu vào 4h** = mẫu 5m mới nhất trong (T − 4h, T]; thiếu → NULL → score NaN →
+  target 0; **không fill** (gói nghiên cứu có 119 nến trống liên tiếp
+  2021-12-30 → 2022-01-19 và ngồi ngoài).
+- **Nghiệm thu:** (1) REST vs dump: max |Δ| trên 30 ngày chồng lấn; (2) đầu vào
+  4h do Go dựng từ dump = `input_*` của fixture trên 2021-07 → 2026-07, 0 lệch;
+  (3) `go test ./...` vẫn offline.
+
+#### Bước 6.3 — Backtest crowding
+- Vòng lặp **riêng** trong `internal/backtest` theo nến 4h, gọi đúng hàm
+  production của 6.1 (Q8). Không dùng chung vòng sự kiện settle của funding;
+  dùng chung phần báo cáo / ghi store.
+- Chạy từ fixture trước (đầu vào 5 năm đã có sẵn ở đó), từ store sau; hai kết
+  quả phải bằng nhau.
+- `position[t] = target[t−1]`; `funding_pnl = −position × rate` **chỉ ở nến
+  settle** (bucket theo `round_to_hour(stamp)`, stamp trong store giữ nguyên);
+  không pro-rate; không hằng số 28800 — đọc `interval_sec` / `gap_prev_sec`
+  (quy tắc 3, 6).
+- **Nghiệm thu:** tái tạo `core_statistics` của manifest (toàn mẫu 3,978×,
+  CAGR 31,79%, MaxDD −9,34% đóng ngày; net ≤ 1e-12 / nến, equity ≤ 1e-9 tương
+  đối); báo cáo ghi rõ cơ sở (ngày / 4h), nhãn **"sau phí giả định 5 bps/chiều"**,
+  MaxDD kèm đuôi bootstrap. Sau đó **Go là reference đóng băng** (sinh fixture
+  từ Go), Python thôi là nguồn sự thật — nếu không, Go mãi là bản thứ hai mà
+  `internal/backtest/doc.go` cấm.
+
+#### Bước 6.4 — Portfolio manager (giữ từ kế hoạch cũ, đổi đối tượng)
+- Phân bổ vốn giữa Funding và Crowding theo lợi suất sau chi phí **và tương
+  quan vị thế đo từ 6.3** — hai track **không độc lập**: funding arb short perp
+  khi đám đông long và funding dương; crowding cũng short perp ở chế độ đó, và
+  khi crowding LONG nó **trả** đúng khoản funding track kia thu.
+- **Mỗi chiến lược một sub-account.** Cùng BTCUSDT/ETHUSDT perp trên một tài
+  khoản thì sàn báo một vị thế ròng mỗi symbol: quy tắc 7 không quy được vị
+  thế cho chiến lược nào, chân spot của funding thành trần, một khoản funding
+  được ghi hai lần. Chi tiết chế độ vị thế / ký quỹ kiểm tài liệu Binance ở
+  GĐ 4 (quy tắc 5).
+- **Nghiệm thu:** báo cáo tương quan vị thế và tỉ trọng funding trong lợi nhuận
+  crowding từ 6.3; quy tắc phân bổ có test; lợi suất tổng KHÔNG phải tổng hai
+  con số.
+
+#### Bước 6.5 — Tái lập chéo sàn và cổng paper 🚦
+- Chỉ dữ liệu, không giao dịch ở sàn khác: Bybit `GET /v5/market/account-ratio`
+  (kiểm từ repo tài liệu chính thức của Bybit; `buyRatio` = tỉ lệ người dùng net
+  long), OKX rubik long-short-account-ratio (chưa kiểm). Connector hai sàn đã có.
+- Paper trading **≥ 6 tháng, luật đóng băng**, hồ sơ 20% target-vol (dev 22,99% /
+  validation 29,99% CAGR; MaxDD −7,75% ngày / −8,41% 4h); không sửa tham số vì
+  chuỗi thua. Ghi mỗi quyết định: stamp dữ liệu gốc, target, giá lý thuyết, giá
+  khớp được, chi phí thật.
+- **Nghiệm thu:** paper khớp backtest 6.3 trong sai số chấp nhận được (gương của
+  3.5). **Không khớp → quay lại 6.1 / 6.2, không sang execution.**
+
+**Ràng buộc kéo sang GĐ 4–5 cho track này** (ghi ở đây để 4.x / 5.x không quên):
+fail-closed khi tỉ lệ thiếu hoặc cũ (ngưỡng = khoảng công bố ĐO ĐƯỢC × ~3, cách
+`config.yaml` đang làm); cổng "nến đã đóng" ở biên 4h UTC; phụ thuộc một sàn
+không có giảm nhẹ cho tới khi 6.5 xong; và mọi ngưỡng cắt theo drawdown phải
+nêu **cơ sở** (đóng ngày / 4h / mark liên tục; đỉnh từ đầu hay trượt; equity
+sub-account hay cả tài khoản; luật vào lại) TRƯỚC khi nêu số — 10% nằm trong
+vùng vận hành bình thường của chính backtest (0,16 điểm trên MaxDD 4h; 37,46%
+đường bootstrap vượt −10%), không phải đuôi. Một stop-loss là luật mới mà backtest
+chưa chạy: thêm vào thì chạy lại 6.3 và sinh lại fixture, không thêm âm thầm.
+
+**Kỳ vọng sau GĐ 6:** không cộng hai con số. Track funding: 5–15% APR đơn (kỳ
+vọng thiết kế; đo được 5,71–6,97% ròng ở 4 cặp Binance). Track crowding: số ở
+trên, sau phí giả định, chờ 6.5. Lợi suất tổng đo ở 6.4 sau khi có tương quan.
 
 ---
 
-### GIAI ĐOẠN 7 — CEX-DEX ARBITRAGE 🔒 *(khoá — chỉ mở sau GĐ 6)*
+### GIAI ĐOẠN 7 — CEX-DEX ARBITRAGE 🔒 *(khoá — chỉ mở sau GĐ 5 và sau cổng 6.5)*
 
 Yêu cầu năng lực hoàn toàn mới: Web3 wallet, AMM, gas optimization, phòng vệ MEV.
 Không lập kế hoạch chi tiết ở thời điểm này — sẽ viết tài liệu riêng khi GĐ 6 hoàn tất.
@@ -1611,6 +1767,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q8** | **Engine backtest viết bằng Go, dùng chung `internal/strategy` với production.** Python chỉ đọc kết quả để phân tích | 2026-08-28 |
 | **Q9** | **Không dùng CCXT.** Giữ connector tự viết | 2026-08-28 |
 | **Q10** | **Giữ frontend vanilla JS.** Sửa backend broadcast trước, không đổi framework | 2026-08-28 |
+| **Q11** | **Bỏ Basis Trade khỏi lộ trình; GĐ 6 trở thành Crowding Reversal** — chiến lược định hướng port Go từ gói nghiên cứu Python, parity với fixture, qua cổng riêng 6.5. Giữ 6.4 portfolio manager. **Quyết định LỘ TRÌNH, có thể đảo ngược** — không phải kết luận "basis trade không hoạt động" | 2026-09-11 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -1639,6 +1796,36 @@ Python trở thành **bắt buộc** ở GĐ 8 (cointegration, VECM/GARCH, ML) �
 #### Q9 — Vì sao không CCXT
 
 CCXT **chuẩn hoá đi** đúng những khác biệt giữa các sàn mà khảo sát phát hiện là có ý nghĩa sống còn: ngữ nghĩa `fundingTime` của OKX, giá trị tuyệt đối của Kraken, mô hình liên tục của Paradex. Một lớp trừu tượng không nhìn thấy bên trong sẽ giấu chính xác những thứ cần nhìn thấy. Cộng thêm việc 7 connector tự viết đã chạy tốt.
+
+#### Q11 — Vì sao bỏ Basis Trade, và vì sao KHÔNG kết luận gì về nó
+
+**Bằng chứng đã đo** — gói nghiên cứu `crowding-reversal-python-share-20260904`
+(2026-09-04), file `STRATEGY_RESEARCH_CONCLUSION.md`, mục "永续—季度交割 日历价差"
+(chênh lệch lịch perp ↔ futures quý, thuần hợp đồng, Binance): cấu hình tốt nhất
+chọn TRƯỚC trên đoạn phát triển chỉ **0,25%/năm ở 5 bp/chiều**, **−0,11% / −0,83%
+ở 10 / 20 bp**; funding thu được bị chi phí roll hai chân và biến động chênh lệch
+hợp đồng ăn hết; tác giả không mở đoạn validation vì không có cấu hình đạt.
+Con số "8–20%/năm sau GĐ 6" của kế hoạch cũ là ước đoán thiết kế ngày
+2026-08-28, chưa từng được đo — cùng loại với "5–15%" của track funding.
+
+**Giới hạn của bằng chứng, và vì thế đây là quyết định lộ trình chứ không phải
+phán quyết:** chỉ MỘT biến thể (perp ↔ quý, không phải cash-and-carry spot ↔ quý
+như GĐ 6 cũ mô tả), MỘT sàn, trong cửa sổ dữ liệu của gói. Ai muốn đưa Basis
+Trade trở lại phải **đo cash-and-carry spot ↔ quý trên corpus thật, có chi phí
+roll**, không được dùng lại "8–20%" làm lý do. Slot GĐ 6 dùng cho Crowding
+Reversal vì gói nghiên cứu đã có sẵn fixture parity 10.957 dòng và spike
+2026-09-11 đo được port Go đạt 1e-10 trong khoảng một ngày công — xem GĐ 6.
+
+**Không xoá theo:** trường `basis[]` trên wire (1.2), `MaxBasisPct` /
+`MaxBasisWidenPct` và luật thoát `basis_widened` (3.2), chú thích trong
+`internal/scanner/grouping.go` — đó là basis spot ↔ perp đo được, không phải
+Basis Trade; contract WS đang đóng băng (quy tắc 12). Cũng bỏ nhu cầu
+`MarketType: future` + `ExpiryDate` trong registry — một đơn giản hoá thật.
+
+**Hệ quả phải nói ra:** kế hoạch gốc là hai chiến lược cùng delta-neutral; sau
+Q11 dự án là **một chiến lược delta-neutral cộng một chiến lược định hướng**.
+Câu "delta-neutral xuyên suốt" chỉ còn đúng cho track funding, không cho cả hệ
+thống — CLAUDE.md và README đã sửa cùng commit này.
 
 #### Q10 — Vì sao giữ vanilla JS
 
@@ -1753,7 +1940,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 |---|---|
 | GĐ 0 — Chuẩn bị nền tảng | **GĐ 0** (đã xong) |
 | GĐ 1 — Funding Rate Arbitrage | **GĐ 1 + 2 + 3 + 4 + 5** (tách làm 5 vì phần execution & risk bị đánh giá thấp trong tài liệu gốc) |
-| GĐ 2 — Basis Trade | **GĐ 6** |
+| GĐ 2 — Basis Trade | **Bỏ** (Q11, 2026-09-11) — lý do: biến thể perp ↔ quý đo được chỉ 0,25%/năm ở 5 bp/chiều, âm ở 10/20 bp; slot GĐ 6 dùng cho Crowding Reversal. Có thể đảo ngược nếu đo được cash-and-carry spot ↔ quý sinh lời sau chi phí roll |
 | GĐ 3 — CEX-DEX | **GĐ 7** |
 | GĐ 4 — Cross-Chain | **GĐ 8** |
 | GĐ 5 — Statistical | **GĐ 8** |
@@ -1771,7 +1958,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [  ] GĐ 3  Signal, Alert & Backtest      2/5 bước   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              0/6 bước
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
-[  ] GĐ 6  Basis Trade                   0/4 bước
+[  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  0/5 bước · 6.1 làm ngay được
 [🔒] GĐ 7  CEX-DEX                       khoá
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```

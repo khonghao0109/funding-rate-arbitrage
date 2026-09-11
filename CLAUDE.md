@@ -20,12 +20,24 @@ venue and recording what it said is still read-only with respect to the venue.
 
 The target is a **Funding Rate Arbitrage bot**: hold spot long and perpetual
 short of equal notional, collect the funding payment each settlement period,
-stay delta-neutral throughout. After that, Basis Trade. The full roadmap is 9
-phases and 40 steps in [docs/PLAN.md](docs/PLAN.md).
+stay delta-neutral throughout. After that, a second strategy — **Crowding
+Reversal**, which is DIRECTIONAL (long/short BTC/ETH perps against the crowd's
+long/short account ratio), ported to Go from a Python research package and
+gated on parity with its fixture. It replaced Basis Trade on 2026-09-11
+(decision Q11 in PLAN §7.1 — a roadmap decision, reversible, not a verdict on
+basis trading). The full roadmap is 9 phases and 42 steps in
+[docs/PLAN.md](docs/PLAN.md).
 
 Expected return for the funding strategy is **5–15% APR**. Anyone or anything
 proposing a design that implies far more than that has misunderstood the
-strategy, not discovered an edge.
+strategy, not discovered an edge. That band is the FUNDING strategy's, stated
+as simple APR on one leg's notional. The phase-6 crowding branch is a different
+strategy with different numbers: its research package reports 27–37% CAGR after
+an ASSUMED 5 bps/side and historical funding, before measured slippage, on one
+venue over 4.5 years, with a validation segment its authors say was inspected
+repeatedly. Read PLAN.md phase 6 before repeating or contesting either figure;
+never present the two as comparable, additive, or "net", and never call the
+system as a whole delta-neutral once phase 6 runs.
 
 ## Current phase
 
@@ -540,7 +552,7 @@ phase 1.
 
 | Document | Contents |
 |---|---|
-| [docs/PLAN.md](docs/PLAN.md) | 9 phases, 40 steps, acceptance criteria, risk register, open decisions |
+| [docs/PLAN.md](docs/PLAN.md) | 9 phases, 42 steps, acceptance criteria, risk register, open decisions |
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | The 9-phase loop every change follows, review checklist, commit rules |
 | [docs/DATA-REQUIREMENTS.md](docs/DATA-REQUIREMENTS.md) | What data is needed from a venue, 7-venue funding survey, `FundingData` design, data traps |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Naming, structure, errors, concurrency, testing, dependency rules |
