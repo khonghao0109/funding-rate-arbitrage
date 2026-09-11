@@ -112,7 +112,7 @@ Lộ trình chia **9 giai đoạn / 42 bước**:
 | 0 | Nền tảng scanner | ✅ Xong ~90% |
 | 1 | Củng cố lõi — staleness, phí, tách spot/perp, test | ✅ Xong 7/7, soak 72h ĐẠT (2026-09-03 → 09-06) |
 | 2 | Funding Rate Monitor — thu thập, lưu trữ, instrument registry | ✅ Xong 7/7 (2026-09-04), đã qua review độc lập |
-| 3 | Signal, Alert & Backtest | ⬜ |
+| 3 | Signal, Alert & Backtest | 🔄 3/5 · 3.4 hoãn · 3.5 chạy lần 2 từ 2026-09-11, phán quyết ≥ 09-25 |
 | 4 | Execution Engine — đặt lệnh, xử lý khớp một phần | ⬜ |
 | 5 | Risk & Vận hành production | ⬜ |
 | 6 | Crowding Reversal — chiến lược thứ hai, **định hướng**, port Go từ gói nghiên cứu Python, qua cổng riêng (thay Basis Trade — quyết định Q11, 2026-09-11) | ⬜ |

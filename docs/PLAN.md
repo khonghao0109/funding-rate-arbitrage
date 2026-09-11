@@ -2666,9 +2666,25 @@ chuỗi lãi với giá −0,10 điểm/năm vào muộn trên phần còn lại
 vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyết.
 
 #### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY LẦN 2 (khởi động 2026-09-11 14:15:50 +07, phán quyết sớm nhất 2026-09-25 14:15:50 +07)
-- Chạy hệ thống ở chế độ chỉ-alert tối thiểu **2 tuần liên tục**.
-- Ghi nhật ký thủ công: nếu vào lệnh theo mọi tín hiệu thì kết quả sẽ ra sao.
-- **Nghiệm thu:** kết quả mô phỏng khớp với backtest trong sai số chấp nhận được. **Không khớp → quay lại Bước 3.2, không được sang GĐ 4.**
+- Chạy đường tín hiệu SỐNG tối thiểu **2 tuần liên tục**: `cmd/scanner`
+  gọi đúng `EvaluateEntry` / `EvaluateExit` production trên dữ liệu sống, ghi
+  mỗi quyết định vào `signal_journal` bằng máy (①), giữ một **sổ vị thế giấy**
+  (mở / giữ / đóng, seed lại từ nhật ký khi restart). Không credential, không
+  đặt lệnh. *(Ba dòng cũ "chế độ chỉ-alert, ghi nhật ký thủ công" thay ngày
+  2026-09-11 cho khớp với thứ đang chạy — Q12.)*
+- **So theo QUYẾT ĐỊNH, không so theo tiền** — giao thức ③, làm bằng máy qua
+  `cmd/backtest -compare-journal`. Sổ paper có vốn ảo, giá khớp, funding ghi
+  có và đường equity là việc của **Bước 4.3**, được làm song song với cổng này
+  như một tiến trình ĐỌC nhật ký (Q12) — nó bổ sung "góc nhìn tiền" cho phán
+  quyết, không thay giao thức ③ và **không bao giờ khởi động lại tiến trình
+  lần 2** (cửa sổ tính lại từ đầu nếu tiến trình chết — ③ bước 1).
+- **Luật đóng băng trong cửa sổ:** không nới ngưỡng, không đổi tham số vì
+  "chưa có lệnh nào để xem". Một cửa sổ gần như không lệnh là **kết quả hợp
+  lệ** của cổng — nó nói chiến lược ở tham số này không giao dịch — không phải
+  lỗi cần sửa cho đẹp.
+- **Nghiệm thu:** theo ③ bước 5: (c) = 0 và (a) ≥ 95%. **Không đạt → quay lại
+  Bước 3.2, không được sang 4.1.** Đạt → 3.4 làm ngay trước 4.1; 4.3 (nếu đã
+  có) tiếp tục chạy như sổ paper của GĐ 4.
 
 > **Khởi động lại (2026-09-11 14:15:50 +07).** Theo quyết định của người
 > vận hành ngày 2026-09-11. Binary build từ working tree sạch ở `59d3707`
@@ -2854,6 +2870,14 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 **Mục tiêu:** Bot tự đặt và đóng vị thế delta-neutral với vốn nhỏ.
 **Thời gian:** 6–8 tuần · **6 bước**
 
+> **Thứ tự sau Q12 (2026-09-11):** Bước 4.3 (sổ paper có vốn ảo + giao diện
+> demo) được làm **song song với cổng 3.5 đang chạy**, như một tiến trình chỉ
+> ĐỌC `signal_journal` và store — không sửa, không build lại, không khởi động
+> lại tiến trình lần 2 trên cổng 8085. Mọi bước còn lại — 4.1 REST có ký, 4.2
+> lệnh testnet, 4.4/4.5 hai chân thật, 4.6 vốn thật — chỉ bắt đầu sau khi 3.5
+> ĐẠT. Máy trạng thái khớp-một-phần của 4.4 được phép thiết kế và unit-test với
+> broker giả trong lúc chờ, nhưng không được đánh dấu xong trước cổng.
+
 #### Bước 4.1 — Hạ tầng REST có ký
 - Package riêng `internal/broker/`, tách hoàn toàn khỏi `exchanges/` (đọc-only).
 - HMAC-SHA256 signing, xử lý `recvWindow`, đồng bộ đồng hồ với server sàn.
@@ -2867,10 +2891,54 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 - Xử lý làm tròn theo `stepSize` / `tickSize` / `minNotional` của từng cặp.
 - **Nghiệm thu:** đặt và huỷ được lệnh trên Binance testnet.
 
-#### Bước 4.3 — Chế độ Paper Trading
-- Cùng logic execution nhưng ghi vào sổ ảo thay vì gửi lên sàn.
-- Mô phỏng slippage và phí thực tế.
-- **Nghiệm thu:** chạy paper 2 tuần, PnL ảo bám sát kỳ vọng backtest.
+#### Bước 4.3 — Chế độ Paper Trading (song song với 3.5 — Q12)
+- **Hình dạng:** sổ paper là **người tiêu thụ nhật ký**. Nó đọc `signal_journal`
+  (hàng `enter` / `exit`, `params_json.inputs`, `params_json.fees`,
+  `notional_quote`) và `price_snapshots` / `depth_snapshots` / `funding_history`
+  từ cùng `data/scanner.db`, **chỉ đọc**, và dựng: giá khớp, phí, funding ghi
+  có, basis đánh dấu, vốn ảo và đường equity. Vì thế nó dựng lại được cho cả
+  cửa sổ lần chạy 2 đã trôi qua, và không chạm tiến trình 3.5. Đường quyết
+  định vẫn là một: 4.3 không quyết gì, nó định giá quyết định 3.5 đã ghi.
+- **Broker paper và broker thật đứng sau MỘT interface** (`PlaceOrder`,
+  `CancelOrder`, `GetPosition`, `GetBalance` của 4.2). Broker paper không giữ
+  credential và sống ngoài `internal/broker`; broker thật chỉ xuất hiện ở 4.1
+  và chỉ kích hoạt bằng cấu hình cộng sự hiện diện của credential. **Không có
+  nút "go live" trên giao diện** — một demo có công tắc chuyển sang tiền thật
+  là sai loại sản phẩm.
+- **Cái gì thật, cái gì giả — in rõ trên giao diện.** Thật: giá, funding, độ
+  sâu, quy tắc hợp đồng, và đường quyết định (production `EvaluateEntry` /
+  `EvaluateExit`; các hàm crowding của 6.1 khi tới 6.5). Giả: khớp lệnh, vị
+  thế, số dư, ghi có funding. Chữ **PAPER** đứng cạnh mọi con số.
+- **Khớp giá từ sổ ĐO ĐƯỢC, không phải giá mid:** mua ở ask, bán ở bid, qua
+  `strategy.EstimateFill` trên snapshot độ sâu gần nhất TRƯỚC thời điểm quyết
+  định (không bao giờ sau — kiểm `sampled_at_ms ≤ evaluated_at_ms`); phí
+  taker từ `params_json.fees` của chính hàng đó, không đọc `config.yaml` hiện
+  tại; lệnh vượt độ sâu trong 0,5% bị TỪ CHỐI như production, không khớp ở giá
+  tưởng tượng.
+- **Funding là sự kiện rời rạc (quy tắc 6):** ghi có đúng tại mốc settle trong
+  `funding_history`, số tiền = mark × size × rate (DATA-REQUIREMENTS bẫy 4);
+  không pro-rate theo thời gian giữ. Basis đánh dấu theo từng mẫu giá để lỗ
+  chưa hiện thực hiện ra trước khi funding bù được.
+- **Paper KHÔNG nhìn thấy gì — phải in ra:** khớp một phần, lệnh bị từ chối, vị
+  trí trong hàng đợi, độ trễ, thanh lý, margin call, sự cố API. Khoảng cách đó
+  là thứ 4.4 và 4.6 sinh ra để đo. Bảng kết quả mang nhãn "paper: giả định khớp
+  đủ hai chân ở sổ đo được, chưa có thanh lý / khớp một phần".
+- **Quy tắc 7 trong paper:** không có vị thế trên sàn để đọc, sổ paper LÀ nguồn
+  sự thật. Ghi đó là ngoại lệ của paper mode trong `internal/execution/doc.go`
+  để không ai mang thói quen đọc sổ cục bộ sang live.
+- **Wire:** thêm loại message mới theo [WS-CONTRACT §8](WS-CONTRACT.md) —
+  `paper_positions`, `paper_ledger` — và `meta.execution_mode: "paper"`; mọi
+  trường mang đơn vị trong tên; không dùng lại trường dành cho execution thật.
+- **Dùng chung cho track crowding:** 6.5 chạy 6 tháng paper trên cùng sổ này
+  (một chân perp, một sàn, funding ở nến settle).
+- **Nghiệm thu:** (1) test đơn vị: giá khớp = `EstimateFill` trên snapshot đã
+  cho; snapshot sau thời điểm quyết định bị từ chối; funding chỉ được ghi ở mốc
+  settle; bất biến "cả hai chân mở hoặc cả hai chân đóng" giữ trong sổ; lệnh
+  vượt độ sâu bị từ chối; (2) dựng lại được đường equity của cửa sổ 3.5 lần 2
+  từ nhật ký, và mỗi hàng `enter` có `net_apr_frac` dự phóng đứng cạnh P&L
+  paper thực tế của vị thế đó tới lúc `exit`. Câu cũ "PnL ảo bám sát backtest"
+  là kiểm tính NHẤT QUÁN, và nó thuộc cổng 3.5 (giao thức ③, theo quyết định);
+  4.3 chỉ thêm góc nhìn tiền.
 
 #### Bước 4.4 — Mở vị thế delta-neutral
 - Đặt đồng thời Spot Long + Perp Short cùng notional.
@@ -2961,9 +3029,10 @@ chứng minh bằng parity với fixture của gói, rồi đi qua đúng các c
 funding phải đi. Chạy trong cùng tiến trình Go, cùng ingestion / store / config
 (Q7, Q8), nhưng **vòng quyết định riêng**: nến 4h UTC, không phải sự kiện settle.
 **Thời gian:** 4–6 tuần cho 6.1–6.3 · **5 bước** · **chỉ 6.1 được làm ngay**;
-6.2 trở đi chờ track funding đóng GĐ 1 (kết luận soak) và 3.3–3.5, vì đó là ba
-cổng đang đứng giữa bot funding và quyết định 3.5, và một nhánh mới không được
-đẩy chúng ra sau.
+6.2 trở đi chờ cổng 3.5 kết luận (lần chạy 2, phán quyết sớm nhất 2026-09-25)
+và 3.4, vì một nhánh mới không được đẩy cổng của track funding ra sau. *(Sửa
+2026-09-11: bản đầu của đoạn này viết trên snapshot cũ còn ghi GĐ 1 và 3.3
+chưa xong.)*
 
 **Luật đóng băng của gói nghiên cứu (không đổi khi port):** BTCUSDT/ETHUSDT
 perp USD-M Binance; nến 4h UTC đóng-phải; z-score của `ln(tỉ lệ TÀI KHOẢN
@@ -2989,7 +3058,7 @@ không cộng được**.
 | Bước | Nội dung | Phụ thuộc |
 |---|---|---|
 | 6.1 | Port toán học lõi & parity với fixture | Không — làm ngay được |
-| 6.2 | Ingestion: tỉ lệ long/short 5m + close theo quy ước biên đã chốt, schema v4 | GĐ 1 đóng; 3.3–3.5 xong |
+| 6.2 | Ingestion: tỉ lệ long/short 5m + close theo quy ước biên đã chốt, schema v4 | 3.5 kết luận; 3.4 |
 | 6.3 | Backtest crowding: vòng lặp nến 4h riêng trong `internal/backtest`, gọi hàm production | 6.1; 3.3 |
 | 6.4 | Portfolio manager: phân bổ vốn giữa Funding và Crowding theo lợi suất sau chi phí VÀ tương quan vị thế | 6.3; 3.5 |
 | 6.5 | Tái lập chéo sàn (chỉ dữ liệu) + paper trading ≥ 6 tháng luật đóng băng — cổng 🚦 | 6.2; 6.3 |
@@ -3214,6 +3283,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q9** | **Không dùng CCXT.** Giữ connector tự viết | 2026-08-28 |
 | **Q10** | **Giữ frontend vanilla JS.** Sửa backend broadcast trước, không đổi framework | 2026-08-28 |
 | **Q11** | **Bỏ Basis Trade khỏi lộ trình; GĐ 6 trở thành Crowding Reversal** — chiến lược định hướng port Go từ gói nghiên cứu Python, parity với fixture, qua cổng riêng 6.5. Giữ 6.4 portfolio manager. **Quyết định LỘ TRÌNH, có thể đảo ngược** — không phải kết luận "basis trade không hoạt động" | 2026-09-11 |
+| **Q12** | **Sổ paper có vốn ảo (4.3) làm SONG SONG với cổng 3.5, như tiến trình chỉ đọc `signal_journal` + store; không bao giờ khởi động lại tiến trình 3.5.** 3.5 so theo quyết định (③), 4.3 thêm góc nhìn tiền. 4.1/4.2/4.4–4.6 vẫn đứng sau cổng. Giao diện demo không có nút go-live | 2026-09-11 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -3242,6 +3312,23 @@ Python trở thành **bắt buộc** ở GĐ 8 (cointegration, VECM/GARCH, ML) �
 #### Q9 — Vì sao không CCXT
 
 CCXT **chuẩn hoá đi** đúng những khác biệt giữa các sàn mà khảo sát phát hiện là có ý nghĩa sống còn: ngữ nghĩa `fundingTime` của OKX, giá trị tuyệt đối của Kraken, mô hình liên tục của Paradex. Một lớp trừu tượng không nhìn thấy bên trong sẽ giấu chính xác những thứ cần nhìn thấy. Cộng thêm việc 7 connector tự viết đã chạy tốt.
+
+#### Q12 — Vì sao sổ paper đi song song với cổng 3.5, và đọc nhật ký thay vì ngồi trong scanner
+
+Người vận hành muốn "giao diện demo với vốn ảo, nhưng hệ thống hoạt động là
+thật" trước khi động tới sàn thật. Cổng 3.5 đang chạy đã có nửa đầu của việc
+đó: đường quyết định production, nhật ký bằng máy, sổ vị thế giấy — nhưng nó cố
+ý so theo quyết định, không theo tiền, và không có giá khớp, funding ghi có hay
+đường equity. Nửa còn lại là Bước 4.3. Ba lý do cho hình dạng "tiến trình đọc
+nhật ký": (1) tiến trình 3.5 lần 2 không được build lại hay khởi động lại —
+③ bước 1 tính lại cửa sổ 14 ngày từ đầu nếu nó chết, và lần 1 đã chết vì đúng
+lý do đó; (2) một sổ định giá từ nhật ký dựng lại được cho cả cửa sổ đã trôi
+qua, nên ngày phán quyết có cả hai góc nhìn; (3) nó giữ đúng một đường quyết
+định — 4.3 định giá quyết định 3.5 đã ghi, không quyết thêm gì, nên không tạo
+bản sao thứ hai của luật vào/ra (Q8). Không vi phạm quy tắc 1: sổ ảo không giữ
+credential, không gửi gì lên sàn; thứ bị cấm kéo lên là 4.1 trở đi. Ba dòng
+đầu của 3.5 được sửa cùng lúc vì chúng vẫn tả "chế độ chỉ-alert, nhật ký thủ
+công" trong khi phần ghi chú ngay dưới đã mô tả nhật ký bằng máy từ 09-07.
 
 #### Q11 — Vì sao bỏ Basis Trade, và vì sao KHÔNG kết luận gì về nó
 
@@ -3402,7 +3489,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 2 từ 2026-09-11 14:15 +07 (lần 1 đứt 09-10 vì máy khởi động lại), phán quyết ≥ 09-25   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              0/6 bước
+[  ] GĐ 4  Execution Engine              0/6 bước · 4.3 (sổ paper vốn ảo) làm song song với 3.5, chỉ đọc nhật ký — Q12
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  0/5 bước · 6.1 làm ngay được
 [🔒] GĐ 7  CEX-DEX                       khoá
