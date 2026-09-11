@@ -875,6 +875,10 @@ docs/                PLAN.md, DATA-REQUIREMENTS.md, CONVENTIONS.md
   reports/           built HTML reports, one per measurement run — a new file
                      each time, never an overwrite: an older one is the record
                      of what was known that day
+  research/          READ-ONLY reference material received from outside — the
+                     crowding-reversal Python package (phase 6 source to port,
+                     its parity fixture, and the evidence Q11 cites). Never
+                     imported or run by any process (rule 8)
 tools/report/        READ-ONLY Python that turns cmd/backtest's CSVs into those
                      reports (rule 8's "Python reads SQLite to plot"): stdlib
                      only, mode=ro, and it never recomputes a rule — every

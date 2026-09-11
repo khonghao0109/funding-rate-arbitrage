@@ -3024,7 +3024,8 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 ### GIAI ĐOẠN 6 — CROWDING REVERSAL *(thay Basis Trade — quyết định Q11, [§7.1](#71-đã-chốt))*
 
 **Mục tiêu:** Thêm chiến lược thứ hai — **định hướng (long/short), KHÔNG delta-neutral** —
-port từ gói nghiên cứu Python `crowding-reversal-python-share-20260904` sang Go,
+port từ gói nghiên cứu Python `crowding-reversal-python-share-20260904`
+(bản chọn lọc lưu tại `docs/research/crowding-reversal-20260904/`) sang Go,
 chứng minh bằng parity với fixture của gói, rồi đi qua đúng các cổng mà track
 funding phải đi. Chạy trong cùng tiến trình Go, cùng ingestion / store / config
 (Q7, Q8), nhưng **vòng quyết định riêng**: nến 4h UTC, không phải sự kiện settle.

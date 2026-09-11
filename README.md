@@ -301,6 +301,7 @@ Dữ liệu công khai và credential nằm hai phía khác nhau của ranh gi�
 | [docs/WORKFLOW.md](docs/WORKFLOW.md) | Quy trình code & review 9 pha, checklist review, quy tắc commit |
 | [docs/DATA-REQUIREMENTS.md](docs/DATA-REQUIREMENTS.md) | Dữ liệu cần từ sàn, khảo sát funding 7 sàn, thiết kế `FundingData`, các bẫy dữ liệu |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Quy ước đặt tên, cấu trúc, lỗi, đồng thời, test, luật phụ thuộc |
+| [docs/research/](docs/research/crowding-reversal-20260904/README.md) | Gói nghiên cứu Crowding Reversal (GĐ 6): mã Python để port, fixture parity, bằng chứng Q11 — chỉ đọc |
 | [docs/WS-CONTRACT.md](docs/WS-CONTRACT.md) | Hợp đồng JSON backend ↔ dashboard, trường nào mang dữ liệu thật ở bước nào |
 | [CLAUDE.md](CLAUDE.md) | Tổng quan cho AI agent — luật, bẫy đã biết, điểm yếu hiện tại |
 
