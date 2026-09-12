@@ -3405,12 +3405,20 @@ không cộng được**.
 > P1: commit docs `010ce8c` đi trước; 6.1 là MỘT commit.
 
 #### Bước 6.2 — Ingestion cho crowding
-- **Chốt quy ước biên TRƯỚC khi viết bảng:** close của fixture tại T là close của
-  nến **1 phút MỞ tại T** (resample đóng-phải), lệch nến 4h của sàn từ −4 đến
-  +58 USDT ở các biên đã đo. Hoặc (a) giữ fixture → lưu klines 1m
-  (`interval_sec = 60`), quyết định chờ đến T + 60 s; hoặc (b) dùng nến 4h của
-  sàn → sinh lại fixture bằng `strict_completed_panel` và lấy số của biến thể
-  đó. Không được lẫn hai quy ước.
+- **Quy ước biên ĐÃ CHỐT — quyết định Q13 ([§7.1](#71-đã-chốt)), 2026-09-12: giữ
+  quy ước của fixture, phương án (a).** Close của fixture tại T là close của nến
+  **1 phút MỞ tại T** (`resample(rule="4h", label="right", closed="right")` →
+  bucket `(T−4h, T]`), nên **quyết định sớm nhất ở T+60 s** và bảng klines lưu
+  `interval_sec = 60`. Không dùng nến 4h của sàn, không sinh lại fixture bằng
+  `strict_completed_panel`, và **tuyệt đối không lẫn hai quy ước**.
+  Số đo đứng sau quyết định (2026-09-12, kho dump công khai của Binance, nến 4h
+  và 1m của 2025-03 + 2026-06, **366 biên**): `fixture@T` bằng close nến 1 phút
+  mở tại T ở **364/364** biên kiểm được; lệch so với close nến 4h của sàn
+  **−223,20 … +269,90 USDT** (trung vị \|Δ\| 34,90; theo bps: −36,95 … +39,36,
+  trung vị \|Δ\| **4,73 bps**); và **0/366** biên hai quy ước trùng nhau. Số cũ
+  ghi ở đây ("−4 đến +58 USDT") đo trên mẫu nhỏ hơn nhiều và đã bị thay. Chi phí
+  của cả hai phương án, kèm số `strict_completed_interval_*` mà manifest đã có
+  sẵn, nằm ở phần Q13.
 - **Endpoint tỉ lệ:** `GET /futures/data/globalLongShortAccountRatio`
   (**không phải** `/fapi/v1/…` — đường sai trả 404 và `FetchJSON` đọc thành
   "không niêm yết", bảng lặng lẽ trống), `period=5m`, `limit ≤ 500`, **chỉ 30
@@ -3585,6 +3593,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q12** | **Sổ paper có vốn ảo (4.3) làm SONG SONG với cổng 3.5, như tiến trình chỉ đọc `signal_journal` + store; không bao giờ khởi động lại tiến trình 3.5.** 3.5 so theo quyết định (③), 4.3 thêm góc nhìn tiền. 4.1/4.2/4.4–4.6 vẫn đứng sau cổng. Giao diện demo không có nút go-live | 2026-09-11 |
 | **Q1** | **Sàn chính cho execution: Binance.** Tài liệu tốt nhất, có testnet, thanh khoản sâu nhất trong 9 nguồn đã đo, và là sàn DUY NHẤT hôm nay có cả hai chân trên một venue (`binance_futures ← binance_spot`) — điều kiện của ký quỹ gộp ở GĐ 4. Chốt từ gợi ý §7.2 cũ | 2026-09-11 |
 | **Q5** | **Kênh alert: Telegram.** Discord là tuỳ chọn thêm sau, không phải kênh thứ hai bắt buộc. `internal/notify` ở Bước 3.4 (hoãn sau cổng 3.5) làm Telegram trước | 2026-09-11 |
+| **Q13** | **Track crowding giữ NGUYÊN quy ước biên của fixture: bucket `(T−4h, T]`, `label="right", closed="right"`** — close tại T là close của nến **1 phút MỞ tại T**, nên quyết định sớm nhất ở **T+60s**. KHÔNG dùng nến 4h của sàn, KHÔNG sinh lại fixture bằng `strict_completed_panel`. **Quyết định LỘ TRÌNH, đảo ngược được** cho tới khi 6.2 ghi dòng đầu tiên; sau đó đảo ngược nghĩa là sinh lại fixture và chạy lại nghiệm thu 6.1 | 2026-09-12 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -3630,6 +3639,77 @@ bản sao thứ hai của luật vào/ra (Q8). Không vi phạm quy tắc 1: s�
 credential, không gửi gì lên sàn; thứ bị cấm kéo lên là 4.1 trở đi. Ba dòng
 đầu của 3.5 được sửa cùng lúc vì chúng vẫn tả "chế độ chỉ-alert, nhật ký thủ
 công" trong khi phần ghi chú ngay dưới đã mô tả nhật ký bằng máy từ 09-07.
+
+#### Q13 — Vì sao giữ quy ước biên của fixture, và cái giá của cả hai phương án
+
+**Đo trước, chọn sau.** Hai quy ước không lệch nhau ở vài biên hiếm — chúng lệch
+ở **mọi biên**. Đo 2026-09-12 trên kho dump công khai chính thức của Binance
+(`data.binance.vision`, `futures/um/monthly/klines/BTCUSDT/`, nến 4h và 1m của
+hai tháng **2025-03** và **2026-06**), đối chiếu từng biên với `input_BTC_close`
+trong `rust_parity_fixture.csv.gz`:
+
+| Đại lượng | Số đo |
+|---|---|
+| Số biên so sánh | **366** (180 + 186) |
+| `fixture@T` = close nến 1 phút **MỞ tại T** | **364/364** biên kiểm được (2 biên còn lại rơi đúng đầu tháng nên nến 1m nằm ở file tháng sau) |
+| Lệch so với close nến 4h của chính sàn | min **−223,20**, max **+269,90** USDT; trung bình +5,30; trung vị \|Δ\| **34,90**; p95 \|Δ\| 143,90 |
+| Cùng số đó theo bps | min −36,95, max **+39,36**; trung vị \|Δ\| **4,73 bps**; p95 21,04 bps |
+| Số biên hai quy ước **trùng nhau** | **0/366** |
+
+Con số phải đọc cạnh chi phí giả định của chính chiến lược: **5 bps/chiều**.
+Trung vị lệch 4,73 bps là **cùng bậc với toàn bộ chi phí giao dịch giả định**,
+nên đây không phải sai số làm tròn và **không được trộn hai quy ước** ở bất kỳ
+đâu — số cũ ghi ở Bước 6.2 ("−4 đến +58 USDT") đo trên mẫu nhỏ hơn nhiều và đã
+được thay bằng bảng trên.
+
+**Gói nghiên cứu đã đo sẵn phương án (b).** `strict_completed_panel` trong
+`crowding_reversal_pre_rust_audit.py` chính là nến 4h của sàn (`label="right",
+closed="left"` → bucket `[T−4h, T)`), và manifest ghi kết quả của nó cạnh kết
+quả gốc:
+
+| Đoạn | Quy ước fixture (a) | Nến sàn (b) — `strict_completed_interval_*` |
+|---|---|---|
+| development | CAGR 26,94% · MaxDD −9,34% · Sharpe 1,725 · Calmar 2,884 | CAGR **28,84%** · MaxDD **−8,16%** · Sharpe 1,808 · Calmar 3,533 |
+| validation | CAGR 36,84% · MaxDD −9,05% · Sharpe 2,049 · Calmar 4,069 | CAGR **38,49%** · MaxDD −9,17% · Sharpe 2,118 · Calmar 4,200 |
+
+Nghĩa là (b) **nhỉnh hơn** 1,90 và 1,65 điểm CAGR. Không lấy đó làm lý do chọn
+(b): manifest cũng ghi cửa sổ 365 ngày trượt của chính chiến lược trải từ
+**12,32%** đến trung vị 33,64% trên 1.463 cửa sổ, và nâng phí giả định 5 → 10
+bps/chiều đã lấy đi **3,18 điểm** CAGR ở development. Chênh lệch quy ước nhỏ hơn
+cả hai dải đó, nên nó là **nhiễu về mặt quyết định**, không phải bằng chứng (b)
+tốt hơn.
+
+**Giá của từng phương án, ghi thẳng:**
+
+- **(a) giữ fixture — ĐÃ CHỌN.** Phải lưu nến 1 phút để dựng close 4h
+  (`interval_sec = 60`), và quyết định **không thể có trước T+60s**: đó là độ
+  trễ thật, cố định, trên một chiến lược giữ vị thế nhiều ngày. Đổi lại: Bước
+  6.1 **đã qua cổng** với parity tuyệt đối vào đúng fixture này (target ≤ 1e-10,
+  signal bằng tuyệt đối — commit `2d26b72`), tiêu chí nghiệm thu của Bước 6.3 là
+  `core_statistics` của chính manifest này, và luật ingestion mà Bước 6.2 đã
+  viết ("mẫu 5m mới nhất trong `(T − 4h, T]`") **vốn đã là luật của (a)**. Một
+  hệ quả phụ có lợi: (a) dùng mẫu tỉ lệ long/short **đóng dấu đúng T**, trong
+  khi (b) chỉ thấy mẫu `T−5m` — tức (b) đánh đổi 5 phút tươi của CHÍNH tín hiệu
+  để lấy 60 giây của giá.
+- **(b) dùng nến 4h của sàn.** Rẻ hơn ở vận hành: chỉ 6 dòng/ngày/symbol, không
+  cần bảng 1m, quyết định có ngay tại T, và là quy ước mà mọi người khác gọi là
+  "nến 4h". Cái giá: phải **chạy lại gói Python đã đóng băng** để sinh fixture
+  mới (manifest chỉ có số strict cho development và validation, không có
+  `full`), đổi hằng số SHA-256 trong `internal/crowding/parity_test.go`, chạy
+  lại nghiệm thu 6.1 đã ghi là xong, và viết lại mọi con số GĐ 6 trong PLAN và
+  CLAUDE.md. Đúng thứ tự mà Bước 6.3 nói phải tránh: Go chỉ trở thành reference
+  **sau** khi nó đã chứng minh bằng fixture hiện có.
+
+**Chốt lại:** chọn (a) vì nó là phương án duy nhất không làm mất hiệu lực một
+bước đã qua cổng (6.1) và tiêu chí nghiệm thu của một bước chưa bắt đầu (6.3).
+Cái giá 60 giây là đã biết, đo được và nằm trong mô hình; cái giá của (b) là mất
+chính cái mỏ neo khiến bản port Go kiểm chứng được. Đảo ngược vẫn rẻ **cho tới
+khi** 6.2 ghi dòng đầu tiên — sau đó nó kéo theo cả kho dữ liệu đã thu.
+
+**Điều quyết định này KHÔNG nói:** nó không nói nến 4h của sàn là sai, cũng
+không nói (a) sinh lợi hơn (b) — số đo nói ngược lại 1,9 điểm. Nó chỉ nói rằng
+với trạng thái hiện tại của lộ trình, đổi quy ước đắt hơn phần lợi mà chính gói
+nghiên cứu xếp vào vùng nhiễu.
 
 #### Q11 — Vì sao bỏ Basis Trade, và vì sao KHÔNG kết luận gì về nó
 
