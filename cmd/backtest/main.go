@@ -34,6 +34,7 @@ import (
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "configuration file")
+	dbPath := flag.String("db", "", "read the corpus and the journal from this database instead of config.yaml's storage.path — point it at a copy to analyse a run without going near the file a live scanner is writing")
 	months := flag.Int("months", 6, "how many months back to replay")
 	from := flag.String("from", "", "replay window start, YYYY-MM-DD or YYYY-MM-DDTHH:MM:SS UTC, or RFC3339 (default: -months before the end)")
 	to := flag.String("to", "", "replay window end, same forms, exclusive (default: now)")
@@ -99,7 +100,17 @@ func main() {
 			log.Fatalf("-compare-journal replays config.yaml's strategy block, and it is disabled — the journal was not written by this file")
 		}
 	}
-	db, err := store.Open(cfg.Storage.Path)
+	// READ-ONLY, always. This command documents itself as replaying the corpus
+	// and writing nothing back, and until 2026-09-13 it took that on trust:
+	// store.Open creates the file if it is missing, applies the schema and
+	// stamps the version. Pointed at the database a step-3.5 gate is writing —
+	// which is the same file config.yaml names — that is a migration waiting
+	// for a version bump. mode=ro makes the promise the driver's job.
+	corpus := cfg.Storage.Path
+	if *dbPath != "" {
+		corpus = *dbPath
+	}
+	db, err := store.OpenReadOnly(corpus)
 	if err != nil {
 		log.Fatalf("store: %v", err)
 	}

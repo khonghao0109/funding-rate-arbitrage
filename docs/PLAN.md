@@ -2827,6 +2827,95 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > "thiếu hàng" trong bảng so sánh và không đếm vào (a)/(b)/(c). Đoạn `2026-09-07 → 09-10` vẫn là 4.004 hàng dữ liệu
 > đối chiếu hợp lệ cho một phép so 2,6 ngày, nhưng không phải phán quyết.
 
+> ### Diễn tập 2026-09-13 trên bản sao — KHÔNG PHẢI PHÁN QUYẾT
+>
+> Chạy để tập giao thức và để tìm lỗi tooling TRƯỚC ngày phán quyết, trên bản
+> sao `sqlite3 -readonly ".backup"` chụp lúc **2026-09-12 13:00:15 +07**. Tiến
+> trình lần 2 không bị đụng. Cửa sổ mới trôi **22h44m = 0,95/14 ngày**, nên
+> không con số nào dưới đây là phán quyết; ngày sớm nhất vẫn là 2026-09-25
+> 14:15:50 +07.
+>
+> ```
+> go run ./cmd/backtest -compare-journal -db <bản sao> >   -from "2026-09-11 14:15:50 +0700" -to "2026-09-12 13:00:15 +0700" -csv <scratch>
+> ```
+>
+> **Mã thoát 1, không phải 2** — tức **bước 2 ĐẠT**: `params_json` và
+> `params_json.fees` của cả **4.355** hàng nhật ký khớp khối `strategy:` và
+> biểu phí mà replay dùng. Đây là thứ đáng ăn mừng nhất của lần chạy 2: nhật ký
+> và backtest **so được với nhau**, khác hẳn lần 1 (phải dựng lại `2328307`).
+>
+> 91 chuỗi replay được, 16 bị từ chối (`model='continuous'` của paradex), **75
+> chuỗi so được**, **708 cặp quyết định**:
+>
+> | nhóm | số cặp |
+> |---|---|
+> | (a) khớp hành động | 199 |
+> | (b) *sổ lệnh* | **0** |
+> | (b) *basis* | **0** |
+> | (b) *lịch sử* | 10 |
+> | **(c) không giải thích được** | **0** |
+> | trạng thái vị thế lệch (không phải (c) mới) | 69 |
+> | **thiếu hàng nhật ký** | **430** |
+>
+> - **(c) = 0** — ngưỡng của bước 5 đạt ở phần quan trọng nhất. Không có dấu
+>   hiệu hai bản đã trôi khỏi nhau.
+> - **(a) trên mốc enter/exit = 2/57 = 3,5%**, cần ≥ 95%. Đọc cùng dòng dưới:
+>   phần lớn 57 mốc đó rơi vào `thiếu hàng` hoặc `trạng thái`, tức hệ quả của
+>   cửa sổ đứt chứ chưa phải bằng chứng luật sai.
+> - **(b) basis = 0 trên MỌI chuỗi** — đúng như ③ bước 3b dự đoán: replay không
+>   có nến nào trong cửa sổ nên nó cũng mù, hai bên mù giống nhau thì check
+>   khớp. Riêng 7 chuỗi HYPE·bybit_spot: `(b) basis` = 0 ở tất cả, lệch của
+>   chúng nằm ở `trạng thái` (1 và 7) và `lịch sử` (1). **Giả định "chuỗi
+>   bybit_spot tự động thuộc (b) vì basis" là SAI, và diễn tập chứng minh
+>   điều đó bằng số.**
+> - **430/708 cặp không có hàng nhật ký nào** → `CỬA SỔ ĐỨT (bước 1)`.
+>
+> **Vì sao cửa sổ đứt — đo được, và là lỗi VẬN HÀNH lặp lại của lần 1.** Nhật
+> ký chỉ có **49 tick** trong 22,7 giờ thay vì ~136. Khoảng giữa hai tick:
+> trung vị đúng 10 phút, nhưng ba lỗ hổng **177 phút**, **610 phút** và **123
+> phút** (UTC: 10:58→13:56, 13:56→00:06 hôm sau, 00:06→02:09) — gần 15 giờ
+> trên 22,7 giờ không có gì được đánh giá. `pmset -g log` nói thẳng:
+> **2026-09-11 18:03:37 +07 "Entering Sleep state due to 'Clamshell Sleep' …
+> Using Batt"** — gập màn hình, và **chạy pin**. Trong cửa sổ có **58 lần ngủ,
+> 100% trong số đó `Using Batt`** (39 'Sleep Service Back to Sleep', 18
+> 'Maintenance Sleep', 1 'Clamshell Sleep'). Đúng điều kiện ngoài code mà ③ đã
+> ghi sau lần 1 và **không được đáp ứng**: `caffeinate -i -s` chỉ giữ được máy
+> khi CẮM SẠC. Máy hiện đã cắm lại AC (đo cùng lúc), nhưng 3 giờ 48 phút sau
+> khi lên là đã mất. Và binary lần 2 (`59d3707`) chưa có đếm tick trễ, nên
+> **không dòng nào trong tiến trình nói ra** — đúng khoản nợ đã trả 2026-09-12
+> cho lần chạy 3.
+>
+> **Tiền (bước 5):** trên **2 mốc CẢ HAI bên cùng enter**, Σ APR ròng
+> sống−replay = **0,0001** so với biên chênh chi phí **±0,0001** — nằm trong
+> biên. 25 enter chỉ bên sống và 14 chỉ bên replay nằm NGOÀI phép so và được in
+> ra chứ không bị gộp (xem lỗi tooling ② dưới).
+>
+> **Hai lỗi tooling tìm được và đã sửa trong diễn tập:**
+>
+> ① **`cmd/backtest` mở `data/scanner.db` ở chế độ ĐỌC-GHI.** `store.Open` tạo
+> file nếu thiếu, áp schema và đóng dấu version — trên đúng file mà tiến trình
+> 3.5 đang ghi. Chưa gây hại vì schema chưa bump, nhưng đó là một lần migrate
+> đang chờ. Nay thêm cờ **`-db`** (mặc định rỗng = `storage.path` của
+> `config.yaml`, hành vi cũ y nguyên) và **luôn mở `store.OpenReadOnly`** —
+> lệnh này vốn tự mô tả là "reads SQLite, writes nothing back", giờ thì driver
+> bảo đảm chứ không phải thiện chí.
+>
+> ② **Phép so tiền của bước 5 không cùng tập.** Nó cộng enter của bên sống và
+> enter của bên replay ĐỘC LẬP, rồi chặn hiệu số bằng một biên chỉ tính ở
+> những mốc CẢ HAI cùng enter. Khi hai bên vào ở mốc khác nhau — tức mọi
+> trường hợp đáng quan tâm — hai tổng phủ hai tập khác nhau và biên không thể
+> chặn nổi hiệu số ngay cả về nguyên tắc: đo được **1,2365 so với biên
+> ±0,0001**, lệch 12.000 lần. Bước 5 viết rõ "cùng đơn vị, **cùng thời
+> điểm**", nên nay chỉ cộng trên các mốc cả hai cùng enter; enter một phía và
+> enter không định giá được (`net_apr_ok = 0`, không bao giờ là số 0 để cộng)
+> được ĐẾM và IN cạnh đó. Sau khi sửa: 0,0001 so với ±0,0001. Có test, và
+> khôi phục lại cách cộng cũ làm test đỏ.
+>
+> **Việc cho phiên phán quyết, rút từ diễn tập:** (1) cắm sạc, mở màn hình —
+> nếu không, cửa sổ tiếp tục đứt và ③ bước 1 buộc tính lại từ đầu; (2) chạy
+> `cmd/backfill -prices` trước khi so, xem ③ bước 3b; (3) chạy `-compare-journal`
+> với `-db` trỏ vào bản sao, không vào file sống.
+>
 > **Khởi động (2026-09-07).** Phần làm được trong một phiên là ba việc, phán
 > quyết là phiên sau (sớm nhất **2026-09-21 09:39**, đủ 14 ngày liên tục):
 >

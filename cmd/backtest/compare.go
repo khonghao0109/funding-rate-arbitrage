@@ -430,6 +430,15 @@ type compareStats struct {
 	buckets                              map[journalBucket]int
 	liveEnterNetAPR, btEnterNetAPR       float64
 	costGapAPR                           float64
+	// pairedEnters is how many settlements BOTH sides entered at, which is the
+	// set the three numbers above are summed over. The two counts beside it are
+	// the entries only one side made: they are deliberately NOT in the sums —
+	// see add — and are printed so nobody reads a matched total as a complete
+	// one.
+	pairedEnters, liveOnlyEnters, btOnlyEnters int
+	// unpricedEnters is paired entries where one side could not price the APR
+	// (net_apr_ok = 0). Dropping them silently would quietly shrink the check.
+	unpricedEnters int
 }
 
 func newCompareStats() *compareStats { return &compareStats{buckets: map[journalBucket]int{}} }
@@ -451,18 +460,43 @@ func (s *compareStats) add(p pairing, holdingDays float64) {
 			s.enterExitMatch++
 		}
 	}
-	// The money check (step 5) sums what each side PROJECTED at its own
-	// entries, over the whole window: the live rows' net_apr_frac at enter,
-	// the replay's NetAPR at its enter decisions — like for like.
-	if !p.LiveOnly && !p.Backtest.Holding && btAction == string(strategy.ActionEnter) && p.Backtest.Decision.NetAPR.OK {
+	// The money check (step 5) compares what the two sides PROJECTED "cùng đơn
+	// vị, cùng thời điểm" — same unit, SAME INSTANT. So it is summed only over
+	// settlements both sides entered at.
+	//
+	// It used to sum each side's entries independently while bounding the
+	// difference by a band computed only where both entered. Whenever the two
+	// sides entered at different settlements — which is the interesting case,
+	// and was every case in the 2026-09-13 rehearsal — the sums covered
+	// different sets and the band could not bound them even in principle:
+	// measured Σ difference 1.2365 against a band of ±0.0001. A bound that
+	// cannot bound its quantity is worse than no bound, because it is printed
+	// beside a verdict.
+	//
+	// Entries only one side made are counted instead, and printed. They are
+	// already visible to the verdict through (a), (b) and (c); what they must
+	// not do is enter an arithmetic that pretends to be like-for-like.
+	btEnter := !p.LiveOnly && !p.Backtest.Holding && btAction == string(strategy.ActionEnter)
+	liveEnter := p.Live != nil && liveAction == string(strategy.ActionEnter)
+	switch {
+	case btEnter && liveEnter:
+		if !p.Backtest.Decision.NetAPR.OK || !p.Live.NetAPROK {
+			// One side has no number at all. net_apr_ok = 0 is "not priced",
+			// never a zero to add in.
+			s.unpricedEnters++
+			break
+		}
+		s.pairedEnters++
 		s.btEnterNetAPR += p.Backtest.Decision.NetAPR.NetAPRFrac
-	}
-	if p.Live != nil && liveAction == string(strategy.ActionEnter) && p.Live.NetAPROK {
 		s.liveEnterNetAPR += p.Live.NetAPRFrac
-		if !p.LiveOnly && btAction == string(strategy.ActionEnter) && holdingDays > 0 {
+		if holdingDays > 0 {
 			// A cost difference enters the net APR as Δcost / hold × 365.
 			s.costGapAPR += math.Abs(p.Live.CostTotalPct-p.Backtest.Decision.Cost.TotalPct) / 100 * 365 / holdingDays
 		}
+	case liveEnter:
+		s.liveOnlyEnters++
+	case btEnter:
+		s.btOnlyEnters++
 	}
 }
 
@@ -476,6 +510,22 @@ func (s *compareStats) merge(o *compareStats) {
 	s.liveEnterNetAPR += o.liveEnterNetAPR
 	s.btEnterNetAPR += o.btEnterNetAPR
 	s.costGapAPR += o.costGapAPR
+	s.pairedEnters += o.pairedEnters
+	s.liveOnlyEnters += o.liveOnlyEnters
+	s.btOnlyEnters += o.btOnlyEnters
+	s.unpricedEnters += o.unpricedEnters
+}
+
+// onlySideNote names the entries left OUT of the money sums. They are not an
+// error and they are not silently dropped: (a), (b) and (c) already account for
+// them as decisions. What they must not do is enter a sum that claims to be
+// like-for-like, so they are reported beside it instead.
+func onlySideNote(s *compareStats) string {
+	if s.liveOnlyEnters == 0 && s.btOnlyEnters == 0 && s.unpricedEnters == 0 {
+		return ""
+	}
+	return fmt.Sprintf(" · ngoài phép so: %d enter chỉ bên sống, %d chỉ bên replay, %d không định giá được",
+		s.liveOnlyEnters, s.btOnlyEnters, s.unpricedEnters)
 }
 
 func (s *compareStats) line(name string) string {
@@ -572,8 +622,8 @@ func runCompare(ctx context.Context, db *store.Store, series []backtest.Series, 
 		}
 		st.buckets[bucketLiveGap] += gaps
 		fmt.Println(st.line(name))
-		fmt.Printf("%-34s   tiền: Σ net_apr hàng enter sống %.4f · Σ APR ròng quyết định enter replay %.4f · biên chênh chi phí cộng dồn ±%.4f\n",
-			"", st.liveEnterNetAPR, st.btEnterNetAPR, st.costGapAPR)
+		fmt.Printf("%-34s   tiền trên %d mốc CẢ HAI cùng enter: Σ net_apr sống %.4f · Σ APR ròng replay %.4f · biên chênh chi phí ±%.4f%s\n",
+			"", st.pairedEnters, st.liveEnterNetAPR, st.btEnterNetAPR, st.costGapAPR, onlySideNote(st))
 		total.merge(st)
 		allPairs = append(allPairs, pairs...)
 		for range pairs {
@@ -622,8 +672,10 @@ func runCompare(ctx context.Context, db *store.Store, series []backtest.Series, 
 	noRow := total.buckets[bucketNoRow]
 	moneyGap := math.Abs(total.liveEnterNetAPR - total.btEnterNetAPR)
 	fmt.Printf("Bước 1: %d mốc không có hàng nhật ký (cần 0 — cửa sổ phải liền) · thiếu chân hedge %d\n", noRow, total.buckets[bucketLiveGap])
-	fmt.Printf("Bước 5: (c) = %d (cần 0) · (a) trên mốc enter/exit = %d/%d = %.1f%% (cần ≥ 95%%) · Σ APR ròng lúc vào, sống−replay = %.4f so với biên chi phí ±%.4f · trạng thái lệch %d\n",
-		unexplained, total.enterExitMatch, total.enterExit, 100*share, total.liveEnterNetAPR-total.btEnterNetAPR, total.costGapAPR, total.buckets[bucketState])
+	fmt.Printf("Bước 5: (c) = %d (cần 0) · (a) trên mốc enter/exit = %d/%d = %.1f%% (cần ≥ 95%%) · trạng thái lệch %d\n",
+		unexplained, total.enterExitMatch, total.enterExit, 100*share, total.buckets[bucketState])
+	fmt.Printf("Bước 5 (tiền): trên %d mốc CẢ HAI cùng enter, Σ APR ròng sống−replay = %.4f so với biên chi phí ±%.4f%s\n",
+		total.pairedEnters, total.liveEnterNetAPR-total.btEnterNetAPR, total.costGapAPR, onlySideNote(total))
 	switch {
 	case noRow > 0:
 		fmt.Println("CỬA SỔ ĐỨT (bước 1): có mốc settle không được nhật ký ghi — tính lại cửa sổ từ lần lên cuối, không cộng dồn hai mảnh. Chưa phán quyết.")

@@ -609,6 +609,18 @@ winners). Rule 2 (moving capital between series) is recorded under PLAN step
 `internal/backtest`, a capital/position object in Go, and the operator's
 decision on how much may sit on one quote-bridged venue.
 
+**A rehearsal of the 3.5 verdict on 2026-09-13 (a read-only copy, NOT a
+verdict) found the run-2 window already broken, and by the same operational
+fault as run 1**: the journal holds 49 evaluation ticks in 22.7 hours instead
+of ~136, with gaps of 177, 610 and 123 minutes, because the machine slept 58
+times inside the window and EVERY one of them was `Using Batt` — `caffeinate
+-i -s` only holds a machine that is plugged in, which PLAN already recorded
+after run 1. The comparison itself is healthy where it can run: parameters
+and fees match on all 4,355 rows (exit 1, not 2), (c) = 0, and on the two
+settlements both sides entered the projected net APR agrees inside the cost
+band. What it cannot do is judge, with 430 of 708 settlements carrying no
+journal row. Details and the two tooling defects it exposed are in PLAN 3.5.
+
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
 RUNNING AGAIN — run 2, launched 2026-09-11 14:15:50 +07 from a clean tree
 at `59d3707`** (port **8085**, PID in `.paper/scanner.pid`, log
@@ -1065,7 +1077,10 @@ sqlite3 data/scanner.db "SELECT datetime(evaluated_at_ms/1000,'unixepoch'), symb
 # The 3.5 verdict by machine (PLAN 3.5 ③ steps 2, 4, 5): the journal in the
 # run's window against a replay of config.yaml's block, decision by decision.
 # Exit 0 passed, 1 failed, 2 the journal was not written with this block.
-go run ./cmd/backtest -compare-journal -from 2026-09-10T07:40:00 -to 2026-09-24T07:40:00 -csv /tmp/compare.csv
+# -db points it at a COPY, which is how it is run while a gate is writing the
+# live file; the corpus is opened read-only either way since 2026-09-13.
+sqlite3 -readonly "file:data/scanner.db?mode=ro" ".backup '/tmp/run2.db'"
+go run ./cmd/backtest -compare-journal -db /tmp/run2.db   -from "2026-09-11 14:15:50 +0700" -to "2026-09-25 14:15:50 +0700" -csv /tmp/compare.csv
 
 
 # Re-measure what a stored price sample costs on disk before changing

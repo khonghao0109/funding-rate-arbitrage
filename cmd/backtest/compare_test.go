@@ -314,3 +314,81 @@ func TestParamsMismatch_AnAbsentKeyMeansTheOldRule(t *testing.T) {
 		t.Errorf("a moved key the row lacks is a mismatch at what its absence meant: %v", got)
 	}
 }
+
+// --- the money check of step 5, which must be like-for-like ---
+
+// enterPair builds a pairing in which each side may or may not enter, with its
+// own projected net APR and round-trip cost.
+func enterPair(liveAction, btAction strategy.Action, liveAPR, btAPR, liveCost, btCost float64, liveOK, btOK bool) pairing {
+	live := liveRow(hour, liveAction, checks(entryOK, nil), liveCost, 0, nil)
+	live.NetAPRFrac, live.NetAPROK = liveAPR, liveOK
+	bt := btAt(hour, false, btAction, checks(entryOK, nil), btCost, hour)
+	bt.Decision.NetAPR = strategy.NetAPRResult{OK: btOK, NetAPRFrac: btAPR}
+	return pairing{AtMs: hour, Live: &live, Backtest: bt, Bucket: bucketMatch}
+}
+
+// Step 5 says the two sums are compared "cùng đơn vị, cùng thời điểm". Summing
+// each side's own entries independently while bounding the difference by a band
+// measured only where both entered gives a bound that cannot bound its own
+// quantity: in the 2026-09-13 rehearsal the difference was 1.2365 against a
+// band of ±0.0001, because the two sides entered at almost entirely different
+// settlements. Only settlements BOTH sides entered at may go into the sums.
+func TestMoneyCheck_SumsOnlyTheSettlementsBothSidesEnteredAt(t *testing.T) {
+	s := newCompareStats()
+	// Both entered: 0.10 live against 0.08 replay, costs 0.30% and 0.28%.
+	s.add(enterPair(strategy.ActionEnter, strategy.ActionEnter, 0.10, 0.08, 0.30, 0.28, true, true), 30)
+	// Live entered alone, with a large projection that must NOT reach the sum.
+	s.add(enterPair(strategy.ActionEnter, strategy.ActionSkip, 5.00, 0, 0.30, 0.30, true, true), 30)
+	// Replay entered alone, likewise.
+	s.add(enterPair(strategy.ActionSkip, strategy.ActionEnter, 0, 7.00, 0.30, 0.30, true, true), 30)
+
+	if s.pairedEnters != 1 {
+		t.Fatalf("pairedEnters = %d, want 1", s.pairedEnters)
+	}
+	if s.liveOnlyEnters != 1 || s.btOnlyEnters != 1 {
+		t.Errorf("one-sided entries counted %d live / %d replay, want 1 / 1", s.liveOnlyEnters, s.btOnlyEnters)
+	}
+	if s.liveEnterNetAPR != 0.10 {
+		t.Errorf("Σ live = %.4f, want 0.10 — the live-only entry of 5.00 leaked into a like-for-like sum", s.liveEnterNetAPR)
+	}
+	if s.btEnterNetAPR != 0.08 {
+		t.Errorf("Σ replay = %.4f, want 0.08 — the replay-only entry of 7.00 leaked in", s.btEnterNetAPR)
+	}
+	// The band must now cover the very difference it is placed beside:
+	// |0.30-0.28|/100 * 365/30 = 0.002433, against |0.10-0.08| = 0.02.
+	gap := s.liveEnterNetAPR - s.btEnterNetAPR
+	if s.costGapAPR <= 0 {
+		t.Fatal("the cost band is zero on a pair whose costs differ")
+	}
+	if want := 0.02 / 100 * 365 / 30; !nearly(s.costGapAPR, want) {
+		t.Errorf("band = %.6f, want %.6f (Δcost / hold × 365)", s.costGapAPR, want)
+	}
+	t.Logf("gap %.6f against band %.6f — both measured on the same one settlement", gap, s.costGapAPR)
+}
+
+// net_apr_ok = 0 is "not priced", never a zero to add in. A paired entry where
+// either side has no number is counted out loud rather than folded into the sum
+// as if it were worth nothing.
+func TestMoneyCheck_AnUnpricedSideIsCountedNotTreatedAsZero(t *testing.T) {
+	s := newCompareStats()
+	s.add(enterPair(strategy.ActionEnter, strategy.ActionEnter, 0.10, 0, 0.30, 0.30, true, false), 30)
+	s.add(enterPair(strategy.ActionEnter, strategy.ActionEnter, 0, 0.09, 0.30, 0.30, false, true), 30)
+
+	if s.unpricedEnters != 2 {
+		t.Errorf("unpricedEnters = %d, want 2", s.unpricedEnters)
+	}
+	if s.pairedEnters != 0 {
+		t.Errorf("pairedEnters = %d, want 0", s.pairedEnters)
+	}
+	if s.liveEnterNetAPR != 0 || s.btEnterNetAPR != 0 {
+		t.Errorf("an unpriced entry reached the sums: live %.4f, replay %.4f", s.liveEnterNetAPR, s.btEnterNetAPR)
+	}
+	if note := onlySideNote(s); !strings.Contains(note, "không định giá được") {
+		t.Errorf("the report does not say two entries were unpriced: %q", note)
+	}
+}
+
+func nearly(got, want float64) bool {
+	d := got - want
+	return d < 1e-9 && d > -1e-9
+}
