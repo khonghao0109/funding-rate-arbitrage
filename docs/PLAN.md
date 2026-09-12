@@ -3328,13 +3328,21 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 **Mục tiêu:** Bot tự đặt và đóng vị thế delta-neutral với vốn nhỏ.
 **Thời gian:** 6–8 tuần · **6 bước**
 
-> **Thứ tự sau Q12 (2026-09-11):** Bước 4.3 (sổ paper có vốn ảo + giao diện
-> demo) được làm **song song với cổng 3.5 đang chạy**, như một tiến trình chỉ
-> ĐỌC `signal_journal` và store — không sửa, không build lại, không khởi động
-> lại tiến trình lần 2 trên cổng 8085. Mọi bước còn lại — 4.1 REST có ký, 4.2
-> lệnh testnet, 4.4/4.5 hai chân thật, 4.6 vốn thật — chỉ bắt đầu sau khi 3.5
-> ĐẠT. Máy trạng thái khớp-một-phần của 4.4 được phép thiết kế và unit-test với
-> broker giả trong lúc chờ, nhưng không được đánh dấu xong trước cổng.
+> **Thứ tự sau Q12 (2026-09-11), đã sửa theo Q14 (2026-09-12):** Bước 4.3 (sổ
+> paper có vốn ảo + giao diện demo) được làm **song song với cổng 3.5 đang
+> chạy**, như một tiến trình chỉ ĐỌC `signal_journal` và store — không sửa,
+> không build lại, không khởi động lại tiến trình đang giữ cổng 8085.
+>
+> **Bước 4.1 (hạ tầng REST có ký) cũng được làm song song**, theo quyết định
+> **Q14** ngày 2026-09-12, với ba giới hạn: chỉ credential **TESTNET** và
+> client từ chối mọi host không phải testnet cho tới 4.6; 4.1 chỉ ✅ khi đã
+> gọi được số dư testnet thật; và **4.2 chỉ bắt đầu sau khi 4.1 được review
+> đạt**. Đọc Q14 ở §7.1 trước khi đụng vào bước này.
+>
+> **4.4/4.5 (hai chân thật) và 4.6 (vốn thật) vẫn đứng sau phán quyết 3.5** —
+> Q14 không đổi điều đó. Máy trạng thái khớp-một-phần của 4.4 được phép thiết
+> kế và unit-test với broker giả trong lúc chờ, nhưng không được đánh dấu xong
+> trước cổng.
 
 #### Bước 4.1 — Hạ tầng REST có ký — 🟡 CODE XONG, **CHƯA NGHIỆM THU** (2026-09-12)
 - Package riêng `internal/broker/`, tách hoàn toàn khỏi `exchanges/` (đọc-only).
@@ -3343,6 +3351,45 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 - API key nạp từ env/secret store, **không bao giờ log**, quyền bật trade / **tắt withdraw**.
 - **Nghiệm thu:** gọi được endpoint đọc số dư trên testnet; test đảm bảo key không lọt vào log.
 
+> **Đã làm 2026-09-12 (Q14 — song song với cổng 3.5 lần 3).** `internal/broker`
+> có bốn phần, mỗi phần kèm test:
+>
+> - **`Secret` / `Credentials`** — nạp từ `BINANCE_TESTNET_API_KEY` /
+>   `BINANCE_TESTNET_API_SECRET`. `Format` thắng `String`/`GoString` ở MỌI
+>   động từ `fmt` nên `%v`, `%s`, `%q`, `%+v`, `%#v`, `%x` đều ra `[redacted]`,
+>   kể cả khi Secret nằm trong struct/slice/map ai đó in ra lúc gỡ lỗi;
+>   `MarshalJSON` **từ chối** thay vì thay bằng chỗ trống — một bản dump ghi
+>   `"[redacted]"` trông như đã round-trip, và người đọc sau sẽ khôi phục một
+>   tài khoản có secret đúng bằng chuỗi đó. Lỗ hổng Go để lại (fmt không gọi
+>   được `Format` trên field không xuất) được GHI ở doc của kiểu chứ không
+>   giấu đi.
+> - **Ký** — HMAC-SHA256 trên `totalParams`, header `X-MBX-APIKEY`, chữ ký là
+>   tham số CUỐI. Tham số là **slice có thứ tự** chứ không phải `url.Values`:
+>   sàn ký đúng chuỗi nó nhận, nên dựng chuỗi hai lần (một để ký, một để gửi)
+>   là cách hai bản trôi khỏi nhau. Ghim bằng **hai ví dụ có sẵn trong tài
+>   liệu Binance** (spot và USDⓈ-M futures — key mẫu của HỌ), tái lập đúng
+>   từng byte.
+> - **Đồng hồ + recvWindow** — `SyncClock` đọc `/fapi/v1/time` (weight 1), đo
+>   lệch so với **trung điểm** vòng request chứ không so với lúc giải mã xong,
+>   nên nửa vòng mạng không bị tính thành lệch đồng hồ sàn. `timestamp` gửi đi
+>   = giờ máy + lệch; đo lại mỗi 30 phút vì máy này ngủ. Hai lần TỪ CHỐI thay
+>   vì cầu may: không đo được đồng hồ thì không ký, và `|lệch| ≥ recv_window_ms`
+>   thì từ chối tại chỗ kèm cả hai con số — để khỏi nhận `-1021` lúc 3 giờ
+>   sáng, một mã lỗi không nói gì về đồng hồ của ta.
+> - **Ngân sách weight** — đặt chỗ TRƯỚC khi gọi (2400/phút futures,
+>   6000/phút spot, đều từ tài liệu và ghim bằng test), đọc
+>   `X-MBX-USED-WEIGHT-*` của sàn làm SỐ CHÍNH THỨC (trong một cửa sổ nó chỉ
+>   được phép NÂNG con số lên), 429 lùi theo **max(Retry-After, phần còn lại
+>   của phút)** — bẫy Hyperliquid đã ghi ở bảng trap — và **418 là dừng hẳn**:
+>   không thử lại, không tự hết hạn, vì thử lại chính là thứ kéo dài lệnh cấm.
+>
+> Ranh giới được **kiểm bằng máy chứ không bằng lời**: một test AST khẳng định
+> `exchanges/` không import bất kỳ gói `internal/` nào, và một test chạy
+> `go list -deps` trên **sáu** lệnh (`scanner`, `backtest`, `backfill`,
+> `paperledger`, `pairscreen`, `fundingcheck`) khẳng định `internal/broker`
+> KHÔNG có trong đồ thị của chúng — tiến trình cổng 3.5 chạy hai tuần không
+> mang credential. `cmd/brokercheck` là lệnh DUY NHẤT liên kết gói này.
+>
 > **Trạng thái 2026-09-12: CHƯA ĐÁNH DẤU ✅, và đây là lý do bằng số.**
 > Chạy `go run ./cmd/brokercheck` trên máy người vận hành:
 >
@@ -3360,8 +3407,18 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > điều chưa đo. Khi có key, chạy lại đúng lệnh trên và dán vào đây: mã HTTP,
 > lệch đồng hồ (ms), weight đã dùng, SỐ tài sản và TÊN tài sản của cả hai tài
 > khoản — **không bao giờ dán giá trị key, chữ ký, hay số dư**.
+>
+> **Hai điều phải nhắc lại, vì chúng dễ bị đọc nhầm thành "đã mở GĐ 4":**
+> (1) **Không có lệnh nào được đặt** — kể cả trên testnet. Mọi phương thức của
+> `broker.Client` là GET; `PlaceOrder`/`CancelOrder` thuộc **4.2** và chưa tồn
+> tại. (2) **`cmd/scanner` vẫn không giữ credential** và không thể giữ: nó
+> không import `internal/broker`, và điều đó được kiểm bằng `go list -deps`
+> chứ không bằng trí nhớ. Tiến trình lần chạy 3 trên cổng 8085 không bị đụng
+> tới trong phiên này.
 
 #### Bước 4.2 — Trừu tượng hoá lệnh
+> **Chưa bắt đầu.** Theo Q14, 4.2 chỉ khởi động sau khi 4.1 **được review đạt**
+> (P5 của WORKFLOW) — mà 4.1 còn ở 🟡 vì chưa có key testnet để nghiệm thu.
 - Interface chung: `PlaceOrder`, `CancelOrder`, `GetPosition`, `GetBalance`.
 - Hiện thực cho **1 sàn duy nhất trước** (đề xuất Binance — tài liệu tốt nhất, có testnet).
 - Xử lý làm tròn theo `stepSize` / `tickSize` / `minNotional` của từng cặp.
@@ -3983,6 +4040,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q1** | **Sàn chính cho execution: Binance.** Tài liệu tốt nhất, có testnet, thanh khoản sâu nhất trong 9 nguồn đã đo, và là sàn DUY NHẤT hôm nay có cả hai chân trên một venue (`binance_futures ← binance_spot`) — điều kiện của ký quỹ gộp ở GĐ 4. Chốt từ gợi ý §7.2 cũ | 2026-09-11 |
 | **Q5** | **Kênh alert: Telegram.** Discord là tuỳ chọn thêm sau, không phải kênh thứ hai bắt buộc. `internal/notify` ở Bước 3.4 (hoãn sau cổng 3.5) làm Telegram trước | 2026-09-11 |
 | **Q13** | **Track crowding giữ NGUYÊN quy ước biên của fixture: bucket `(T−4h, T]`, `label="right", closed="right"`** — close tại T là close của nến **1 phút MỞ tại T**, nên quyết định sớm nhất ở **T+60s**. KHÔNG dùng nến 4h của sàn, KHÔNG sinh lại fixture bằng `strict_completed_panel`. **Quyết định LỘ TRÌNH, đảo ngược được** cho tới khi 6.2 ghi dòng đầu tiên; sau đó đảo ngược nghĩa là sinh lại fixture và chạy lại nghiệm thu 6.1 | 2026-09-12 |
+| **Q14** | **Bước 4.1 (REST có ký) được làm SONG SONG với cổng 3.5 lần 3**, với ba giới hạn: (1) chỉ credential **TESTNET** — `broker.NewClient` từ chối mọi host ngoài danh sách testnet và không có cờ mở mainnet cho tới **4.6**; (2) 4.1 chỉ ✅ khi đã **gọi được số dư testnet thật**, chưa có key thì ghi "chưa nghiệm thu"; (3) **4.2 chỉ bắt đầu sau khi 4.1 được review đạt**; 4.4–4.6 vẫn sau phán quyết 3.5. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-12 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -4099,6 +4157,54 @@ khi** 6.2 ghi dòng đầu tiên — sau đó nó kéo theo cả kho dữ liệu
 không nói (a) sinh lợi hơn (b) — số đo nói ngược lại 1,9 điểm. Nó chỉ nói rằng
 với trạng thái hiện tại của lộ trình, đổi quy ước đắt hơn phần lợi mà chính gói
 nghiên cứu xếp vào vùng nhiễu.
+
+#### Q14 — Vì sao 4.1 được làm trong lúc cổng 3.5 còn chạy
+
+**Quyết định của người vận hành, 2026-09-12. Quyết định LỘ TRÌNH, đảo ngược
+được** — không phải kết luận rằng "giai đoạn 4 an toàn rồi".
+
+Quy tắc 1 nói execution và credential (GĐ 4) đến sau khi giám sát, tín hiệu và
+backtest đã được chứng minh (GĐ 2–3), và Q12 đã áp dụng nó bằng cách đẩy toàn
+bộ GĐ 4 ra sau cổng 3.5 trừ sổ paper 4.3. Q14 nới đúng **một** bước, và nới vì
+ba lý do đo được chứ không vì sốt ruột:
+
+1. **4.1 không chạm đường quyết định.** Nó là hạ tầng vận chuyển: một đồng hồ,
+   một chữ ký, một ngân sách weight, và hai endpoint ĐỌC. Nó không gọi
+   `EvaluateEntry`/`EvaluateExit`, không đọc `signal_journal`, không ghi
+   `data/scanner.db`, và **không đặt lệnh nào** — kể cả trên testnet, vì đó là
+   4.2. Cổng 3.5 so quyết định của đường sống với replay; không có gì trong
+   4.1 xuất hiện ở hai bên phép so đó.
+2. **Nó không vào binary của cổng.** `internal/broker` chỉ được `cmd/brokercheck`
+   liên kết, và điều đó được kiểm bằng máy: `go list -deps` chạy trên **sáu**
+   lệnh còn lại phải không có gói này (`internal/broker/boundary_test.go`).
+   Tiến trình lần chạy 3 chạy suốt hai tuần không mang một dòng credential nào.
+3. **Nó gỡ một nút thắt đã đo.** Q1 ghi cái giá phải trả của Binance: biểu ký
+   quỹ duy trì (`leverageBracket`) cần API key, nên hôm nay `margin.verified:
+   false` và luật `margin_known` **từ chối** mở vị thế đòn bẩy ở binance. Có
+   key testnet là xác minh được đường gọi đó trước khi cần nó thật.
+
+**Ba giới hạn, và mỗi giới hạn là một cái test chứ không phải một lời hứa:**
+
+- **Chỉ TESTNET.** `broker.NewClient` từ chối mọi base URL có host ngoài danh
+  sách testnet (`demo-fapi.binance.com`, `testnet.binance.vision`) và từ chối
+  cả `http://`. **Không có cờ nào mở mainnet ở bước này** — có một test đọc
+  chính mã nguồn của gói để bắt ai đó thêm `AllowMainnet` cho một buổi chiều
+  gỡ lỗi. Host mainnet là việc của **4.6**, và khi thêm thì thêm kèm URL tài
+  liệu, không phải bằng cách nới phép so thành so tiền tố.
+- **4.1 chỉ ✅ khi ĐÃ GỌI ĐƯỢC số dư testnet thật.** Code chạy được không phải
+  nghiệm thu. Chưa có key thì `cmd/brokercheck` in "chưa có key testnet", thoát
+  mã 2, và bước này ở 🟡 — đúng trạng thái nó đang ở lúc viết dòng này.
+- **4.2 chỉ bắt đầu sau khi 4.1 được review đạt** (P5 của WORKFLOW). 4.4–4.6
+  vẫn đứng sau phán quyết 3.5 và Q14 không đụng tới điều đó.
+
+**Cái giá phải nói ra.** Từ nay repo có một gói giữ credential, nên rủi ro rò
+rỉ tồn tại ở đây mà trước đây không tồn tại. Đổi lại là bốn thứ có thể kiểm:
+kiểu `Secret` không in được qua bất kỳ động từ `fmt` nào và `MarshalJSON` thì
+**từ chối** thay vì thay bằng chỗ trống; mọi lỗi chỉ nêu scheme/host/path vì
+chữ ký nằm trên query string; thân phản hồi của sàn được chà sạch trước khi vào
+một thông báo; và một test chạy cả client với secret mồi rồi bắt toàn bộ log và
+mọi chuỗi lỗi để khẳng định không có gì lọt. Nếu một trong bốn thứ đó hỏng,
+quyết định này phải được xem lại.
 
 #### Q11 — Vì sao bỏ Basis Trade, và vì sao KHÔNG kết luận gì về nó
 

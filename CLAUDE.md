@@ -746,6 +746,30 @@ connectors on the shipped config, same tool before and after: bybit_spot went
 from **0 messages in 20 minutes** to **9,592 in 6**. The running gate was not
 touched.
 
+**Step 4.1 (signed REST) was built 2026-09-12, beside the running gate, and
+is NOT accepted (decision Q14).** The operator allowed one more phase-4 step
+to run in parallel with step-3.5 run 3, under three limits that are tests
+rather than promises: TESTNET credentials only — `broker.NewClient` refuses
+any host outside the documented testnet list (`demo-fapi.binance.com`,
+`testnet.binance.vision`) and refuses plaintext, with no flag to widen it
+before 4.6; 4.1 is ✅ only once a testnet balance has actually been READ; and
+4.2 starts only after 4.1 passes review. 4.4–4.6 still wait for the 3.5
+verdict. `internal/broker` now holds a `Secret` no fmt verb can print and
+whose `MarshalJSON` refuses rather than substitutes, HMAC-SHA256 signing
+pinned to Binance's OWN two documented worked examples byte-for-byte, a clock
+skew measured against the midpoint of the round trip (with two refusals — no
+signing on an unmeasurable clock, and none when |skew| ≥ recvWindow, rather
+than letting the venue answer -1021), and a weight budget that reserves
+before the call, adopts `X-MBX-USED-WEIGHT-*` as authoritative, backs a 429
+off by max(Retry-After, the rest of the minute), and treats 418 as terminal
+because retrying is what lengthens a ban. **It places no order — every method
+is a GET** — and it is kept off the ingestion path by machine: an AST walk
+asserts `exchanges/` imports no `internal/` package at all, and `go list
+-deps` asserts that none of the six other commands links the broker, so the
+gate's unattended binary carries no credential. `cmd/brokercheck` is the one
+command that links it; run on this machine it exits 2 ("no testnet
+credentials"), which is why PLAN 4.1 reads 🟡 CODE XONG, CHƯA NGHIỆM THU.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -965,6 +989,11 @@ cmd/paperledger/     step-4.3 paper ledger: a separate process that reads the
                      journal and the store READ-ONLY, prices every journalled
                      decision with internal/paper, serves PAPER-labelled JSON
                      and a UI on its own port; never touches cmd/scanner
+cmd/brokercheck/     step-4.1 diagnostic: signed REST against Binance TESTNET —
+                     server clock, skew, one signed balance read per venue, the
+                     weight the venue reports. Places NO order, prints no key,
+                     no signature and no amount. The ONE command that links
+                     internal/broker; a test asserts every other one does not
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
                      the root package is the shared KERNEL: types, Feeds, the
                      RunStream lifecycle, FetchJSON, and the normalization
@@ -1005,7 +1034,12 @@ internal/
                      makes one; rule 7's one exception, bounded in
                      execution/doc.go
   notify/            Telegram and Discord alerts — step 3.4, DEFERRED behind 3.5
-  broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS
+  broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS — step 4.1, and
+                     TESTNET ONLY: NewClient refuses any host outside the
+                     documented testnet list and there is no flag to widen it
+                     before 4.6. It READS (GETs) and places no order. Two tests
+                     keep it off the ingestion path: an AST walk over
+                     exchanges/, and `go list -deps` over every cmd/ binary
   execution/         delta-neutral position open and close
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
                      holds the perp liquidation model strategy calls
@@ -1035,8 +1069,10 @@ written one for; `connector:` picks from `exchanges.Connectors()`, and
 Per-venue symbol naming lives there too (`symbol_format`, `symbol_map`), which is
 what removed six hardcoded translation tables from `exchanges/`.
 
-**Three packages under `internal/` are still empty** — `broker`, `execution`
-and `notify` contain only `doc.go` stating their responsibility and boundaries.
+**Two packages under `internal/` are still empty** — `execution` and `notify`
+contain only `doc.go` stating their responsibility and boundaries. `broker`
+became real on 2026-09-12 (step 4.1, decision Q14) and is still the only
+package that may hold a credential.
 `backtest` has been real code since step 3.3 (2026-09-04) and `risk` since the
 liquidation model of 2026-09-07; `crowding` (6.1) and `paper` (4.3) arrived on
 2026-09-11/12. Read the relevant `doc.go` before adding code to any of them,
