@@ -3336,12 +3336,30 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > ĐẠT. Máy trạng thái khớp-một-phần của 4.4 được phép thiết kế và unit-test với
 > broker giả trong lúc chờ, nhưng không được đánh dấu xong trước cổng.
 
-#### Bước 4.1 — Hạ tầng REST có ký
+#### Bước 4.1 — Hạ tầng REST có ký — 🟡 CODE XONG, **CHƯA NGHIỆM THU** (2026-09-12)
 - Package riêng `internal/broker/`, tách hoàn toàn khỏi `exchanges/` (đọc-only).
 - HMAC-SHA256 signing, xử lý `recvWindow`, đồng bộ đồng hồ với server sàn.
 - Rate limiter theo weight của từng sàn.
 - API key nạp từ env/secret store, **không bao giờ log**, quyền bật trade / **tắt withdraw**.
 - **Nghiệm thu:** gọi được endpoint đọc số dư trên testnet; test đảm bảo key không lọt vào log.
+
+> **Trạng thái 2026-09-12: CHƯA ĐÁNH DẤU ✅, và đây là lý do bằng số.**
+> Chạy `go run ./cmd/brokercheck` trên máy người vận hành:
+>
+> ```
+> CHƯA CÓ KEY TESTNET: broker: no credentials in the environment:
+>   BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET are unset
+> Bước 4.1: code xong, CHƯA NGHIỆM THU.
+> ```
+> **mã thoát 2** ("không có credential, không thử gì cả"; 0 = đạt, 1 = hỏng).
+> `.env` chỉ có `PORT`. Không gọi mạng nào được thực hiện.
+>
+> Nghiệm thu của bước này là **"gọi được endpoint đọc số dư trên testnet"** —
+> một phép đo, không phải một đoạn code chạy được. Chừng nào chưa có hai biến
+> môi trường thì mục này ở **🟡**, và bất kỳ ai đánh ✅ cho nó là đang ghi một
+> điều chưa đo. Khi có key, chạy lại đúng lệnh trên và dán vào đây: mã HTTP,
+> lệch đồng hồ (ms), weight đã dùng, SỐ tài sản và TÊN tài sản của cả hai tài
+> khoản — **không bao giờ dán giá trị key, chữ ký, hay số dư**.
 
 #### Bước 4.2 — Trừu tượng hoá lệnh
 - Interface chung: `PlaceOrder`, `CancelOrder`, `GetPosition`, `GetBalance`.
