@@ -78,8 +78,9 @@ deployed 21 times, both absorbed by the shared lifecycle; 36/36 series live at
 91h. Two caveats: Pyth answered 401 on every attempt, so the oracle was absent
 the whole run, and the step-1.6 silent-subscription defect simply did not occur
 — it stays open, unfixed. The soak process was left running past its deadline
-on port 8082 (`.soak/scanner.pid`); stop it with SIGINT when it is no longer
-wanted, and keep using another port while it lives.
+on port 8082 and **died with the machine reboot of 2026-09-10 01:13 +07**, the
+same reboot that killed step-3.5 run 1; `.soak/` keeps its record (last log
+line 01:10) and **port 8082 is free** — re-measured 2026-09-12.
 
 Phase 2 (Funding Rate Monitor) has started in parallel without touching the
 soak process: step 2.1 (`cmd/fundingcheck`) verified the funding fields of all
@@ -884,6 +885,10 @@ cmd/fundingcheck/    step-2.1 diagnostic: reads BTC funding from all 7 venues
 cmd/backfill/        step-2.6 one-off: fills funding_history from the venues'
                      history endpoints and reports how deep each series really
                      reached. Safe to re-run — every row is keyed by settlement
+cmd/backtest/        step-3.3 replay + parameter sweep: reads the corpus,
+                     calls internal/strategy's production rules (never its own
+                     copy — two AST tests enforce it), writes CSVs for
+                     tools/report/. -compare-journal is the 3.5 gate by machine
 cmd/pairscreen/      candidate-pair screen (2026-09-09): live registry, hedge
                      mapping, 9 order books and the round trip strategy prices
                      at 50k, one JSON row per pair × perp; the corpus half and
@@ -908,6 +913,9 @@ exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credent
   exchangestest/     shared test harness: recorder, capture tool, and the
                      contract checkers every venue's recording must pass
 internal/
+  config/            config.yaml -> typed config; the ONE mapping from the
+                     strategy: block to strategy.Params, shared by cmd/scanner
+                     and cmd/backtest so the 3.5 gate compares one parameter set
   scanner/           the engine: price state, staleness, the wire contract
   depth/             order book -> liquidity figures; contract->coin conversion
   instruments/       trading rules, spot<->perp mapping, delta-neutral sizing
@@ -959,10 +967,14 @@ written one for; `connector:` picks from `exchanges.Connectors()`, and
 Per-venue symbol naming lives there too (`symbol_format`, `symbol_map`), which is
 what removed six hardcoded translation tables from `exchanges/`.
 
-The remaining empty packages under `internal/` (`backtest`, `notify`, `broker`,
-`execution`, `risk`) contain only `doc.go` stating their responsibility and
-boundaries. Read the relevant `doc.go` before adding code to one — the
-boundaries written there are the contract, not a suggestion.
+**Three packages under `internal/` are still empty** — `broker`, `execution`
+and `notify` contain only `doc.go` stating their responsibility and boundaries.
+`backtest` has been real code since step 3.3 (2026-09-04) and `risk` since the
+liquidation model of 2026-09-07; `crowding` (6.1) and `paper` (4.3) arrived on
+2026-09-11/12. Read the relevant `doc.go` before adding code to any of them,
+empty or not — the boundaries written there are the contract, not a suggestion,
+and `paper/doc.go` plus `execution/doc.go` are where rule 7's one exception is
+bounded.
 
 ### Dependency rules — blocking, not advisory
 
@@ -1006,7 +1018,9 @@ go run ./cmd/backtest -sweep -months 12 -min-rate-bps 0.3,0.5,0.8,1.2,2,3,5 \
   -csv wide.csv -trades-csv trades.csv -top 40   # the 6,048-set grid of 2026-09-07
 
 # Step 3.5's journal-only run: same binary, strategy: block enabled in
-# config.yaml. PORT picks the port (8082 belongs to the phase-1 soak).
+# config.yaml. PORT picks the port. Run 2 holds 8085; 8082 is free since the
+# phase-1 soak died on 2026-09-10, but nothing may be started on either while
+# the gate runs.
 PORT=8085 go run ./cmd/scanner
 sqlite3 data/scanner.db "SELECT datetime(evaluated_at_ms/1000,'unixepoch'), symbol, perp_source, action FROM signal_journal ORDER BY 1 DESC LIMIT 28"
 
@@ -1099,21 +1113,24 @@ phase 1.
   `symbols × 5/s` — measured 20.0/s and 65 KB/s afterwards. Alerts are not
   queued. Still open, and now the dominant cost: the server ships every symbol
   to every client (PLAN §7.3 item 2), so 50 symbols would be 250 msg/s.
-- 483 test functions (`grep -r '^func Test' --include='*_test.go'`, re-measured 2026-09-07; most
-  table-driven so the case count is far higher; earlier docs quoted a "211
-  tests" figure whose counting method did not survive — this one is stated so
-  it can be re-measured): `internal/strategy` 35 (96.7%),
-  `exchanges` 90 (58.8% of statements),
-  `internal/scanner` 114 (86.5%), `internal/instruments` 27 (96.9%),
-  `internal/store` 18 (84.2%), `internal/config` 34 (84.0%),
-  `internal/depth` 10 (95.3%), `internal/history` 6 (76.5%),
-  `internal/fees` 5 (100%), `cmd/scanner` 19, `cmd/backfill` 6,
-  `cmd/fundingcheck` 3. The `exchanges` percentage FELL from
-  61.8% at step 1.6 while the test count rose: step 2.6 added seven history
-  fetchers whose pagination loops only run against live venues. Their parsers
-  and the cadence arithmetic are golden-tested against recorded payloads; the
-  loops are not, and pretending otherwise with a mock HTTP server would test
-  the mock.
+- 650 test functions (`grep -r '^func Test' --include='*_test.go'`, re-measured
+  2026-09-12 with `go test -cover ./...`; most are table-driven so the case
+  count is far higher; earlier docs quoted 211 and then 483 under counting
+  methods that did not survive — the command is stated so the number can always
+  be re-measured): `internal/scanner` 118 (89.1% of statements),
+  `internal/strategy` 94 (95.9%), `internal/backtest` 50 (94.3%),
+  `internal/config` 47 (83.0%), `internal/instruments` 36 (96.1%),
+  `cmd/scanner` 32 (40.3%), `internal/store` 31 (80.6%), `exchanges` 29
+  (67.6%), `cmd/backtest` 28 (43.3%), `internal/crowding` 13 (94.3%),
+  `internal/depth` 12 (95.4%), `internal/paper` 10 (90.7%),
+  `cmd/paperledger` 9 (54.0%), `internal/risk` 6 (100%),
+  `internal/history` 6 (51.4%), `internal/fees` 5 (100%), plus 88 across the
+  eight per-venue packages (47.1–63.5%). The root `exchanges` figure ROSE from
+  58.8% as step 3.3b's shared candle helpers gained tests; the per-venue
+  packages sit lower because step 2.6's history fetchers and step 3.3b's candle
+  pagers have loops that only run against live venues. Their parsers and the
+  cadence arithmetic are golden-tested against recorded payloads; the loops are
+  not, and pretending otherwise with a mock HTTP server would test the mock.
   Each `exchanges/<venue>/testdata/` holds that venue's real recordings;
   re-record with `CAPTURE_TESTDATA=1 go test -run TestCapture ./exchanges/...`. **Pyth has
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic
@@ -1202,11 +1219,18 @@ phase 1.
   quote-bridged series the measured basis is the coin basis PLUS the USD/USDT
   spread**, which is stated in the assumptions block — the exit there is partly
   watching the bridging risk nothing deducts.
-- **`depth_snapshots` holds one sample per source/pair** (2026-09-04), left over
-  from the step-2.7b acceptance sweep. The live scanner fills it going forward,
-  but there is **no historical depth**, so a backtest cannot model slippage from
-  the book as it was — it has to take slippage as a stated parameter and say so.
-  Every hour the scanner is not running is an hour of depth nobody can recover.
+- **`depth_snapshots` is thin and starts where the scanner did**, not where the
+  corpus does. Re-measured 2026-09-12 on the live file: **1,579 rows over 116
+  source|pair series in 31 sweeps** — the step-2.7b acceptance sweep plus what
+  run 2 has written since 2026-09-11 14:15 — against 12 months of funding and
+  candles. So there is still **no historical depth**, a backtest cannot model
+  slippage from the book as it was, and it has to take slippage as a stated
+  parameter and say so. Every hour the scanner is not running is an hour of
+  depth nobody can recover. One more limitation the paper ledger met (PLAN 4.3):
+  `sampled_at_ms` stamps the START of a whole sweep (~117 fetches, 30–90s), so
+  "the book at or before a decision" resolves to a sweep, not to a fetch; the
+  `fetched_at_ms` column that would fix it is schema v6, deliberately deferred
+  until nothing is writing the file.
 
 ---
 

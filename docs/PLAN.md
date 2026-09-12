@@ -2822,7 +2822,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > lên lại thì ghi kèm trạng thái ba cổng như đã ghi trạng thái phí.
 >
 > **Vận hành:** tiến trình `cmd/scanner` build từ working tree bước này, cổng
-> **8085** (soak GĐ1 vẫn giữ 8082, không đụng), PID trong `.paper/scanner.pid`,
+> **8085**, PID trong `.paper/scanner.pid`,
 > log ở đường dẫn trong `.paper/log_path`. Cùng `data/scanner.db` — nó vừa là
 > corpus vừa là nhật ký, và mỗi giờ nó bồi thêm depth thật, tức từ hôm nay
 > backtest tương lai bắt đầu có độ sâu lịch sử.
@@ -3745,8 +3745,10 @@ trong 2–4 s (4 lần chạm trần backoff 60 s đúng thiết kế), hai lầ
 bộ toàn phần đều hồi phục, 36/36 chuỗi `live` lúc 91 giờ — bảng đo ở Bước 1.5.
 Hai điều phán quyết KHÔNG nói: Pyth vắng mặt suốt kỳ (hermes 401), và khoản nợ
 🔴 Bước 1.6 (subscription bị huỷ âm thầm) chỉ là *không tái hiện* chứ chưa sửa.
-Tiến trình soak được để chạy tiếp sau hạn trên cổng 8082; tắt bằng SIGINT khi
-không cần nữa.
+Tiến trình soak được để chạy tiếp sau hạn trên cổng 8082 và **chết cùng lần
+khởi động lại máy 2026-09-10 01:13 +07** (dòng log cuối 01:10) — cùng lần
+khởi động lại đã giết lần chạy 1 của cổng 3.5. **Cổng 8082 đang trống** (đo
+lại 2026-09-12); hồ sơ soak còn nguyên ở `.soak/`.
 
 **GĐ 2 đã xong cả 7 bước** (2026-09-04), chạy song song và không đụng tiến trình
 soak: funding realtime 7 sàn, instrument registry, ánh xạ spot↔perp, persistence
