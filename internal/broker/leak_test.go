@@ -82,11 +82,12 @@ func jsonResponse(r *http.Request, body string) *http.Response {
 func leakTestClient(t *testing.T, tr *pinnedTransport) *Client {
 	t.Helper()
 	c, err := NewClient(Config{
-		BaseURL:      BinanceFuturesTestnetBaseURL,
-		Credentials:  Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
-		RecvWindowMs: 5000,
-		TimePath:     BinanceFuturesTimePath,
-		HTTPClient:   &http.Client{Transport: tr, Timeout: 5 * time.Second},
+		BaseURL:           BinanceFuturesTestnetBaseURL,
+		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
+		RecvWindowMs:      5000,
+		TimePath:          BinanceFuturesTimePath,
+		WeightLimitPerMin: BinanceFuturesWeightPerMin,
+		HTTPClient:        &http.Client{Transport: tr, Timeout: 5 * time.Second},
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -149,7 +150,7 @@ func TestClient_NeitherTheSecretNorTheSignatureReachesALogOrAnError(t *testing.T
 			defer log.SetOutput(restore)
 
 			var into map[string]any
-			err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, &into)
+			err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, &into)
 			if err == nil {
 				t.Fatal("this case must fail; a success proves nothing about the error path")
 			}
@@ -204,7 +205,7 @@ func TestClient_SignsTheRequestAndSendsTheKeyInTheDocumentedHeader(t *testing.T)
 	client := leakTestClient(t, &pinnedTransport{to: u, serverTimeMs: time.Now().UnixMilli()})
 
 	var into []map[string]any
-	if err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, &into); err != nil {
+	if err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, &into); err != nil {
 		t.Fatalf("GetSigned: %v", err)
 	}
 	if gotHeader != "KEY-"+sentinel {
@@ -233,7 +234,7 @@ func TestClient_SignsTheRequestAndSendsTheKeyInTheDocumentedHeader(t *testing.T)
 
 	// An unsigned call must carry NO identity at all.
 	gotHeader = ""
-	if err := client.GetPublic(context.Background(), "/fapi/v1/time", nil, nil); err != nil {
+	if err := client.GetPublic(context.Background(), FuturesServerTime, nil, nil); err != nil {
 		t.Fatalf("GetPublic: %v", err)
 	}
 	if gotHeader != "" {

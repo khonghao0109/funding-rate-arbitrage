@@ -38,6 +38,13 @@ type Config struct {
 	// DefaultClockSyncEvery.
 	ClockSyncEvery time.Duration
 
+	// WeightLimitPerMin is this venue's documented REQUEST_WEIGHT budget —
+	// BinanceFuturesWeightPerMin or BinanceSpotWeightPerMin. There is no
+	// default: a budget nobody looked up is not an unlimited one, and the cost
+	// of assuming otherwise is a 429 followed by an IP ban that lengthens for
+	// repeat offenders.
+	WeightLimitPerMin int
+
 	// HTTPClient is injectable so tests run against httptest and never open a
 	// socket to a venue. Nil gets a client with a bounded timeout.
 	HTTPClient *http.Client
@@ -69,6 +76,7 @@ type Client struct {
 	userAgent    string
 	timePath     string
 	now          func() time.Time
+	budget       *WeightBudget
 
 	// The clock measurement, guarded because one client is shared by every
 	// caller and the skew is read on every signed request.
@@ -94,6 +102,10 @@ func NewClient(cfg Config) (*Client, error) {
 	if recvWindowMs < 0 || recvWindowMs > MaxRecvWindowMs {
 		return nil, fmt.Errorf("broker: recv_window_ms %d is outside the documented range (1..%d)", recvWindowMs, MaxRecvWindowMs)
 	}
+	if cfg.WeightLimitPerMin <= 0 {
+		return nil, fmt.Errorf("broker: weight_limit_per_min must be the venue's documented REQUEST_WEIGHT budget (futures %d, spot %d) — a budget nobody looked up is not an unlimited one",
+			BinanceFuturesWeightPerMin, BinanceSpotWeightPerMin)
+	}
 	httpClient := cfg.HTTPClient
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 20 * time.Second}
@@ -114,6 +126,7 @@ func NewClient(cfg Config) (*Client, error) {
 		userAgent:      cfg.UserAgentVI,
 		timePath:       cfg.TimePath,
 		now:            now,
+		budget:         NewWeightBudget(cfg.WeightLimitPerMin, now),
 		clockSyncEvery: syncEvery,
 	}, nil
 }
@@ -145,11 +158,15 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("%s: HTTP %d: %s", e.URL, e.StatusCode, e.Body)
 }
 
+// Budget exposes the weight budget for a report. It is the same instance every
+// call reserves against.
+func (c *Client) Budget() *WeightBudget { return c.budget }
+
 // GetPublic calls an unsigned endpoint. It sends no credential — not even the
 // API key header — because an endpoint that does not need identifying should
 // not be handed an identity.
-func (c *Client) GetPublic(ctx context.Context, path string, params []Param, into any) error {
-	return c.do(ctx, path, QueryString(params), false, into)
+func (c *Client) GetPublic(ctx context.Context, ep Endpoint, params []Param, into any) error {
+	return c.do(ctx, ep, QueryString(params), false, into)
 }
 
 // GetSigned calls a SIGNED (USER_DATA) endpoint.
@@ -157,7 +174,7 @@ func (c *Client) GetPublic(ctx context.Context, path string, params []Param, int
 // timestamp and recvWindow are appended here, last before the signature, so a
 // caller cannot forget them and cannot set them to something the client did not
 // measure.
-func (c *Client) GetSigned(ctx context.Context, path string, params []Param, into any) error {
+func (c *Client) GetSigned(ctx context.Context, ep Endpoint, params []Param, into any) error {
 	// The clock first, always: a signed request built on an unmeasured or
 	// stale skew is one the venue answers with -1021, and that answer names
 	// our clock nowhere.
@@ -170,11 +187,16 @@ func (c *Client) GetSigned(ctx context.Context, path string, params []Param, int
 		Param{"recvWindow", fmt.Sprintf("%d", c.recvWindowMs)},
 		Param{"timestamp", fmt.Sprintf("%d", c.timestampMs())},
 	)
-	return c.do(ctx, path, SignedQuery(c.creds.APISecret, signed), true, into)
+	return c.do(ctx, ep, SignedQuery(c.creds.APISecret, signed), true, into)
 }
 
-func (c *Client) do(ctx context.Context, path, query string, signed bool, into any) error {
-	full := c.baseURL + path
+func (c *Client) do(ctx context.Context, ep Endpoint, query string, signed bool, into any) error {
+	// Reserved BEFORE the request. A limiter that notices afterwards has
+	// already earned the 429 it exists to avoid.
+	if err := c.budget.Reserve(ctx, ep.WeightIP); err != nil {
+		return fmt.Errorf("%s: %w", ep.Path, err)
+	}
+	full := c.baseURL + ep.Path
 	if query != "" {
 		full += "?" + query
 	}
@@ -200,14 +222,26 @@ func (c *Client) do(ctx context.Context, path, query string, signed bool, into a
 	}
 	defer resp.Body.Close()
 
+	// The venue's own account of what this IP has spent, read on EVERY answer
+	// including the failures — a 429 is exactly when the number matters.
+	c.budget.Observe(resp.Header)
+
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if resp.StatusCode != http.StatusOK {
-		return &HTTPError{
+		retryAfter := parseRetryAfterSeconds(resp.Header.Get("Retry-After"))
+		c.budget.NoteStatus(resp.StatusCode, retryAfter)
+		err := &HTTPError{
 			StatusCode: resp.StatusCode,
 			URL:        redactURL(full),
 			Body:       c.scrub(strings.TrimSpace(string(body))),
-			RetryAfter: parseRetryAfterSeconds(resp.Header.Get("Retry-After")),
+			RetryAfter: retryAfter,
 		}
+		if resp.StatusCode == http.StatusTeapot {
+			// Surfaced as ErrIPBanned so a caller stops on errors.Is rather
+			// than on a status code it had to remember means "teapot".
+			return fmt.Errorf("%w: %s", ErrIPBanned, err)
+		}
+		return err
 	}
 	if into == nil {
 		return nil

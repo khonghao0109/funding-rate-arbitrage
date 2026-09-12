@@ -69,12 +69,13 @@ func clockTestClient(t *testing.T, tr *pinnedTransport, localNowMs int64, recvWi
 	local := &atomic.Int64{}
 	local.Store(localNowMs)
 	c, err := NewClient(Config{
-		BaseURL:      BinanceFuturesTestnetBaseURL,
-		Credentials:  Credentials{APIKey: NewSecret("k"), APISecret: NewSecret(sentinel)},
-		RecvWindowMs: recvWindowMs,
-		TimePath:     BinanceFuturesTimePath,
-		HTTPClient:   &http.Client{Transport: tr, Timeout: 5 * time.Second},
-		Now:          func() time.Time { return time.UnixMilli(local.Load()) },
+		BaseURL:           BinanceFuturesTestnetBaseURL,
+		Credentials:       Credentials{APIKey: NewSecret("k"), APISecret: NewSecret(sentinel)},
+		RecvWindowMs:      recvWindowMs,
+		TimePath:          BinanceFuturesTimePath,
+		WeightLimitPerMin: BinanceFuturesWeightPerMin,
+		HTTPClient:        &http.Client{Transport: tr, Timeout: 5 * time.Second},
+		Now:               func() time.Time { return time.UnixMilli(local.Load()) },
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -91,7 +92,7 @@ func TestClient_SendsATimestampInTheVenuesFrameNotOurs(t *testing.T) {
 	client, _ := clockTestClient(t, tr, localMs, 60000)
 
 	var into []map[string]any
-	if err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, &into); err != nil {
+	if err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, &into); err != nil {
 		t.Fatalf("GetSigned: %v", err)
 	}
 	if got := client.ClockSkewMs(); got != 30_000 {
@@ -135,7 +136,7 @@ func TestClient_RefusesToSignWhenTheSkewExceedsTheDeclaredRecvWindow(t *testing.
 	_, tr := newFakeVenue(t, localMs+90_000) // 90 s out, window 5 s
 	client, _ := clockTestClient(t, tr, localMs, 5000)
 
-	err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, nil)
+	err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, nil)
 	if err == nil {
 		t.Fatal("a 90 s skew against a 5 s recvWindow must be refused")
 	}
@@ -157,12 +158,12 @@ func TestClient_ResyncsTheClockWhenTheMeasurementGoesStale(t *testing.T) {
 	client, local := clockTestClient(t, tr, localMs, 60000)
 	client.SetClockSyncEvery(time.Minute)
 
-	if err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, nil); err != nil {
+	if err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, nil); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
 	// Still fresh: no second measurement.
 	local.Add(30 * 1000)
-	if err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, nil); err != nil {
+	if err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, nil); err != nil {
 		t.Fatalf("second call: %v", err)
 	}
 	if got := venue.timeCalls.Load(); got != 1 {
@@ -172,7 +173,7 @@ func TestClient_ResyncsTheClockWhenTheMeasurementGoesStale(t *testing.T) {
 	// Past the interval, and the venue's clock has moved differently from ours.
 	local.Add(2 * 60 * 1000)
 	venue.serverNowMs.Store(local.Load() + 4000)
-	if err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, nil); err != nil {
+	if err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, nil); err != nil {
 		t.Fatalf("third call: %v", err)
 	}
 	if got := venue.timeCalls.Load(); got != 2 {
@@ -189,7 +190,7 @@ func TestClient_WillNotSignOnAnUnmeasurableClock(t *testing.T) {
 	tr := &pinnedTransport{failErr: errors.New("dial tcp: connection refused")}
 	client, _ := clockTestClient(t, tr, 1_789_000_000_000, 5000)
 
-	err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, nil)
+	err := client.GetSigned(context.Background(), FuturesAccountBalance, nil, nil)
 	if err == nil {
 		t.Fatal("a signed call must not proceed when the clock could not be measured")
 	}

@@ -62,9 +62,10 @@ func (c *Client) SyncClock(ctx context.Context) (int64, error) {
 	if c.timePath == "" {
 		return 0, errors.New("broker: no server-time endpoint configured — set Config.TimePath")
 	}
+	ep := Endpoint{Path: c.timePath, WeightIP: BinanceTimeWeight}
 	var resp serverTimeResponse
 	sentAt := c.now()
-	if err := c.GetPublic(ctx, c.timePath, nil, &resp); err != nil {
+	if err := c.GetPublic(ctx, ep, nil, &resp); err != nil {
 		return 0, fmt.Errorf("broker: could not read the venue clock at %s: %w", c.timePath, err)
 	}
 	answeredAt := c.now()
