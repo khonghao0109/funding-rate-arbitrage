@@ -689,7 +689,16 @@ reconstruction, recorded in PLAN 4.3: **bybit_spot has produced zero price
 samples in run 2** (connected at launch, REST depth fine), so the live basis
 exit on HYPE·kraken is "not evaluable" every tick. **Diagnosed 2026-09-12** —
 see the next paragraph — which means HYPE·kraken's run-2 journal rows say
-nothing about the basis rule and must not be read as if they did.
+nothing about the basis rule and must not be read as if they did. Counted
+2026-09-13 on a read-only copy (PLAN ③ step 3b): every bybit_spot row in the
+window is HYPEUSDT, 335 rows over 7 perp sources, and all **46** that reach
+the exit path report the basis "not measurable" — against binance_spot's
+556 of 556 measured. The same count turned up a second hole that matters
+more for the verdict: **`price_history` holds no candle inside the run-2
+window at all** (newest 2026-09-10 07:00 UTC), because the scanner tops up
+funding hourly while candles come only from `cmd/backfill -prices` run by
+hand — so the REPLAY is basis-blind on every series too, and the verdict
+session must backfill prices before comparing.
 
 **The step-1.6 silent-subscription debt reproduced, was diagnosed and is
 fixed (2026-09-12, for the next run's binary only).** `bybit_spot` delivered

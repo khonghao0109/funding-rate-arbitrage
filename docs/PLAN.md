@@ -2865,6 +2865,61 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >    được, dừng.
 > 3. **Chạy backtest** trên đúng cửa sổ đó (`-months` không đủ mịn: thêm
 >    `-from/-to` — nợ tooling, ghi ở dưới) với cùng 4 chuỗi binance.
+> 3b. **Khoanh vùng chuỗi có ĐẦU VÀO BASIS hỏng, TRƯỚC khi đếm (a)/(b)/(c)**
+>    *(thêm 2026-09-13, đo trên bản sao chụp lúc 2026-09-12 13:00:15 +07)*.
+>    Điều kiện basis là đầu vào lệch duy nhất mà giao thức cho phép đổ lỗi
+>    (bước 4), nên phải biết TRƯỚC nó đo được ở đâu — nếu không, một lệch thật
+>    sẽ được tha vào (b) bằng một lý do không tồn tại.
+>
+>    **Bên SỐNG — `bybit_spot` chết suốt lần chạy 2** (nguyên nhân đo được và
+>    bản sửa ở Bước 1.6; sửa chỉ vào binary lần kế, lần 2 không được đụng).
+>    Mọi hàng nhật ký có `spot_source = bybit_spot` trong cửa sổ đều là
+>    **HYPEUSDT**, vì đó là cặp duy nhất `binance_spot` không phục vụ:
+>
+>    | chuỗi | hàng | enter | exit | hold | skip | hàng có check basis | basis ĐO ĐƯỢC |
+>    |---|---|---|---|---|---|---|---|
+>    | HYPE·binance_futures | 41 | 0 | 0 | 0 | 41 | 0 | — |
+>    | HYPE·bybit_futures | 49 | 0 | 0 | 0 | 49 | 0 | — |
+>    | HYPE·gate_futures | 49 | 0 | 0 | 0 | 49 | 0 | — |
+>    | HYPE·hyperliquid_futures | 49 | 1 | 0 | 23 | 25 | **23** | **0** |
+>    | HYPE·kraken_futures | 49 | 2 | 1 | 22 | 24 | **23** | **0** |
+>    | HYPE·okx_futures | 49 | 0 | 0 | 0 | 49 | 0 | — |
+>    | HYPE·paradex_futures | 49 | 0 | 0 | 0 | 49 | 0 | — |
+>    | **cộng** | **335** | **3** | **1** | **45** | **286** | **46** | **0** |
+>
+>    Cả **46/46** hàng đó ghi `basis_widened`: *"Chưa đo được basis: thiếu giá
+>    một trong hai chân."* Đối chứng: `binance_spot` có **4.020** hàng, **556**
+>    hàng chạy check basis, **556/556 đo được**, 0 hàng "chưa đo được". Chỉ
+>    `bybit_spot` hỏng, và nó hỏng trọn cửa sổ. (Hàng entry-path không có
+>    check basis — basis là điều kiện THOÁT — nên 289 hàng bybit_spot còn lại
+>    nằm ngoài phép đếm này.)
+>
+>    **Bên REPLAY — và đây là cái phải kiểm trước khi chạy phán quyết:**
+>    `price_history` **không có một cây nến nào bên trong cửa sổ lần 2**. Nến
+>    mới nhất của mọi nguồn là **2026-09-10 07:00 UTC** (gate/hyperliquid/
+>    kraken/okx dừng ở 2026-09-09 04:00), trong khi cửa sổ bắt đầu
+>    2026-09-11 07:15:50 UTC — vì scanner bồi **funding** mỗi giờ nhưng nến
+>    chỉ đến từ `cmd/backfill -prices` chạy tay. `maxBasisCandleGapIntervals`
+>    = 2 giờ, nên replay báo **NotEvaluated** ở mọi mốc, trên MỌI chuỗi.
+>
+>    **Hệ quả, phải đọc kỹ vì nó ngược với trực giác:**
+>    - Trên chuỗi `binance_spot`: sống ĐO ĐƯỢC basis, replay thì KHÔNG →
+>      đúng là đầu vào *basis* của bước 4, lệch quy về nó là **(b)**.
+>    - Trên 2 chuỗi HYPE có vị thế (`hyperliquid`, `kraken`): **CẢ HAI BÊN
+>      đều mù**, nên check basis **khớp nhau** ở đó. Nó không gây ra lệch và
+>      cũng **không được dùng để giải thích** lệch. Một lệch trên hai chuỗi
+>      này mà không quy được về *sổ lệnh* hoặc *lịch sử* thì là **(c) thật**
+>      — không được tha vào (b) bằng cớ "basis chỉ sống mới xét được".
+>    - 5 chuỗi HYPE còn lại chưa bao giờ mở vị thế nên không có check basis:
+>      chúng chỉ vào (a)/(b)/(c) qua đường entry.
+>
+>    **Việc bắt buộc trước phiên phán quyết:** chạy `cmd/backfill -prices` để
+>    nến phủ hết cửa sổ, rồi chạy lại `-compare-journal`. Không làm thì đầu
+>    vào *basis* không kiểm được trên bất kỳ chuỗi nào và (b) sẽ nuốt những
+>    lệch lẽ ra phải bị soi. Ghi lại độ phủ nến tại thời điểm chạy cùng phán
+>    quyết. **Không chạy trong phiên này** — nó ghi vào `data/scanner.db`,
+>    đúng file tiến trình 3.5 đang viết.
+>
 > 4. **So theo quyết định, không so theo tiền:** với mỗi mốc settle backtest ra
 >    quyết định (enter/exit/skip/hold), lấy hàng nhật ký gần nhất SAU mốc đó
 >    (nhật ký tick 10 phút, settle 8h). Đếm: (a) khớp hành động; (b) lệch
@@ -3189,7 +3244,9 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > **Hệ quả cho phiên phán quyết, đọc kỹ:** mọi hàng nhật ký của HYPE·kraken
 > trong lần chạy 2 được quyết định với `basis_widened` = "chưa đo được", nên
 > cặp đó **không phải là bằng chứng về luật basis**; và mọi cặp có chân spot
-> bybit_spot mất một nguồn giá sống. Bản sửa nằm trong binary của **lần chạy
+> bybit_spot mất một nguồn giá sống. Đếm đầy đủ theo từng chuỗi, cùng phát
+> hiện rằng REPLAY cũng mù basis vì `price_history` không có nến nào trong
+> cửa sổ, nằm ở **③ bước 3b** — đọc bước đó trước khi đếm (a)/(b)/(c). Bản sửa nằm trong binary của **lần chạy
 > kế**, KHÔNG triển khai vào lần 2 (Bước 1.6), nên con số trên đứng nguyên cho
 > tới hết lần 2. Lần chạy 3: kiểm `source_status` của bybit_spot ngay sau khi
 > lên, và `prices.tick_status` sẽ nói nếu máy ngủ.
