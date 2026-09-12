@@ -275,6 +275,7 @@ không còn hardcode ở Go hay JavaScript.
 │   ├── strategy/              # APR, tín hiệu vào/ra
 │   ├── backtest/              # replay lịch sử
 │   ├── paper/                 # sổ cái paper: khớp, funding, mark, equity (Bước 4.3)
+│   ├── crowding/              # Crowding Reversal (GĐ 6): port Go có parity với fixture (Bước 6.1)
 │   ├── notify/                # Telegram, Discord
 │   ├── broker/                # ⚠️ package DUY NHẤT giữ credential
 │   ├── execution/             # vị thế delta-neutral

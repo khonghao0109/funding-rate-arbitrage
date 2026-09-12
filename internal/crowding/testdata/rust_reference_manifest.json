@@ -1,0 +1,394 @@
+{
+  "schema_version": 1,
+  "decision": "GO_FOR_RUST_REFERENCE_ENGINE_AND_FORWARD_PAPER_TRADING",
+  "explicitly_not_approved": [
+    "full-capital live trading",
+    "monthly income guarantee",
+    "parameter changes selected on 2024+ results"
+  ],
+  "python": "3.13.3",
+  "pandas": "3.0.2",
+  "panel": {
+    "first": "2021-07-01T00:00:00+00:00",
+    "last": "2026-07-01T00:00:00+00:00",
+    "rows_4h": 10957
+  },
+  "configuration": {
+    "lookback": 180,
+    "entry_z": 1.0,
+    "exit_z": 0.25,
+    "target_vol": 0.24,
+    "max_gross": 1.0,
+    "fee": 0.0005,
+    "lag_bars": 1,
+    "boundary_offset_hours": 0,
+    "side": "both",
+    "include_funding": true,
+    "use_trend_filter": true,
+    "trend_horizon_days": [
+      30,
+      60,
+      120
+    ],
+    "trend_required": 2
+  },
+  "ensemble_members": [
+    [
+      90,
+      1.0,
+      0.25
+    ],
+    [
+      90,
+      1.0,
+      0.5
+    ],
+    [
+      90,
+      1.25,
+      0.25
+    ],
+    [
+      90,
+      1.25,
+      0.5
+    ],
+    [
+      180,
+      1.0,
+      0.25
+    ],
+    [
+      180,
+      1.0,
+      0.5
+    ],
+    [
+      180,
+      1.25,
+      0.25
+    ],
+    [
+      180,
+      1.25,
+      0.5
+    ],
+    [
+      360,
+      1.0,
+      0.25
+    ],
+    [
+      360,
+      1.0,
+      0.5
+    ],
+    [
+      360,
+      1.25,
+      0.25
+    ],
+    [
+      360,
+      1.25,
+      0.5
+    ]
+  ],
+  "source_files": {
+    "btc_um_1m.parquet": {
+      "bytes": 117964288,
+      "rows": 2665440,
+      "first_timestamp": "2021-07-01T00:00:00+00:00",
+      "last_timestamp": "2026-07-25T23:59:00+00:00",
+      "duplicate_timestamps": 0,
+      "sha256": "9f748f47f36f04e6cdac243542ef3831fa409815cdb95fa95f000d321a96881b"
+    },
+    "eth_um_1m.parquet": {
+      "bytes": 117686709,
+      "rows": 2665440,
+      "first_timestamp": "2021-07-01T00:00:00+00:00",
+      "last_timestamp": "2026-07-25T23:59:00+00:00",
+      "duplicate_timestamps": 0,
+      "sha256": "cff3e39fd97dbbc9de32be8d12d3c31bba22a94f5153ff2649ac10c910633a04"
+    },
+    "btcusdt_metrics_5m.parquet": {
+      "bytes": 27213268,
+      "rows": 525652,
+      "first_timestamp": "2021-07-01T00:00:00+00:00",
+      "last_timestamp": "2026-06-30T23:55:00+00:00",
+      "duplicate_timestamps": 0,
+      "sha256": "66dcbb7cddc4b16cdba04753c0136fc64de6a80a4ab103ef57a36aad64fb7c5f"
+    },
+    "ethusdt_metrics_5m.parquet": {
+      "bytes": 25316395,
+      "rows": 481680,
+      "first_timestamp": "2021-12-01T00:00:00+00:00",
+      "last_timestamp": "2026-06-30T23:55:00+00:00",
+      "duplicate_timestamps": 0,
+      "sha256": "af5ff04dd0ea0fdc014461cbb459bf0925436baaed334509a30a023b5936d696"
+    },
+    "btcusdt_funding.parquet": {
+      "bytes": 82057,
+      "rows": 5478,
+      "first_timestamp": "2021-07-01T00:00:00+00:00",
+      "last_timestamp": "2026-06-30T16:00:00.005000+00:00",
+      "duplicate_timestamps": 0,
+      "sha256": "2fb1bb656b448643fa11749ab1304977143979002b486ca6736073e599feae1a"
+    },
+    "ethusdt_funding.parquet": {
+      "bytes": 82678,
+      "rows": 5478,
+      "first_timestamp": "2021-07-01T00:00:00+00:00",
+      "last_timestamp": "2026-06-30T16:00:00.005000+00:00",
+      "duplicate_timestamps": 0,
+      "sha256": "c74fa9b24c690d60b93dd287339f7cf4aa26b6743cff1ce0f7caad22730f47e6"
+    }
+  },
+  "integrity": {
+    "index_monotonic": true,
+    "index_unique": true,
+    "non_4h_index_steps": 0,
+    "maximum_gross_position": 1.0,
+    "maximum_position_lag_error": 0.0,
+    "maximum_pnl_identity_error": 0.0,
+    "maximum_prefix_causality_error": 0.0,
+    "prefix_checks": [
+      {
+        "timestamp": "2022-06-30T20:00:00+00:00",
+        "max_absolute_target_error": 0.0
+      },
+      {
+        "timestamp": "2023-06-30T20:00:00+00:00",
+        "max_absolute_target_error": 0.0
+      },
+      {
+        "timestamp": "2023-12-31T20:00:00+00:00",
+        "max_absolute_target_error": 0.0
+      },
+      {
+        "timestamp": "2024-06-30T20:00:00+00:00",
+        "max_absolute_target_error": 0.0
+      },
+      {
+        "timestamp": "2025-06-30T20:00:00+00:00",
+        "max_absolute_target_error": 0.0
+      },
+      {
+        "timestamp": "2025-12-31T20:00:00+00:00",
+        "max_absolute_target_error": 0.0
+      },
+      {
+        "timestamp": "2026-06-30T20:00:00+00:00",
+        "max_absolute_target_error": 0.0
+      }
+    ]
+  },
+  "hard_integrity_pass": true,
+  "core_statistics": {
+    "full": {
+      "cagr": 0.3179174721856548,
+      "max_dd": -0.09340071845507436,
+      "sharpe": 1.8931171512198786,
+      "calmar": 3.4038011424780716,
+      "multiple": 3.9782058828034916
+    },
+    "development": {
+      "cagr": 0.2693701856284634,
+      "max_dd": -0.09340071845507436,
+      "sharpe": 1.7250049624448107,
+      "calmar": 2.8840269120416897,
+      "multiple": 1.816430945464593
+    },
+    "historical_validation": {
+      "cagr": 0.3683777089213385,
+      "max_dd": -0.0905428550745706,
+      "sharpe": 2.049328686529188,
+      "calmar": 4.0685453161151655,
+      "multiple": 2.1901222794825226
+    },
+    "from_2022": {
+      "cagr": 0.3684583508075372,
+      "max_dd": -0.09340071845507503,
+      "sharpe": 2.048054501837649,
+      "calmar": 3.9449198775142467,
+      "multiple": 4.10023751658817
+    },
+    "annual_returns": [
+      {
+        "year": 2021,
+        "days": 184,
+        "calendar_return": -0.029762088974346956,
+        "annualised_if_partial": -0.0582132117444637
+      },
+      {
+        "year": 2022,
+        "days": 365,
+        "calendar_return": 0.22172371016091108,
+        "annualised_if_partial": 0.22189130092591602
+      },
+      {
+        "year": 2023,
+        "days": 365,
+        "calendar_return": 0.532384143816532,
+        "annualised_if_partial": 0.5328321952892057
+      },
+      {
+        "year": 2024,
+        "days": 366,
+        "calendar_return": 0.4025569338164703,
+        "annualised_if_partial": 0.4015849741619937
+      },
+      {
+        "year": 2025,
+        "days": 365,
+        "calendar_return": 0.24741767291175276,
+        "annualised_if_partial": 0.2476065732074466
+      },
+      {
+        "year": 2026,
+        "days": 182,
+        "calendar_return": 0.25180295077282877,
+        "annualised_if_partial": 0.5694295729055441
+      }
+    ],
+    "complete_years": 4,
+    "complete_years_ge_20_percent": 4,
+    "rolling_365_full": {
+      "windows": 1463,
+      "minimum": 0.12323317329406591,
+      "median": 0.3363438367467093,
+      "positive_share": 1.0,
+      "ge_20_percent_share": 0.8851674641148325,
+      "minimum_window_end": "2022-10-22T00:00:00+00:00"
+    },
+    "rolling_365_validation": {
+      "windows": 913,
+      "minimum": 0.1691074905478276,
+      "median": 0.3351917446941346,
+      "positive_share": 1.0,
+      "ge_20_percent_share": 0.9572836801752465,
+      "minimum_window_end": "2025-07-05T00:00:00+00:00"
+    },
+    "strict_completed_interval_development": {
+      "cagr": 0.2883669686805952,
+      "max_dd": -0.08161438012611277,
+      "sharpe": 1.8077793699890028,
+      "calmar": 3.5332862693437437,
+      "multiple": 1.885222296188641
+    },
+    "strict_completed_interval_validation": {
+      "cagr": 0.3849265444774401,
+      "max_dd": -0.09165277375830283,
+      "sharpe": 2.1183130346263876,
+      "calmar": 4.199835189849556,
+      "multiple": 2.256931861981783
+    },
+    "fee_stress": {
+      "5": {
+        "development": {
+          "cagr": 0.2693701856284634,
+          "max_dd": -0.09340071845507436,
+          "sharpe": 1.7250049624448107,
+          "calmar": 2.8840269120416897,
+          "multiple": 1.816430945464593
+        },
+        "historical_validation": {
+          "cagr": 0.3683777089213385,
+          "max_dd": -0.0905428550745706,
+          "sharpe": 2.049328686529188,
+          "calmar": 4.0685453161151655,
+          "multiple": 2.1901222794825226
+        }
+      },
+      "10": {
+        "development": {
+          "cagr": 0.2375572063631044,
+          "max_dd": -0.1012216876524249,
+          "sharpe": 1.5493148585012317,
+          "calmar": 2.346900272783719,
+          "multiple": 1.7046489675112237
+        },
+        "historical_validation": {
+          "cagr": 0.32009824425714206,
+          "max_dd": -0.09720145867095664,
+          "sharpe": 1.8216673943433166,
+          "calmar": 3.2931423934771256,
+          "multiple": 2.00204741311361
+        }
+      },
+      "15": {
+        "development": {
+          "cagr": 0.20653813690076328,
+          "max_dd": -0.10897656908454945,
+          "sharpe": 1.3732627647714126,
+          "calmar": 1.8952527009775901,
+          "multiple": 1.5997347397294428
+        },
+        "historical_validation": {
+          "cagr": 0.2735170224150547,
+          "max_dd": -0.1038120066321716,
+          "sharpe": 1.594152357863616,
+          "calmar": 2.634733989722255,
+          "multiple": 1.8301047569640043
+        }
+      },
+      "20": {
+        "development": {
+          "cagr": 0.17629324882691244,
+          "max_dd": -0.11666590984446912,
+          "sharpe": 1.1969671900723238,
+          "calmar": 1.51109479248852,
+          "multiple": 1.50126700483233
+        },
+        "historical_validation": {
+          "cagr": 0.22857448845859984,
+          "max_dd": -0.1103748408185865,
+          "sharpe": 1.3669583851181635,
+          "calmar": 2.070893029275465,
+          "multiple": 1.6729121533007485
+        }
+      }
+    }
+  },
+  "rust_parity_fixture": {
+    "path": "/Users/king/workspace/blockchain-区块链/hotcoin-预测市场/crowding_reversal_results/rust_parity_fixture.csv",
+    "rows": 10957,
+    "columns": [
+      "input_BTC_close",
+      "input_BTC_global_account_ratio",
+      "input_BTC_funding_rate",
+      "expected_score_BTC",
+      "expected_signal_BTC",
+      "expected_target_BTC",
+      "expected_position_BTC",
+      "expected_price_pnl_BTC",
+      "expected_funding_pnl_BTC",
+      "expected_cost_BTC",
+      "input_ETH_close",
+      "input_ETH_global_account_ratio",
+      "input_ETH_funding_rate",
+      "expected_score_ETH",
+      "expected_signal_ETH",
+      "expected_target_ETH",
+      "expected_position_ETH",
+      "expected_price_pnl_ETH",
+      "expected_funding_pnl_ETH",
+      "expected_cost_ETH",
+      "expected_price_pnl",
+      "expected_funding_pnl",
+      "expected_cost",
+      "expected_turnover",
+      "expected_net",
+      "expected_equity"
+    ],
+    "sha256": "fa9eae27c979f7fe031f6d54b1db954afbc81c3634e9542460a4533b49ec3bb2"
+  },
+  "known_limits": [
+    "The 2024+ segment has been inspected repeatedly and is not a fresh blind test.",
+    "There are four complete natural years, not enough to guarantee future 20% CAGR.",
+    "The full-sample worst rolling 365-day return is below 20%.",
+    "The bootstrap 95% CAGR interval extends below 20%.",
+    "Crowding data is Binance-specific and has not been replicated cross-exchange.",
+    "Backtest costs omit order-book queueing, outages, liquidation and venue tail risk."
+  ]
+}

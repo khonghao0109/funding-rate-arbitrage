@@ -664,6 +664,20 @@ reconstruction, recorded in PLAN 4.3: **bybit_spot has produced zero price
 samples in run 2** (connected at launch, REST depth fine), so the live basis
 exit on HYPE·kraken is "not evaluable" every tick.
 
+**Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
+the research package's whole nine-definition path (not four functions) with
+the pandas semantics written in its doc.go first, and its parity test
+gunzips the package's golden fixture, checks its SHA-256 against the
+constant PLAN names, then compares 21,914 asset-bars: max |target error|
+1.55e-14 (threshold 1e-10), max |score error| 2.51e-13 (stated tolerance
+1e-10), the signal exactly equal everywhere, and the manifest's seven
+prefix-causality cut-offs reproduced with error 0. It proves Go = Python on
+the already-aggregated 4h path and nothing about the aggregation layer or
+an edge. One semantic the fixture could not see and the review caught: a
+window of identical ratios must give z = NaN (pandas' variance is exactly
+0 there) so a stuck feed goes flat rather than being held on a rounding
+error. Steps 6.2 onward wait for the 3.5 verdict and 3.4.
+
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
 (venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),
@@ -890,6 +904,11 @@ internal/
                      ⚠️ the ONLY package allowed to say "net" (step 3.1)
   backtest/          historical replay — MUST call strategy, never re-grow a
                      rule (two AST tests enforce it)
+  crowding/          the Crowding Reversal core (phase 6, step 6.1): a Go port
+                     of the frozen Python research package, DIRECTIONAL, proven
+                     equal to the package's fixture (target ≤ 1e-10, signal
+                     exact); it outputs a fraction of equity before any cost
+                     and never says "net"; backtest/ingestion are 6.2–6.3
   paper/             the paper ledger (step 4.3): fills from EstimateFill on a
                      book at or before the decision, funding at settlements
                      only, mark to mid, equity — it PRICES decisions, never

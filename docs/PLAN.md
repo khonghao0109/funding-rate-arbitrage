@@ -102,7 +102,7 @@
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 2 từ 09-11** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **1/6 · 4.3 sổ paper ✅ (2026-09-11, tiến trình đọc nhật ký — Q12) · còn lại chờ cổng 3.5** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
-| **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | ⬜ Chưa bắt đầu — 6.1 làm ngay được | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
+| **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
 | **8** | Cross-Chain / Statistical | 1 (phác thảo) | 12+ tháng | 🔒 Khoá | — |
 
@@ -3175,7 +3175,7 @@ không cộng được**.
 | 6.4 | Portfolio manager: phân bổ vốn giữa Funding và Crowding theo lợi suất sau chi phí VÀ tương quan vị thế | 6.3; 3.5 |
 | 6.5 | Tái lập chéo sàn (chỉ dữ liệu) + paper trading ≥ 6 tháng luật đóng băng — cổng 🚦 | 6.2; 6.3 |
 
-#### Bước 6.1 — Port toán học lõi & parity (làm ngay được)
+#### Bước 6.1 — Port toán học lõi & parity ✅ (2026-09-12)
 - **Vị trí:** `internal/strategy/crowding` chỉ khi `internal/strategy/doc.go`
   được sửa để nói gói này chứa một chiến lược delta-neutral và một chiến lược
   định hướng; nếu không thì gói `internal/crowding` ngang hàng, có `doc.go`
@@ -3216,6 +3216,83 @@ không cộng được**.
   4h ĐÃ GỘP; không chứng minh tầng gộp nến (đổi quy ước biên làm CAGR
   26,94/36,84 → 28,84/38,49 — xem 6.2), không chứng minh edge.
 - Cổng 1 (P1): commit `docs:` này đi trước; 6.1 là MỘT commit.
+
+> **Đã làm (2026-09-12).** Gói `internal/crowding` ngang hàng (doc.go riêng;
+> `internal/strategy/doc.go` không đổi — đó vẫn là gói của chiến lược
+> delta-neutral với đúng hai người gọi). Cả đường đi 9 định nghĩa, ánh xạ
+> theo tên trong doc.go: `RollingZScore`, `CrowdingScores`,
+> `HysteresisSignal`, `CausalWeights`, `TrendConfirmationVotes`,
+> `ApplyTrendConfirmation`, `EnsembleTargets`, `Config` (đủ 13 trường của
+> `StrategyConfig`, có `Validate`), hằng `BarsPerDay`/`BarsPerYear`/
+> `EnsembleMembers` (12 thành viên, test ghim bằng manifest). Ngữ nghĩa
+> pandas ghi trong doc.go TRƯỚC code: ln chỉ khi ratio > 0, NaN không fill;
+> cửa sổ hợp lệ khi ≥ min_periods giá trị không-NaN, `max(20, int(0,8·L))`
+> cho z-score và `int(0,8·W)` cho vol/var/cov; std/var/cov MẪU (ddof 1), cov
+> theo công thức pandas với mean biên trên từng chuỗi và mean tích trên cặp;
+> score NaN reset trạng thái; scale = min(target/vol, max_gross), NaN/Inf →
+> 0, `scale[:minimum] = 0`; momentum `pct_change(days×6) > 0` với mask "đủ
+> lịch sử"; trung bình 12 rồi mới lọc xu hướng; `BarsPerYear = 6 × 365,25`.
+> Định danh mang đơn vị (`LookbackBars`, `EntryZ`/`ExitZ`,
+> `TargetVolAnnualFrac`, `MaxGrossFrac`, `FeeFracPerSide`, `LagBars`,
+> `TrendHorizonsDays`, `TrendRequiredVotes`, `windowBars`/`minPeriodsBars`/
+> `periodsBars` ở hàm nội bộ); đầu ra là `TargetFracOfEquity`; chữ `Net`
+> không xuất hiện ở đâu.
+>
+> **Fixture:** `rust_parity_fixture.csv.gz` (1,2 MB) + `rust_reference_manifest.json`
+> trong `internal/crowding/testdata/`; test giải nén rồi kiểm SHA-256 của
+> bản thô so với hằng `fa9eae27…` ghim trong test VÀ với manifest trước khi
+> đọc một dòng nào (nên tái sinh cả fixture lẫn manifest cũng không qua
+> được); offline, ~2,4 s.
+>
+> **Nghiệm thu, đo được:** trên 10.957 dòng × 2 tài sản = 21.914 asset-bar,
+> `expected_target` |err| max **1,55e-14** (ngưỡng 1e-10), `expected_score`
+> |err| max **2,51e-13** (ngưỡng 1e-10, ghi rõ: pandas dùng tổng online
+> Kahan/Welford nên trôi ở mức 1e-13, không phải lỗi port), `expected_signal`
+> **bằng tuyệt đối ở mọi bar** (bội của 1/12: tổng nguyên trong [−12, 12] chia
+> 12 là cùng một double ở cả hai ngôn ngữ), 0 dòng vượt ngưỡng; 7 mốc cắt
+> `prefix_checks` của manifest tái hiện với sai số **đúng 0** (chạy trên
+> prefix panel so với chạy toàn bộ). Không đòi bit-exact: `math.Log` của Go
+> lệch glibc 1 ulp ở 8,4% giá trị ratio (đo ở spike 2026-09-11).
+>
+> **Test Python port thành test bảng** (161 dòng của
+> `test_crowding_reversal_research.py` + 37 dòng của
+> `test_crowding_reversal_pre_rust_audit.py`): scores+signal prefix-causal;
+> weights prefix-causal và gross ≤ 1 (kiểm cả "có exposure thật" để test
+> không rỗng); ratio thiếu → fail closed, mở rộng thành bảng 4 trường hợp
+> (NaN và +Inf reset trạng thái đang giữ, đúng-ngưỡng vào/ra, side long bỏ
+> qua crowded long); hysteresis từ chối exit ≥ entry, exit âm, side lạ;
+> ensemble prefix-causal và gross ≤ 1; trend confirmation fail closed lúc
+> warm-up và mask "chưa đủ lịch sử không phải phiếu giảm" cô lập ở biên 30
+> ngày; `min_periods` đếm giá trị không-NaN (71 → NaN, 72 → số; sàn 20 dưới
+> L = 25); cov đúng định nghĩa mẫu, kể cả NaN bất đối xứng (x = {1, NaN, 3,
+> 4}, y = {2, 4, 6, 9} → 7 theo mean biên/mean cặp — một bản viết lại "chỉ
+> cặp" cho số khác); cửa sổ đồng nhất → var đúng 0 → z NaN → reset; 0 member
+> và config sai bị từ chối. **Bốn test KHÔNG port, gọi tên:**
+> `benchmark_returns` và `trade_episodes` và `invert_path` là tầng backtest
+> (6.3), `funding bucket` là ingestion (6.2); kiểm "cắt lịch sử" của audit đã
+> port, kiểm "trễ 1 nến / đẳng thức kế toán" là 6.3.
+>
+> **Review đối kháng (2026-09-12): không có lỗi chặn**, 6 mục nên sửa đã áp
+> cùng commit: (1) cửa sổ toàn giá trị đồng nhất — pandas `calc_var` trả
+> ĐÚNG 0 và `calc_mean` trả chính giá trị (GH#42064) nên z = 0/0 = NaN và
+> trạng thái reset, còn `sum/count` lệch 1 ulp cho z ≈ ±0,994 nằm giữa mọi
+> ngưỡng ra (0,25/0,5) và vào (1,0/1,25) → Go sẽ GIỮ vị thế qua một feed
+> ratio bị kẹt ≥ L bar trong khi Python về flat; fixture không thấy vì chuỗi
+> đồng nhất dài nhất trong đó là 1 bar — sửa bằng luật đặc biệt trong
+> `rollingMeanVar` + test; (2) 0 member trả `err == nil` với NaN — giờ là
+> lỗi; (3) test cov chưa phân biệt mean biên/cặp — thêm case bất đối xứng;
+> (4) tên đếm trần (`window`, `minimum`, `periods`) → `windowBars`,
+> `minPeriodsBars`, `periodsBars`; (5) SHA chỉ ràng với manifest bên cạnh →
+> ghim thêm hằng; (6) `Config` thiếu `include_funding`,
+> `boundary_offset_hours` → đủ 13 trường + `Validate` (target vol âm đảo dấu
+> mọi vị thế cả ở Python). Nit đã sửa: doc cov nói rõ mean biên, var tính
+> thẳng `ss/(n−1)` (parity không đổi), `Prefix` kẹp biên, dòng log parity in
+> sau khi đã khẳng định.
+>
+> **Giới hạn (doc.go):** parity chứng minh Go = Python trên đường 4h ĐÃ GỘP;
+> không chứng minh tầng gộp nến (6.2 chốt quy ước biên), không chứng minh
+> edge; các cột lag / P&L / equity của fixture là của 6.3 và chưa so. Cổng
+> P1: commit docs `010ce8c` đi trước; 6.1 là MỘT commit.
 
 #### Bước 6.2 — Ingestion cho crowding
 - **Chốt quy ước biên TRƯỚC khi viết bảng:** close của fixture tại T là close của
@@ -3637,7 +3714,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 2 từ 2026-09-11 14:15 +07 (lần 1 đứt 09-10 vì máy khởi động lại), phán quyết ≥ 09-25   ← ĐANG LÀM
 [  ] GĐ 4  Execution Engine              1/6 bước · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger` đọc nhật ký, cổng riêng — Q12) · 4.1/4.2/4.4–4.6 chờ cổng 3.5
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
-[  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  0/5 bước · 6.1 làm ngay được
+[  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá
 [🔒] GĐ 8  Cross-Chain / Statistical     khoá
 ```
