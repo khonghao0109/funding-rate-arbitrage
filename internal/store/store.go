@@ -96,6 +96,60 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
+// OpenReadOnly opens an EXISTING database for reading only (PLAN.md step
+// 4.3, Q12): the paper ledger is a second process reading the file the
+// step-3.5 scanner is writing, and it must not be able to write a byte to
+// it — not a row, not a schema stamp, not a checkpoint of its own.
+//
+// mode=ro is enforced by SQLite itself (every write fails with "attempt to
+// write a readonly database"), which is why this is a separate constructor
+// rather than a flag on Open: Open applies the schema and stamps the
+// version, and a read-only handle must do neither. The version is only
+// CHECKED — a file newer than this binary is refused for the same reason
+// Open refuses it, and a file older than this binary is still readable
+// (every migration so far added tables or renamed a column this reader
+// resolves by name).
+//
+// WAL is what makes this safe beside the writer: readers never block the
+// writer and the writer never blocks readers (measured in the test beside
+// this — a row inserted by the writer is visible to the reader on its next
+// query). The one thing a reader needs is write access to the -shm file
+// for its read locks, which a process running as the same user has.
+func OpenReadOnly(path string) (*Store, error) {
+	if strings.ContainsAny(path, "?#") {
+		return nil, fmt.Errorf("store: path %q contains ? or #, which the driver reads as DSN parameters", path)
+	}
+	if _, err := os.Stat(path); err != nil {
+		// A read-only open of a missing file must not create one: with the
+		// URI form SQLite would refuse anyway, but the message here names
+		// the real problem.
+		return nil, fmt.Errorf("store: open read-only: %w", err)
+	}
+	dsn := "file:" + path + "?mode=ro&_pragma=busy_timeout(5000)"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("store: open %s read-only: %w", path, err)
+	}
+	db.SetMaxOpenConns(1)
+	s := &Store{db: db, now: time.Now}
+
+	var version int
+	if err := s.db.QueryRowContext(context.Background(), "PRAGMA user_version").Scan(&version); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("store: read schema version: %w", err)
+	}
+	if version > schemaVersion {
+		db.Close()
+		return nil, fmt.Errorf("store: database is at schema version %d, this binary knows %d — "+
+			"a reader older than the file would misread columns it does not know about", version, schemaVersion)
+	}
+	if version == 0 {
+		db.Close()
+		return nil, fmt.Errorf("store: %s has schema version 0 — not a store this code created, refusing to read it", path)
+	}
+	return s, nil
+}
+
 // Close releases the database. WAL content is checkpointed by SQLite on the
 // last connection closing, so a clean shutdown leaves one file behind.
 func (s *Store) Close() error { return s.db.Close() }

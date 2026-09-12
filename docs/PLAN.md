@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 2 từ 09-11** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | ⬜ Chưa bắt đầu | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **1/6 · 4.3 sổ paper ✅ (2026-09-11, tiến trình đọc nhật ký — Q12) · còn lại chờ cổng 3.5** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | ⬜ Chưa bắt đầu — 6.1 làm ngay được | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -2891,7 +2891,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 - Xử lý làm tròn theo `stepSize` / `tickSize` / `minNotional` của từng cặp.
 - **Nghiệm thu:** đặt và huỷ được lệnh trên Binance testnet.
 
-#### Bước 4.3 — Chế độ Paper Trading (song song với 3.5 — Q12)
+#### Bước 4.3 — Chế độ Paper Trading ✅ (2026-09-11, song song với 3.5 — Q12)
 - **Hình dạng:** sổ paper là **người tiêu thụ nhật ký**. Nó đọc `signal_journal`
   (hàng `enter` / `exit`, `params_json.inputs`, `params_json.fees`,
   `notional_quote`) và `price_snapshots` / `depth_snapshots` / `funding_history`
@@ -2939,6 +2939,117 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
   paper thực tế của vị thế đó tới lúc `exit`. Câu cũ "PnL ảo bám sát backtest"
   là kiểm tính NHẤT QUÁN, và nó thuộc cổng 3.5 (giao thức ③, theo quyết định);
   4.3 chỉ thêm góc nhìn tiền.
+
+> **Đã làm (2026-09-11/12, commit của bước này).** Hai gói mới và không đụng
+> gì khác: `internal/paper` là sổ cái thuần (không DB, không socket, test
+> được) — `Open`/`Close` khớp hai chân qua `strategy.EstimateFill` trên đúng
+> snapshot được đưa vào (mua ở ask = mid × (1 + slippage), bán ở bid = mid ×
+> (1 − slippage)); chân perp lúc vào và **cả hai chân lúc thoát** được định
+> giá ở **qty × mid hiện tại** của chính sổ đó chứ không phải notional lúc
+> vào — review đối kháng 2026-09-11 bắt được lỗi chặn ở đây: sau một cú
+> tăng giá cùng số coin là một lệnh to hơn, và cổng độ sâu phải được hỏi về
+> lệnh sẽ thật sự gửi đi (test: mở 50k ở 100k, giá lên 30%, sổ thoát 60k
+> trong 0,5% → production từ chối 65k, sổ giấy cũng phải từ chối); từ chối
+> cả vị thế khi một chân không khớp, snapshot SAU quyết định bị từ chối dù
+> chỉ 1 ms, snapshot quá `max_book_age_min` của chính hàng đó cũng bị từ
+> chối; `CreditFunding` chỉ ghi có mốc settle **sau** lúc mở và
+> tới lúc đóng (cùng phép đếm với `internal/backtest` và `minHoldFloor`),
+> tiền = mark × qty × rate, dương là tiền VÀO chân short, chuỗi `continuous`
+> đếm là "không ghi có được"; `Mark` định giá cặp theo mid (spot ở mark + ký
+> quỹ + lãi/lỗ chưa hiện thực của chân short) nên hai chân cùng lên 10% thì
+> equity đứng yên, chỉ basis dịch mới ra tiền, chân thiếu mẫu giá giữ mark cũ
+> và **gắn cờ stale**. `cmd/paperledger` là tiến trình riêng: mở kho bằng
+> `store.OpenReadOnly` (`file:…?mode=ro` — SQLite tự từ chối mọi lệnh ghi,
+> test ghim: reader thấy hàng writer vừa chèn, ghi bị "readonly", stamp
+> user_version bị từ chối, file mới hơn binary bị từ chối), dựng lại **từ
+> đầu** mỗi 5 phút từ `signal_journal` (đếm theo action bằng SQL và chỉ nạp
+> hàng enter/exit KHÔNG kèm `checks_json` — `SignalActionTally` /
+> `SignalPositionRows`, để một lượt dựng lại trên chính máy đang chạy 3.5
+> không phải nạp 170k hàng lý luận) + `depth_snapshots` + `funding_history`
+> + `price_snapshots` + `instrument_snapshots` (quote asset do sàn khai, lấy
+> ngày snapshot mới nhất CỦA TỪNG market — `InstrumentQuoteAssets` — và
+> market không có snapshot được gắn `quote_assets_known: false` / "QUOTE
+> CHƯA RÕ", không bao giờ đọc là "cùng quote"), phí từ `params_json.fees`
+> của **chính hàng đó** (hàng không có khoá — lần chạy 1 — bị từ chối bằng
+> tên), mark cho sàn không công bố lấy mid mẫu ≤ 15 phút trước mốc, không có
+> thì dùng mark cuối của sổ giấy và ghi rõ nguồn; mốc Binance `Special` ĐƯỢC
+> ghi có (tài khoản thật nhận nó; luật và backtest loại nó — đếm ở
+> `funding_special` để hai bên đối chiếu được); phục vụ `/api/ledger` (JSON,
+> mọi trường mang đơn vị, header `X-Execution-Mode: paper`) và giao diện `/`
+> (vanilla JS, chữ **PAPER** cạnh mọi ô số, khối THẬT / GIẢ / GIẢ ĐỊNH, cột
+> P&L trên VỐN = spot + ký quỹ đứng trước cột trên notional MỘT CHÂN, không
+> có `<button>`, không có `<form>`, POST/PUT/DELETE trả 405 ở cả ba route,
+> test ghim) chỉ trên loopback (`-bind 127.0.0.1`) và cổng riêng (mặc định
+> 8086, **từ chối 8082/8085**); `-once` in JSON rồi thoát. Vốn ảo mặc định
+> 10M quote (74 ô × 50k × 2 chân); ở 1M sổ chỉ mở được 9/18 lệnh đầu và từ
+> chối 9 vì "vốn ảo không đủ" — đo được, là hành vi tài khoản thật. Ghi chú
+> quy tắc 7 cho paper mode đã vào `internal/execution/doc.go`.
+>
+> **Nghiệm thu (1)** — test đơn vị ở `internal/paper` và `cmd/paperledger`:
+> giá khớp = `EstimateFill` trên snapshot đã cho (kiểm cả chiều và cả qty hai
+> chân bằng nhau); snapshot sau mốc bị từ chối (4 trường hợp + đúng-mốc được
+> nhận); funding chỉ ở mốc settle sau lúc mở (trước / đúng lúc mở / continuous
+> / không mark / sau khi đóng đều không ghi có, mốc âm vẫn trừ); "cả hai chân
+> mở hoặc cả hai chân đóng" giữ qua một lần thoát bị từ chối; lệnh vượt độ
+> sâu 0,5% bị từ chối từ cả hai phía không để lại nửa vị thế. **(2)** —
+> dựng lại cửa sổ lần 2 từ **bản sao** `.backup` của `data/scanner.db` chụp
+> 17:36 +07 (file sống chưa bị mở một lần nào trong phiên này), `-from
+> "2026-09-11 14:15:50 +0700"`, dựng trong **1,08 s**: 1.716 hàng nhật ký (18
+> enter · 1 exit · 303 hold · 1.394 skip) → **18/18 enter khớp được** trên
+> đúng lượt quét TRƯỚC tick (ví dụ 07:18:48 UTC dùng sổ 07:17:18; ETH·kraken
+> 10:18:50 dùng sổ 09:18:40 chứ không phải 10:19:28 — luật "không bao giờ
+> sau" chạy thật), chi phí VÀO của paper bằng đúng **một nửa vòng phí nhật
+> ký** ở mọi vị thế (BTC·okx 0,1505% so với 0,3010%; NEAR·okx 0,3642% so với
+> 0,6768%) — sổ đo được và sổ sống là cùng một sổ; **1 từ chối** đúng nghĩa:
+> exit SUI·hyperliquid 09:28:50 UTC, sổ 20 mức của hyperliquid chỉ vươn tới
+> 0,055% và có 47.502 quote trong 0,5% (< kích thước lệnh) nên chân MUA lại
+> perp không khớp, vị thế **vẫn mở và gắn cờ** thay vì đóng ở giá tưởng
+> tượng (đường sống đã thoát vì "không còn tính được APR ròng" — cùng nguyên
+> nhân, hai cách ghi); funding **+25,21 quote qua 40 mốc** (hyperliquid 1h ×
+> 3, các sàn 8h × 1; mark đều là mid lấy mẫu vì chưa vị thế binance nào qua
+> mốc settle; 0 mốc Special); phí taker đã trả 1.331,95; đo lại sau review
+> với `-to "2026-09-11 17:36:00 +0700"` (mốc chụp bản sao): equity
+> **9.998.449 / 10.000.000** (P&L vị thế mở −1.551 = basis dịch − phí vào +
+> funding đã ghi có), drawdown lớn nhất 2.012; đường equity 5 điểm (mỗi giờ
+> từ quyết định đầu + điểm cuối, điểm cuối là bắt buộc dù `-mark-every` thế
+> nào), mỗi điểm 1 chân stale (bybit_spot, xem dưới). Mỗi vị thế mang
+> `projected_net_apr_frac` của chính hàng enter (3,64%–22,95%) cạnh
+> `open_pnl_quote` / `realized_pnl_quote` — không annualize một lệnh giữ 3
+> giờ. Server thật trên cổng 8087 trả `X-Execution-Mode: paper` ở cả `/`,
+> `/api/ledger`, `/healthz`; tiến trình 3.5 (PID 35370, cổng 8085) cùng PID,
+> cùng `lstart` trước và sau. Cửa sổ mặc định đọc `.paper/started_at`, file
+> đó đang giữ đúng mốc lần 2 (`2026-09-11 14:15:50 +0700`).
+>
+> **Phát hiện khi dựng lại (thuộc hồ sơ 3.5, KHÔNG sửa trong bước này):**
+> `bybit_spot` nối lúc 14:15:48 nhưng kho **không có mẫu giá bybit_spot nào**
+> kể từ khi lần 2 lên (0 so với 5.213 ở mỗi nguồn khác; mẫu mới nhất của nó
+> là 2026-09-09 18:10 UTC, trước khi máy khởi động lại), trong khi REST depth
+> của nó vẫn có 52 hàng. Hệ quả: HYPE·kraken (chân spot bybit_spot) không có
+> giá spot sống nên `basis_widened` ở đường sống báo "chưa đo được" ở mọi
+> tick, và sổ giấy đánh dấu chân đó là stale. Hình dạng giống khoản nợ
+> "subscription bị huỷ âm thầm" của Bước 1.6; ghi ở đây để phiên phán quyết
+> đọc, và để lần chạy 3 kiểm `source_status` của bybit_spot ngay sau khi lên.
+>
+> **Giới hạn của dữ liệu đầu vào, ghi ở `internal/paper/doc.go` và khối giả
+> định của báo cáo (review 2026-09-11):** `sampled_at_ms` của
+> `depth_snapshots` là mốc BẮT ĐẦU một lượt quét (`internal/depth` đóng một
+> dấu cho cả lượt; lượt ~117 lượt tải, nghỉ 150 ms, kéo dài 30–90 s), nên
+> "≤ evaluated_at_ms" lọc ở độ phân giải lượt quét chứ không phải từng lượt
+> tải — quyết định 07:18:48 dùng lượt 07:17:18 nằm đúng trong khoảng đó. Nợ
+> ghi cho SAU cổng 3.5 (không đổi schema trong khi tiến trình đang ghi): cột
+> `fetched_at_ms` cho `depth_snapshots` (schema v6).
+>
+> **Chưa làm, và vì sao:** (a) hai message `paper_positions` / `paper_ledger`
+> và `meta.execution_mode` trên wire của `cmd/scanner` — theo chỉ thị của
+> người vận hành ngày 2026-09-11 (không thêm message vào wire của scanner
+> trong khi 3.5 chạy); sổ giấy có JSON và giao diện riêng nên không cần
+> chúng để xem, và nếu sau này gộp vào dashboard thì thêm theo đúng luật
+> [WS-CONTRACT §8](WS-CONTRACT.md); (b) interface broker chung
+> (`PlaceOrder`/`CancelOrder`/`GetPosition`/`GetBalance`) thuộc 4.2, đứng sau
+> cổng 3.5 — `paper.Ledger.Open`/`Close` là hai lời gọi mà broker paper sẽ
+> bọc khi 4.2 tới lượt, không phải bản sao thứ hai của chúng; (c) 6.5 dùng
+> chung sổ này cho track crowding (một chân perp, funding ở nến settle) là
+> việc của 6.3/6.5.
 
 #### Bước 4.4 — Mở vị thế delta-neutral
 - Đặt đồng thời Spot Long + Perp Short cùng notional.
@@ -3524,7 +3635,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 2 từ 2026-09-11 14:15 +07 (lần 1 đứt 09-10 vì máy khởi động lại), phán quyết ≥ 09-25   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              0/6 bước · 4.3 (sổ paper vốn ảo) làm song song với 3.5, chỉ đọc nhật ký — Q12
+[  ] GĐ 4  Execution Engine              1/6 bước · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger` đọc nhật ký, cổng riêng — Q12) · 4.1/4.2/4.4–4.6 chờ cổng 3.5
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  0/5 bước · 6.1 làm ngay được
 [🔒] GĐ 7  CEX-DEX                       khoá

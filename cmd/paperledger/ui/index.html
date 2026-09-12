@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PAPER — sổ giấy 4.3</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; color: #e0e0e0; font-family: 'JetBrains Mono', 'Monaco', 'Consolas', monospace; font-size: 13px; padding: 16px; }
+  h1 { font-size: 16px; color: #00ff88; }
+  .banner { border: 2px dashed #ffaa00; color: #ffaa00; padding: 8px 12px; margin: 12px 0; font-weight: bold; }
+  .paper { display: inline-block; background: #ffaa00; color: #000; font-size: 10px; padding: 0 4px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+  .tiles { display: flex; flex-wrap: wrap; gap: 10px; margin: 12px 0; }
+  .tile { background: #151515; border: 1px solid #333; padding: 10px 14px; min-width: 190px; }
+  .tile .k { color: #888; font-size: 11px; }
+  .tile .v { font-size: 18px; margin-top: 4px; }
+  .neg { color: #ff4444; } .pos { color: #00ff88; } .muted { color: #888; }
+  section { margin: 18px 0; }
+  h2 { font-size: 13px; color: #aaa; border-bottom: 1px solid #333; padding-bottom: 4px; margin-bottom: 8px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12px; }
+  th, td { text-align: right; padding: 4px 6px; border-bottom: 1px solid #222; white-space: nowrap; }
+  th { color: #888; font-weight: normal; } td:first-child, th:first-child { text-align: left; }
+  .wrap { overflow-x: auto; }
+  svg { width: 100%; height: 220px; background: #0f0f0f; border: 1px solid #333; }
+  ul { margin-left: 18px; line-height: 1.5; }
+  .event { font-size: 11px; color: #bbb; }
+  .refuse { color: #ffaa00; } .anomaly { color: #ff4444; }
+  footer { color: #666; font-size: 11px; margin-top: 24px; }
+</style>
+</head>
+<body>
+<h1><span class="paper">PAPER</span>Sổ giấy — Bước 4.3 (Q12) · chỉ đọc nhật ký · vốn ảo</h1>
+<div class="banner">MỌI CON SỐ Ở ĐÂY LÀ PAPER. Không có tài khoản, không có lệnh, không có công tắc nào chuyển sang tiền thật — và sẽ không có. Sổ này không quyết định gì: nó định giá quyết định mà tiến trình 3.5 đã ghi.</div>
+<div id="status" class="muted">đang tải…</div>
+<div class="tiles" id="tiles"></div>
+<section><h2><span class="paper">PAPER</span>Đường equity (vốn ảo, đánh dấu theo mid)</h2><svg id="equity" viewBox="0 0 1000 220" preserveAspectRatio="none"></svg><div id="equityNote" class="muted"></div></section>
+<section><h2><span class="paper">PAPER</span>Vị thế đang mở</h2><div class="wrap"><table id="open"></table></div></section>
+<section><h2><span class="paper">PAPER</span>Vị thế đã đóng — APR ròng DỰ PHÓNG lúc vào đứng cạnh P&amp;L paper thực tế</h2><div class="wrap"><table id="closed"></table></div></section>
+<section><h2>Thật / giả / giả định</h2><div id="labels"></div></section>
+<section><h2><span class="paper">PAPER</span>Sự kiện (mở, đóng, funding, từ chối, bất thường)</h2><div id="events"></div></section>
+<footer id="footer"></footer>
+<script>
+(function () {
+  const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v)) ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const pct = (v, d = 4) => v === null || v === undefined ? '—' : (Number(v)).toFixed(d) + '%';
+  const ts = ms => ms ? new Date(ms).toISOString().replace('T', ' ').slice(0, 19) + 'Z' : '—';
+  const sign = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+  const P = '<span class="paper">PAPER</span>';
+  const esc = s => String(s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+
+  function tile(k, v, cls) { return `<div class="tile"><div class="k">${P}${k}</div><div class="v ${cls || ''}">${v}</div></div>`; }
+
+  function render(r) {
+    document.getElementById('status').textContent =
+      `dựng lúc ${ts(r.built_at_ms)} · cửa sổ ${ts(r.window_from_ms)} → ${ts(r.window_to_ms)} (${r.window_from_note_vi}) · ${r.journal_rows} hàng nhật ký: ${r.journal_enters} enter · ${r.journal_exits} exit · ${r.journal_holds} hold · ${r.journal_skips} skip · chế độ: ${r.mode.toUpperCase()}`;
+    document.getElementById('tiles').innerHTML = [
+      tile('Vốn ảo khởi điểm (quote)', fmt(r.capital_quote, 0)),
+      tile('Equity (quote)', fmt(r.equity_quote), sign(r.equity_quote - r.capital_quote)),
+      tile('Tiền mặt ảo (quote)', fmt(r.cash_quote)),
+      tile('P&L thực hiện (quote)', fmt(r.realized_quote), sign(r.realized_quote)),
+      tile('P&L vị thế mở (quote) — gồm funding đã ghi có', fmt(r.open_pnl_quote), sign(r.open_pnl_quote)),
+      tile('Funding ghi có (quote)' + (r.funding_special ? ` · ${r.funding_special} mốc Special` : ''), fmt(r.funding_quote), sign(r.funding_quote)),
+      tile('Phí taker đã trả (quote)', fmt(r.fees_paid_quote), 'neg'),
+      tile('Drawdown lớn nhất (quote)', fmt(r.max_drawdown_quote), r.max_drawdown_quote > 0 ? 'neg' : ''),
+      tile('Mở / đóng / từ chối / bất thường', `${r.open.length} / ${r.closed.length} / <span class="refuse">${r.refusals}</span> / <span class="anomaly">${r.anomalies}</span>`),
+    ].join('');
+
+    // Equity curve: plain SVG polyline, no library.
+    const svg = document.getElementById('equity');
+    const eq = r.equity || [];
+    if (eq.length < 2) { svg.innerHTML = ''; document.getElementById('equityNote').textContent = 'Chưa đủ điểm đánh dấu để vẽ (cần ≥ 2).'; }
+    else {
+      const xs = eq.map(p => p.at_ms), ys = eq.map(p => p.equity_quote);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      const sx = x => (x1 === x0) ? 0 : (x - x0) / (x1 - x0) * 980 + 10;
+      const sy = y => (y1 === y0) ? 110 : 210 - (y - y0) / (y1 - y0) * 200;
+      const pts = eq.map(p => `${sx(p.at_ms).toFixed(1)},${sy(p.equity_quote).toFixed(1)}`).join(' ');
+      const cap = sy(r.capital_quote);
+      svg.innerHTML = `<line x1="10" y1="${cap}" x2="990" y2="${cap}" stroke="#444" stroke-dasharray="4 4"/><polyline points="${pts}" fill="none" stroke="#00ff88" stroke-width="1.5"/>` +
+        eq.filter(p => p.stale_marks > 0).map(p => `<circle cx="${sx(p.at_ms)}" cy="${sy(p.equity_quote)}" r="2" fill="#ffaa00"/>`).join('');
+      document.getElementById('equityNote').innerHTML = `${P}${eq.length} điểm · min ${fmt(y0)} · max ${fmt(y1)} · nét đứt = vốn khởi điểm · chấm vàng = điểm có chân thiếu mẫu giá (giữ mark cũ)`;
+    }
+
+    const legRow = (l) => `${fmt(l.fill_price_quote, 4)}<br><span class="muted">slip ${pct(l.slippage_pct)} · phí ${fmt(l.fee_quote)}${l.depth_is_lower_bound ? ' · ⚠ cận trên' : ''}</span>`;
+    const head = (cols) => '<tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr>';
+    const openT = document.getElementById('open');
+    const quoteTag = p => p.quote_bridged ? ' <span class="refuse">KHÁC QUOTE</span>' : (p.quote_assets_known ? '' : ' <span class="refuse">QUOTE CHƯA RÕ</span>');
+    const fundingCell = p => `${fmt(p.funding_quote)} (${p.funding_settlements}${p.funding_special ? ', ' + p.funding_special + ' Special' : ''}${p.funding_unpriced ? ', ' + p.funding_unpriced + ' không định giá' : ''})`;
+    openT.innerHTML = head(['Cặp / perp ← spot', 'Mở lúc', 'Qty (coin)', 'Spot mua', 'Perp bán', 'Ký quỹ', 'Funding (n mốc)', 'Basis P&L', 'P&L vị thế mở (gồm funding)', 'APR ròng DỰ PHÓNG', 'Vòng phí nhật ký / paper (vào)', 'Ghi chú']) +
+      (r.open.length ? r.open.map(p => `<tr><td>${P}${esc(p.symbol)} / ${esc(p.perp_source)} ← ${esc(p.spot_source)}${quoteTag(p)}</td><td>${ts(p.opened_at_ms)}</td><td>${fmt(p.qty_coin, 6)}</td><td>${legRow(p.entry_spot)}</td><td>${legRow(p.entry_perp)}</td><td>${fmt(p.margin_quote)}</td><td class="${sign(p.funding_quote)}">${fundingCell(p)}</td><td class="${sign(p.basis_pnl_quote)}">${fmt(p.basis_pnl_quote)}</td><td class="${sign(p.open_pnl_quote)}">${fmt(p.open_pnl_quote)}</td><td>${p.projected_net_apr_ok ? pct(p.projected_net_apr_frac * 100, 2) : '<span class="muted">không có số</span>'}</td><td>${pct(p.journal_cost_total_pct)} / ${pct(p.paper_entry_cost_pct)}</td><td class="${p.exit_refused_vi ? 'refuse' : 'muted'}">${p.mark_is_stale ? 'mark cũ · ' : ''}${esc(p.exit_refused_vi || '')}</td></tr>`).join('')
+        : '<tr><td colspan="12" class="muted">không có vị thế mở</td></tr>');
+
+    const closedT = document.getElementById('closed');
+    closedT.innerHTML = head(['Cặp / perp ← spot', 'Mở', 'Đóng', 'Giữ (ngày)', 'Qty (coin)', 'Funding (n mốc)', 'Phí 4 lượt', 'P&L THỰC HIỆN', 'P&L / VỐN (spot + ký quỹ)', 'P&L / notional MỘT CHÂN', 'APR ròng DỰ PHÓNG lúc vào (trên notional một chân)', 'Vòng phí nhật ký / paper']) +
+      (r.closed.length ? r.closed.map(p => {
+        const fees = p.entry_spot.fee_quote + p.entry_perp.fee_quote + p.exit_spot.fee_quote + p.exit_perp.fee_quote;
+        const days = (p.closed_at_ms - p.opened_at_ms) / 86400000;
+        const capital = p.entry_spot.notional_quote + p.margin_quote;
+        return `<tr><td>${P}${esc(p.symbol)} / ${esc(p.perp_source)} ← ${esc(p.spot_source)}${quoteTag(p)}</td><td>${ts(p.opened_at_ms)}</td><td>${ts(p.closed_at_ms)}</td><td>${fmt(days, 2)}</td><td>${fmt(p.qty_coin, 6)}</td><td class="${sign(p.funding_quote)}">${fundingCell(p)}</td><td class="neg">${fmt(fees)}</td><td class="${sign(p.realized_pnl_quote)}">${fmt(p.realized_pnl_quote)}</td><td class="${sign(p.realized_pnl_quote)}">${pct(p.realized_pnl_quote / capital * 100)}</td><td class="${sign(p.realized_pnl_quote)}">${pct(p.realized_pnl_quote / p.notional_quote * 100)}</td><td>${p.projected_net_apr_ok ? pct(p.projected_net_apr_frac * 100, 2) : '<span class="muted">không có số</span>'}</td><td>${pct(p.journal_cost_total_pct)} / ${pct(p.paper_round_trip_cost_pct)}</td></tr>`;
+      }).join('') : '<tr><td colspan="12" class="muted">chưa có vị thế đóng</td></tr>');
+
+    document.getElementById('labels').innerHTML =
+      `<b>THẬT:</b><ul>${r.real_vi.map(s => `<li>${esc(s)}</li>`).join('')}</ul><b>GIẢ (PAPER):</b><ul>${r.fake_vi.map(s => `<li>${esc(s)}</li>`).join('')}</ul><b>GIẢ ĐỊNH:</b><ul>${r.assumptions_vi.map(s => `<li>${esc(s)}</li>`).join('')}</ul><div class="banner">${esc(r.label_vi)}</div>`;
+
+    const ev = (r.events || []).slice().reverse().slice(0, 300);
+    document.getElementById('events').innerHTML = ev.length ? ev.map(e => `<div class="event ${e.kind.startsWith('refuse') ? 'refuse' : e.kind === 'anomaly' ? 'anomaly' : ''}">${ts(e.at_ms)} · ${e.kind} · ${esc(e.symbol)}/${esc(e.perp_source)} · ${fmt(e.amount_quote)} · ${esc(e.detail_vi)}</div>`).join('') : '<div class="muted">chưa có sự kiện</div>';
+    document.getElementById('footer').textContent = 'cmd/paperledger · PLAN.md Bước 4.3 · đọc SQLite ở chế độ mode=ro · tự tải lại mỗi 60 giây';
+  }
+
+  async function load() {
+    try {
+      const res = await fetch('/api/ledger', { cache: 'no-store' });
+      render(await res.json());
+    } catch (e) {
+      document.getElementById('status').textContent = 'không tải được /api/ledger: ' + e;
+    }
+  }
+  load();
+  setInterval(load, 60000);
+})();
+</script>
+</body>
+</html>

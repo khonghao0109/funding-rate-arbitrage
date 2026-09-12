@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 
 	"futures-arbitrage-scanner/internal/depth"
@@ -123,4 +124,39 @@ func (s *Store) DepthSnapshots(ctx context.Context, symbol string, fromMs, toMs 
 		out = append(out, summary)
 	}
 	return out, rows.Err()
+}
+
+// DepthSnapshotAt is the newest USABLE measurement of one market taken AT
+// OR BEFORE atMs, and whether there was one. Usable: a row is only ever
+// written when the summary carried a book (PutDepthSnapshots skips errors),
+// so every stored row prices. Never after atMs: the paper ledger (step 4.3)
+// fills a decision on the book the decision could have seen, and PLAN 4.3
+// makes "sampled_at_ms <= evaluated_at_ms" the rule — the caller re-checks
+// it on the returned row rather than trusting this function.
+func (s *Store) DepthSnapshotAt(ctx context.Context, source, symbol string, atMs int64) (depth.Summary, bool, error) {
+	var summary depth.Summary
+	err := s.db.QueryRowContext(ctx, `
+		SELECT source, symbol, sampled_at_ms, venue_time_ms,
+		       mid_price_quote, best_bid_quote, best_ask_quote,
+		       best_bid_qty_coin, best_ask_qty_coin, spread_pct,
+		       bid_depth_within_0_1pct_quote, ask_depth_within_0_1pct_quote,
+		       bid_depth_within_0_5pct_quote, ask_depth_within_0_5pct_quote,
+		       bid_levels, ask_levels, bid_span_pct, ask_span_pct, is_contract_book
+		FROM depth_snapshots
+		WHERE source = ? AND symbol = ? AND sampled_at_ms <= ?
+		ORDER BY sampled_at_ms DESC LIMIT 1`, source, symbol, atMs).Scan(
+		&summary.Source, &summary.Symbol, &summary.SampledAtMs, &summary.VenueTimeMs,
+		&summary.MidPriceQuote, &summary.BestBidQuote, &summary.BestAskQuote,
+		&summary.BestBidQtyCoin, &summary.BestAskQtyCoin, &summary.SpreadPct,
+		&summary.BidDepthWithinTightQuote, &summary.AskDepthWithinTightQuote,
+		&summary.BidDepthWithinWideQuote, &summary.AskDepthWithinWideQuote,
+		&summary.BidLevels, &summary.AskLevels, &summary.BidSpanPct, &summary.AskSpanPct,
+		&summary.IsContractBook)
+	if err == sql.ErrNoRows {
+		return depth.Summary{}, false, nil
+	}
+	if err != nil {
+		return depth.Summary{}, false, fmt.Errorf("store: depth snapshot at %d for %s/%s: %w", atMs, source, symbol, err)
+	}
+	return summary, true, nil
 }

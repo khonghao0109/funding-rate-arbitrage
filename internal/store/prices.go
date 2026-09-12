@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -113,4 +114,30 @@ func (s *Store) PriceSnapshots(ctx context.Context, symbol string, fromMs, toMs 
 		out = append(out, sample)
 	}
 	return out, rows.Err()
+}
+
+// PriceSampleAt is the newest sample of one market taken AT OR BEFORE atMs,
+// and whether there was one. Never after: the paper ledger (step 4.3) marks a
+// position at an instant, and a sample from the future would be a price the
+// instant had not seen yet. The caller decides how old is too old — the row
+// carries its own SampledAtMs.
+func (s *Store) PriceSampleAt(ctx context.Context, source, symbol string, atMs int64) (PriceSample, bool, error) {
+	var sample PriceSample
+	err := s.db.QueryRowContext(ctx, `
+		SELECT source, symbol, sampled_at_ms,
+		       mid_price_quote, best_bid_quote, best_ask_quote,
+		       best_bid_qty_coin, best_ask_qty_coin, recv_at_ms
+		FROM price_snapshots
+		WHERE source = ? AND symbol = ? AND sampled_at_ms <= ?
+		ORDER BY sampled_at_ms DESC LIMIT 1`, source, symbol, atMs).Scan(
+		&sample.Source, &sample.Symbol, &sample.SampledAtMs,
+		&sample.MidPriceQuote, &sample.BestBidQuote, &sample.BestAskQuote,
+		&sample.BestBidQtyCoin, &sample.BestAskQtyCoin, &sample.RecvAtMs)
+	if err == sql.ErrNoRows {
+		return PriceSample{}, false, nil
+	}
+	if err != nil {
+		return PriceSample{}, false, fmt.Errorf("store: price sample at %d for %s/%s: %w", atMs, source, symbol, err)
+	}
+	return sample, true, nil
 }

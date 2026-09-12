@@ -643,6 +643,27 @@ is written in PLAN 3.5 — read it before delivering the verdict. Once it is
 running again, **do not restart it casually**: the gate needs 14 UNBROKEN
 days.
 
+**Step 4.3 (paper ledger) shipped 2026-09-11, beside the running gate (Q12).**
+`internal/paper` is the ledger arithmetic — fills through
+`strategy.EstimateFill` on a book sampled AT OR BEFORE the decision, fees
+from the journal row's own `params_json.fees`, funding credited only at a
+settlement strictly after the open, the pair marked to mid, both legs or
+neither — and `cmd/paperledger` is a SEPARATE process that opens the store
+READ-ONLY (`store.OpenReadOnly`, SQLite `mode=ro`), rebuilds the account from
+scratch every 5 minutes and serves it on loopback on its own port (default
+8086; it refuses 8082 and 8085) with **PAPER** beside every figure and no
+go-live control. Exit legs are sized at the coins' CURRENT value (qty × mid),
+never at the entry notional — the adversarial review caught that as blocking. It decides nothing. Measured on a `.backup` copy of the run-2
+database: 18/18 journal enters filled on the sweep before the tick, the
+paper entry cost equals half the journal's round trip on every position, and
+the one refusal is an exit the hyperliquid book could not absorb — the
+position stays open and flagged rather than filled at an imagined price.
+The scanner's wire got no new message (the operator's instruction); the
+broker interface belongs to 4.2, behind the gate. A finding from that
+reconstruction, recorded in PLAN 4.3: **bybit_spot has produced zero price
+samples in run 2** (connected at launch, REST depth fine), so the live basis
+exit on HYPE·kraken is "not evaluable" every tick.
+
 Step 2.6 added persistence: `internal/store/` (SQLite through the pure-Go
 `modernc.org/sqlite`, so `CGO_ENABLED=0` builds keep working), `internal/history/`
 (venue REST → store, shared by the scanner's hourly top-up and `cmd/backfill`),
@@ -839,6 +860,10 @@ cmd/pairscreen/      candidate-pair screen (2026-09-09): live registry, hedge
                      mapping, 9 order books and the round trip strategy prices
                      at 50k, one JSON row per pair × perp; the corpus half and
                      the six-criterion verdict are tools/report/pairscreen.py
+cmd/paperledger/     step-4.3 paper ledger: a separate process that reads the
+                     journal and the store READ-ONLY, prices every journalled
+                     decision with internal/paper, serves PAPER-labelled JSON
+                     and a UI on its own port; never touches cmd/scanner
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
                      the root package is the shared KERNEL: types, Feeds, the
                      RunStream lifecycle, FetchJSON, and the normalization
@@ -865,6 +890,11 @@ internal/
                      ⚠️ the ONLY package allowed to say "net" (step 3.1)
   backtest/          historical replay — MUST call strategy, never re-grow a
                      rule (two AST tests enforce it)
+  paper/             the paper ledger (step 4.3): fills from EstimateFill on a
+                     book at or before the decision, funding at settlements
+                     only, mark to mid, equity — it PRICES decisions, never
+                     makes one; rule 7's one exception, bounded in
+                     execution/doc.go
   notify/            Telegram and Discord alerts — step 3.4, DEFERRED behind 3.5
   broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS
   execution/         delta-neutral position open and close
