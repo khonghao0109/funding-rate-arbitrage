@@ -2845,21 +2845,41 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > lịch sử); (c) phần còn lại, kể cả hai đầu vào cùng lệch; riêng "hai bên
 > không cùng trạng thái vị thế" (hệ quả của một lệch trước) đếm cột trạng
 > thái, không phải (c) mới. `history_depth` không đem so vì backtest nạp 200
-> ngày trước cửa sổ còn đường sống nạp 30 ngày. Bước 5 in (c), tỷ lệ (a)
+> ngày trước cửa sổ còn đường sống nạp 30 ngày (từ 2026-09-12: max(30,
+> `trailing_mean_days` + 7) ngày; lần 2 vẫn 30 vì chạy binary cũ). Bước 5 in (c), tỷ lệ (a)
 > trên mốc enter/exit, và Σ `net_apr_frac` hàng enter sống so với Σ APR ròng
 > quyết định enter của replay cạnh biên chênh chi phí cộng dồn; mã thoát 0
 > đạt / 1 không đạt.
 >
-> **Nợ mới (ghi 2026-09-10):** đường sống không ghi gì khi máy ngủ và không
-> báo khoảng trống khi thức dậy — chỉ `pmset -g log` và mật độ hàng nhật ký
-> cho thấy; một dòng log "tick trễ N phút" lúc thức dậy và đếm số tick trễ
-> trong `source_status` là việc nhỏ nên làm trước lần chạy 3. Và:
-> `settledLookback` của đường sống là 30 ngày
-> (`cmd/scanner/signals.go`) nên `trailing_mean_days` > 30 sẽ bị điều kiện
-> `trailing_mean` TỪ CHỐI ở đường sống ("chưa phủ") trong khi backtest nạp
-> 200 ngày — hai khoá chọn chuỗi đang ở 0 nên lần chạy 2 không bị ảnh
-> hưởng; bật chúng lên là phải nâng lookback sống theo chân trời (sửa nhỏ,
-> làm khi cần).
+> **Nợ mới (ghi 2026-09-10) — TRẢ 2026-09-12, chỉ để sẵn cho lần chạy 3
+> (lần 2 chạy binary `59d3707`, không có hai thay đổi này):** (1) đường sống
+> không ghi gì khi máy ngủ và không báo khoảng trống khi thức dậy — giờ
+> `tickLoop` của `cmd/scanner` (5 job: lấy mẫu giá, ảnh chụp instrument,
+> prune, độ sâu, tín hiệu) đo độ trễ mỗi tick trên **đồng hồ tường** từ lúc
+> hẹn tới lúc NHẬN (không phải giá trị timer.C — từ Go 1.23 nó bị lùi về mốc
+> hẹn; không phải `t.Sub(u)` — nó dùng đồng hồ đơn điệu, đúng cái đứng yên
+> khi máy ngủ; review đối kháng 2026-09-12 bắt cả hai lỗi này ở bản đầu và
+> một test flaky 10/300), quá 1 phút thì in `tick trễ N theo đồng hồ tường
+> (đơn điệu M: ≈0 = máy ngủ hay đồng hồ nhảy, bằng nhau = tiến trình bị
+> treo)` và báo cho `Scanner.NoteLateTick`; đếm lên wire ở
+> `prices.tick_status` **cạnh** `source_status` (mỗi job đếm một; ghi chú
+> vì sao không nằm trong `source_status` ở [WS-CONTRACT §4.3](WS-CONTRACT.md));
+> `fn` nhận mốc NHẬN nên `sampled_at_ms`/`evaluated_at_ms` sau một cú treo
+> được đóng dấu sau khi dữ liệu đã đọc được, không phải trước; vòng top-up
+> funding (`internal/history`, ticker riêng) chưa đếm — ghi ở WS-CONTRACT.
+> Test: đồng hồ tiêm được nhảy 5 giờ giữa lần hẹn và lần nổ → đúng 1 tick
+> trễ 5h−5ms với tên job, `fn` thấy mốc sau giấc ngủ; 100 lượt `-race`
+> sạch. (2) `settledLookback` 30 ngày cố định → `settledLookbackFor` =
+> max(30, `trailing_mean_days` + 7) ngày (7 ngày trượt thay cho 1 để phủ cả
+> lỗ hổng ở mép chân trời — sàn mất kết nối, trang 429 mất — mà replay không
+> bao giờ vấp vì nạp 200 ngày trước cửa sổ); `config.Strategy` từ chối
+> `trailing_mean_days` > 199 (`MaxTrailingMeanDays`) vì trên đó replay mù ở
+> đầu cửa sổ còn đường sống thì xét — lệch ngược chiều so với nợ cũ; với
+> `trailing_mean_days = 0` (khối đang ship và lần 2) truy vấn giống hệt
+> trước, ghim bằng test; test tích hợp: 70 ngày lịch sử, chân trời 60 →
+> `trailing_mean` "qua 180 mốc trong 60 ngày — đạt" thay vì "chưa phủ".
+> Nhắc lại cho phiên phán quyết: `time.Now()` trong `tickLoop` là dấu LỊCH
+> TRÌNH, không phải chỗ đóng `RecvAt` thứ tư — quy tắc 13 không đổi.
 
 ---
 

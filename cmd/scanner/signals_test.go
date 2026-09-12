@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -280,5 +281,94 @@ func TestPaperBook_SeedReadsTheNotionalBesideNonNumericParams(t *testing.T) {
 	}
 	if pos, open := book.position("BTCUSDT", "binance_futures"); !open || pos.NotionalQuote != 50000 {
 		t.Errorf("the notional must survive non-numeric siblings: open=%v %+v", open, pos)
+	}
+}
+
+// The live path reads back as much settled history as the trailing-mean
+// horizon needs, never less than the 30-day floor (PLAN 3.5, debt of
+// 2026-09-10): with the floor alone, trailing_mean_days above 30 was refused
+// live ("chưa phủ") and judged in the replay.
+func TestSettledLookbackFor_FollowsTheTrailingHorizon(t *testing.T) {
+	day := 24 * time.Hour
+	cases := []struct {
+		name string
+		days float64
+		want time.Duration
+	}{
+		{"selection off keeps the floor", 0, 30 * day},
+		{"a horizon inside the floor keeps the floor", 20, 30 * day},
+		{"a horizon at the floor still gets its week of slack", 30, 37 * day},
+		{"a 90-day horizon reads 97 days", 90, 97 * day},
+		{"the 180-day horizon the grid offers reads 187 days", 180, 187 * day},
+		{"fractional days are honoured", 45.5, time.Duration(45.5*24*float64(time.Hour)) + 7*day},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := settledLookbackFor(config.Strategy{TrailingMeanDays: tc.days})
+			if got != tc.want {
+				t.Fatalf("lookback for %g days = %s, want %s", tc.days, got, tc.want)
+			}
+		})
+	}
+}
+
+// End to end on a temporary store: with trailing_mean_days 60 the live path
+// must read 60 days back and JUDGE the mean, not refuse for lack of
+// coverage — which is exactly what the 30-day floor alone produced.
+func TestEvaluateOnce_ReadsEnoughHistoryForTheTrailingMean(t *testing.T) {
+	ctx := context.Background()
+	db := openTempStore(t)
+	at := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	// 70 days of 8h settlements ending an hour before the evaluation.
+	var rows []exchanges.FundingHistoryEntry
+	for i := 0; i < 70*3; i++ {
+		rows = append(rows, exchanges.FundingHistoryEntry{
+			Symbol: "BTCUSDT", Source: "binance_futures", Model: exchanges.FundingDiscrete,
+			SettledAtMs: at.Add(-time.Hour).Add(-time.Duration(i) * 8 * time.Hour).UnixMilli(),
+			IntervalSec: 28800, GapPrevSec: 28800, RatePerIntervalFrac: 0.0001, RatePer8hFrac: 0.0001, APRFrac: 0.1095,
+			RawRateField: "fundingRate", RawRate: 0.0001,
+		})
+	}
+	if _, err := db.PutFundingHistory(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := signalsFixtureConfig()
+	cfg.Strategy.MinTrailingMeanBps, cfg.Strategy.TrailingMeanDays = 0.1, 60
+	s := scanner.New([]string{"BTCUSDT"})
+	s.SetHedges([]scanner.HedgeLeg{{Symbol: "BTCUSDT", PerpSource: "binance_futures", SpotSource: "binance_spot"}})
+
+	evaluateOnce(ctx, cfg, paramsFrom(cfg.Strategy), s, db, newPaperBook(), at)
+
+	journal, err := db.SignalDecisions(ctx, 0, at.Add(time.Hour).UnixMilli())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(journal) != 1 {
+		t.Fatalf("journal has %d rows, want 1", len(journal))
+	}
+	var checks []struct {
+		Name     string `json:"name"`
+		Passed   bool   `json:"passed"`
+		DetailVI string `json:"detail_vi"`
+	}
+	if err := json.Unmarshal([]byte(journal[0].ChecksJSON), &checks); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, c := range checks {
+		if c.Name != "trailing_mean" {
+			continue
+		}
+		found = true
+		if strings.Contains(c.DetailVI, "chưa phủ") {
+			t.Fatalf("the live path still refuses a 60-day horizon for lack of coverage: %s", c.DetailVI)
+		}
+		if !c.Passed || !strings.Contains(c.DetailVI, "180 mốc trong 60 ngày") {
+			t.Fatalf("trailing_mean should be judged over the 180 settlements of the last 60 days and pass at 1.0 bps: passed=%v %s", c.Passed, c.DetailVI)
+		}
+	}
+	if !found {
+		t.Fatal("no trailing_mean check in the journal row")
 	}
 }

@@ -467,7 +467,7 @@ func TestNewWirePrices_DropsNonPositivePriceButKeepsTheSource(t *testing.T) {
 			"okx_futures":     {Price: 0, RecvAt: now},
 			"gate_futures":    {Price: -1, RecvAt: now},
 		},
-	}, map[string]time.Time{}, nil, time.Time{}, now)
+	}, map[string]time.Time{}, nil, time.Time{}, now, lateTicks{})
 
 	points := msg.Prices["BTCUSDT"]
 	if _, ok := points["okx_futures"]; ok {
@@ -575,7 +575,7 @@ func TestNewWirePrices_TopOfBookIsZeroWhenNotKnown(t *testing.T) {
 	now := time.Now()
 	raw, err := json.Marshal(newWirePrices(map[string]map[string]PricePoint{
 		"BTCUSDT": {"binance_futures": {Price: 65000, RecvAt: now}},
-	}, map[string]time.Time{}, nil, time.Time{}, now))
+	}, map[string]time.Time{}, nil, time.Time{}, now, lateTicks{}))
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

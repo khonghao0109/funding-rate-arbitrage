@@ -168,6 +168,12 @@ Thay cho `map[symbol]map[source]float64` phẳng hiện tại.
       "reconnect_count": 0,
       "uptime_sec": 0
     }
+  },
+  "tick_status": {
+    "late_ticks": 0,
+    "last_late_job": "",
+    "last_late_at_ms": 0,
+    "last_late_by_sec": 0
   }
 }
 ```
@@ -224,6 +230,25 @@ sàn có thể còn kết nối nhưng ngừng đẩy một cặp thanh khoản 
 Nên: connector báo `connected` **cộng** im lặng vượt ngưỡng mất-kết-nối → vẫn là
 `disconnected`. Ngưỡng im lặng giữ nguyên như Bước 1.1: 3× `stale_after_sec`, tối
 thiểu 45s, và 90s ân hạn khởi động cho sàn chưa từng gửi gì.
+
+### 4.3. `tick_status` — trạng thái LỊCH TRÌNH của tiến trình (thêm 2026-09-12)
+
+Đứng **cạnh** `source_status`, không nằm trong nó: một tick trễ là chuyện của
+đồng hồ tiến trình (máy ngủ, host bị treo), không phải của một sàn nào, và
+`source_status` khoá theo sàn — FE dựng chấm trạng thái theo từng khoá nên một
+"sàn giả" ở đó là sai chỗ. Trả nợ Bước 3.5 (ghi 2026-09-10): lần chạy 1 mất
+16/32 mốc settle vì máy ngủ khi gập màn hình mà không dòng nào trong tiến
+trình nói ra.
+
+| Trường | Kiểu | Mặc định | Ghi chú |
+|---|---|---|---|
+| `late_ticks` | int | `0` | Số tick của các vòng lặp định kỳ trong `cmd/scanner` nổ **trễ hơn 1 phút** so với lịch hẹn, cộng dồn từ lúc khởi động. **Mỗi job đếm một**: năm job dùng `tickLoop` (lấy mẫu giá, ảnh chụp instrument, prune, độ sâu, tín hiệu), nên một giấc ngủ 5 giờ là ≥ 5 tick trễ, mỗi job báo ở lần nổ KẾ TIẾP của nó — sampler trong 30 s sau khi thức, prune có thể một ngày sau, cùng một độ trễ. Vòng top-up funding (`internal/history`) chạy ticker riêng và **không** được đếm |
+| `last_late_job` | string | `""` | Tên job của tick trễ mới nhất |
+| `last_late_at_ms` | int64 | `0` | Lúc tick đó THỰC SỰ chạy (đồng hồ tường); lúc nó được hẹn = `last_late_at_ms − last_late_by_sec × 1000` |
+| `last_late_by_sec` | int64 | `0` | Trễ bao lâu, giây, đo trên **đồng hồ tường** từ lúc hẹn tới lúc nhận — đồng hồ đơn điệu của Go đứng yên khi máy ngủ, nên một cú nhảy giờ hệ thống sau khi thức cũng đếm là trễ (cùng một khoảng trống, gọi tên khác) |
+
+Không lưu qua restart: dòng log `tick trễ …` là bản ghi bền, trường này là số
+đếm của tiến trình đang chạy. `static/` chưa hiển thị nó; FE cũ bỏ qua.
 
 ---
 
@@ -462,6 +487,7 @@ Bước 2.7a đã thêm theo đúng luật đó, `v` giữ nguyên `1`:
 | 2.7b | message type **`depth`** (mục 11) | — (type mới, FE cũ bỏ qua) |
 | 2.7b | `meta.depth` | `{refresh_every_sec, windows_pct, note_vi}` |
 | 2.7b | `prices[sym][src].best_bid_qty_coin`/`best_ask_qty_coin` **có dữ liệu thật ở OKX/Gate/Kraken** | không đổi shape — 0 vẫn là "chưa biết" |
+| 3.5 (2026-09-12) | `prices.tick_status` (mục 4.3) | `{late_ticks: 0, last_late_job: "", last_late_at_ms: 0, last_late_by_sec: 0}` — FE cũ bỏ qua; `v` giữ `1` |
 
 ---
 

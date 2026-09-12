@@ -466,7 +466,7 @@ func TestNewWirePrices_CarriesTopOfBookFromThePricePoint(t *testing.T) {
 		},
 	}
 
-	msg := newWirePrices(prices, map[string]time.Time{"binance_futures": now}, nil, now, now)
+	msg := newWirePrices(prices, map[string]time.Time{"binance_futures": now}, nil, now, now, lateTicks{})
 	point := msg.Prices["BTCUSDT"]["binance_futures"]
 
 	if point.BestBid != 64999.5 || point.BestAsk != 65000.5 {

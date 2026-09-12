@@ -64,6 +64,10 @@ func main() {
 
 	scanner.Configure(cfg)
 	s := scanner.New(cfg.SymbolNames())
+	// Late ticks (a slept machine, a stalled host) are counted on the wire
+	// beside source_status, so an unattended run can be read for the gaps
+	// its journal does not show (PLAN 3.5, debt of 2026-09-10).
+	lateTickSink = s.NoteLateTick
 	s.Run(ctx)
 
 	connectors := startConnectors(ctx, cfg, s)

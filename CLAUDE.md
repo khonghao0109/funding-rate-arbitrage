@@ -643,6 +643,20 @@ is written in PLAN 3.5 — read it before delivering the verdict. Once it is
 running again, **do not restart it casually**: the gate needs 14 UNBROKEN
 days.
 
+**Two 3.5 debts paid 2026-09-12, for run 3 only (run 2's binary predates
+them):** `cmd/scanner`'s `tickLoop` now measures each tick's lateness on the
+WALL clock from arming to RECEIPT — not on `time.Time.Sub` (monotonic, and
+Darwin's monotonic clock stops during sleep) and not on the value a timer
+channel delivers (backdated to the schedule since Go 1.23) — logs `tick trễ
+…` past one minute, hands `fn` the receipt instant, and counts on the wire
+in `prices.tick_status` beside `source_status` (WS-CONTRACT §4.3; one count
+per job, the funding top-up's own ticker uncounted). That `time.Now()` is a
+scheduling stamp, not a fourth `RecvAt` site. And the live path's settled
+lookback is `max(30, trailing_mean_days + 7)` days with the config capped at
+199 so the replay's 200-day lookback always covers what the live path
+judges. Run 1 lost 16 of 32 settlements to a sleeping machine with no line
+saying so; run 3 will say so.
+
 **Step 4.3 (paper ledger) shipped 2026-09-11, beside the running gate (Q12).**
 `internal/paper` is the ledger arithmetic — fills through
 `strategy.EstimateFill` on a book sampled AT OR BEFORE the decision, fees

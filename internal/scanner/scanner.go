@@ -81,8 +81,13 @@ type Scanner struct {
 	// both are needed: this one knows a venue is unreachable while the last
 	// message is still recent, and silence catches a socket that stayed open
 	// and stopped delivering. Step 1.1 could only infer.
-	sourceConn    map[string]sourceConn
-	connMutex     sync.RWMutex
+	sourceConn map[string]sourceConn
+	connMutex  sync.RWMutex
+
+	// late is what the entrypoint's periodic jobs reported about their own
+	// scheduling: how many ticks fired late, and the newest one. Under
+	// connMutex — it is published beside the connection records.
+	late          lateTicks
 	wsClients     map[*websocket.Conn]bool
 	clientsMutex  sync.RWMutex
 	wsWriteMutex  sync.Mutex // Protects WebSocket writes
@@ -642,6 +647,33 @@ func (s *Scanner) applyConnEvent(event exchanges.ConnEvent) {
 	s.sourceConn[event.Source] = current
 }
 
+// lateTicks is the process-level scheduling record: a tick that fired later
+// than its schedule allows means the process was not running its loops —
+// the machine slept or the host stalled — and nothing was journalled,
+// sampled or evaluated in the gap. It is NOT a property of any one source,
+// which is why it travels beside source_status rather than inside it.
+type lateTicks struct {
+	Count   int
+	LastJob string
+	LastAt  time.Time
+	LastBy  time.Duration
+}
+
+// NoteLateTick records one late tick from one of the entrypoint's jobs.
+func (s *Scanner) NoteLateTick(job string, at time.Time, lateBy time.Duration) {
+	s.connMutex.Lock()
+	defer s.connMutex.Unlock()
+	s.late.Count++
+	s.late.LastJob, s.late.LastAt, s.late.LastBy = job, at, lateBy
+}
+
+// snapshotLateTicks copies the late-tick record for one broadcast.
+func (s *Scanner) snapshotLateTicks() lateTicks {
+	s.connMutex.RLock()
+	defer s.connMutex.RUnlock()
+	return s.late
+}
+
 // snapshotConn copies the connection records for one broadcast.
 func (s *Scanner) snapshotConn() map[string]sourceConn {
 	s.connMutex.RLock()
@@ -1101,7 +1133,7 @@ func (s *Scanner) broadcastPrices(ctx context.Context) {
 		// Sent even with no prices at all: the message carries the status of
 		// every registered source, and a total outage is precisely when the
 		// dashboard needs to be told.
-		s.broadcast(newWirePrices(pricesCopy, lastMsgCopy, connCopy, s.startedAt, s.now()))
+		s.broadcast(newWirePrices(pricesCopy, lastMsgCopy, connCopy, s.startedAt, s.now(), s.snapshotLateTicks()))
 	}
 }
 

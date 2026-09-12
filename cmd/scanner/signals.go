@@ -43,11 +43,42 @@ import (
 // column of "no book" and "no history".
 const signalWarmup = 3 * time.Minute
 
-// settledLookback bounds how much history each evaluation reads. Thirty days
-// covers any persistence window a config would set at hourly cadence (720
-// settlements) with room to spare, and keeps the per-tick query on the
-// funding_history_by_symbol index rather than a year of rows.
-const settledLookback = 30 * 24 * time.Hour
+// settledLookbackFloor bounds how much history each evaluation reads when no
+// selection horizon asks for more. Thirty days covers any persistence window
+// a config would set at hourly cadence (720 settlements) with room to spare,
+// and keeps the per-tick query on the funding_history_by_symbol index rather
+// than a year of rows.
+const settledLookbackFloor = 30 * 24 * time.Hour
+
+// settledLookbackSlack is read BEYOND the trailing-mean horizon. The check
+// wants the first usable row inside one interval of the window's start, and
+// a corpus read from exactly the start has no row before it to prove that
+// with; a week also covers a hole at the horizon's edge — a venue outage, a
+// 429-lost page — that the replay never trips on because it loads 200 days
+// before its window. At the longest horizon the grid offers (180 days) on
+// an hourly venue that is ~4.5k rows per series per tick, on the
+// funding_history_by_symbol index (review of 2026-09-12).
+const settledLookbackSlack = 7 * 24 * time.Hour
+
+// settledLookbackFor is how far back one evaluation reads: the floor, or the
+// trailing-mean horizon plus the slack when the config sets one and it is
+// longer. Before 2026-09-12 the floor was the whole answer, so a
+// trailing_mean_days above 30 was REFUSED by checkTrailingMean on the live
+// path ("chưa phủ") while the replay, which loads 200 days, judged it — the
+// two sides of the 3.5 gate reading the same rule on different histories
+// (PLAN 3.5, "Nợ mới 2026-09-10"). config.Strategy refuses a horizon the
+// replay's 200 days could not cover, so the two sides stay inside each
+// other's reach at every allowed value.
+func settledLookbackFor(st config.Strategy) time.Duration {
+	lookback := settledLookbackFloor
+	if st.TrailingMeanDays > 0 {
+		horizon := time.Duration(st.TrailingMeanDays*24*float64(time.Hour)) + settledLookbackSlack
+		if horizon > lookback {
+			lookback = horizon
+		}
+	}
+	return lookback
+}
 
 func startSignals(ctx context.Context, cfg config.Config, s *scanner.Scanner, db *store.Store, start func(func())) {
 	if !cfg.Strategy.Enabled {
@@ -66,6 +97,7 @@ func startSignals(ctx context.Context, cfg config.Config, s *scanner.Scanner, db
 	// The schedules are loaded ONCE, here, and never re-read (PLAN 3.5 ④):
 	// the log's first lines are the record of what this run priced with.
 	log.Printf("strategy: fee state at launch (taker bps, verified): %s", feeStateVI(cfg))
+	log.Printf("strategy: settled history read back %.1f days per tick (trailing_mean_days %g)", settledLookbackFor(cfg.Strategy).Hours()/24, cfg.Strategy.TrailingMeanDays)
 
 	book := newPaperBook()
 	if err := book.seed(ctx, db); err != nil {
@@ -73,7 +105,7 @@ func startSignals(ctx context.Context, cfg config.Config, s *scanner.Scanner, db
 	}
 
 	start(func() {
-		tickLoop(ctx, signalWarmup, every, func(at time.Time) {
+		tickLoop(ctx, "strategy", signalWarmup, every, func(at time.Time) {
 			evaluateOnce(ctx, cfg, params, s, db, book, at.UTC())
 		})
 	})
@@ -88,7 +120,7 @@ func evaluateOnce(ctx context.Context, cfg config.Config, params strategy.Params
 		log.Printf("strategy: no hedge legs yet (registry has not refreshed) — nothing evaluated")
 		return
 	}
-	rows, err := settledSince(ctx, db, cfg, at.Add(-settledLookback), at)
+	rows, err := settledSince(ctx, db, cfg, at.Add(-settledLookbackFor(cfg.Strategy)), at)
 	if err != nil {
 		log.Printf("strategy: read settled history: %v — skipping this tick", err)
 		return

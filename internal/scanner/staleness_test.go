@@ -98,7 +98,7 @@ func TestNewWirePrices_FillsAgeAndStatus(t *testing.T) {
 		"bybit_futures":   now.Add(-30 * time.Second),
 	}
 
-	msg := newWirePrices(prices, lastMsgAt, nil, time.Time{}, now)
+	msg := newWirePrices(prices, lastMsgAt, nil, time.Time{}, now, lateTicks{})
 
 	fresh := msg.Prices["BTCUSDT"]["binance_futures"]
 	if fresh.Status != statusLive {
@@ -129,7 +129,7 @@ func TestNewWirePrices_KeepsStalePricesSoTheUICanShowThem(t *testing.T) {
 	now := time.Now()
 	msg := newWirePrices(map[string]map[string]PricePoint{
 		"BTCUSDT": {"bybit_futures": {Price: 65100, RecvAt: now.Add(-time.Hour)}},
-	}, map[string]time.Time{"bybit_futures": now.Add(-time.Hour)}, nil, time.Time{}, now)
+	}, map[string]time.Time{"bybit_futures": now.Add(-time.Hour)}, nil, time.Time{}, now, lateTicks{})
 
 	point, ok := msg.Prices["BTCUSDT"]["bybit_futures"]
 	if !ok {
@@ -157,7 +157,7 @@ func TestSourceState_DerivedFromSilenceAcrossAllSymbols(t *testing.T) {
 		"binance_futures": now.Add(-time.Second),
 		// OKX has sent nothing at all for a long time.
 		"okx_futures": now.Add(-time.Hour),
-	}, nil, time.Time{}, now)
+	}, nil, time.Time{}, now, lateTicks{})
 
 	if got := msg.SourceStatus["binance_futures"].State; got != stateConnected {
 		t.Errorf("binance state = %q, want connected: the venue is still sending, only this pair is quiet", got)
@@ -295,7 +295,7 @@ func TestNewWirePrices_ReportsSourcesThatNeverDelivered(t *testing.T) {
 
 	msg := newWirePrices(map[string]map[string]PricePoint{
 		"BTCUSDT": {"binance_futures": {Price: 65000, RecvAt: now}},
-	}, map[string]time.Time{"binance_futures": now}, nil, startedAt, now)
+	}, map[string]time.Time{"binance_futures": now}, nil, startedAt, now, lateTicks{})
 
 	if len(msg.SourceStatus) != len(sourceRegistry) {
 		t.Errorf("source_status has %d entries, want one per registered source (%d)",

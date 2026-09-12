@@ -252,3 +252,31 @@ strategy:
 		t.Errorf("both floors may share one horizon: %v", err)
 	}
 }
+
+// The selection horizon is capped where the replay's 200-day lookback and
+// the live path's horizon-plus-slack read both still reach.
+func TestStrategyValidate_RefusesATrailingHorizonTheReplayCannotCover(t *testing.T) {
+	base := `
+strategy:
+  enabled: true
+  min_rate_per_8h_bps: 0.5
+  persistence_periods: 3
+  min_net_apr_frac: 0.02
+  notional_quote: 50000
+  holding_days: 30
+  exit_net_apr_frac: 0.005
+  exit_persistence_periods: 3
+  max_basis_pct: 1.0
+  max_basis_widen_pct: 0.5
+`
+	if _, err := loadStrategyFixture(t, base+"  min_trailing_mean_bps: 0.5\n  trailing_mean_days: 199\n"); err != nil {
+		t.Fatalf("199 days must load: %v", err)
+	}
+	_, err := loadStrategyFixture(t, base+"  min_trailing_mean_bps: 0.5\n  trailing_mean_days: 200\n")
+	if err == nil {
+		t.Fatal("200 days loaded — the replay would be blind to it at its window start")
+	}
+	if MaxTrailingMeanDays != 199 {
+		t.Fatalf("MaxTrailingMeanDays %d, want 199 = the replay's 200-day lookback minus its one-day slack", MaxTrailingMeanDays)
+	}
+}

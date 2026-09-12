@@ -52,7 +52,7 @@ func startDepth(ctx context.Context, cfg config.Config, s *scanner.Scanner,
 		len(collector.Jobs()), every, cfg.Depth.Levels, depth.WindowTightPct, depth.WindowWidePct)
 
 	start(func() {
-		tickLoop(ctx, depthWarmup, every, func(time.Time) {
+		tickLoop(ctx, "depth", depthWarmup, every, func(time.Time) {
 			summaries := collector.CollectOnce(ctx)
 			if ctx.Err() != nil {
 				return

@@ -411,12 +411,27 @@ type wireSourceStatus struct {
 	UptimeSec      int64  `json:"uptime_sec"`      // step 1.5
 }
 
+// wireTickStatus is the PROCESS's scheduling health, a sibling of
+// source_status (added 2026-09-11, PLAN 3.5's debt of 2026-09-10): how many
+// of the entrypoint's periodic ticks fired later than a minute past their
+// schedule since start-up, and the newest one. A late tick is a gap in
+// which nothing was sampled, evaluated or journalled — a slept machine
+// looks exactly like this and like nothing else on the wire. Defaults: 0,
+// "", 0, 0 (WS-CONTRACT §8: a new field with a documented default).
+type wireTickStatus struct {
+	LateTicks     int    `json:"late_ticks"`
+	LastLateJob   string `json:"last_late_job"`
+	LastLateAtMs  int64  `json:"last_late_at_ms"`
+	LastLateBySec int64  `json:"last_late_by_sec"`
+}
+
 type wirePrices struct {
 	Type         string                               `json:"type"`
 	V            int                                  `json:"v"`
 	ServerTimeMs int64                                `json:"server_time_ms"`
 	Prices       map[string]map[string]wirePricePoint `json:"prices"`
 	SourceStatus map[string]wireSourceStatus          `json:"source_status"`
+	TickStatus   wireTickStatus                       `json:"tick_status"`
 }
 
 // wireSpreadCell keeps the gross figure and the after-fee figure in separate
@@ -574,13 +589,14 @@ func newWireMeta(symbols []string, nowMs int64) wireMeta {
 // A stale price is kept and labelled, not dropped: removing the row would make a
 // dead venue disappear from the dashboard, which reads as "nothing to report"
 // rather than "this feed died".
-func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string]time.Time, conns map[string]sourceConn, startedAt, now time.Time) wirePrices {
+func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string]time.Time, conns map[string]sourceConn, startedAt, now time.Time, late lateTicks) wirePrices {
 	out := wirePrices{
 		Type:         "prices",
 		V:            wireVersion,
 		ServerTimeMs: now.UnixMilli(),
 		Prices:       make(map[string]map[string]wirePricePoint, len(prices)),
 		SourceStatus: make(map[string]wireSourceStatus),
+		TickStatus:   newWireTickStatus(late),
 	}
 
 	for symbol, sourcePrices := range prices {
@@ -630,6 +646,16 @@ func newWirePrices(prices map[string]map[string]PricePoint, lastMsgAt map[string
 		}
 	}
 
+	return out
+}
+
+// newWireTickStatus renders the late-tick record; a zero record is the
+// documented default, so a process that never slept ships zeros.
+func newWireTickStatus(late lateTicks) wireTickStatus {
+	out := wireTickStatus{LateTicks: late.Count, LastLateJob: late.LastJob, LastLateBySec: int64(late.LastBy.Seconds())}
+	if !late.LastAt.IsZero() {
+		out.LastLateAtMs = late.LastAt.UnixMilli()
+	}
 	return out
 }
 

@@ -2,7 +2,9 @@ package scanner
 
 import (
 	"context"
+	"encoding/json"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -242,5 +244,36 @@ func TestApplyConnEvent_AFailedFirstDialDoesNotMakeTheFirstConnectionAReconnect(
 
 	if got := s.snapshotConn()["pyth"].ReconnectCount; got != 1 {
 		t.Errorf("reconnect count = %d, want 1", got)
+	}
+}
+
+// tick_status rides beside source_status on every prices message: zeros by
+// default (a process that never slept), and the count plus the newest late
+// tick once the entrypoint reports one (PLAN 3.5, debt of 2026-09-10).
+func TestNewWirePrices_CarriesTickStatusBesideSourceStatus(t *testing.T) {
+	now := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	msg := newWirePrices(map[string]map[string]PricePoint{}, nil, nil, now, now, lateTicks{})
+	if msg.TickStatus != (wireTickStatus{}) {
+		t.Fatalf("default tick_status %+v, want all zeros", msg.TickStatus)
+	}
+
+	s := New([]string{"BTCUSDT"})
+	s.NoteLateTick("strategy", now.Add(-time.Hour), 47*time.Minute)
+	s.NoteLateTick("storage: price sampler", now, 3*time.Minute+30*time.Second)
+	late := s.snapshotLateTicks()
+	msg = newWirePrices(map[string]map[string]PricePoint{}, nil, nil, now, now, late)
+	want := wireTickStatus{LateTicks: 2, LastLateJob: "storage: price sampler", LastLateAtMs: now.UnixMilli(), LastLateBySec: 210}
+	if msg.TickStatus != want {
+		t.Fatalf("tick_status %+v, want %+v", msg.TickStatus, want)
+	}
+
+	raw, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{`"tick_status":{`, `"late_ticks":2`, `"last_late_job":"storage: price sampler"`, `"last_late_by_sec":210`, `"last_late_at_ms":`} {
+		if !strings.Contains(string(raw), key) {
+			t.Fatalf("wire lacks %s: %s", key, raw)
+		}
 	}
 }

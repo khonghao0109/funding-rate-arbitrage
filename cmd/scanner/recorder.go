@@ -103,7 +103,7 @@ func fundingHistoryJobs(cfg config.Config) []history.Job {
 // the record of a dead feed, and dropping the row instead would make it
 // indistinguishable from the scanner being down.
 func samplePrices(ctx context.Context, db *store.Store, s *scanner.Scanner, every time.Duration) {
-	tickLoop(ctx, every, every, func(at time.Time) {
+	tickLoop(ctx, "storage: price sampler", every, every, func(at time.Time) {
 		samples := priceSamples(s.PriceSnapshot(), at)
 		if len(samples) == 0 {
 			return
@@ -114,6 +114,26 @@ func samplePrices(ctx context.Context, db *store.Store, s *scanner.Scanner, ever
 	})
 }
 
+// lateTickTolerance is how far past its schedule a tick may fire before it
+// is a LATE tick. A minute absorbs scheduler jitter and a slow disk; a tick
+// later than that means the process was not running its loops — the machine
+// slept, or the host stalled — and the live path wrote nothing for that
+// long. Run 1 of step 3.5 lost 16 of 32 settlements this way and nothing in
+// the process said so (PLAN 3.5, "Nợ mới 2026-09-10"); the log line and the
+// counter below are that debt paid.
+const lateTickTolerance = time.Minute
+
+// wallNow is the clock lateness is measured on. A variable so the test can
+// hand the loop a clock that jumps five hours between arming a timer and
+// its firing, which is what a sleeping machine does to the wall clock.
+var wallNow = time.Now
+
+// lateTickSink receives every late tick — job, when it fired, how late. main
+// points it at the scanner so the count reaches source_status' sibling
+// tick_status on the wire; it defaults to a no-op so a job started without a
+// scanner (a test) still runs.
+var lateTickSink = func(job string, at time.Time, lateBy time.Duration) {}
+
 // tickLoop runs fn after first, then every period, until ctx ends.
 //
 // The two delays are separate because the jobs below run on periods measured in
@@ -121,7 +141,24 @@ func samplePrices(ctx context.Context, db *store.Store, s *scanner.Scanner, ever
 // never take an instrument snapshot and never prune, and the database would
 // grow forever on a host that reboots nightly. The first delay is a warm-up,
 // not a period — long enough for the registry's first fetch to land.
-func tickLoop(ctx context.Context, first, every time.Duration, fn func(time.Time)) {
+//
+// Lateness is measured on WALL readings only, from the instant the timer was
+// armed to the instant its firing was RECEIVED. Three facts force that shape
+// (review of 2026-09-12): Go's timers run on a monotonic clock that does not
+// advance while the machine sleeps (Darwin's CLOCK_UPTIME_RAW), so a
+// 10-minute timer armed a minute before a 5-hour sleep fires 9 minutes after
+// the wake — on time by its own clock, five hours late by the world's;
+// time.Time.Sub uses the monotonic readings whenever both operands carry
+// one, which is why the difference is taken on UnixNano; and since Go 1.23
+// the value a timer channel delivers is the SCHEDULED instant, backdated, so
+// a host that stalled after the deadline would read as on time — the
+// receipt instant is what says when the loop actually ran. fn is handed
+// that instant too, so a settlement that landed during a stall is stamped
+// after it was readable, not before. fn's own running time is excluded: the
+// next due instant is taken after fn returns. A forward clock step (NTP
+// after a wake) counts as a late tick; that is the same gap by another name.
+func tickLoop(ctx context.Context, job string, first, every time.Duration, fn func(time.Time)) {
+	due := wallNow().Add(first)
 	timer := time.NewTimer(first)
 	defer timer.Stop()
 
@@ -129,8 +166,19 @@ func tickLoop(ctx context.Context, first, every time.Duration, fn func(time.Time
 		select {
 		case <-ctx.Done():
 			return
-		case at := <-timer.C:
-			fn(at)
+		case <-timer.C:
+			fired := wallNow()
+			if lateBy := time.Duration(fired.UnixNano() - due.UnixNano()); lateBy > lateTickTolerance {
+				// Beside it, the monotonic reading of the same gap: ≈0 says the
+				// machine slept (or the clock stepped), ≈lateBy says the process
+				// was not scheduled.
+				log.Printf("%s: tick trễ %s theo đồng hồ tường (đơn điệu %s: ≈0 = máy ngủ hay đồng hồ nhảy, bằng nhau = tiến trình bị treo) — hẹn %s, chạy %s; không có gì được ghi trong khoảng đó",
+					job, lateBy.Round(time.Second), fired.Sub(due).Round(time.Second),
+					due.UTC().Format(time.RFC3339), fired.UTC().Format(time.RFC3339))
+				lateTickSink(job, fired, lateBy)
+			}
+			fn(fired)
+			due = wallNow().Add(every)
 			timer.Reset(every)
 		}
 	}
@@ -171,7 +219,7 @@ func priceSamples(readings []scanner.PriceReading, at time.Time) []store.PriceSa
 // mean a single failed fetch loses that day's rules forever, and the whole
 // point of these snapshots is being able to look back.
 func snapshotInstruments(ctx context.Context, db *store.Store, registry *instruments.Registry, every time.Duration) {
-	tickLoop(ctx, instrumentSnapshotWarmup, every, func(at time.Time) {
+	tickLoop(ctx, "storage: instrument snapshot", instrumentSnapshotWarmup, every, func(at time.Time) {
 		// UTC, so a restart at 23:59 and one at 00:01 land in different
 		// snapshots rather than in whichever day the host's zone believes.
 		day := at.UTC().Format(time.DateOnly)
@@ -200,7 +248,7 @@ const (
 )
 
 func prune(ctx context.Context, db *store.Store, every time.Duration, policy store.Retention) {
-	tickLoop(ctx, pruneWarmup, every, func(time.Time) {
+	tickLoop(ctx, "storage: prune", pruneWarmup, every, func(time.Time) {
 		result, err := db.Prune(ctx, policy)
 		if err != nil && ctx.Err() == nil {
 			log.Printf("storage: prune: %v", err)

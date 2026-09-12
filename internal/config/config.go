@@ -866,6 +866,10 @@ func (st Strategy) validate(d Depth) error {
 		return fmt.Errorf("strategy.min_trailing_mean_bps must be >= 0 (a floor on the mean settled rate, bps per 8h), got %g", st.MinTrailingMeanBps)
 	case st.TrailingMeanDays < 0:
 		return fmt.Errorf("strategy.trailing_mean_days must be >= 0, got %g", st.TrailingMeanDays)
+	case st.TrailingMeanDays > MaxTrailingMeanDays:
+		return fmt.Errorf("strategy.trailing_mean_days (%g) exceeds %d: cmd/backtest loads 200 days before its "+
+			"window and the live path reads the horizon plus a week, so a longer horizon would be judged live and "+
+			"refused for coverage in the replay — the drift the 3.5 gate exists to catch", st.TrailingMeanDays, MaxTrailingMeanDays)
 	case st.MinTrailingMeanBps > 0 && st.TrailingMeanDays <= 0:
 		return fmt.Errorf("strategy.min_trailing_mean_bps is set but trailing_mean_days is 0: a floor on a mean " +
 			"needs the horizon the mean is taken over")
@@ -880,6 +884,14 @@ func (st Strategy) validate(d Depth) error {
 	}
 	return nil
 }
+
+// MaxTrailingMeanDays bounds the selection horizon so that BOTH readers of
+// the rule can cover it: cmd/backtest loads fundingHistoryLookbackDays (200)
+// before its window and cmd/scanner's live path reads the horizon plus a
+// week of slack per tick. A horizon one side can see and the other cannot
+// is a decision the two sides make on different histories, which is the
+// exact drift the step-3.5 gate is built to catch (review of 2026-09-12).
+const MaxTrailingMeanDays = 199
 
 // StrategyParams is the strategy.Params this block means — the ONE mapping
 // from config to rule parameters. cmd/scanner's live journal and

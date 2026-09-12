@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -93,5 +96,111 @@ func TestFundingHistoryJobsCoverEveryPerpSource(t *testing.T) {
 			t.Errorf("source %q is %s but its connector has a funding history fetcher",
 				source.Source, source.MarketType)
 		}
+	}
+}
+
+// A tick that fires later than its schedule allows is LOGGED and REPORTED
+// to the sink with its job name (PLAN 3.5, debt of 2026-09-10). The wall
+// clock is injected and JUMPS five hours between the second arming and the
+// second firing — the loop reads wallNow exactly four times up to that
+// firing (due, fired, due, fired), so the fourth reading is the one after
+// the "sleep" — which is deterministic and needs no tolerance games.
+func TestTickLoop_ReportsLateTicksToTheSinkWithTheJobName(t *testing.T) {
+	oldNow, oldSink := wallNow, lateTickSink
+	defer func() { wallNow, lateTickSink = oldNow, oldSink }()
+
+	base := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	const sleep = 5 * time.Hour
+	calls := 0 // read on the loop goroutine only
+	wallNow = func() time.Time {
+		calls++
+		if calls >= 4 {
+			return base.Add(sleep)
+		}
+		return base
+	}
+
+	var mu sync.Mutex
+	var jobs []string
+	var ats []time.Time
+	var lateBys []time.Duration
+	lateTickSink = func(job string, at time.Time, lateBy time.Duration) {
+		mu.Lock()
+		defer mu.Unlock()
+		jobs = append(jobs, job)
+		ats = append(ats, at)
+		lateBys = append(lateBys, lateBy)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	const every = 5 * time.Millisecond
+	ticks := 0
+	var seen []time.Time
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tickLoop(ctx, "test job", every, every, func(at time.Time) {
+			ticks++
+			seen = append(seen, at)
+			if ticks == 2 {
+				cancel()
+			}
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tickLoop did not stop after cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(jobs) != 1 {
+		t.Fatalf("sink saw %d late ticks, want exactly 1 (the tick after the 5h jump)", len(jobs))
+	}
+	if jobs[0] != "test job" {
+		t.Fatalf("late tick reported job %q, want %q", jobs[0], "test job")
+	}
+	if want := sleep - every; lateBys[0] != want {
+		t.Fatalf("late by %s, want %s (5h sleep minus the 5ms the timer was due)", lateBys[0], want)
+	}
+	if !ats[0].Equal(base.Add(sleep)) {
+		t.Fatalf("late tick stamped %s, want the wall instant of the firing %s", ats[0], base.Add(sleep))
+	}
+	// fn is handed the RECEIPT instant, never the backdated scheduled one.
+	if len(seen) != 2 || !seen[1].Equal(base.Add(sleep)) {
+		t.Fatalf("fn saw %v, want the second call at the post-sleep wall time", seen)
+	}
+}
+
+// At the real tolerance an on-time tick is NOT late: a loop that reports
+// every tick would make the counter noise.
+func TestTickLoop_DoesNotReportOnTimeTicks(t *testing.T) {
+	oldSink := lateTickSink
+	defer func() { lateTickSink = oldSink }()
+	var reported int32
+	lateTickSink = func(string, time.Time, time.Duration) { atomic.AddInt32(&reported, 1) }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ticks := 0
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tickLoop(ctx, "on time", 5*time.Millisecond, 5*time.Millisecond, func(time.Time) {
+			ticks++
+			if ticks == 3 {
+				cancel()
+			}
+		})
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("tickLoop did not stop after cancellation")
+	}
+	if n := atomic.LoadInt32(&reported); n != 0 {
+		t.Fatalf("%d on-time ticks were reported late", n)
 	}
 }
