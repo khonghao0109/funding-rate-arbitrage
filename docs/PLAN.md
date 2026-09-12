@@ -2977,6 +2977,30 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >    14 ngày, không hở. Nếu tiến trình chết giữa chừng (kiểm `.paper/scanner.pid`
 >    + khoảng trống trong `evaluated_at_ms`), cửa sổ tính lại từ lần lên cuối
 >    và phải đủ 14 ngày liên tục — không cộng dồn hai mảnh.
+>
+>    **Sổ giấy lên theo mốc nào (ghi 2026-09-12, có từ lần chạy 3).**
+>    `paperBook.seed` trước đây đọc MỌI hàng `signal_journal` từ đầu kho, nên
+>    một lần chạy mới thừa kế vị thế `enter`/`hold` của lần chạy trước. Replay
+>    thì luôn bắt đầu TRỐNG tại `-from`, nên mỗi vị thế mang qua ranh giới là
+>    một chuỗi nằm ở cột "trạng thái vị thế lệch" ngay từ tick đầu — và không
+>    đầu vào nào ở bước 4 giải thích được nó. `cmd/scanner` nay nhận
+>    `-paper-seed-since <mốc>` và `-started-at-file <đường dẫn>` (đọc cùng các
+>    dạng thời gian `-from` của `cmd/paperledger` và `cmd/backtest`, qua chung
+>    `config.ParseRunStamp`); seed bỏ qua mọi hàng có `evaluated_at_ms` trước
+>    mốc. Hai tình huống, một cờ:
+>
+>    - **Lên lại GIỮA cửa sổ** (tiến trình chết, cửa sổ chưa tính lại): truyền
+>      **cùng** `started_at` → sổ giấy giữ nguyên vị thế đang mở, nhật ký là
+>      một sổ liên tục.
+>    - **LẦN CHẠY MỚI**: truyền mốc lên của chính nó → sổ giấy lên **TRỐNG**,
+>      cùng trạng thái replay bắt đầu.
+>
+>    Cờ rỗng ≡ hành vi cũ (đọc cả nhật ký), ghim bằng test; `-started-at-file`
+>    trỏ vào file không tồn tại thì **dừng hẳn** chứ không lặng lẽ seed từ tất
+>    cả — hỏng kiểu đó chỉ lộ ra hai tuần sau, lúc đọc bảng so sánh. Dòng log
+>    lúc lên là bằng chứng: `sổ giấy: seed từ N hàng kể từ <mốc>, mở M vị thế`,
+>    in ở MỌI lần lên kể cả khi M = 0 (không có dòng và không có vị thế phải
+>    trông khác nhau).
 > 2. **Cùng tham số:** `params_json` của MỌI hàng nhật ký phải bằng khối
 >    `strategy:` dùng để chạy `cmd/backtest`; khác một số là kết quả không so
 >    được, dừng.
@@ -3046,7 +3070,32 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >    muộn: `history_depth` khác); (c) lệch **không giải thích được**.
 > 5. **Ngưỡng ĐẠT:** (c) = **0** — một lệch không giải thích được là hai bản
 >    đã trôi, đúng thứ cổng sinh ra để bắt (Q8); và (a) ≥ **95%** trên các mốc
->    `enter`/`exit` của 4 chuỗi binance. Về tiền: tổng `net_apr_frac` các hàng
+>    `enter`/`exit` của 4 chuỗi binance.
+>
+>    **Luật đếm cho "trạng thái vị thế lệch" (ghi 2026-09-12).** Diễn tập cho
+>    **69** cặp ở cột này và cột đó *không được phân loại gì cả* — một phán
+>    quyết không đọc được từ một bảng mà ô lớn nhất nghĩa là "chưa biết". Luật:
+>
+>    - Một hàng sống `hold`/`exit` mà bên replay không có đối ứng là **(c)**.
+>      Nó nói hai bên đang giữ hai sổ vị thế khác nhau, đúng thứ Q8 sợ.
+>    - **Trừ khi** chuỗi lệch **bắt đầu ngay tại một lỗ hổng nhật ký** — hơn
+>      **2 tick liên tiếp** thiếu — thì là **(b) *lịch sử***, và phải **nêu lỗ
+>      hổng** (mốc đầu → mốc cuối, số phút). Bên sống đã ôm vị thế qua những
+>      giờ không có gì được ghi, đó là đầu vào lịch sử chứ không phải luật trôi.
+>    - Chỉ lần **MỞ RA** của mỗi chuỗi lệch bị xử theo luật trên. Phần **KÉO
+>      DÀI** vẫn nằm ở cột trạng thái như cũ: nó là hệ quả của một lệch đã được
+>      phân loại rồi, đếm hai lần là sai.
+>    - Một cặp **không có hàng nhật ký** không nói gì về trạng thái: nó không
+>      mở ra và cũng không kết thúc một chuỗi lệch.
+>    - Lệch ngay ở cặp ĐẦU TIÊN của chuỗi không có khoảng nào để tìm lỗ hổng →
+>      **(c)**. Đó là vị thế mang vào cửa sổ, thứ mà từ lần chạy 3 không xảy ra
+>      được nữa (bước 1, `-paper-seed-since`).
+>
+>    `cmd/backtest -compare-journal` in luôn số theo luật này
+>    (`journalGaps` + `resolveStateRuns`, ~45 dòng, có test): nhịp tick được
+>    **ĐO** từ chính các hàng (trung vị khoảng cách) chứ không đọc
+>    `evaluate_every_min` — chu kỳ là thứ config yêu cầu, các hàng là thứ máy
+>    thật sự làm, và một lần chạy có máy ngủ thì hai thứ đó khác nhau. Về tiền: tổng `net_apr_frac` các hàng
 >    `enter` sống so với tổng APR ròng DỰ PHÓNG tại các quyết định `enter` của
 >    backtest — cùng đơn vị, cùng thời điểm; `RealizedAPRFrac` của cả cửa sổ
 >    là số khác loại (đã trừ vòng phí của lệnh đóng cưỡng bức ở cuối) nên

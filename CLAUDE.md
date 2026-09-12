@@ -1071,7 +1071,14 @@ go run ./cmd/backtest -sweep -months 12 -min-rate-bps 0.3,0.5,0.8,1.2,2,3,5 \
 # config.yaml. PORT picks the port. Run 2 holds 8085; 8082 is free since the
 # phase-1 soak died on 2026-09-10, but nothing may be started on either while
 # the gate runs.
-PORT=8085 go run ./cmd/scanner
+#
+# -started-at-file is what makes a NEW run come up with an EMPTY paper book:
+# the seed ignores journal rows older than that stamp, so this run does not
+# inherit the positions of the last one (the replay it is compared against
+# starts flat). A restart INSIDE a window passes the same stamp and keeps what
+# it was holding. -paper-seed-since takes the instant directly; both empty is
+# the old behaviour, seed from the whole journal. PLAN 3.5 ③ step 1.
+PORT=8085 go run ./cmd/scanner -started-at-file .paper/started_at
 sqlite3 data/scanner.db "SELECT datetime(evaluated_at_ms/1000,'unixepoch'), symbol, perp_source, action FROM signal_journal ORDER BY 1 DESC LIMIT 28"
 
 # The 3.5 verdict by machine (PLAN 3.5 ③ steps 2, 4, 5): the journal in the

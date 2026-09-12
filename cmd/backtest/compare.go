@@ -156,6 +156,84 @@ func pairDecisions(decisions []backtest.DecisionAt, rows []store.SignalRecord, r
 	return out
 }
 
+// journalGaps is where the live journal stopped writing, as [from, to] pairs.
+//
+// The tick cadence is MEASURED from the rows themselves — their median spacing
+// — rather than read off strategy.evaluate_every_min: the period is what the
+// config asked for, the rows are what the machine actually did, and a run whose
+// machine slept has both. A gap is more than TWO consecutive ticks missing,
+// i.e. a spacing above three times the median (PLAN 3.5 ③ step 5).
+func journalGaps(rows []store.SignalRecord) [][2]int64 {
+	deltas := make([]int64, 0, len(rows))
+	for i := 1; i < len(rows); i++ {
+		deltas = append(deltas, rows[i].EvaluatedAtMs-rows[i-1].EvaluatedAtMs)
+	}
+	if len(deltas) < 2 {
+		return nil
+	}
+	sorted := append([]int64(nil), deltas...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	tick := sorted[len(sorted)/2]
+	var out [][2]int64
+	for i, d := range deltas {
+		if tick > 0 && d > 3*tick {
+			out = append(out, [2]int64{rows[i].EvaluatedAtMs, rows[i+1].EvaluatedAtMs})
+		}
+	}
+	return out
+}
+
+// resolveStateRuns applies step 5's rule for position-state divergence, which
+// until 2026-09-12 was counted in its own column and classified as nothing.
+//
+// The FIRST pairing of each divergent run is a live hold/exit the replay has no
+// counterpart for, and that is (c) — unless the journal had a GAP right before
+// it, in which case the live side carried a position across hours nothing was
+// recorded and the divergence is the HISTORY input, (b), with the gap named.
+// The rest of a run is the same divergence still being carried, which is what
+// the state column was always for, and stays there. Pairings with no journal
+// row say nothing about state and neither end a run nor start one.
+func resolveStateRuns(pairs []pairing, gaps [][2]int64) {
+	prevMs, inRun := int64(0), false
+	for i := range pairs {
+		switch {
+		case pairs[i].Bucket == bucketNoRow:
+			continue
+		case pairs[i].Bucket != bucketState:
+			prevMs, inRun = pairs[i].AtMs, false
+			continue
+		case inRun:
+			continue
+		}
+		inRun = true
+		gap, found := gapBefore(gaps, prevMs, pairs[i].AtMs)
+		if !found {
+			pairs[i].Bucket = bucketUnexplained
+			pairs[i].WhyVI = "không có lỗ hổng nhật ký ngay trước — " + pairs[i].WhyVI
+			continue
+		}
+		pairs[i].Bucket = bucketHistory
+		pairs[i].WhyVI = fmt.Sprintf("lịch sử: lệch trạng thái mở ra ngay sau lỗ hổng nhật ký %s → %s (%.0f phút không ghi gì) — %s",
+			stampMs(gap[0]), stampMs(gap[1]), float64(gap[1]-gap[0])/60000, pairs[i].WhyVI)
+	}
+}
+
+// gapBefore is the first journal gap lying between the last decision the two
+// sides agreed a position state on and this one. With no such decision — a
+// divergence at the very first pairing — there is no interval to look in, and
+// a position carried into the window is unexplained by construction.
+func gapBefore(gaps [][2]int64, prevMs, atMs int64) ([2]int64, bool) {
+	if prevMs <= 0 {
+		return [2]int64{}, false
+	}
+	for _, g := range gaps {
+		if g[1] > prevMs && g[0] < atMs {
+			return g, true
+		}
+	}
+	return [2]int64{}, false
+}
+
 // classify says whether one replay decision and its journal row agree, and if
 // not, which ONE of the three inputs explains every differing check — or that
 // none does on its own.
@@ -613,6 +691,7 @@ func runCompare(ctx context.Context, db *store.Store, series []backtest.Series, 
 			return 1
 		}
 		pairs := pairDecisions(decisions, hedged, recorded, journalLagMs)
+		resolveStateRuns(pairs, journalGaps(hedged))
 		st := newCompareStats()
 		for _, p := range pairs {
 			st.add(p, params.HoldingDays)
@@ -672,7 +751,7 @@ func runCompare(ctx context.Context, db *store.Store, series []backtest.Series, 
 	noRow := total.buckets[bucketNoRow]
 	moneyGap := math.Abs(total.liveEnterNetAPR - total.btEnterNetAPR)
 	fmt.Printf("Bước 1: %d mốc không có hàng nhật ký (cần 0 — cửa sổ phải liền) · thiếu chân hedge %d\n", noRow, total.buckets[bucketLiveGap])
-	fmt.Printf("Bước 5: (c) = %d (cần 0) · (a) trên mốc enter/exit = %d/%d = %.1f%% (cần ≥ 95%%) · trạng thái lệch %d\n",
+	fmt.Printf("Bước 5: (c) = %d (cần 0) · (a) trên mốc enter/exit = %d/%d = %.1f%% (cần ≥ 95%%) · trạng thái lệch %d (chỉ phần KÉO DÀI; mỗi lần lệch MỞ RA đã vào (c) hoặc (b) lịch sử)\n",
 		unexplained, total.enterExitMatch, total.enterExit, 100*share, total.buckets[bucketState])
 	fmt.Printf("Bước 5 (tiền): trên %d mốc CẢ HAI cùng enter, Σ APR ròng sống−replay = %.4f so với biên chi phí ±%.4f%s\n",
 		total.pairedEnters, total.liveEnterNetAPR-total.btEnterNetAPR, total.costGapAPR, onlySideNote(total))

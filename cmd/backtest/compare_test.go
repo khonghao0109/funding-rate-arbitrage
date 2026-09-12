@@ -392,3 +392,72 @@ func nearly(got, want float64) bool {
 	d := got - want
 	return d < 1e-9 && d > -1e-9
 }
+
+// PLAN 3.5 ③ step 5's rule for position-state divergence. Until 2026-09-12 the
+// column was counted and classified as nothing, so 69 of the rehearsal's 708
+// pairings sat outside (a), (b) and (c) — a verdict cannot be read off a table
+// whose largest non-empty cell means "unknown".
+func TestResolveStateRuns_OpensAreJudgedAndOnlyAJournalGapExcusesThem(t *testing.T) {
+	const tick = int64(10 * 60 * 1000)
+	at := func(n int64) int64 { return 1_757_000_000_000 + n*tick }
+	// A row every tick, except a hole of six ticks between t=6 and t=12.
+	var rows []store.SignalRecord
+	for _, n := range []int64{0, 1, 2, 3, 4, 5, 6, 12, 13, 14, 15, 16, 17, 18} {
+		rows = append(rows, store.SignalRecord{EvaluatedAtMs: at(n), Symbol: "BTCUSDT", PerpSource: "binance_futures", Action: "hold"})
+	}
+	gaps := journalGaps(rows)
+	if len(gaps) != 1 || gaps[0][0] != at(6) || gaps[0][1] != at(12) {
+		t.Fatalf("the measured gaps are %v; want exactly the six-tick hole %d → %d", gaps, at(6), at(12))
+	}
+
+	state := func(ms int64) pairing {
+		return pairing{AtMs: ms, Bucket: bucketState, WhyVI: "hai bên không cùng trạng thái vị thế"}
+	}
+	pairs := []pairing{
+		{AtMs: at(1), Bucket: bucketMatch},
+		state(at(3)), // opens with no gap before it
+		state(at(4)), // the same divergence, still carried
+		{AtMs: at(5), Bucket: bucketMatch},
+		{AtMs: at(9), Bucket: bucketNoRow}, // says nothing about state
+		state(at(14)),                      // opens across the six-tick hole
+		state(at(15)),
+	}
+	resolveStateRuns(pairs, gaps)
+
+	want := []journalBucket{bucketMatch, bucketUnexplained, bucketState, bucketMatch, bucketNoRow, bucketHistory, bucketState}
+	for i := range pairs {
+		if pairs[i].Bucket != want[i] {
+			t.Errorf("pairing %d at %s: bucket %s, want %s (%s)", i, stampMs(pairs[i].AtMs), pairs[i].Bucket, want[i], pairs[i].WhyVI)
+		}
+	}
+	if !strings.Contains(pairs[5].WhyVI, "lỗ hổng nhật ký") || !strings.Contains(pairs[5].WhyVI, "60 phút") {
+		t.Errorf("the excused divergence must NAME the gap it is excused by: %q", pairs[5].WhyVI)
+	}
+}
+
+// A divergence at the very first pairing has no interval to look for a gap in:
+// it is a position carried into the window, which since 2026-09-12 a new run
+// cannot have (cmd/scanner -paper-seed-since), and is (c) if it happens anyway.
+func TestResolveStateRuns_ADivergenceCarriedIntoTheWindowIsUnexplained(t *testing.T) {
+	pairs := []pairing{{AtMs: 1_757_000_000_000, Bucket: bucketState, WhyVI: "vị thế mang từ trước cửa sổ"}}
+	resolveStateRuns(pairs, [][2]int64{{1, 2}})
+	if pairs[0].Bucket != bucketUnexplained {
+		t.Errorf("bucket %s, want (c): nothing before it can excuse it", pairs[0].Bucket)
+	}
+}
+
+// Two rows carry no cadence to measure, and a series that ticked evenly has no
+// gaps: neither may invent one, because an invented gap excuses a real (c).
+func TestJournalGaps_NeedsACadenceAndFindsNoneInAnEvenSeries(t *testing.T) {
+	const tick = int64(10 * 60 * 1000)
+	var even []store.SignalRecord
+	for n := int64(0); n < 8; n++ {
+		even = append(even, store.SignalRecord{EvaluatedAtMs: 1_757_000_000_000 + n*tick})
+	}
+	if got := journalGaps(even); len(got) != 0 {
+		t.Errorf("an evenly ticking series has no gaps; got %v", got)
+	}
+	if got := journalGaps(even[:2]); got != nil {
+		t.Errorf("two rows carry no cadence to measure against; got %v", got)
+	}
+}

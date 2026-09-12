@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -172,7 +173,10 @@ func TestPaperBook_SeedsOpenPositionsFromTheJournal(t *testing.T) {
 		t.Fatal(err)
 	}
 	book := newPaperBook()
-	if err := book.seed(ctx, db); err != nil {
+	// 0 is the cut-off every launch before 2026-09-12 had: read the whole
+	// journal. Pinned here so the flag cannot quietly change what a restart
+	// inside a window does.
+	if err := book.seed(ctx, db, 0); err != nil {
 		t.Fatal(err)
 	}
 	pos, open := book.position("BTCUSDT", "binance_futures")
@@ -184,6 +188,81 @@ func TestPaperBook_SeedsOpenPositionsFromTheJournal(t *testing.T) {
 	}
 	if _, open := book.position("SOLUSDT", "binance_futures"); open {
 		t.Error("SOL (skip) was never open")
+	}
+}
+
+// A NEW run must come up FLAT. Step 3.5 run 2 was launched on a journal that
+// already held another run's decisions; the replay the gate compares against
+// starts empty at -from, so every position carried across the boundary would
+// have shown up as a position-state divergence from the first tick and been
+// explainable by none of step 4's three inputs (PLAN 3.5 ③ step 1).
+func TestPaperBook_SeedIgnoresTheRowsOfAnEarlierRun(t *testing.T) {
+	db := openTempStore(t)
+	ctx := context.Background()
+	const launchMs = int64(1_757_000_000_000)
+	rows := []store.SignalRecord{
+		// An earlier run's position, still open when that run died.
+		{EvaluatedAtMs: launchMs - 2*3600_000, Symbol: "BTCUSDT", PerpSource: "binance_futures", SpotSource: "binance_spot",
+			Action: "enter", ParamsJSON: `{"notional_quote":50000}`, ChecksJSON: "[]"},
+		{EvaluatedAtMs: launchMs - 600_000, Symbol: "BTCUSDT", PerpSource: "binance_futures", SpotSource: "binance_spot",
+			Action: "hold", ParamsJSON: `{"notional_quote":50000}`, ChecksJSON: "[]"},
+		// This run's own first entry, after the cut-off.
+		{EvaluatedAtMs: launchMs + 600_000, Symbol: "ETHUSDT", PerpSource: "binance_futures", SpotSource: "binance_spot",
+			Action: "enter", ParamsJSON: `{"notional_quote":50000}`, ChecksJSON: "[]"},
+	}
+	if _, err := db.PutSignalDecisions(ctx, rows); err != nil {
+		t.Fatal(err)
+	}
+
+	fresh := newPaperBook()
+	if err := fresh.seed(ctx, db, launchMs); err != nil {
+		t.Fatal(err)
+	}
+	if pos, open := fresh.position("BTCUSDT", "binance_futures"); open {
+		t.Errorf("a run launched at the cut-off inherited the PREVIOUS run's position: %+v", pos)
+	}
+	if pos, open := fresh.position("ETHUSDT", "binance_futures"); !open || pos.OpenedAtMs != launchMs+600_000 || pos.NotionalQuote != 50000 {
+		t.Errorf("its OWN entry must be resumed: open=%v %+v", open, pos)
+	}
+
+	// The same journal, seeded as a restart INSIDE the earlier window: the
+	// position comes back. One cut-off decides between the two, and nothing
+	// else about the seed changes.
+	resumed := newPaperBook()
+	if err := resumed.seed(ctx, db, launchMs-6*3600_000); err != nil {
+		t.Fatal(err)
+	}
+	if pos, open := resumed.position("BTCUSDT", "binance_futures"); !open || pos.OpenedAtMs != launchMs-2*3600_000 {
+		t.Errorf("a restart inside the window must keep what it was holding: open=%v %+v", open, pos)
+	}
+}
+
+// The cut-off is resolved from the flag, else from the run's own launch record,
+// else not at all. A -started-at-file that is not there STOPS the launch: the
+// failure it would otherwise cause is silent for a fortnight.
+func TestResolveSeedSince_FlagThenFileThenNothing(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "started_at")
+	if err := os.WriteFile(path, []byte("2026-09-11 14:15:50 +0700\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	wantMs := time.Date(2026, 9, 11, 7, 15, 50, 0, time.UTC).UnixMilli()
+
+	if ms, note, err := resolveSeedSince("", path); err != nil || ms != wantMs {
+		t.Errorf("-started-at-file: got %d, %q, %v; want %d", ms, note, err, wantMs)
+	}
+	// The flag wins, and it reads the same forms as the file.
+	if ms, _, err := resolveSeedSince("2026-09-11T07:15:50", path); err != nil || ms != wantMs {
+		t.Errorf("-paper-seed-since: got %d, %v; want %d", ms, err, wantMs)
+	}
+	if ms, _, err := resolveSeedSince("", ""); err != nil || ms != 0 {
+		t.Errorf("neither given must mean the whole journal: got %d, %v", ms, err)
+	}
+	if _, _, err := resolveSeedSince("", filepath.Join(dir, "absent")); err == nil {
+		t.Error("a -started-at-file that does not exist must stop the launch, not seed from everything")
+	}
+	if _, _, err := resolveSeedSince("11/09/2026", ""); err == nil {
+		t.Error("an unparseable -paper-seed-since must stop the launch")
 	}
 }
 
@@ -276,7 +355,7 @@ func TestPaperBook_SeedReadsTheNotionalBesideNonNumericParams(t *testing.T) {
 		t.Fatal(err)
 	}
 	book := newPaperBook()
-	if err := book.seed(ctx, db); err != nil {
+	if err := book.seed(ctx, db, 0); err != nil {
 		t.Fatal(err)
 	}
 	if pos, open := book.position("BTCUSDT", "binance_futures"); !open || pos.NotionalQuote != 50000 {

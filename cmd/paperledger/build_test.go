@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/internal/config"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/paper"
 	"futures-arbitrage-scanner/internal/store"
@@ -327,7 +328,7 @@ func TestResolveFromAndParseStamp(t *testing.T) {
 	if err != nil || ms != 1_789_110_950_000 {
 		t.Fatalf("-from UTC form: %d %v", ms, err)
 	}
-	if _, err := parseStamp("11/09/2026"); err == nil {
+	if _, err := config.ParseRunStamp("11/09/2026"); err == nil {
 		t.Fatal("accepted a stamp form nobody documented")
 	}
 }

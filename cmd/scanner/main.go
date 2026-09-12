@@ -15,6 +15,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -43,7 +44,24 @@ const shutdownBudget = 5 * time.Second
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "path to the configuration file")
+	// A NEW run's paper book must start EMPTY: see paperBook.seed and PLAN 3.5
+	// ③ step 1. Both flags are empty by default, which is the behaviour every
+	// launch before 2026-09-12 had — seed from the whole journal.
+	paperSeedSince := flag.String("paper-seed-since", "",
+		"ignore signal_journal rows older than this when seeding the PAPER book: YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC), RFC3339, or 'YYYY-MM-DD HH:MM:SS -0700'")
+	startedAtFile := flag.String("started-at-file", "",
+		"file holding THIS run's launch stamp (e.g. .paper/started_at), read when -paper-seed-since is empty; a new run passes its own stamp so it starts flat, a restart inside a window passes the window's and keeps its positions")
 	flag.Parse()
+
+	seedSinceMs, seedSinceNote, err := resolveSeedSince(*paperSeedSince, *startedAtFile)
+	if err != nil {
+		// Fatal rather than "seed from everything": being told where the window
+		// starts and not finding it is a misconfigured launch, and the failure
+		// it would otherwise cause — inheriting another run's positions — is
+		// invisible until the gate's comparison is read a fortnight later.
+		log.Fatalf("paper book seed cut-off: %v", err)
+	}
+	log.Printf("paper book seed cut-off: %s", seedSinceNote)
 
 	if err := godotenv.Load(); err != nil {
 		log.Println("No .env file found, using system environment variables")
@@ -94,7 +112,7 @@ func main() {
 
 	// The live signal path (step 3.5): paper decisions into the signal journal,
 	// on the recorders' WaitGroup because it writes to the same store.
-	startSignals(ctx, cfg, s, db, func(job func()) {
+	startSignals(ctx, cfg, s, db, seedSinceMs, func(job func()) {
 		recorders.Add(1)
 		go func() {
 			defer recorders.Done()
@@ -371,4 +389,26 @@ func startInstrumentRegistry(ctx context.Context, cfg config.Config, s *scanner.
 			len(mapping.Pairs), len(mapping.Rejections), strings.Join(mapping.LogLines(), "\n  "))
 	})
 	return registry
+}
+
+// resolveSeedSince picks the earliest journal row the paper book may seed
+// from: the flag, else the run's own launch record, else nothing (0 = the
+// whole journal). It returns the note the launch log prints, because "which
+// of the three it used" is the fact a later reader needs.
+func resolveSeedSince(sinceFlag, startedAtFile string) (int64, string, error) {
+	switch {
+	case sinceFlag != "":
+		t, err := config.ParseRunStamp(sinceFlag)
+		if err != nil {
+			return 0, "", fmt.Errorf("-paper-seed-since %q: %w", sinceFlag, err)
+		}
+		return t.UnixMilli(), "-paper-seed-since " + t.Format(time.RFC3339), nil
+	case startedAtFile != "":
+		t, err := config.ReadRunStamp(startedAtFile)
+		if err != nil {
+			return 0, "", fmt.Errorf("-started-at-file %s: %w", startedAtFile, err)
+		}
+		return t.UnixMilli(), startedAtFile + " (" + t.Format(time.RFC3339) + ")", nil
+	}
+	return 0, "the whole journal (no cut-off given)", nil
 }

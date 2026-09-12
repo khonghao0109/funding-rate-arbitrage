@@ -33,7 +33,10 @@ import (
 // Positions here are PAPER positions: nothing is placed (phase 4 has not
 // started, and this process holds no credentials). They are seeded from the
 // journal at startup so a restart continues the same paper book instead of
-// re-entering everything it was already holding.
+// re-entering everything it was already holding — but only back to the
+// cut-off the launch passes in (-paper-seed-since / -started-at-file), which
+// is what tells a restart INSIDE a window apart from a NEW run. See
+// paperBook.seed.
 //
 // Nothing in this file blocks the data path: it runs on its own goroutine, on
 // its own ticker, and a store error is logged and skipped.
@@ -80,7 +83,7 @@ func settledLookbackFor(st config.Strategy) time.Duration {
 	return lookback
 }
 
-func startSignals(ctx context.Context, cfg config.Config, s *scanner.Scanner, db *store.Store, start func(func())) {
+func startSignals(ctx context.Context, cfg config.Config, s *scanner.Scanner, db *store.Store, seedSinceMs int64, start func(func())) {
 	if !cfg.Strategy.Enabled {
 		log.Printf("strategy: disabled; nothing is evaluated and the signal journal stays empty")
 		return
@@ -100,7 +103,7 @@ func startSignals(ctx context.Context, cfg config.Config, s *scanner.Scanner, db
 	log.Printf("strategy: settled history read back %.1f days per tick (trailing_mean_days %g)", settledLookbackFor(cfg.Strategy).Hours()/24, cfg.Strategy.TrailingMeanDays)
 
 	book := newPaperBook()
-	if err := book.seed(ctx, db); err != nil {
+	if err := book.seed(ctx, db, seedSinceMs); err != nil {
 		log.Printf("strategy: could not seed paper positions from the journal: %v — starting flat", err)
 	}
 
@@ -340,9 +343,27 @@ type paperBook struct {
 func newPaperBook() *paperBook { return &paperBook{positions: map[string]strategy.Position{}} }
 
 // seed rebuilds the open set from the journal: for each market, the newest row
-// decides — an "enter" or "hold" means the paper position is still open.
-func (b *paperBook) seed(ctx context.Context, db *store.Store) error {
-	rows, err := db.SignalDecisions(ctx, 0, time.Now().Add(time.Hour).UnixMilli())
+// at or after sinceMs decides — an "enter" or "hold" means the paper position
+// is still open.
+//
+// sinceMs is the whole difference between the two things a launch can be, and
+// the gate's comparison reads them differently (PLAN 3.5 ③ step 1):
+//
+//   - A process that died INSIDE a window comes back with the SAME stamp, so
+//     it inherits the positions it was holding and the journal stays one
+//     continuous paper book.
+//   - A NEW run passes its own launch stamp, and the journal before it is
+//     another run's. Seeding from that would open this run holding positions
+//     the replay — which starts flat at -from — never entered, and every one of
+//     those series would land in the comparison's position-state column from
+//     its first tick, unexplainable by any of step 4's three inputs.
+//
+// 0 reads the whole journal, which is what every launch before 2026-09-12 did.
+func (b *paperBook) seed(ctx context.Context, db *store.Store, sinceMs int64) error {
+	if sinceMs < 0 {
+		sinceMs = 0
+	}
+	rows, err := db.SignalDecisions(ctx, sinceMs, time.Now().Add(time.Hour).UnixMilli())
 	if err != nil {
 		return err
 	}
@@ -378,10 +399,21 @@ func (b *paperBook) seed(ctx context.Context, db *store.Store) error {
 			}
 		}
 	}
-	if len(b.positions) > 0 {
-		log.Printf("strategy: resumed %d paper position(s) from the journal", len(b.positions))
-	}
+	// Printed on EVERY launch, including the flat one: "no line" and "no
+	// positions" have to look different, because a run that silently inherited
+	// another run's book is exactly what this cut-off exists to prevent, and the
+	// acceptance check after a launch is this line.
+	log.Printf("sổ giấy: seed từ %d hàng kể từ %s, mở %d vị thế", len(rows), seedSinceVI(sinceMs), len(b.positions))
 	return nil
+}
+
+// seedSinceVI names the cut-off for the launch log: the instant, or the fact
+// that there was none.
+func seedSinceVI(sinceMs int64) string {
+	if sinceMs <= 0 {
+		return "đầu nhật ký (không đặt mốc)"
+	}
+	return time.UnixMilli(sinceMs).UTC().Format("2006-01-02 15:04:05") + " UTC"
 }
 
 func (b *paperBook) position(symbol, perp string) (strategy.Position, bool) {

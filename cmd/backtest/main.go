@@ -533,20 +533,6 @@ func stamp(ms int64) string { return time.UnixMilli(ms).UTC().Format("2006-01-02
 // one-interval tolerance checkTrailingMean allows.
 const fundingHistoryLookbackDays = 200
 
-// parseStamp reads a window edge as a date, a UTC date-time, or an RFC3339
-// stamp with zone: the journal comparison's window is a run's start instant,
-// not a midnight.
-func parseStamp(s string) (time.Time, error) {
-	// The last layout is what .paper/started_at holds ("2026-09-07 09:39:52
-	// +0700"), so the run's own record can be pasted as -from.
-	for _, layout := range []string{"2006-01-02", "2006-01-02T15:04:05", time.RFC3339, "2006-01-02 15:04:05 -0700"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC(), nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("want YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC), RFC3339, or 'YYYY-MM-DD HH:MM:SS -0700'")
-}
-
 func fundingLoadFrom(window backtest.Window) int64 {
 	return window.FromMs - int64(fundingHistoryLookbackDays)*24*3600*1000
 }
@@ -560,7 +546,7 @@ func fundingLoadFrom(window backtest.Window) int64 {
 func replayWindow(now time.Time, months int, from, to string) (backtest.Window, error) {
 	end := now
 	if to != "" {
-		t, err := parseStamp(to)
+		t, err := config.ParseRunStamp(to)
 		if err != nil {
 			return backtest.Window{}, fmt.Errorf("-to %q: %w", to, err)
 		}
@@ -568,7 +554,7 @@ func replayWindow(now time.Time, months int, from, to string) (backtest.Window, 
 	}
 	start := end.AddDate(0, -months, 0)
 	if from != "" {
-		t, err := parseStamp(from)
+		t, err := config.ParseRunStamp(from)
 		if err != nil {
 			return backtest.Window{}, fmt.Errorf("-from %q: %w", from, err)
 		}

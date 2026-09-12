@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
@@ -82,7 +81,7 @@ func main() {
 	}
 	var toMs int64 // 0 = now at each rebuild
 	if *to != "" {
-		t, err := parseStamp(*to)
+		t, err := config.ParseRunStamp(*to)
 		if err != nil {
 			log.Fatalf("-to %q: %v", *to, err)
 		}
@@ -168,35 +167,20 @@ func main() {
 // relaunch script wrote, else 0 (the caller reads the oldest journal row).
 func resolveFrom(flagValue, startedAtFile string) (int64, string, error) {
 	if flagValue != "" {
-		t, err := parseStamp(flagValue)
+		t, err := config.ParseRunStamp(flagValue)
 		if err != nil {
 			return 0, "", fmt.Errorf("-from %q: %w", flagValue, err)
 		}
 		return t.UnixMilli(), "-from", nil
 	}
-	raw, err := os.ReadFile(startedAtFile)
+	t, err := config.ReadRunStamp(startedAtFile)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return 0, "oldest journal row (no " + startedAtFile + ")", nil
 		}
-		return 0, "", fmt.Errorf("read %s: %w", startedAtFile, err)
-	}
-	t, err := parseStamp(strings.TrimSpace(string(raw)))
-	if err != nil {
-		return 0, "", fmt.Errorf("%s: %w", startedAtFile, err)
+		return 0, "", err
 	}
 	return t.UnixMilli(), startedAtFile, nil
-}
-
-// parseStamp reads the same forms cmd/backtest accepts, so the run's own
-// record (.paper/started_at) can be pasted as -from.
-func parseStamp(s string) (time.Time, error) {
-	for _, layout := range []string{"2006-01-02", "2006-01-02T15:04:05", time.RFC3339, "2006-01-02 15:04:05 -0700"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.UTC(), nil
-		}
-	}
-	return time.Time{}, fmt.Errorf("want YYYY-MM-DD, YYYY-MM-DDTHH:MM:SS (UTC), RFC3339, or 'YYYY-MM-DD HH:MM:SS -0700'")
 }
 
 func stampMs(ms int64) string {
