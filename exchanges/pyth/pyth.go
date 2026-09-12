@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -155,11 +156,36 @@ func streamPyth(source string, symbols []exchanges.Symbol, f exchanges.Feeds, ss
 	log.Printf("%s: connected", source)
 	f.ReportConn(source, exchanges.ConnConnected)
 
-	// An SSE stream that stops delivering looks exactly like a quiet one, and
-	// http has no read deadline for a body being streamed. Every line resets
-	// this; if none arrives in time it cancels the request, which ends the read.
+	// TWO watchdogs, the same pair runSession runs on the WebSocket side and for
+	// the same reason (docs/PLAN.md step 1.6). http has no read deadline for a
+	// body being streamed, so both work by cancelling the request, which ends
+	// the read.
+	//
+	// frameDog is silence of ANY kind and catches a dead socket. Every line
+	// resets it — and that is exactly why it is not enough on its own: this
+	// stream carries SSE comments and `data: heartbeat`, so a Hermes that
+	// stopped publishing prices while still sending heartbeats would hold this
+	// connection open forever with no price on it. That is the bybit_spot
+	// failure in another transport.
+	//
+	// dataDog is silence of PRICES, reset only by a line that published one. It
+	// is off when Feeds carries no threshold, which is what every harness and
+	// every pre-2026-09-13 config gets.
 	watchdog := time.AfterFunc(pythReadTimeout, cancel)
 	defer watchdog.Stop()
+
+	// Written by the timer goroutine, read by this one, so the stream can say
+	// WHICH silence ended it rather than reporting a bare cancellation.
+	var starved atomic.Bool
+	dataSilence := f.DataSilenceTimeout
+	var dataDog *time.Timer
+	if dataSilence > 0 {
+		dataDog = time.AfterFunc(dataSilence, func() {
+			starved.Store(true)
+			cancel()
+		})
+		defer dataDog.Stop()
+	}
 
 	scanner := bufio.NewScanner(response.Body)
 	// One data line carries every subscribed feed at once, and Hermes ships a
@@ -178,35 +204,47 @@ func streamPyth(source string, symbols []exchanges.Symbol, f exchanges.Feeds, ss
 		recvAt := time.Now()
 		watchdog.Reset(pythReadTimeout)
 
-		if !handlePythLine(source, symbols, f, line, recvAt) {
+		keepGoing, produced := handlePythLine(source, symbols, f, line, recvAt)
+		if produced && dataDog != nil {
+			dataDog.Reset(dataSilence)
+		}
+		if !keepGoing {
 			return f.Ctx.Err()
 		}
 	}
 
+	if starved.Load() {
+		return fmt.Errorf("%w in the last %s: the stream kept sending lines and none carried a price — "+
+			"reconnecting", exchanges.ErrDataSilence, dataSilence)
+	}
 	if err := scanner.Err(); err != nil {
 		return err
 	}
 	return fmt.Errorf("stream closed by the server")
 }
 
-// handlePythLine parses one line of the SSE stream. It reports false only when
-// the feeds context was cancelled mid-batch, which ends the stream; a line that
-// is not a price update, or one that will not parse, is skipped and is not an
-// error - the stream carries comments and heartbeats too.
-func handlePythLine(source string, symbols []exchanges.Symbol, f exchanges.Feeds, line string, recvAt time.Time) bool {
+// handlePythLine parses one line of the SSE stream.
+//
+// keepGoing is false only when the feeds context was cancelled mid-batch, which
+// ends the stream; a line that is not a price update, or one that will not
+// parse, is skipped and is not an error - the stream carries comments and
+// heartbeats too. produced says whether a price reached the feed, which is what
+// the data watchdog above measures and is the same answer
+// exchanges.StreamConfig.Handle gives on the WebSocket side.
+func handlePythLine(source string, symbols []exchanges.Symbol, f exchanges.Feeds, line string, recvAt time.Time) (keepGoing, produced bool) {
 	// SSE format: lines starting with "data:" contain the JSON payload.
 	if !strings.HasPrefix(line, "data:") {
-		return true
+		return true, false
 	}
 	data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 	if data == "" || data == "heartbeat" {
-		return true
+		return true, false
 	}
 
 	var response PythSSEResponse
 	if err := json.Unmarshal([]byte(data), &response); err != nil {
 		log.Printf("%s: JSON unmarshal error: %v", source, err)
-		return true
+		return true, false
 	}
 
 	for _, feed := range response.Parsed {
@@ -231,8 +269,9 @@ func handlePythLine(source string, symbols []exchanges.Symbol, f exchanges.Feeds
 			VenueTimeMs: feed.Price.PublishTime * 1000, // seconds to milliseconds
 			RecvAt:      recvAt,
 		}) {
-			return false
+			return false, produced
 		}
+		produced = true
 	}
-	return true
+	return true, produced
 }

@@ -52,10 +52,6 @@ var knownFundingPublishModes = map[string]bool{
 // marketTypePerp is the only market type that has funding at all.
 const marketTypePerp = "perp"
 
-// marketTypeOracle is a price feed that is not tradable and, today, not even a
-// WebSocket: Pyth is SSE with its own read loop.
-const marketTypeOracle = "oracle"
-
 // MinDataSilenceSec is the floor on data_silence_sec.
 //
 // Below it the check would stop meaning what it says. The WebSocket lifecycle
@@ -479,12 +475,12 @@ func (c *Config) applyDefaults() {
 		// and "written wrong" are different mistakes and only one of them is
 		// safe to fix silently.
 		//
-		// An ORACLE is skipped: Pyth is SSE and keeps its own read loop, which
-		// the WebSocket lifecycle's data clock does not reach. Filling the
-		// field there would be a setting that looks like protection and is
-		// none — and Pyth answering 401 for a whole 72h soak with nobody
-		// noticing is exactly the mistake worth not repeating.
-		if c.Sources[i].DataSilenceSec == 0 && c.Sources[i].MarketType != marketTypeOracle {
+		// The oracle was skipped here between 2026-09-12 and 2026-09-13,
+		// because Pyth is SSE with its own read loop and a number there would
+		// have been protection it did not have. It has the same two watchdogs
+		// now (exchanges/pyth), so the exception is gone and every source is
+		// covered.
+		if c.Sources[i].DataSilenceSec == 0 {
 			c.Sources[i].DataSilenceSec = c.Scanner.DefaultDataSilenceSec
 		}
 		// Comparison groups key on the quote asset, and three separate blocks

@@ -835,6 +835,34 @@ Sửa:
 > cho bybit báo "có dữ liệu" trên frame nó không đẩy gì → đỏ ở frame 13 và 51.
 > Bỏ đột biến, cả cây xanh.
 >
+> **Pyth (SSE) được che nốt, 2026-09-13.** Bản sửa 2026-09-12 miễn oracle khỏi
+> `data_silence_sec` vì Pyth không đi qua `runSession`: nó là server-sent
+> events trên HTTP, có vòng đọc riêng và một watchdog riêng. Nhưng watchdog đó
+> là **đồng hồ KHUNG** — nó được `Reset` bởi **mọi dòng**, mà stream Hermes
+> mang cả comment SSE lẫn `data: heartbeat`. Nghĩa là một Hermes ngừng công bố
+> giá trong khi vẫn heartbeat sẽ giữ kết nối mở **vô hạn**, không giá nào, mọi
+> tín hiệu sức khoẻ xanh: đúng lỗi bybit_spot, trên một transport khác. Và
+> oracle là chỗ nó ẩn được lâu nhất — Pyth trả 401 suốt 72 giờ soak mà không
+> ai thấy.
+>
+> Nay `streamPyth` chạy **hai** watchdog, cùng ngữ nghĩa với `runSession`:
+> `watchdog` (khung, mọi dòng, 60 s) và `dataDog` (dữ liệu, chỉ dòng nào thật
+> sự đẩy được một giá ra feed, `Feeds.DataSilenceTimeout`). `handlePythLine`
+> trả thêm `produced` — đúng câu trả lời mà `StreamConfig.Handle` trả ở phía
+> WebSocket. Đồng hồ dữ liệu đo từ **giá cuối**, không phải từ lúc nối; 0 =
+> tắt = hành vi cũ y nguyên. Hết ngoại lệ oracle trong `internal/config`, nên
+> **mọi nguồn trong `config.yaml` đều được che**. **27 dòng code** (không kể
+> comment) — trong hạn 100 dòng, nên làm luôn chứ không ghi nợ. Không thêm
+> điểm đóng dấu `RecvAt` thứ tư: `dataDog` dùng lại đúng `recvAt` sẵn có
+> (quy tắc 13).
+>
+> Test với server SSE giả (`httptest`, flush từng dòng): stream chỉ heartbeat
+> → kết thúc bằng `exchanges.ErrDataSilence` và test khẳng định server THẬT SỰ
+> vẫn đang gửi (≥ 4 dòng) chứ không phải im; 4 giá rồi chuyển sang heartbeat →
+> bị cắt sau giá cuối, không phải sau lúc nối; stream giá đều 30 ms → không bị
+> đụng; ngưỡng 0 → không gì cắt nó. Đột biến cho `dataDog` reset theo **mọi**
+> dòng (tức quay lại đồng hồ khung) → test treo tới timeout và đỏ.
+>
 > Cộng với test: server WS giả "mở socket, trả pong, không bao giờ gửi dữ liệu"
 > kết thúc phiên bằng `ErrDataSilence` và KHÔNG reset backoff; một feed vẫn đang
 > đẩy thì không bị đụng tới; đồng hồ dữ liệu đo từ **message cuối** chứ không từ

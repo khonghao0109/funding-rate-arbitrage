@@ -1220,9 +1220,14 @@ phase 1.
   that just cost 19 hours — not on a ratio to the worst measured gap, which is
   not stable: bybit_futures measured 0.69s in one window and 18.38s in another
   minutes later. Absent means OFF, so the config the 3.5 process loaded still
-  means what it meant, and the oracle is skipped because Pyth is SSE with its
-  own read loop. The fix is in the NEXT run's binary — run 2 was not
-  restarted.
+  means what it meant. **Pyth was covered on 2026-09-13**: it is SSE with its
+  own read loop, and that loop's watchdog was reset by every line — including
+  the SSE comments and `data: heartbeat` Hermes sends — so a Hermes that
+  stopped publishing prices while still heartbeating would have held the stream
+  open forever, which is this same failure on another transport. `streamPyth`
+  now runs the same two clocks, the oracle exception in `internal/config` is
+  gone, and every source in `config.yaml` is covered. The fix is in the NEXT
+  run's binary — run 2 was not restarted.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new

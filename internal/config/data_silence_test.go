@@ -101,10 +101,11 @@ func TestDataSilence_RefusesADeadlineBelowTheFloorOrBelowStaleness(t *testing.T)
 	}
 }
 
-// An oracle is not on the WebSocket lifecycle at all — Pyth is SSE with its own
-// read loop — so it must not be handed a threshold that would silently do
-// nothing. Absent means absent there, default or no default.
-func TestDataSilence_TheDefaultSkipsTheOracle(t *testing.T) {
+// The oracle was exempt for one day, because Pyth is SSE and had no data
+// watchdog of its own. It has one now (exchanges/pyth), so it is covered like
+// every other source — and it is the source where a silent stream would hide
+// longest: Pyth answered 401 for a whole 72h soak and nothing noticed.
+func TestDataSilence_TheOracleIsCoveredToo(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "config.yaml"))
 	if err != nil {
 		t.Fatalf("load the shipped config: %v", err)
@@ -112,32 +113,33 @@ func TestDataSilence_TheDefaultSkipsTheOracle(t *testing.T) {
 	if cfg.Scanner.DefaultDataSilenceSec <= 0 {
 		t.Fatal("the shipped config sets no default, so this test proves nothing")
 	}
+	oracles := 0
 	for _, source := range cfg.Sources {
 		if source.MarketType != "oracle" {
 			continue
 		}
-		if source.DataSilenceSec != 0 {
-			t.Errorf("%s is an oracle and got data_silence_sec %d; the WebSocket data clock never reaches it, "+
-				"so the number would read as protection it does not have", source.Source, source.DataSilenceSec)
+		oracles++
+		if source.DataSilenceSec <= 0 {
+			t.Errorf("%s is an oracle with no data_silence_sec; its SSE stream could heartbeat forever "+
+				"without a price and nothing would notice", source.Source)
 		}
+	}
+	if oracles == 0 {
+		t.Fatal("the shipped config has no oracle, so this test proves nothing")
 	}
 }
 
 // The shipped file is the one that runs, so its numbers are asserted here
 // rather than described in a comment somebody has to trust.
 //
-// The oracle is excluded on purpose: Pyth is SSE and keeps its own read loop,
-// which runSession's data clock does not reach. Giving it a number would be a
-// setting that looks like protection and is not.
-func TestShippedConfig_GivesEveryWebSocketSourceASilenceDeadline(t *testing.T) {
+// Every source, the oracle included since 2026-09-13: Pyth keeps its own read
+// loop but now runs the same two watchdogs.
+func TestShippedConfig_GivesEverySourceASilenceDeadline(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "config.yaml"))
 	if err != nil {
 		t.Fatalf("load the shipped config: %v", err)
 	}
 	for _, source := range cfg.Sources {
-		if source.MarketType == "oracle" {
-			continue
-		}
 		if source.DataSilenceSec <= 0 {
 			t.Errorf("%s has no data_silence_sec; a refused or dropped subscription there would go unnoticed for as long as the process runs",
 				source.Source)

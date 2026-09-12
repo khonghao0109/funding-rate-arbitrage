@@ -1,8 +1,13 @@
 package pyth
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"math"
+	"net/http"
+	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -80,7 +85,7 @@ func TestHandlePythLine_ConvertsPublishTimeToMilliseconds(t *testing.T) {
 	const publishTimeSec = 1788415749
 	line := syntheticPythLine(pythBTCFeedID, "7765012345678", -8, publishTimeSec)
 
-	if !handlePythLine("pyth", pythSymbols(), r.Feeds, line, recvAt) {
+	if keepGoing, _ := handlePythLine("pyth", pythSymbols(), r.Feeds, line, recvAt); !keepGoing {
 		t.Fatal("handlePythLine reported cancellation on a live context")
 	}
 
@@ -124,12 +129,171 @@ func TestHandlePythLine_IgnoresEverythingThatIsNotOurPriceUpdate(t *testing.T) {
 	for name, line := range cases {
 		t.Run(name, func(t *testing.T) {
 			r := exchangestest.NewRecorder(t)
-			if !handlePythLine("pyth", pythSymbols(), r.Feeds, line, time.Now()) {
+			if keepGoing, _ := handlePythLine("pyth", pythSymbols(), r.Feeds, line, time.Now()); !keepGoing {
 				t.Fatal("handlePythLine reported cancellation on a live context")
 			}
 			if prices := r.Prices(); len(prices) != 0 {
 				t.Errorf("produced %d prices from %q: %+v", len(prices), line, prices)
 			}
 		})
+	}
+}
+
+// --- the data watchdog (2026-09-13) ---
+
+// sseTestServer streams lines to every client until the client goes away. Each
+// line is flushed on its own so the reader sees it immediately, which is what
+// makes the watchdogs measurable in milliseconds rather than in the 60s the
+// production constants use.
+func sseTestServer(t *testing.T, lines func(write func(string) bool)) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			t.Error("the test server cannot flush, so nothing would stream")
+			return
+		}
+		flusher.Flush()
+		lines(func(line string) bool {
+			if _, err := io.WriteString(w, line+"\n"); err != nil {
+				return false
+			}
+			flusher.Flush()
+			select {
+			case <-r.Context().Done():
+				return false
+			default:
+				return true
+			}
+		})
+	}))
+	t.Cleanup(server.Close)
+	return server.URL
+}
+
+// The failure this exists for, in Pyth's transport: a stream that keeps sending
+// and never sends a PRICE. Hermes carries SSE comments and `data: heartbeat`,
+// and the frame watchdog is reset by every one of them — so before 2026-09-13 a
+// Hermes that stopped publishing while still heartbeating would have held this
+// connection open for as long as the process ran, with no price on it and every
+// health signal green. That is the bybit_spot failure in another transport, and
+// the oracle is where it would hide longest: Pyth answered 401 for a whole 72h
+// soak and nothing noticed.
+func TestStreamPyth_EndsAStreamThatHeartbeatsAndNeverPrices(t *testing.T) {
+	var sent int32
+	url := sseTestServer(t, func(write func(string) bool) {
+		for {
+			if !write(": keep-alive") || !write("data: heartbeat") {
+				return
+			}
+			atomic.AddInt32(&sent, 2)
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	r := exchangestest.NewRecorder(t)
+	feeds := r.Feeds
+	feeds.DataSilenceTimeout = 300 * time.Millisecond
+
+	err := streamPyth("pyth", pythSymbols(), feeds, url)
+
+	if !errors.Is(err, exchanges.ErrDataSilence) {
+		t.Fatalf("stream ended with %v, want ErrDataSilence — a heartbeat-only oracle must not look alive", err)
+	}
+	if got := atomic.LoadInt32(&sent); got < 4 {
+		t.Fatalf("the server sent %d lines; the test is not exercising a LIVE stream unless lines kept arriving", got)
+	}
+	if prices := r.Prices(); len(prices) != 0 {
+		t.Errorf("a heartbeat-only stream produced %d prices", len(prices))
+	}
+}
+
+// The data clock is restarted by a price, not by any line, and is measured from
+// the last PRICE — so a stream that prices and then goes to heartbeats is cut
+// the same silence later, not from the connect.
+func TestStreamPyth_MeasuresSilenceFromTheLastPriceNotTheConnect(t *testing.T) {
+	url := sseTestServer(t, func(write func(string) bool) {
+		for i := 0; i < 4; i++ {
+			if !write(syntheticPythLine(pythBTCFeedID, "7765012345678", -8, 1788415749)) {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+		for {
+			if !write("data: heartbeat") {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	r := exchangestest.NewRecorder(t)
+	feeds := r.Feeds
+	feeds.DataSilenceTimeout = 300 * time.Millisecond
+
+	startedAt := time.Now()
+	err := streamPyth("pyth", pythSymbols(), feeds, url)
+	lasted := time.Since(startedAt)
+
+	if !errors.Is(err, exchanges.ErrDataSilence) {
+		t.Fatalf("stream ended with %v, want ErrDataSilence", err)
+	}
+	if prices := r.Prices(); len(prices) != 4 {
+		t.Errorf("got %d prices, want the 4 the server sent", len(prices))
+	}
+	// Measured from the connect it would have fired at 300ms, before the fourth
+	// price at ~200ms could restart it.
+	if lasted < 450*time.Millisecond {
+		t.Errorf("stream lasted %s; the data clock was not restarted by the prices that did arrive", lasted)
+	}
+}
+
+// A stream that keeps pricing is never cut, however short the threshold is next
+// to its cadence — the failure mode that would be worse than the bug.
+func TestStreamPyth_LeavesAStreamThatKeepsPricingAlone(t *testing.T) {
+	url := sseTestServer(t, func(write func(string) bool) {
+		for {
+			if !write(syntheticPythLine(pythBTCFeedID, "7765012345678", -8, 1788415749)) {
+				return
+			}
+			time.Sleep(30 * time.Millisecond)
+		}
+	})
+
+	r := exchangestest.NewRecorder(t)
+	feeds := r.Feeds
+	feeds.DataSilenceTimeout = 300 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() { done <- streamPyth("pyth", pythSymbols(), feeds, url) }()
+	select {
+	case err := <-done:
+		t.Fatalf("stream ended with %v while the server was still pricing every 30ms", err)
+	case <-time.After(700 * time.Millisecond):
+	}
+}
+
+// Zero is off, and off is what every harness and every config written before
+// this existed gets: only the frame watchdog may end the stream then.
+func TestStreamPyth_DataSilenceZeroLeavesTheOldBehaviourExactly(t *testing.T) {
+	url := sseTestServer(t, func(write func(string) bool) {
+		for {
+			if !write("data: heartbeat") {
+				return
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	r := exchangestest.NewRecorder(t)
+	// DataSilenceTimeout deliberately left at its zero value.
+	done := make(chan error, 1)
+	go func() { done <- streamPyth("pyth", pythSymbols(), r.Feeds, url) }()
+	select {
+	case err := <-done:
+		t.Fatalf("stream ended with %v; with the threshold unset only the 60s frame watchdog may end it", err)
+	case <-time.After(600 * time.Millisecond):
 	}
 }
