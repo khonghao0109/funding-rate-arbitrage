@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/exchanges/venues"
 	"futures-arbitrage-scanner/internal/config"
+	"futures-arbitrage-scanner/internal/history"
 	"futures-arbitrage-scanner/internal/scanner"
 )
 
@@ -203,4 +205,118 @@ func TestTickLoop_DoesNotReportOnTimeTicks(t *testing.T) {
 	if n := atomic.LoadInt32(&reported); n != 0 {
 		t.Fatalf("%d on-time ticks were reported late", n)
 	}
+}
+
+// The funding top-up is a periodic job like any other and must be counted like
+// any other. It ran on internal/history's own ticker until 2026-09-12, which
+// left exactly one loop in the process invisible to prices.tick_status — the
+// one whose whole job is to fetch the settlements that happened while the
+// machine was asleep.
+func TestTopUpFundingHistory_IsCountedByTheSharedScheduler(t *testing.T) {
+	oldNow, oldSink := wallNow, lateTickSink
+	defer func() { wallNow, lateTickSink = oldNow, oldSink }()
+
+	// tickLoop reads wallNow three times before the SECOND firing — arming
+	// due, stamping the first firing, re-arming due — so the fourth reading is
+	// the one after the "sleep". Counting the calls rather than sleeping is
+	// what makes this deterministic; if a wallNow call is ever added inside
+	// tickLoop, this number moves with it.
+	base := time.Date(2026, 9, 12, 0, 0, 0, 0, time.UTC)
+	calls := 0 // read on the loop goroutine only
+	wallNow = func() time.Time {
+		calls++
+		if calls >= 4 {
+			return base.Add(5 * time.Hour)
+		}
+		return base
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var mu sync.Mutex
+	var jobs []string
+	lateTickSink = func(job string, _ time.Time, _ time.Duration) {
+		mu.Lock()
+		jobs = append(jobs, job)
+		mu.Unlock()
+		cancel()
+	}
+
+	// A collector with one job it CAN serve: the loop's guard reads the
+	// collector's own filtered list, and a fetcher that returns nothing keeps
+	// the test offline while leaving a real job to schedule.
+	job := history.Job{Source: "s", Connector: "c", Symbols: []exchanges.Symbol{{Standard: "BTCUSDT", Venue: "BTCUSDT"}}}
+	collector := history.New(openTempStore(t), []history.Job{job},
+		map[string]exchanges.FundingHistoryFetchFunc{"c": emptyFundingFetcher})
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		topUpFundingHistory(ctx, collector, time.Millisecond)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the top-up loop did not stop after cancellation")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(jobs) == 0 {
+		t.Fatal("a five-hour jump produced no late tick for the funding top-up; the loop is still uncounted")
+	}
+	// The literal, not the constant: the constant's own doc says this exact
+	// string is what the operator reads on the wire and in the log, so a
+	// rename is a wire change and must fail here rather than pass silently.
+	if jobs[0] != "storage: funding top-up" {
+		t.Fatalf("late tick reported job %q, want %q", jobs[0], "storage: funding top-up")
+	}
+	// And it must stay DISTINCT from the collection report's prefix, which has
+	// been in the log since step 2.6 and which operators grep. Collapsing the
+	// two would make a scheduling fault and a collection result look alike.
+	if fundingTopUpJob == "funding history top-up" {
+		t.Error("the scheduler's job name and the collection report's prefix have been merged")
+	}
+}
+
+// Nothing to collect must not spin a timer: the guard is what keeps a scanner
+// with storage on but no fetchable series from waking every period forever.
+func TestTopUpFundingHistory_DoesNothingWithoutJobsOrAPeriod(t *testing.T) {
+	db := openTempStore(t)
+	job := history.Job{Source: "s", Connector: "c", Symbols: []exchanges.Symbol{{Standard: "BTCUSDT", Venue: "BTCUSDT"}}}
+	fetchers := map[string]exchanges.FundingHistoryFetchFunc{"c": emptyFundingFetcher}
+
+	for name, tc := range map[string]struct {
+		collector *history.Collector
+		every     time.Duration
+	}{
+		"no jobs at all": {history.New(db, nil, fetchers), time.Hour},
+		// The job list is not empty, but NO connector in it has a history
+		// fetcher, so the collector keeps none. Guarding on the list this
+		// process built rather than on the collector's own would arm a timer
+		// here and wake the process every period forever with nothing to do.
+		"jobs the collector cannot serve": {history.New(db, []history.Job{job}, nil), time.Hour},
+		"no period":                       {history.New(db, []history.Job{job}, fetchers), 0},
+		"nil collector":                   {nil, time.Hour},
+	} {
+		t.Run(name, func(t *testing.T) {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				topUpFundingHistory(context.Background(), tc.collector, tc.every)
+			}()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				t.Fatal("topUpFundingHistory did not return; it armed a timer with nothing to do")
+			}
+		})
+	}
+}
+
+// emptyFundingFetcher is a fetcher that opens no socket and returns nothing,
+// so a scheduling test can have a real job without going near a venue.
+func emptyFundingFetcher(context.Context, string, exchanges.Symbol, exchanges.FundingWindow) ([]exchanges.FundingHistoryEntry, error) {
+	return nil, nil
 }

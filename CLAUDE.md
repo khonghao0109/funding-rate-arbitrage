@@ -651,8 +651,18 @@ Darwin's monotonic clock stops during sleep) and not on the value a timer
 channel delivers (backdated to the schedule since Go 1.23) — logs `tick trễ
 …` past one minute, hands `fn` the receipt instant, and counts on the wire
 in `prices.tick_status` beside `source_status` (WS-CONTRACT §4.3; one count
-per job, the funding top-up's own ticker uncounted). That `time.Now()` is a
-scheduling stamp, not a fourth `RecvAt` site. And the live path's settled
+per job). That `time.Now()` is a scheduling stamp, not a fourth `RecvAt`
+site. **Completed 2026-09-12:** the funding top-up ran `internal/history`'s
+own ticker and was the one periodic loop the count could not see — the loop
+whose whole purpose is to fetch the settlements that happened while the
+machine was asleep. `history.Collector.Run` is gone and `cmd/scanner` keeps
+that schedule too, so all six of its FIXED-period jobs now run on one
+scheduler and are counted. `instruments.Registry.Run` keeps its own loop on
+purpose — its period is variable, backing off 2x while a refresh keeps
+failing, so "late against its schedule" would not mean the same thing there
+(WS-CONTRACT §4.3). The dashboard renders the count under the source list when it is above
+zero; an absent field and a real zero render identically — as nothing — because
+a server that cannot count late ticks must not appear to be reporting none. And the live path's settled
 lookback is `max(30, trailing_mean_days + 7)` days with the config capped at
 199 so the replay's 200-day lookback always covers what the live path
 judges. Run 1 lost 16 of 32 settlements to a sleeping machine with no line

@@ -737,6 +737,13 @@ class FuturesArbitrageScanner {
         if (message.source_status) {
             this.sourceStatus = new Map(Object.entries(message.source_status));
         }
+        // tick_status is a SIBLING of source_status on the wire, not a field
+        // inside it (WS-CONTRACT §4.3): it describes OUR scheduler, not a
+        // venue. Absent means a server older than 2026-09-12, and the
+        // documented default is "no late ticks" — which must render as nothing
+        // at all, never as a reassuring zero, because an old server cannot
+        // know either way.
+        this.renderTickStatus(message.tick_status);
         const serverTimeMs = message.server_time_ms;
         for (const [symbol, sourcePrices] of Object.entries(message.prices || {})) {
             if (symbol === this.currentSymbol) {
@@ -886,6 +893,62 @@ class FuturesArbitrageScanner {
         if (conn.uptime_sec > 0) parts.push(`kết nối liên tục ${this.formatDuration(conn.uptime_sec)}`);
         if (conn.reconnect_count > 0) parts.push(`đã nối lại ${conn.reconnect_count} lần`);
         return parts.join(' · ');
+    }
+
+    // A late tick is a window in which NOTHING was sampled, evaluated or
+    // journalled — a slept laptop looks exactly like this and like nothing
+    // else on the wire. Run 1 of the step-3.5 gate lost 16 of 32 settlements
+    // to a sleeping machine with no line anywhere saying so; this is that
+    // line. Counts come from the scanner, which counts one per scheduled job.
+    renderTickStatus(tick) {
+        const el = document.getElementById('tickStatusNote');
+        if (!el) return;
+
+        const late = tick && tick.late_ticks ? tick.late_ticks : 0;
+        if (late <= 0) {
+            // Nothing to say. An absent field and a real zero are rendered the
+            // same way deliberately: neither is evidence of a gap, and a badge
+            // reading "0 late ticks" on a server that cannot count them would
+            // be a false assurance.
+            //
+            // The early return matters a little: prices arrive five times a
+            // second, so on a healthy process this runs 432,000 times a day and
+            // would otherwise rewrite the same empty node every time.
+            if (el.hidden) return;
+            el.hidden = true;
+            el.innerHTML = '';
+            return;
+        }
+
+        // Everything interpolated below comes from the scanner's own wire:
+        // late_ticks and the two stamps are numbers, and last_late_job is one
+        // of a fixed set of Go constants naming a scheduled job. None of it is
+        // venue text or user input. It still goes through esc(), like the cost
+        // basis note above, so that stays true if a later job name is ever
+        // built from a source id.
+        const parts = [`<strong>${esc(String(late))} tick trễ</strong> kể từ lúc khởi động`];
+        if (tick.last_late_job) {
+            // The INTERVAL, not just the instant the tick fired. The wire
+            // carries when it ran and how late it was, and the gap began at
+            // the difference — WS-CONTRACT §4.3 documents that subtraction,
+            // and making the reader do it is making them do arithmetic to
+            // learn the one thing this note exists to tell them.
+            const by = tick.last_late_by_sec > 0
+                ? ` trễ ${esc(this.formatDuration(tick.last_late_by_sec))}`
+                : '';
+            let at = '';
+            if (tick.last_late_at_ms > 0) {
+                const ran = new Date(tick.last_late_at_ms);
+                at = tick.last_late_by_sec > 0
+                    ? ` — không ghi gì từ ${esc(new Date(tick.last_late_at_ms - tick.last_late_by_sec * 1000).toLocaleString())}`
+                      + ` đến ${esc(ran.toLocaleString())}`
+                    : ` lúc ${esc(ran.toLocaleString())}`;
+            }
+            parts.push(`gần nhất: ${esc(tick.last_late_job)}${by}${at}`);
+        }
+        parts.push('Trong khoảng trễ KHÔNG có gì được lấy mẫu, đánh giá hay ghi nhật ký — thường là máy ngủ hoặc đồng hồ nhảy.');
+        el.innerHTML = parts.join(' · ');
+        el.hidden = false;
     }
 
     formatDuration(seconds) {

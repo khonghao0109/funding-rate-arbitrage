@@ -242,13 +242,20 @@ trình nói ra.
 
 | Trường | Kiểu | Mặc định | Ghi chú |
 |---|---|---|---|
-| `late_ticks` | int | `0` | Số tick của các vòng lặp định kỳ trong `cmd/scanner` nổ **trễ hơn 1 phút** so với lịch hẹn, cộng dồn từ lúc khởi động. **Mỗi job đếm một**: năm job dùng `tickLoop` (lấy mẫu giá, ảnh chụp instrument, prune, độ sâu, tín hiệu), nên một giấc ngủ 5 giờ là ≥ 5 tick trễ, mỗi job báo ở lần nổ KẾ TIẾP của nó — sampler trong 30 s sau khi thức, prune có thể một ngày sau, cùng một độ trễ. Vòng top-up funding (`internal/history`) chạy ticker riêng và **không** được đếm |
+| `late_ticks` | int | `0` | Số tick của các vòng lặp định kỳ trong `cmd/scanner` nổ **trễ hơn 1 phút** so với lịch hẹn, cộng dồn từ lúc khởi động. **Mỗi job đếm một**: **sáu** job dùng `tickLoop` (lấy mẫu giá, ảnh chụp instrument, prune, độ sâu, tín hiệu, **top-up funding**), nên một giấc ngủ 5 giờ là ≥ 6 tick trễ, mỗi job báo ở lần nổ KẾ TIẾP của nó — sampler trong 30 s sau khi thức, prune có thể một ngày sau, cùng một độ trễ. Top-up funding chạy ticker riêng của `internal/history` cho tới 2026-09-12 và **không** được đếm; nay `history.Collector.Run` đã bỏ, `cmd/scanner` giữ lịch cho nó, nên **mọi job chu kỳ CỐ ĐỊNH của `cmd/scanner` đều chạy trên một bộ lập lịch và đều được đếm**. Vòng làm mới instrument registry (`registry.Run`) **không** đếm, và có lý do chứ không phải bỏ sót: chu kỳ của nó KHÔNG cố định — thất bại thì lùi 2× tới trần rồi reset khi thành công — nên "trễ so với lịch hẹn" ở đó không có nghĩa giống sáu job kia. Thêm một job chu kỳ cố định thì đặt nó lên `tickLoop` |
 | `last_late_job` | string | `""` | Tên job của tick trễ mới nhất |
 | `last_late_at_ms` | int64 | `0` | Lúc tick đó THỰC SỰ chạy (đồng hồ tường); lúc nó được hẹn = `last_late_at_ms − last_late_by_sec × 1000` |
 | `last_late_by_sec` | int64 | `0` | Trễ bao lâu, giây, đo trên **đồng hồ tường** từ lúc hẹn tới lúc nhận — đồng hồ đơn điệu của Go đứng yên khi máy ngủ, nên một cú nhảy giờ hệ thống sau khi thức cũng đếm là trễ (cùng một khoảng trống, gọi tên khác) |
 
 Không lưu qua restart: dòng log `tick trễ …` là bản ghi bền, trường này là số
-đếm của tiến trình đang chạy. `static/` chưa hiển thị nó; FE cũ bỏ qua.
+đếm của tiến trình đang chạy. FE cũ bỏ qua.
+
+**`static/` hiển thị từ 2026-09-12**, dưới danh sách Sources (`#tickStatusNote`),
+và chỉ khi `late_ticks > 0`. Trường vắng mặt và số 0 thật được vẽ **giống hệt
+nhau — không vẽ gì cả**: một máy chủ cũ không có cách nào biết nó có bỏ lỡ tick
+hay không, nên một huy hiệu "0 tick trễ" ở đó là lời trấn an sai. Nhãn tiếng
+Việt, nói thẳng cái mà khoảng trễ có nghĩa: trong khoảng đó không có gì được lấy
+mẫu, đánh giá hay ghi nhật ký.
 
 ---
 

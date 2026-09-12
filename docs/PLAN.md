@@ -2926,8 +2926,9 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > **Nợ mới (ghi 2026-09-10) — TRẢ 2026-09-12, chỉ để sẵn cho lần chạy 3
 > (lần 2 chạy binary `59d3707`, không có hai thay đổi này):** (1) đường sống
 > không ghi gì khi máy ngủ và không báo khoảng trống khi thức dậy — giờ
-> `tickLoop` của `cmd/scanner` (5 job: lấy mẫu giá, ảnh chụp instrument,
-> prune, độ sâu, tín hiệu) đo độ trễ mỗi tick trên **đồng hồ tường** từ lúc
+> `tickLoop` của `cmd/scanner` (**6 job** từ 2026-09-12: lấy mẫu giá, ảnh
+> chụp instrument, prune, độ sâu, tín hiệu, top-up funding) đo độ trễ mỗi
+> tick trên **đồng hồ tường** từ lúc
 > hẹn tới lúc NHẬN (không phải giá trị timer.C — từ Go 1.23 nó bị lùi về mốc
 > hẹn; không phải `t.Sub(u)` — nó dùng đồng hồ đơn điệu, đúng cái đứng yên
 > khi máy ngủ; review đối kháng 2026-09-12 bắt cả hai lỗi này ở bản đầu và
@@ -2937,11 +2938,45 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > `prices.tick_status` **cạnh** `source_status` (mỗi job đếm một; ghi chú
 > vì sao không nằm trong `source_status` ở [WS-CONTRACT §4.3](WS-CONTRACT.md));
 > `fn` nhận mốc NHẬN nên `sampled_at_ms`/`evaluated_at_ms` sau một cú treo
-> được đóng dấu sau khi dữ liệu đã đọc được, không phải trước; vòng top-up
-> funding (`internal/history`, ticker riêng) chưa đếm — ghi ở WS-CONTRACT.
+> được đóng dấu sau khi dữ liệu đã đọc được, không phải trước.
 > Test: đồng hồ tiêm được nhảy 5 giờ giữa lần hẹn và lần nổ → đúng 1 tick
 > trễ 5h−5ms với tên job, `fn` thấy mốc sau giấc ngủ; 100 lượt `-race`
-> sạch. (2) `settledLookback` 30 ngày cố định → `settledLookbackFor` =
+> sạch.
+>
+> **Hai phần đuôi trả nốt 2026-09-12** (cũng chỉ vào binary lần chạy kế):
+> vòng **top-up funding** chạy ticker riêng của `internal/history` nên là
+> vòng lặp định kỳ DUY NHẤT mà bộ đếm không thấy — đúng cái vòng có nhiệm
+> vụ đi lấy những mốc settle đã xảy ra trong lúc máy ngủ. `Collector.Run`
+> đã bỏ, `cmd/scanner` giữ lịch cho nó qua chính `tickLoop`, nên **mọi job
+> chu kỳ CỐ ĐỊNH của `cmd/scanner` chạy trên một bộ lập lịch và đều được
+> đếm** — sáu job. `instruments.Registry.Run` vẫn giữ vòng riêng, có chủ ý:
+> chu kỳ của nó thay đổi (lùi 2× khi refresh hỏng) nên "trễ so với lịch hẹn"
+> ở đó không cùng nghĩa; ghi ở [WS-CONTRACT §4.3](WS-CONTRACT.md). Một
+> ngữ nghĩa CÓ đổi: `Collector.Run` lên dây ticker TRƯỚC lần thu đầu nên
+> các lần thu rơi vào lưới cố định, còn `tickLoop` tính mốc kế tiếp SAU khi
+> `fn` xong nên chu kỳ đo từ lúc thu xong và lưới trôi dần theo thời gian
+> mỗi lượt thu (bảy sàn đi tuần tự dưới rate limit riêng). Không mất dữ
+> liệu chứ không chỉ là chấp nhận được: `TopUp` bắt đầu mỗi chuỗi từ mốc
+> settle MỚI NHẤT ĐÃ LƯU trừ `TopUpOverlap` = 26 giờ, nên trôi bao nhiêu
+> dưới một ngày vẫn đọc lại đủ. (Test: cùng cú nhảy 5 giờ, tick trễ mang
+> đúng tên `storage: funding top-up`; và ba cách "không có việc" — danh
+> sách job rỗng, **danh sách job mà collector không phục vụ được**, chu kỳ
+> 0 — đều trả về ngay thay vì lên lịch một timer không có việc, vì hàm
+> đọc danh sách ĐÃ LỌC của chính collector.) Và
+> `static/` **hiển thị** `tick_status` dưới danh sách Sources khi
+> `late_ticks > 0`; trường vắng mặt và số 0 thật vẽ giống hệt nhau — không
+> vẽ gì — vì một máy chủ không đếm được tick trễ không được phép trông như
+> đang báo "không có tick nào trễ". Nhãn nêu thẳng KHOẢNG chứ không chỉ mốc
+> nổ ("không ghi gì từ … đến …"), vì mốc nổ bắt người đọc tự trừ ra đúng cái
+> thứ mà nhãn tồn tại để nói. Đo bằng cách gọi thẳng `renderTickStatus` với
+> DOM giả, sáu ca: vắng mặt / 0 / `null` / số âm → ẩn; 1 tick → "1 tick trễ
+> … trễ 4g 59p — không ghi gì từ 02:26:45 đến 07:26:40"; chỉ có số đếm → bỏ
+> mệnh đề "gần nhất"; tên job thù địch `<img src=x onerror=…>` ra chuỗi trơ
+> `&lt;img …&gt;` (mọi giá trị đi qua `esc()` như khối cost-basis, dù hôm nay
+> tất cả đều là hằng số Go chứ không phải văn bản của sàn); và khi đã ẩn sẵn
+> thì hàm trả về ngay, không ghi lại DOM — giá 5 lần/giây suốt ngày. Repo
+> không có bộ chạy test JS và không nên thêm (quy tắc 11), nên đây là **số
+> đo**, không phải test được commit. (2) `settledLookback` 30 ngày cố định → `settledLookbackFor` =
 > max(30, `trailing_mean_days` + 7) ngày (7 ngày trượt thay cho 1 để phủ cả
 > lỗ hổng ở mép chân trời — sàn mất kết nối, trang 429 mất — mà replay không
 > bao giờ vấp vì nạp 200 ngày trước cửa sổ); `config.Strategy` từ chối

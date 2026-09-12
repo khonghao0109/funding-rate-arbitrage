@@ -122,6 +122,11 @@ func newCollector(st *store.Store, jobs []Job, fetchers map[string]exchanges.Fun
 
 // Jobs is the list actually collectable, after the connectors without a history
 // fetcher were dropped.
+//
+// A caller scheduling this work reads it to tell "nothing to do" from
+// "something to do" the same way the collector does: counting the jobs handed
+// to New instead would arm a timer for a config that names only venues nobody
+// has written a history fetcher for.
 func (c *Collector) Jobs() []Job { return c.jobs }
 
 // Collect fetches a fixed window for every job and stores what came back.
@@ -202,34 +207,6 @@ func (c *Collector) collectOne(ctx context.Context, job Job, symbol exchanges.Sy
 	}
 	result.Inserted = inserted
 	return result
-}
-
-// Run tops up on a schedule until ctx ends. It is what keeps the corpus current
-// inside the scanner process; a failure is logged per series and retried at the
-// next tick, because a venue being down is not a reason to stop collecting from
-// the other six.
-func (c *Collector) Run(ctx context.Context, every time.Duration) {
-	if len(c.jobs) == 0 || every <= 0 {
-		return
-	}
-	ticker := time.NewTicker(every)
-	defer ticker.Stop()
-
-	for {
-		results := c.TopUp(ctx)
-		// A cancelled context makes TopUp return nothing, and logging that
-		// would put "0 series, 0 rows" in the log on every shutdown — a line
-		// that reads like a failed collection.
-		if ctx.Err() != nil {
-			return
-		}
-		LogResults("funding history top-up", results)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 // LogResults prints one line per series that did something, and one per series

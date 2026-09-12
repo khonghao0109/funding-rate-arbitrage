@@ -740,6 +740,23 @@
             color: #ffa500;
         }
 
+        /* A late tick is a hole in the record, not a venue problem, so it is
+           rendered beside the source list rather than inside it — the same
+           place the wire puts tick_status: next to source_status, not in it. */
+        .tick-status-note {
+            font-size: 9px;
+            color: #999;
+            line-height: 1.5;
+            margin-top: 8px;
+            padding: 6px;
+            border-left: 2px solid #ff4444;
+            background: rgba(255, 68, 68, 0.06);
+        }
+
+        .tick-status-note strong {
+            color: #ff4444;
+        }
+
         .source-status-dot {
             width: 6px;
             height: 6px;
@@ -981,6 +998,7 @@
                     <div class="source-list" id="sourceList">
                         <div class="loading">Loading sources</div>
                     </div>
+                    <div id="tickStatusNote" class="tick-status-note" hidden></div>
                 </div>
             </div>
 

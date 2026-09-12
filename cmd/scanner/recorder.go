@@ -63,8 +63,8 @@ func startStore(ctx context.Context, cfg config.Config, s *scanner.Scanner,
 		snapshotInstruments(ctx, db, registry, time.Duration(cfg.Storage.InstrumentSnapshotEveryHours)*time.Hour)
 	})
 	start(func() {
-		history.New(db, fundingHistoryJobs(cfg), venues.FundingHistoryFetchers()).
-			Run(ctx, time.Duration(cfg.Storage.FundingTopUpEveryMin)*time.Minute)
+		topUpFundingHistory(ctx, history.New(db, fundingHistoryJobs(cfg), venues.FundingHistoryFetchers()),
+			time.Duration(cfg.Storage.FundingTopUpEveryMin)*time.Minute)
 	})
 	start(func() {
 		prune(ctx, db, time.Duration(cfg.Storage.PruneEveryHours)*time.Hour, store.Retention{
@@ -75,6 +75,69 @@ func startStore(ctx context.Context, cfg config.Config, s *scanner.Scanner,
 		})
 	})
 	return db
+}
+
+// fundingTopUpJob is the SCHEDULER's name for this loop — what a late tick is
+// reported under, on the wire and in the log. Named once so the test asserts
+// the same string the operator reads.
+//
+// It is deliberately not the same string as the collection report's prefix
+// below ("funding history top-up"): that one has been in the log since step
+// 2.6 and operators grep it, while this one follows the "storage: …"
+// convention the other five scheduled jobs use. Two labels, two different
+// things — do not "fix" one into the other.
+const fundingTopUpJob = "storage: funding top-up"
+
+// topUpFundingHistory collects settled funding on the SAME scheduler every
+// other periodic job here uses.
+//
+// It used to run history.Collector's own ticker, which meant one loop in the
+// process was not counted by tickLoop and so never appeared in
+// prices.tick_status — a machine that slept through four hours of settlements
+// would show every other job's late tick and say nothing about the one job
+// whose whole purpose is to fetch what happened while it was asleep.
+//
+// Since 2026-09-12 all SIX of this file's and its siblings' fixed-period jobs
+// run on tickLoop and are counted: the price sampler, the instrument snapshot,
+// the prune, the depth sweep, the strategy evaluation and this. It is NOT the
+// only loop in the process — instruments.Registry.Run keeps its own, on
+// purpose, because its period is variable (it backs off 2x while a refresh
+// keeps failing), so "late against its schedule" would not mean there what it
+// means here. That exclusion is written down in WS-CONTRACT §4.3; a job added
+// with a FIXED period belongs on tickLoop.
+//
+// The first delay is zero on purpose: the collector's own loop collected once
+// at start-up before waiting, and the corpus wants that — a process restarted
+// more often than its period would otherwise never top up at all.
+//
+// One semantic did change with the scheduler. Collector.Run armed its ticker
+// BEFORE the first collection, so top-ups landed on a fixed grid; tickLoop
+// takes the next due instant AFTER fn returns, so the period is now measured
+// from the end of each collection and the grid drifts forward by however long
+// a collection takes (seven venues walked serially under their own rate
+// limits). That is lossless rather than merely tolerable: TopUp starts each
+// series at its newest STORED settlement minus history.TopUpOverlap, 26 hours,
+// so drift of any size short of a day still re-reads every settlement it
+// passed. What it buys is that the loop's lateness is measurable at all.
+func topUpFundingHistory(ctx context.Context, collector *history.Collector, every time.Duration) {
+	// The collector's OWN job list, not the one this process built: it drops
+	// every job whose connector has no history fetcher, and arming a timer for
+	// a config that names only such venues would wake the process forever with
+	// nothing to do. Collector.Run guarded on its filtered list for the same
+	// reason, and this is the one place that behaviour could have been lost.
+	if collector == nil || len(collector.Jobs()) == 0 || every <= 0 {
+		return
+	}
+	tickLoop(ctx, fundingTopUpJob, 0, every, func(time.Time) {
+		results := collector.TopUp(ctx)
+		// A cancelled context makes TopUp return nothing, and logging that
+		// would put "0 series, 0 rows" in the log on every shutdown - a line
+		// that reads like a failed collection.
+		if ctx.Err() != nil {
+			return
+		}
+		history.LogResults("funding history top-up", results)
+	})
 }
 
 // fundingHistoryJobs turns the configured sources into collection jobs. Sources

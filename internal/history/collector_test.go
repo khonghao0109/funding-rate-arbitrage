@@ -227,24 +227,3 @@ func TestTopUpKeepsGoingWhenOneVenueFails(t *testing.T) {
 		t.Errorf("the healthy venue collected nothing: %+v", byPair["binance_futures"])
 	}
 }
-
-func TestRunStopsOnContextCancel(t *testing.T) {
-	db := openTemp(t)
-	var windows []exchanges.FundingWindow
-	collector := newCollector(db, []Job{btcJob("binance_futures", "binance_futures")},
-		map[string]exchanges.FundingHistoryFetchFunc{"binance_futures": recordingFetcher(&windows)})
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		collector.Run(ctx, time.Hour)
-	}()
-	cancel()
-
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after its context was cancelled")
-	}
-}
