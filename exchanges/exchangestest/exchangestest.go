@@ -176,14 +176,34 @@ func ReplayAt() time.Time { return time.Date(2026, 9, 3, 13, 0, 0, 0, time.UTC) 
 // Replay pushes every frame of the calling package's golden file through the
 // venue's production Handle, in the order the venue sent them. Order matters
 // for Kraken, whose top of book is the result of every frame that came before.
+//
+// It also holds the connector to the Handle contract as it goes — see
+// CheckHandleContract. Doing it here rather than in each venue's golden test is
+// what makes it universal: a venue package cannot forget an assertion it never
+// had to write.
 func Replay(t *testing.T, r *Recorder, source string, cfg exchanges.StreamConfig) time.Time {
 	t.Helper()
 	if cfg.Handle == nil {
 		t.Fatalf("no Handle in the stream config for %s", source)
 	}
 	recvAt := ReplayAt()
-	for _, frame := range ReadFrames(t, source) {
-		cfg.Handle(frame, recvAt)
+	frames := ReadFrames(t, source)
+	verdicts := make([]HandleVerdict, 0, len(frames))
+	for i, frame := range frames {
+		// Counted, never drained: the caller reads the same channels
+		// afterwards, and draining here would empty them.
+		before := r.pending()
+		saidData := cfg.Handle(frame, recvAt)
+		verdicts = append(verdicts, HandleVerdict{Index: i, SaidData: saidData, Produced: r.pending() - before})
 	}
+	CheckHandleContract(t, source, verdicts)
 	return recvAt
+}
+
+// pending is how many messages are waiting on the recorder's channels. len on a
+// buffered channel is exactly the count queued, and reading it takes nothing
+// off — which is what lets Replay measure one frame at a time without
+// consuming what the contract checks read next.
+func (r *Recorder) pending() int {
+	return len(r.priceChan) + len(r.orderbookChan) + len(r.tradeChan) + len(r.fundingChan)
 }

@@ -816,6 +816,25 @@ Sửa:
 > | `bybit_spot` | **0 message** | **9.592 message**, cái đầu tiên sau 0,60 s |
 > | mọi nguồn khác | 13.654 – 1.026.954 | 4.439 – 252.755 |
 >
+> **Test chung cho cả 9 nguồn WebSocket, thêm 2026-09-13.** Hợp đồng
+> `StreamConfig.Handle` ("trả true KHI VÀ CHỈ KHI frame này sinh ra message
+> trên feed") trước đó chỉ được bảo đảm gián tiếp qua kênh đầu ra — không có
+> assert nào nói thẳng. Nay `exchangestest.Replay` đếm số message thật sự ra
+> feed quanh mỗi frame rồi gọi `CheckHandleContract`, nên **mọi golden test
+> của 9 nguồn tự kiểm mà không phải viết gì**. Khẳng định hai chiều chứ không
+> phải danh sách hình dạng frame điều khiển của từng sàn: không cần biết pong
+> của sàn nào trông thế nào, không trôi khi sàn đổi envelope, và bao luôn frame
+> acknowledgement/keepalive miễn phí — chúng không đẩy gì ra feed nên bắt buộc
+> trả false. Số đo trên recording thật (frame mang dữ liệu / tổng):
+> binance_futures 16/16 · binance_spot 32/32 · bybit_futures 34/52 ·
+> bybit_spot 32/34 · gate_futures 32/34 · hyperliquid_futures 30/53 ·
+> kraken_futures 98/103 · okx_futures 34/41 · paradex_futures 28/39.
+> Chứng minh bằng đột biến hai chiều: cho đường `books5` của OKX vẫn đẩy
+> message nhưng báo "không có dữ liệu" → đỏ, nêu đúng số thứ tự frame
+> ("okx_futures frame 14: Handle reported NO DATA but published 1 message");
+> cho bybit báo "có dữ liệu" trên frame nó không đẩy gì → đỏ ở frame 13 và 51.
+> Bỏ đột biến, cả cây xanh.
+>
 > Cộng với test: server WS giả "mở socket, trả pong, không bao giờ gửi dữ liệu"
 > kết thúc phiên bằng `ErrDataSilence` và KHÔNG reset backoff; một feed vẫn đang
 > đẩy thì không bị đụng tới; đồng hồ dữ liệu đo từ **message cuối** chứ không từ

@@ -28,6 +28,80 @@ type BookExpectation struct {
 	Trades bool
 }
 
+// HandleVerdict is what one frame of a recording did: what
+// exchanges.StreamConfig.Handle SAID about it, and how many messages it
+// actually put on the feeds.
+type HandleVerdict struct {
+	// Index is the frame's position in the recording, so a failure names the
+	// line of the .jsonl file to look at.
+	Index int
+	// SaidData is Handle's own answer — "this frame produced a message".
+	SaidData bool
+	// Produced is how many messages really reached the feed channels while
+	// this frame was being handled.
+	Produced int
+}
+
+// CheckHandleContract holds every venue's connector to the contract
+// StreamConfig.Handle documents: it returns true if and only if the frame
+// produced at least one message on a feed.
+//
+// Until 2026-09-12 Handle returned nothing and the lifecycle counted FRAMES,
+// which is why bybit_spot could answer keepalives for nineteen hours with a
+// refused subscription behind it and look healthy the whole time (PLAN step
+// 1.6). The fix made that verdict load-bearing: it now decides whether a
+// session's data clock is refreshed and whether the backoff resets. A
+// connector that got it wrong in either direction would be expensive and
+// silent — say false on a real book and a live feed is torn down and re-dialled
+// every data_silence_sec; say true on an acknowledgement and the whole
+// mechanism goes back to counting frames.
+//
+// Asserting the biconditional rather than a list of per-venue control-frame
+// shapes is deliberate. It needs no knowledge of what any venue's pong looks
+// like, it cannot drift as a venue changes its envelope, and it covers the
+// acknowledgement and keepalive frames for free: they put nothing on a feed, so
+// they must answer false.
+//
+// It is called from Replay, so every venue whose golden test replays a real
+// recording is held to it without having to remember.
+func CheckHandleContract(t *testing.T, source string, verdicts []HandleVerdict) {
+	t.Helper()
+
+	if len(verdicts) == 0 {
+		t.Fatalf("%s: no frames replayed, so the Handle contract was not exercised", source)
+	}
+
+	saidData, quiet := 0, 0
+	for _, v := range verdicts {
+		switch {
+		case v.SaidData && v.Produced == 0:
+			t.Errorf("%s frame %d: Handle reported DATA and published nothing. "+
+				"The lifecycle would keep refreshing this session's data clock on frames that carry no data, "+
+				"which is the bybit_spot failure exactly (PLAN 1.6)", source, v.Index)
+		case !v.SaidData && v.Produced > 0:
+			t.Errorf("%s frame %d: Handle reported NO DATA but published %d message(s). "+
+				"A live feed made of frames like this would be torn down and re-dialled every data_silence_sec",
+				source, v.Index, v.Produced)
+		}
+		if v.SaidData {
+			saidData++
+		} else {
+			quiet++
+		}
+	}
+
+	// A recording in which nothing ever reports data would satisfy the
+	// biconditional trivially — and would also be a connector that publishes
+	// nothing, which is the state this whole mechanism exists to detect.
+	if saidData == 0 {
+		t.Errorf("%s: not one of %d recorded frames reported data. "+
+			"Either the connector stopped publishing or the recording holds no market data; "+
+			"a live session like this is torn down every data_silence_sec", source, len(verdicts))
+	}
+	t.Logf("%s: %d of %d recorded frames carried data (%d quiet: acknowledgements, keepalive replies, other channels)",
+		source, saidData, len(verdicts), quiet)
+}
+
 // CheckBookContract runs the one set of data-contract assertions every venue's
 // recording must pass: the symbol on the wire is one we asked for, the source
 // name is configuration rather than a literal, the receive stamp survives, a

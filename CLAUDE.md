@@ -1160,6 +1160,15 @@ phase 1.
   pagers have loops that only run against live venues. Their parsers and the
   cadence arithmetic are golden-tested against recorded payloads; the loops are
   not, and pretending otherwise with a mock HTTP server would test the mock.
+  Since 2026-09-13 every one of those replays also holds the connector to the
+  `StreamConfig.Handle` contract — true if and only if the frame produced a
+  message on a feed — because `exchangestest.Replay` counts what really
+  reached the channels around each frame and calls `CheckHandleContract`. It
+  asserts the biconditional rather than a list of each venue's control-frame
+  shapes, so it needs no knowledge of what a pong looks like and covers
+  acknowledgements for free. Measured on the real recordings, data frames of
+  total: binance 16/16 and 32/32, bybit 34/52 and 32/34, gate 32/34,
+  hyperliquid 30/53, kraken 98/103, okx 34/41, paradex 28/39.
   Each `exchanges/<venue>/testdata/` holds that venue's real recordings;
   re-record with `CAPTURE_TESTDATA=1 go test -run TestCapture ./exchanges/...`. **Pyth has
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic
