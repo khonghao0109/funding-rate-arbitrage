@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -27,9 +28,23 @@ type Config struct {
 	// https://developers.binance.com/docs/binance-spot-api-docs/rest-api/endpoint-security-type
 	RecvWindowMs int64
 
+	// TimePath is the venue's server-time endpoint, used to measure the clock
+	// skew every signed request is corrected by — BinanceFuturesTimePath or
+	// BinanceSpotTimePath. Empty means no signed call can be made, because a
+	// timestamp nobody checked is how -1021 arrives.
+	TimePath string
+
+	// ClockSyncEvery is how often the skew is re-measured; 0 takes
+	// DefaultClockSyncEvery.
+	ClockSyncEvery time.Duration
+
 	// HTTPClient is injectable so tests run against httptest and never open a
 	// socket to a venue. Nil gets a client with a bounded timeout.
 	HTTPClient *http.Client
+
+	// Now is the local clock, injectable so the skew tests can move it. Nil
+	// takes time.Now.
+	Now func() time.Time
 
 	// UserAgentVI identifies this tool in the venue's logs. Optional.
 	UserAgentVI string
@@ -52,6 +67,15 @@ type Client struct {
 	recvWindowMs int64
 	http         *http.Client
 	userAgent    string
+	timePath     string
+	now          func() time.Time
+
+	// The clock measurement, guarded because one client is shared by every
+	// caller and the skew is read on every signed request.
+	clockMu         sync.Mutex
+	clockSkewMs     int64
+	clockMeasuredAt time.Time
+	clockSyncEvery  time.Duration
 }
 
 // NewClient validates the configuration and refuses anything it cannot make
@@ -74,12 +98,23 @@ func NewClient(cfg Config) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 20 * time.Second}
 	}
+	now := cfg.Now
+	if now == nil {
+		now = time.Now
+	}
+	syncEvery := cfg.ClockSyncEvery
+	if syncEvery <= 0 {
+		syncEvery = DefaultClockSyncEvery
+	}
 	return &Client{
-		baseURL:      strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
-		creds:        cfg.Credentials,
-		recvWindowMs: recvWindowMs,
-		http:         httpClient,
-		userAgent:    cfg.UserAgentVI,
+		baseURL:        strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
+		creds:          cfg.Credentials,
+		recvWindowMs:   recvWindowMs,
+		http:           httpClient,
+		userAgent:      cfg.UserAgentVI,
+		timePath:       cfg.TimePath,
+		now:            now,
+		clockSyncEvery: syncEvery,
 	}, nil
 }
 
@@ -123,6 +158,12 @@ func (c *Client) GetPublic(ctx context.Context, path string, params []Param, int
 // caller cannot forget them and cannot set them to something the client did not
 // measure.
 func (c *Client) GetSigned(ctx context.Context, path string, params []Param, into any) error {
+	// The clock first, always: a signed request built on an unmeasured or
+	// stale skew is one the venue answers with -1021, and that answer names
+	// our clock nowhere.
+	if err := c.ensureClock(ctx); err != nil {
+		return err
+	}
 	signed := make([]Param, 0, len(params)+2)
 	signed = append(signed, params...)
 	signed = append(signed,
@@ -131,10 +172,6 @@ func (c *Client) GetSigned(ctx context.Context, path string, params []Param, int
 	)
 	return c.do(ctx, path, SignedQuery(c.creds.APISecret, signed), true, into)
 }
-
-// timestampMs is the value sent as `timestamp`. Step 4.2's clock correction
-// replaces the body of this method; every signed call already goes through it.
-func (c *Client) timestampMs() int64 { return time.Now().UnixMilli() }
 
 func (c *Client) do(ctx context.Context, path, query string, signed bool, into any) error {
 	full := c.baseURL + path

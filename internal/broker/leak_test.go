@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -36,9 +37,24 @@ type pinnedTransport struct {
 	to      *url.URL
 	failErr error
 	lastURL string
+
+	// serverTimeMs, when set, answers the server-time endpoint from here
+	// instead of from `to`. Every signed call measures the clock first, and a
+	// test about the BALANCE path must not be a test about the clock path.
+	serverTimeMs int64
+
+	// beforeRoundTrip lets a test move its own clock across the call, which is
+	// how the round-trip midpoint is measured.
+	beforeRoundTrip func()
 }
 
 func (t *pinnedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if t.beforeRoundTrip != nil {
+		t.beforeRoundTrip()
+	}
+	if t.serverTimeMs > 0 && r.URL.Path == BinanceFuturesTimePath {
+		return jsonResponse(r, fmt.Sprintf(`{"serverTime":%d}`, t.serverTimeMs)), nil
+	}
 	t.lastURL = r.URL.String()
 	if t.failErr != nil {
 		// http.Client wraps this in *url.Error carrying the full URL — exactly
@@ -53,12 +69,23 @@ func (t *pinnedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(clone)
 }
 
+func jsonResponse(r *http.Request, body string) *http.Response {
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Status:     "200 OK",
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Request:    r,
+	}
+}
+
 func leakTestClient(t *testing.T, tr *pinnedTransport) *Client {
 	t.Helper()
 	c, err := NewClient(Config{
 		BaseURL:      BinanceFuturesTestnetBaseURL,
 		Credentials:  Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
 		RecvWindowMs: 5000,
+		TimePath:     BinanceFuturesTimePath,
 		HTTPClient:   &http.Client{Transport: tr, Timeout: 5 * time.Second},
 	})
 	if err != nil {
@@ -98,7 +125,11 @@ func TestClient_NeitherTheSecretNorTheSignatureReachesALogOrAnError(t *testing.T
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tr := &pinnedTransport{failErr: tc.failErr}
+			// The clock endpoint always answers, agreeing with this machine:
+			// in production the skew would have been measured long before the
+			// call that fails, and these cases are about the failure, not the
+			// clock.
+			tr := &pinnedTransport{failErr: tc.failErr, serverTimeMs: time.Now().UnixMilli()}
 			if tc.handler != nil {
 				server := httptest.NewServer(tc.handler)
 				defer server.Close()
@@ -170,7 +201,7 @@ func TestClient_SignsTheRequestAndSendsTheKeyInTheDocumentedHeader(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	client := leakTestClient(t, &pinnedTransport{to: u})
+	client := leakTestClient(t, &pinnedTransport{to: u, serverTimeMs: time.Now().UnixMilli()})
 
 	var into []map[string]any
 	if err := client.GetSigned(context.Background(), "/fapi/v3/balance", nil, &into); err != nil {
