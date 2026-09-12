@@ -7,6 +7,17 @@ crypto-futures-arbitrage-scanner
 *.test
 *.out
 
+# One per command in cmd/: `go build ./cmd/scanner/` drops a 17 MB binary
+# named after the package IN THE REPO ROOT, and the line above only covers the
+# module's old name. Anchored with a leading slash so a future package or
+# directory of the same name deeper in the tree is not swallowed too.
+/scanner
+/backfill
+/backtest
+/pairscreen
+/paperledger
+/fundingcheck
+
 # macOS
 .DS_Store
 
