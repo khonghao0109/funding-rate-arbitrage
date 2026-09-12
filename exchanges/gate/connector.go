@@ -6,8 +6,6 @@ import (
 	"log"
 	"strconv"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type GateFuturesTrade struct {
@@ -95,7 +93,7 @@ func gateStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds) ex
 	return exchanges.StreamConfig{
 		Source: source,
 		URL:    "wss://fx-ws.gateio.ws/v4/ws/usdt",
-		Subscribe: func(conn *websocket.Conn) error {
+		Subscribe: func(conn exchanges.Subscriber) error {
 			// config.yaml supplies the venue identifiers (symbol_format
 			// "{base}_{quote}"), so this connector no longer keeps its own table.
 			//
@@ -116,46 +114,51 @@ func gateStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds) ex
 			}
 			return nil
 		},
-		Handle: func(raw []byte, recvAt time.Time) {
-			handleGateFrame(source, symbols, f, raw, recvAt)
+		Handle: func(raw []byte, recvAt time.Time) bool {
+			return handleGateFrame(source, symbols, f, raw, recvAt)
 		},
 	}
 }
 
-func handleGateFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) {
+// handleGateFrame reports whether the frame became a message on a feed — the
+// contract exchanges.StreamConfig.Handle documents. False is the answer for
+// the keepalive reply and for a subscribe acknowledgement or refusal, which
+// is what lets the lifecycle tell a live subscription from a socket that is
+// merely open (docs/PLAN.md step 1.6).
+func handleGateFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
 	// First, check for errors and subscription acknowledgements.
 	var wsMsg GateWebSocketMessage
 	if exchanges.Decode(raw, &wsMsg) {
 		if wsMsg.Error != nil {
 			log.Printf("%s: WebSocket error %d - %s", source, wsMsg.Error.Code, wsMsg.Error.Message)
-			return
+			return false
 		}
 		if wsMsg.Event == "subscribe" {
-			return
+			return false
 		}
 	}
 
-	if handleGateFunding(source, symbols, f, raw, recvAt) {
-		return
+	if handled, produced := handleGateFunding(source, symbols, f, raw, recvAt); handled {
+		return produced
 	}
 
 	var bookTickerMsg GateBookTickerMessage
 	if !exchanges.Decode(raw, &bookTickerMsg) ||
 		bookTickerMsg.Channel != "futures.book_ticker" ||
 		bookTickerMsg.Event != "update" {
-		return // any other message type is ignored
+		return false // any other message type is ignored
 	}
 
 	bestBid, err1 := strconv.ParseFloat(bookTickerMsg.Result.BestBid, 64)
 	bestAsk, err2 := strconv.ParseFloat(bookTickerMsg.Result.BestAsk, 64)
 	if err1 != nil || err2 != nil {
 		log.Printf("%s: error parsing prices - bid: %v, ask: %v", source, err1, err2)
-		return
+		return false
 	}
 
 	standardSymbol := exchanges.StandardOf(symbols, bookTickerMsg.Result.Symbol)
 	if standardSymbol == "" {
-		return // a contract this connector never subscribed to
+		return false // a contract this connector never subscribed to
 	}
 
 	// A missing venue timestamp stays 0. Substituting the local clock would
@@ -172,7 +175,7 @@ func handleGateFrame(source string, symbols []exchanges.Symbol, f exchanges.Feed
 	// Until step 2.7b it was dropped rather than published in a ...Coin field.
 	// It now travels as contracts and the scanner multiplies by
 	// quanto_multiplier from the instrument registry.
-	f.SendOrderbook(exchanges.OrderbookData{
+	return f.SendOrderbook(exchanges.OrderbookData{
 		Symbol:              standardSymbol,
 		Source:              source,
 		BestBid:             bestBid,

@@ -106,28 +106,36 @@ func (t *bybitTicker) merge(fields bybitTickerFields) bool {
 }
 
 // handleBybitTicker merges one ticker frame and publishes the funding reading
-// the merged state describes. It reports whether the frame was a ticker at all.
+// the merged state describes. It reports two separate things: whether the frame
+// was a ticker at all — which tells the caller to stop trying other shapes —
+// and whether it PRODUCED a funding reading on the feed.
+//
+// The two were one bool until 2026-09-12, which was fine for routing and wrong
+// for health: this channel pushes every ~100ms and publishes only when a
+// funding field really changes, so "was a ticker" is true thousands of times an
+// hour on a subscription that has delivered nothing. The stream lifecycle needs
+// the second answer to tell a live feed from a dead one (StreamConfig.Handle).
 //
 // tickers is per-connection state, cleared on every (re)subscribe: Bybit
 // resends a snapshot then, and state assembled over a socket that no longer
 // exists could otherwise supply a field the new session never confirmed.
 func handleBybitTicker(source string, symbols []exchanges.Symbol, tickers map[string]*bybitTicker,
-	f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+	f exchanges.Feeds, raw []byte, recvAt time.Time) (handled, produced bool) {
 
 	var message bybitTickerMessage
 	if !exchanges.Decode(raw, &message) || message.Data.Symbol == "" {
-		return false
+		return false, false
 	}
 	if message.Type != "snapshot" && message.Type != "delta" {
-		return false
+		return false, false
 	}
 	if !strings.HasPrefix(message.Topic, "tickers.") {
-		return false
+		return false, false
 	}
 
 	standard := exchanges.StandardOf(symbols, message.Data.Symbol)
 	if standard == "" {
-		return true // a market this connector never subscribed to
+		return true, false // a market this connector never subscribed to
 	}
 
 	ticker := tickers[message.Data.Symbol]
@@ -140,7 +148,7 @@ func handleBybitTicker(source string, symbols []exchanges.Symbol, tickers map[st
 	// The snapshot that carries the funding fields may not have arrived yet
 	// after a (re)subscribe.
 	if !ticker.haveRate || !ticker.haveInterval {
-		return true
+		return true, false
 	}
 	// A delta that changed no FUNDING field says nothing new about funding, and
 	// republishing on it would be actively harmful: this channel pushes every
@@ -151,11 +159,11 @@ func handleBybitTicker(source string, symbols []exchanges.Symbol, tickers map[st
 	// died silently look permanently current, which is the step-1.6 defect
 	// re-created one layer up.
 	if !changed {
-		return true
+		return true, false
 	}
 	rateFrac, err := strconv.ParseFloat(ticker.fundingRate, 64)
 	if err != nil {
-		return true
+		return true, false
 	}
 	// An unparseable settlement stamp stays 0 ("not supplied") rather than
 	// discarding a good rate.
@@ -169,7 +177,7 @@ func handleBybitTicker(source string, symbols []exchanges.Symbol, tickers map[st
 		// "venue changed the format" and "subscription died".
 		log.Printf("%s: fundingIntervalHour %q for %s does not parse as whole hours; funding for this symbol is NOT published",
 			source, ticker.fundingIntervalHour, standard)
-		return true
+		return true, false
 	}
 
 	data, err := normalizeBybitFunding(bybitFundingInput{
@@ -184,7 +192,7 @@ func handleBybitTicker(source string, symbols []exchanges.Symbol, tickers map[st
 		NextFundingAtMs: nextFundingAtMs,
 	})
 	if err != nil {
-		return true
+		return true, false
 	}
 	data.MarkPrice, _ = strconv.ParseFloat(ticker.markPrice, 64)
 	data.IndexPrice, _ = strconv.ParseFloat(ticker.indexPrice, 64)
@@ -200,6 +208,5 @@ func handleBybitTicker(source string, symbols []exchanges.Symbol, tickers map[st
 	}
 	data.IsEstimated = true // the rate for the period now running
 
-	f.SendFunding(data)
-	return true
+	return true, f.SendFunding(data)
 }

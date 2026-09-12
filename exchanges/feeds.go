@@ -33,6 +33,23 @@ type Feeds struct {
 	// 1.5 the scanner could only infer connection state from silence, which
 	// cannot tell a venue that is unreachable from one that is merely quiet.
 	Conn chan<- ConnEvent
+
+	// DataSilenceTimeout is how long ONE session may keep answering — frames,
+	// pongs, subscribe acknowledgements — while delivering nothing this
+	// connector could turn into a message on the channels above, before
+	// RunStream tears it down and dials again (which re-subscribes).
+	//
+	// It is a per-SOURCE operational number, not a venue constant, so the
+	// wiring layer sets it on its own copy of this struct for each source out
+	// of config.yaml's `data_silence_sec` — exactly as `stale_after_sec` is
+	// per source. Zero disables the check, which is what every harness that
+	// builds a Feeds by hand gets.
+	//
+	// This is the field that would have caught bybit_spot on 2026-09-11: the
+	// socket was open and answering pings for 19 hours with a REFUSED
+	// subscription behind it, and every signal the lifecycle had said healthy.
+	// See docs/PLAN.md step 1.6.
+	DataSilenceTimeout time.Duration
 }
 
 // SendPrice, SendOrderbook, SendTrade and SendFunding deliver one message, or

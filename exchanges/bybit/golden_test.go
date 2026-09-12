@@ -8,14 +8,17 @@ import (
 	"futures-arbitrage-scanner/exchanges/exchangestest"
 )
 
-// goldenConfigs builds this venue's PRODUCTION stream configs — the same URL
-// and the same subscription production uses. Capture swaps only Handle; a
-// harness with its own copy of the subscribe messages would drift from the
-// connector and record payloads nobody actually receives.
+// goldenConfigs builds this venue's PRODUCTION stream configs by calling the
+// SAME two constructors ConnectFutures and ConnectSpot call — the same URL, the
+// same subscription, the same args ceiling. It used to call bybitStream with
+// its own copy of those three, which meant a connector that stopped applying
+// the spot ceiling left every test green (adversarial review 2026-09-12).
+// Capture swaps only Handle; a harness with its own copy of the subscribe
+// messages would drift from the connector and record payloads nobody receives.
 func goldenConfigs(f exchanges.Feeds) map[string]exchanges.StreamConfig {
 	return map[string]exchanges.StreamConfig{
-		"bybit_futures": bybitStream("bybit_futures", exchangestest.Symbols("bybit_futures"), f, "wss://stream.bybit.com/v5/public/linear", true),
-		"bybit_spot":    bybitStream("bybit_spot", exchangestest.Symbols("bybit_spot"), f, "wss://stream.bybit.com/v5/public/spot", false),
+		"bybit_futures": futuresStream("bybit_futures", exchangestest.Symbols("bybit_futures"), f),
+		"bybit_spot":    spotStream("bybit_spot", exchangestest.Symbols("bybit_spot"), f),
 	}
 }
 

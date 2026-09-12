@@ -2,6 +2,7 @@ package exchanges
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -187,8 +188,8 @@ func TestRunStream_StampsReceiveTimeAtTheSocketReadNotAtTheQueue(t *testing.T) {
 	go RunStream(feeds, StreamConfig{
 		Source: "test",
 		URL:    url,
-		Handle: func(raw []byte, recvAt time.Time) {
-			feeds.SendOrderbook(OrderbookData{Symbol: "BTCUSDT", RecvAt: recvAt})
+		Handle: func(raw []byte, recvAt time.Time) bool {
+			return feeds.SendOrderbook(OrderbookData{Symbol: "BTCUSDT", RecvAt: recvAt})
 		},
 	})
 
@@ -225,7 +226,7 @@ func TestRunStream_StopsPromptlyWhileBlockedOnASilentServer(t *testing.T) {
 
 	stopped := make(chan struct{})
 	go func() {
-		RunStream(feeds, StreamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) {}})
+		RunStream(feeds, StreamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) bool { return false }})
 		close(stopped)
 	}()
 
@@ -263,7 +264,7 @@ func TestRunStream_ReconnectsWhenTheServerGoesSilent(t *testing.T) {
 	go RunStream(feeds, StreamConfig{
 		Source: "test",
 		URL:    url,
-		Handle: func([]byte, time.Time) {},
+		Handle: func([]byte, time.Time) bool { return false },
 		// No keepalive, so nothing extends the deadline and it fires.
 		PingEvery:   time.Hour,
 		ReadTimeout: 200 * time.Millisecond,
@@ -299,7 +300,7 @@ func TestRunSession_AServerPingKeepsTheConnectionAlive(t *testing.T) {
 	go RunStream(feeds, StreamConfig{
 		Source:      "test",
 		URL:         url,
-		Handle:      func([]byte, time.Time) {},
+		Handle:      func([]byte, time.Time) bool { return false },
 		PingEvery:   time.Hour, // only the SERVER's ping can keep this alive
 		ReadTimeout: 300 * time.Millisecond,
 	})
@@ -328,7 +329,7 @@ func TestRunStream_WaitsBeforeReconnectingAfterTheServerHangsUp(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	go RunStream(feeds, StreamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) {}})
+	go RunStream(feeds, StreamConfig{Source: "test", URL: url, Handle: func([]byte, time.Time) bool { return false }})
 
 	// Two connections means one reconnect happened, and the gap between them is
 	// the backoff.
@@ -362,11 +363,11 @@ func TestRunSession_ASubscribeFailureEndsTheSession(t *testing.T) {
 	go RunStream(feeds, StreamConfig{
 		Source: "test",
 		URL:    url,
-		Subscribe: func(*websocket.Conn) error {
+		Subscribe: func(Subscriber) error {
 			atomic.AddInt32(&attempts, 1)
 			return context.DeadlineExceeded
 		},
-		Handle: func([]byte, time.Time) {},
+		Handle: func([]byte, time.Time) bool { return false },
 	})
 
 	waitForState(t, events, ConnReconnecting, 3*time.Second)
@@ -403,8 +404,8 @@ func TestRunSession_SubscribeRunsOncePerConnection(t *testing.T) {
 	go RunStream(feeds, StreamConfig{
 		Source:    "test",
 		URL:       url,
-		Subscribe: func(*websocket.Conn) error { atomic.AddInt32(&subscribes, 1); return nil },
-		Handle:    func([]byte, time.Time) {},
+		Subscribe: func(Subscriber) error { atomic.AddInt32(&subscribes, 1); return nil },
+		Handle:    func([]byte, time.Time) bool { return false },
 	})
 
 	deadline := time.After(backoffMin + 3*time.Second)
@@ -429,7 +430,7 @@ func TestShouldResetBackoff_ASilentSessionIsNotAHealthyOne(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		framesRead int64
+		dataFrames int64
 		lasted     time.Duration
 		want       bool
 	}{
@@ -437,13 +438,17 @@ func TestShouldResetBackoff_ASilentSessionIsNotAHealthyOne(t *testing.T) {
 		{"killed by the read deadline having said nothing", 0, defaultReadTimeout, false},
 		{"delivered, but dropped immediately", 5, time.Second, false},
 		{"delivered for a long time", 5, HealthySession, true},
+		// The bybit_spot shape: frames all session long, none of them data.
+		// Counting frames rather than data made this the "true" row and reset
+		// the backoff on a socket subscribed to nothing (2026-09-12).
+		{"answered keepalives for hours and delivered no data", 0, 19 * time.Hour, false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldResetBackoff(tc.framesRead, tc.lasted); got != tc.want {
-				t.Errorf("shouldResetBackoff(%d frames, %s) = %v, want %v",
-					tc.framesRead, tc.lasted, got, tc.want)
+			if got := shouldResetBackoff(tc.dataFrames, tc.lasted); got != tc.want {
+				t.Errorf("shouldResetBackoff(%d data frames, %s) = %v, want %v",
+					tc.dataFrames, tc.lasted, got, tc.want)
 			}
 		})
 	}
@@ -459,5 +464,206 @@ func TestStreamDialer_StillHonoursTheProxyEnvironment(t *testing.T) {
 	}
 	if streamDialer.HandshakeTimeout <= 0 {
 		t.Error("streamDialer has no handshake timeout; a venue that never upgrades would hold the connector forever")
+	}
+}
+
+// The failure this whole mechanism exists for, reproduced end to end: a socket
+// that connects, answers every keepalive, and delivers no market data at all.
+//
+// It is not hypothetical. bybit_spot spent 19 hours in exactly this state
+// during step-3.5 run 2 (2026-09-11 → 12) because a 26-arg subscribe exceeded
+// Bybit spot's documented 10-arg ceiling and was refused as a whole; the
+// connector never read the refusal, the pings kept the read deadline fresh, and
+// the scanner recorded 0 price samples against 7,904 for every other source.
+// Before this test the lifecycle had no signal that could tell the difference.
+func TestRunSession_EndsASessionThatAnswersKeepalivesButDeliversNoData(t *testing.T) {
+	var framesSent int32
+	url := wsTestServer(t, func(conn *websocket.Conn) {
+		// The server answers the keepalive the way Bybit, OKX and Hyperliquid
+		// do: with an ordinary DATA frame, not a protocol pong. That detail is
+		// the whole point. A server that merely stayed silent would be caught
+		// by any deadline at all, and an earlier version of this test used one
+		// - so decoupling lastDataAt from Handle's verdict left the suite
+		// green while removing the semantic this change exists to add
+		// (adversarial review 2026-09-12 proved it by mutation). Here frames
+		// keep arriving, Handle keeps saying "not data", and only the data
+		// clock can end it.
+		go func() {
+			ticker := time.NewTicker(50 * time.Millisecond)
+			defer ticker.Stop()
+			for range ticker.C {
+				if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"op":"pong","success":true}`)); err != nil {
+					return
+				}
+				atomic.AddInt32(&framesSent, 1)
+			}
+		}()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+
+	feeds, cancel, _, _ := testFeeds(t)
+	defer cancel()
+	feeds.DataSilenceTimeout = 300 * time.Millisecond
+
+	var handled int32
+	dataFrames, err := runSession(feeds, StreamConfig{
+		Source: "test",
+		URL:    url,
+		Handle: func([]byte, time.Time) bool {
+			atomic.AddInt32(&handled, 1)
+			return false // a keepalive reply is not market data
+		},
+		// The frame clock is kept deliberately alive and enormous: every one of
+		// those frames refreshes it and it would not fire for ten seconds.
+		PingEvery:   50 * time.Millisecond,
+		ReadTimeout: 10 * time.Second,
+	})
+
+	if !errors.Is(err, ErrDataSilence) {
+		t.Fatalf("session ended with %v, want ErrDataSilence — a socket whose only traffic is keepalive replies must not look healthy", err)
+	}
+	if got := atomic.LoadInt32(&handled); got < 2 {
+		t.Fatalf("Handle saw %d frames; the test is not exercising the case it describes unless frames really kept arriving", got)
+	}
+	if dataFrames != 0 {
+		t.Errorf("dataFrames = %d, want 0", dataFrames)
+	}
+	if shouldResetBackoff(dataFrames, time.Hour) {
+		t.Error("a session that delivered no data reset the backoff; a permanently refused subscription would then be re-dialled forever at the floor")
+	}
+}
+
+// The other half of the same rule: a subscription that WORKED and then died is
+// measured from the last data, not from the connect. This is the shape the
+// step-1.6 debt described - the venue drops a subscription silently mid-session
+// - as opposed to the refusal above, which never delivers anything.
+func TestRunSession_MeasuresDataSilenceFromTheLastDataNotFromTheConnect(t *testing.T) {
+	url := wsTestServer(t, func(conn *websocket.Conn) {
+		go func() {
+			// Four frames over ~200ms, then silence while the socket stays up.
+			for i := 0; i < 4; i++ {
+				if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"tick":1}`)); err != nil {
+					return
+				}
+				time.Sleep(50 * time.Millisecond)
+			}
+		}()
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+
+	feeds, cancel, _, _ := testFeeds(t)
+	defer cancel()
+	feeds.DataSilenceTimeout = 300 * time.Millisecond
+
+	startedAt := time.Now()
+	dataFrames, err := runSession(feeds, StreamConfig{
+		Source:      "test",
+		URL:         url,
+		Handle:      func([]byte, time.Time) bool { return true },
+		PingEvery:   50 * time.Millisecond,
+		ReadTimeout: 10 * time.Second,
+	})
+	lasted := time.Since(startedAt)
+
+	if !errors.Is(err, ErrDataSilence) {
+		t.Fatalf("session ended with %v, want ErrDataSilence", err)
+	}
+	if dataFrames != 4 {
+		t.Errorf("dataFrames = %d, want 4", dataFrames)
+	}
+	// Had the deadline been measured from the connect it would have fired at
+	// 300ms, before the fourth frame. It must fire after the last one instead.
+	if lasted < 400*time.Millisecond {
+		t.Errorf("session lasted %s; the data clock was not restarted by the frames that did arrive", lasted)
+	}
+}
+
+// A feed that keeps delivering must never be torn down by this, however short
+// the deadline is next to its cadence. A check that reconnects a working venue
+// is worse than no check: it would cost a snapshot and a resubscribe every few
+// minutes on every source at once.
+func TestRunSession_LeavesAFeedThatKeepsDeliveringAlone(t *testing.T) {
+	serverDone := make(chan struct{})
+	url := wsTestServer(t, func(conn *websocket.Conn) {
+		deadline := time.Now().Add(700 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"tick":1}`)); err != nil {
+				break
+			}
+			time.Sleep(40 * time.Millisecond)
+		}
+		close(serverDone)
+	})
+
+	feeds, cancel, _, _ := testFeeds(t)
+	defer cancel()
+	feeds.DataSilenceTimeout = 300 * time.Millisecond
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := runSession(feeds, StreamConfig{
+			Source:      "test",
+			URL:         url,
+			Handle:      func([]byte, time.Time) bool { return true },
+			PingEvery:   50 * time.Millisecond,
+			ReadTimeout: 10 * time.Second,
+		})
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("session ended after %v while the server was still delivering every 40ms", err)
+	case <-serverDone:
+	}
+}
+
+// Zero is off, which is what every harness that builds a Feeds by hand gets -
+// including the testdata capture tool, which publishes nothing by design.
+//
+// What "off" means here is precisely the behaviour that hid bybit_spot: the
+// server answers every ping, the pong refreshes the frame clock, and the
+// session lives forever with nothing behind it. So this test asserts the OLD
+// behaviour survives when the field is unset — it is the compatibility half of
+// the pair above, not a second way of catching the bug.
+func TestRunSession_DataSilenceZeroLeavesTheOldBehaviourExactly(t *testing.T) {
+	url := wsTestServer(t, func(conn *websocket.Conn) {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	})
+
+	feeds, cancel, _, _ := testFeeds(t)
+	defer cancel()
+	// DataSilenceTimeout deliberately left at its zero value.
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := runSession(feeds, StreamConfig{
+			Source:      "test",
+			URL:         url,
+			Handle:      func([]byte, time.Time) bool { return false },
+			PingEvery:   50 * time.Millisecond,
+			ReadTimeout: 10 * time.Second,
+		})
+		done <- err
+	}()
+
+	// Six times the deadline the other tests use. With the field set, this
+	// session would have been torn down five times over.
+	select {
+	case err := <-done:
+		t.Fatalf("session ended with %v; with DataSilenceTimeout unset nothing may end a socket that is still answering", err)
+	case <-time.After(600 * time.Millisecond):
 	}
 }

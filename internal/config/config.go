@@ -52,6 +52,21 @@ var knownFundingPublishModes = map[string]bool{
 // marketTypePerp is the only market type that has funding at all.
 const marketTypePerp = "perp"
 
+// marketTypeOracle is a price feed that is not tradable and, today, not even a
+// WebSocket: Pyth is SSE with its own read loop.
+const marketTypeOracle = "oracle"
+
+// MinDataSilenceSec is the floor on data_silence_sec.
+//
+// Below it the check would stop meaning what it says. The WebSocket lifecycle
+// already gives up on a socket that delivers NOTHING - no data, no pong, no
+// server ping - after 60 seconds; a data deadline under that would fire first
+// on every merely-quiet socket and turn a health check into a reconnect loop.
+// The measurement says the same thing from the other side: the worst
+// socket-wide gap seen across nine venues on 2026-09-12 was 18.38s, so
+// anything near it is inside normal operation.
+const MinDataSilenceSec = 60
+
 type Config struct {
 	Server   Server   `yaml:"server"`
 	Scanner  Scanner  `yaml:"scanner"`
@@ -220,6 +235,11 @@ type Scanner struct {
 	AlertMinSpreadPct float64 `yaml:"alert_min_spread_pct"`
 	// DefaultStaleAfterSec fills in for a source that declares no threshold.
 	DefaultStaleAfterSec int64 `yaml:"default_stale_after_sec"`
+
+	// DefaultDataSilenceSec fills in for a source that declares no
+	// data_silence_sec. Zero leaves the check OFF everywhere it is not set
+	// per source, which is what a config written before 2026-09-12 gets.
+	DefaultDataSilenceSec int64 `yaml:"default_data_silence_sec"`
 }
 
 // Storage configures the SQLite persistence layer (step 2.6).
@@ -326,6 +346,22 @@ type Source struct {
 	EnabledByDefault bool   `yaml:"enabled_by_default"`
 
 	StaleAfterSec int64 `yaml:"stale_after_sec"`
+
+	// DataSilenceSec is how long ONE WebSocket session may keep answering
+	// while delivering no usable data for THIS source before the connector
+	// tears it down and dials again, which re-sends the subscription.
+	//
+	// It is a different claim from StaleAfterSec and must be much larger.
+	// StaleAfterSec says "stop believing this number"; this says "the
+	// subscription behind the socket is gone". Getting it wrong in the small
+	// direction reconnects a healthy venue during a quiet minute; getting it
+	// wrong in the large direction is what cost bybit_spot 19 hours of the
+	// step-3.5 gate (PLAN step 1.6).
+	//
+	// Absent (or zero) inherits scanner.default_data_silence_sec; the check is
+	// off only where that default is itself absent, and on oracles, which run
+	// their own read loop and would silently ignore it.
+	DataSilenceSec int64 `yaml:"data_silence_sec"`
 
 	// FundingStaleAfterSec is the staleness threshold for this source's FUNDING
 	// readings, which is a different measurement from the price one and much
@@ -437,6 +473,19 @@ func (c *Config) applyDefaults() {
 	for i := range c.Sources {
 		if c.Sources[i].StaleAfterSec <= 0 {
 			c.Sources[i].StaleAfterSec = c.Scanner.DefaultStaleAfterSec
+		}
+		// == 0, not <= 0: a NEGATIVE value must survive to be refused by
+		// validation rather than be quietly replaced by the default. "Absent"
+		// and "written wrong" are different mistakes and only one of them is
+		// safe to fix silently.
+		//
+		// An ORACLE is skipped: Pyth is SSE and keeps its own read loop, which
+		// the WebSocket lifecycle's data clock does not reach. Filling the
+		// field there would be a setting that looks like protection and is
+		// none — and Pyth answering 401 for a whole 72h soak with nobody
+		// noticing is exactly the mistake worth not repeating.
+		if c.Sources[i].DataSilenceSec == 0 && c.Sources[i].MarketType != marketTypeOracle {
+			c.Sources[i].DataSilenceSec = c.Scanner.DefaultDataSilenceSec
 		}
 		// Comparison groups key on the quote asset, and three separate blocks
 		// compare it exactly while the group id lowercases it. Left as written,
@@ -681,6 +730,22 @@ func (c Config) validateSource(source Source, seen map[string]bool) error {
 	case source.StaleAfterSec <= 0:
 		return fmt.Errorf("source %s has stale_after_sec %d; zero would mark every price stale on arrival",
 			source.Source, source.StaleAfterSec)
+	case source.DataSilenceSec < 0:
+		return fmt.Errorf("source %s has data_silence_sec %d; a negative deadline is not a deadline",
+			source.Source, source.DataSilenceSec)
+	case source.DataSilenceSec > 0 && source.DataSilenceSec < MinDataSilenceSec:
+		return fmt.Errorf("source %s has data_silence_sec %d, below the %d-second floor; "+
+			"the socket's own read deadline is 60s, so a shorter data deadline would re-dial every quiet minute",
+			source.Source, source.DataSilenceSec, MinDataSilenceSec)
+	case source.DataSilenceSec > 0 && source.DataSilenceSec <= source.StaleAfterSec:
+		// Tearing a socket down before its own data is even called stale
+		// would reconnect a venue the scanner still trusts, and on a venue
+		// that publishes on change (Bybit funding) it would reconnect
+		// constantly. The two thresholds answer different questions and the
+		// silence one is always the longer.
+		return fmt.Errorf("source %s has data_silence_sec %d at or below stale_after_sec %d; "+
+			"the session would be re-dialled before its own prices were even called stale",
+			source.Source, source.DataSilenceSec, source.StaleAfterSec)
 	}
 
 	if err := validateFunding(source); err != nil {

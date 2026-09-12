@@ -37,15 +37,20 @@ type gateTickerMessage struct {
 	} `json:"result"`
 }
 
-// handleGateFunding publishes one reading per ticker entry and reports whether
-// the frame belonged to that channel.
-func handleGateFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+// handleGateFunding publishes one reading per ticker entry.
+//
+// It reports two things: whether the frame belonged to this channel at all —
+// which tells the caller to stop trying other shapes — and whether it PRODUCED
+// a reading on the feed. The stream lifecycle needs the second answer to tell a
+// live subscription from a socket that only answers keepalives
+// (exchanges.StreamConfig.Handle, 2026-09-12).
+func handleGateFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) (handled, produced bool) {
 	var message gateTickerMessage
 	if !exchanges.Decode(raw, &message) || message.Channel != "futures.tickers" {
-		return false
+		return false, false
 	}
 	if message.Event != "update" {
-		return true // the subscription acknowledgement rides the same channel
+		return true, false // the subscription acknowledgement rides the same channel
 	}
 
 	for _, entry := range message.Result {
@@ -87,8 +92,9 @@ func handleGateFunding(source string, symbols []exchanges.Symbol, f exchanges.Fe
 		data.IsEstimated = true
 
 		if !f.SendFunding(data) {
-			return true // shutting down
+			return true, produced // shutting down
 		}
+		produced = true
 	}
-	return true
+	return true, produced
 }

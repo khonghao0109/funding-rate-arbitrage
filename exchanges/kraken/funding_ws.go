@@ -37,22 +37,27 @@ type krakenTickerMessage struct {
 	NextFundingRateTime *int64   `json:"next_funding_rate_time"`
 }
 
-// handleKrakenFunding publishes one reading per ticker frame and reports
-// whether the frame belonged to that feed.
-func handleKrakenFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+// handleKrakenFunding publishes one reading per ticker frame.
+//
+// It reports two things: whether the frame belonged to this channel at all —
+// which tells the caller to stop trying other shapes — and whether it PRODUCED
+// a reading on the feed. The stream lifecycle needs the second answer to tell a
+// live subscription from a socket that only answers keepalives
+// (exchanges.StreamConfig.Handle, 2026-09-12).
+func handleKrakenFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) (handled, produced bool) {
 	var message krakenTickerMessage
 	if !exchanges.Decode(raw, &message) || message.Feed != "ticker" {
-		return false
+		return false, false
 	}
 
 	standard := exchanges.StandardOf(symbols, message.ProductID)
 	if standard == "" {
-		return true // a product this connector never subscribed to
+		return true, false // a product this connector never subscribed to
 	}
 	// Kraken sends a ticker for its dated futures too, and those carry no
 	// relative funding rate at all. Absent means absent.
 	if message.RelativeFundingRate == nil {
-		return true
+		return true, false
 	}
 
 	var nextFundingAtMs int64
@@ -71,7 +76,7 @@ func handleKrakenFunding(source string, symbols []exchanges.Symbol, f exchanges.
 		NextFundingAtMs: nextFundingAtMs,
 	})
 	if err != nil {
-		return true
+		return true, false
 	}
 	data.MarkPrice = message.MarkPrice
 	data.IndexPrice = message.Index
@@ -93,6 +98,5 @@ func handleKrakenFunding(source string, symbols []exchanges.Symbol, f exchanges.
 	// what settles at T.
 	data.IsEstimated = false
 
-	f.SendFunding(data)
-	return true
+	return true, f.SendFunding(data)
 }

@@ -22,7 +22,7 @@ func TestHyperliquidFunding_NoMetaNoReading(t *testing.T) {
 
 	r := exchangestest.NewRecorder(t)
 	empty := exchanges.NewFundingMetaCache()
-	if !handleHyperliquidFunding("hyperliquid_futures", symbols, empty, r.Feeds, frame, recvAt) {
+	if handled, _ := handleHyperliquidFunding("hyperliquid_futures", symbols, empty, r.Feeds, frame, recvAt); !handled {
 		t.Fatal("the frame should be recognised as activeAssetCtx even with no metadata")
 	}
 	if got := r.Fundings(); len(got) != 0 {
@@ -36,7 +36,7 @@ func TestHyperliquidFunding_NoMetaNoReading(t *testing.T) {
 	currentPeriodMs := recvAt.Add(-30 * time.Minute).UnixMilli()
 	meta := exchanges.NewFundingMetaCache()
 	meta.Put(map[string]exchanges.FundingMetaEntry{"BTCUSDT": {IntervalHours: 1, NextFundingAtMs: currentPeriodMs}})
-	handleHyperliquidFunding("hyperliquid_futures", symbols, meta, r.Feeds, frame, recvAt)
+	_, _ = handleHyperliquidFunding("hyperliquid_futures", symbols, meta, r.Feeds, frame, recvAt)
 	got := r.Fundings()
 	if len(got) != 1 || got[0].IntervalSec != 3600 {
 		t.Fatalf("with metadata, got %+v; want one hourly reading", got)
@@ -51,7 +51,7 @@ func TestHyperliquidFunding_NoMetaNoReading(t *testing.T) {
 	// be dropped rather than published.
 	stale := exchanges.NewFundingMetaCache()
 	stale.Put(map[string]exchanges.FundingMetaEntry{"BTCUSDT": {IntervalHours: 1, NextFundingAtMs: recvAt.Add(-3 * time.Hour).UnixMilli()}})
-	handleHyperliquidFunding("hyperliquid_futures", symbols, stale, r.Feeds, frame, recvAt)
+	_, _ = handleHyperliquidFunding("hyperliquid_futures", symbols, stale, r.Feeds, frame, recvAt)
 	got = r.Fundings()
 	if len(got) != 1 || got[0].NextFundingAtMs != 0 {
 		t.Fatalf("a stamp still in the past after correction must be dropped, got %+v", got)

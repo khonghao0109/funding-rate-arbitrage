@@ -51,7 +51,7 @@ func TestKraken_TopOfBookIsAssembledFromTheDeltaStream(t *testing.T) {
 	afterSnapshot := map[string]int{}
 	r2 := exchangestest.NewRecorder(t)
 	for _, frame := range exchangestest.ReadFrames(t, "kraken_futures") {
-		handleKrakenFrame("kraken_futures", exchangestest.Symbols("kraken_futures"), assembled, r2.Feeds, frame, time.Now())
+		_ = handleKrakenFrame("kraken_futures", exchangestest.Symbols("kraken_futures"), assembled, r2.Feeds, frame, time.Now())
 		// Record each book's size the moment its snapshot has landed, so what
 		// is compared afterwards is the effect of the DELTAS alone.
 		for venue, book := range assembled {
@@ -154,7 +154,7 @@ func TestKrakenSnapshotOrderIsNotTrusted(t *testing.T) {
 	frame := []byte(`{"feed":"book_snapshot","product_id":"PF_XBTUSD",` +
 		`"bids":[{"price":1,"qty":41},{"price":77000,"qty":0.5},{"price":77100,"qty":0.2}],` +
 		`"asks":[{"price":77300,"qty":0.4},{"price":77200,"qty":0.1}],"timestamp":1788413683802}`)
-	handleKrakenFrame("kraken_futures", symbols, orderbooks, r.Feeds, frame, time.Now())
+	_ = handleKrakenFrame("kraken_futures", symbols, orderbooks, r.Feeds, frame, time.Now())
 
 	books := r.Orderbooks()
 	if len(books) != 1 {
@@ -173,7 +173,7 @@ func TestKrakenSnapshotOrderIsNotTrusted(t *testing.T) {
 	// new best bid must land at the front, not wherever the venue's order
 	// would have put it.
 	delta := []byte(`{"feed":"book","product_id":"PF_XBTUSD","side":"buy","price":77150,"qty":0.3,"timestamp":1788413683903}`)
-	handleKrakenFrame("kraken_futures", symbols, orderbooks, r.Feeds, delta, time.Now())
+	_ = handleKrakenFrame("kraken_futures", symbols, orderbooks, r.Feeds, delta, time.Now())
 	books = r.Orderbooks()
 	if len(books) != 1 || books[0].BestBid != 77150 {
 		t.Fatalf("after delta: published %d books, best bid %v, want 1 book at 77150", len(books), books)

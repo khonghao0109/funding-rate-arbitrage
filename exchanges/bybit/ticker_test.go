@@ -53,8 +53,8 @@ func TestBybitTickerMerge_AbsentMeansUnchanged(t *testing.T) {
 	symbols := []exchanges.Symbol{{Standard: "BTCUSDT", Venue: "BTCUSDT"}}
 	recvAt := time.Date(2026, 9, 4, 9, 0, 0, 0, time.UTC)
 
-	handleBybitTicker("bybit_futures", symbols, tickers, r.Feeds, snapshot, recvAt)
-	handleBybitTicker("bybit_futures", symbols, tickers, r.Feeds, delta, recvAt)
+	_, _ = handleBybitTicker("bybit_futures", symbols, tickers, r.Feeds, snapshot, recvAt)
+	_, _ = handleBybitTicker("bybit_futures", symbols, tickers, r.Feeds, delta, recvAt)
 
 	// The price-only delta must publish NOTHING. Republishing on it would
 	// refresh RecvAt roughly ten times a second per market, which is what
@@ -67,7 +67,7 @@ func TestBybitTickerMerge_AbsentMeansUnchanged(t *testing.T) {
 		t.Errorf("snapshot RawRate = %v, want 0.00005908", readings[0].RawRate)
 	}
 
-	handleBybitTicker("bybit_futures", symbols, tickers, r.Feeds, rateDelta, recvAt)
+	_, _ = handleBybitTicker("bybit_futures", symbols, tickers, r.Feeds, rateDelta, recvAt)
 	readings = r.Fundings()
 	if len(readings) != 1 {
 		t.Fatalf("a delta carrying a NEW rate produced %d readings, want 1", len(readings))

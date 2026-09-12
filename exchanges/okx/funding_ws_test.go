@@ -25,7 +25,7 @@ func TestOKXEmptyNextFundingRateIsAbsentNotZero(t *testing.T) {
 	}
 
 	r := exchangestest.NewRecorder(t)
-	handleOKXFunding("okx_futures", symbols, r.Feeds, frame(""), time.Now())
+	_, _ = handleOKXFunding("okx_futures", symbols, r.Feeds, frame(""), time.Now())
 	readings := r.Fundings()
 	if len(readings) != 1 {
 		t.Fatalf("published %d readings, want 1", len(readings))
@@ -37,7 +37,7 @@ func TestOKXEmptyNextFundingRateIsAbsentNotZero(t *testing.T) {
 		t.Fatalf("FollowingRateFrac = %g behind a false flag, want the zero value", readings[0].FollowingRateFrac)
 	}
 
-	handleOKXFunding("okx_futures", symbols, r.Feeds, frame("0.0000512345678901"), time.Now())
+	_, _ = handleOKXFunding("okx_futures", symbols, r.Feeds, frame("0.0000512345678901"), time.Now())
 	readings = r.Fundings()
 	if len(readings) != 1 {
 		t.Fatalf("published %d readings, want 1", len(readings))

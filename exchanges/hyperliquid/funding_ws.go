@@ -48,29 +48,34 @@ type hyperliquidAssetCtxMessage struct {
 	} `json:"data"`
 }
 
-// handleHyperliquidFunding publishes one reading per activeAssetCtx frame and
-// reports whether the frame belonged to that channel.
+// handleHyperliquidFunding publishes one reading per activeAssetCtx frame.
+//
+// It reports two things: whether the frame belonged to this channel at all —
+// which tells the caller to stop trying other shapes — and whether it PRODUCED
+// a reading on the feed. The stream lifecycle needs the second answer to tell a
+// live subscription from a socket that only answers keepalives
+// (exchanges.StreamConfig.Handle, 2026-09-12).
 func handleHyperliquidFunding(source string, symbols []exchanges.Symbol, meta *exchanges.FundingMetaCache,
-	f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+	f exchanges.Feeds, raw []byte, recvAt time.Time) (handled, produced bool) {
 
 	var message hyperliquidAssetCtxMessage
 	if !exchanges.Decode(raw, &message) || message.Channel != "activeAssetCtx" {
-		return false
+		return false, false
 	}
 
 	standard := exchanges.StandardOf(symbols, message.Data.Coin)
 	if standard == "" {
-		return true // a coin this connector never subscribed to
+		return true, false // a coin this connector never subscribed to
 	}
 	rateFrac, err := strconv.ParseFloat(message.Data.Ctx.Funding, 64)
 	if err != nil {
-		return true
+		return true, false
 	}
 	// No interval means no reading: RatePer8hFrac and APRFrac both divide by
 	// it, and this venue's whole trap is that assuming 8h is wrong by 8×.
 	entry, ok := meta.Get(standard)
 	if !ok {
-		return true
+		return true, false
 	}
 
 	data, err := normalizeHyperliquidFunding(hyperliquidFundingInput{
@@ -102,14 +107,13 @@ func handleHyperliquidFunding(source string, symbols []exchanges.Symbol, meta *e
 			entry.NextFundingAtMs+entry.IntervalHours*exchanges.SecPerHour*exchanges.MsPerSecond, recvAt),
 	})
 	if err != nil {
-		return true
+		return true, false
 	}
 	data.MarkPrice, _ = strconv.ParseFloat(message.Data.Ctx.MarkPx, 64)
 	data.IndexPrice, _ = strconv.ParseFloat(message.Data.Ctx.OraclePx, 64)
 	data.IsEstimated = true // the rate for the hour now running
 
-	f.SendFunding(data)
-	return true
+	return true, f.SendFunding(data)
 }
 
 // refreshHyperliquidFundingMeta reads predictedFundings and keeps the HlPerp

@@ -677,7 +677,25 @@ The scanner's wire got no new message (the operator's instruction); the
 broker interface belongs to 4.2, behind the gate. A finding from that
 reconstruction, recorded in PLAN 4.3: **bybit_spot has produced zero price
 samples in run 2** (connected at launch, REST depth fine), so the live basis
-exit on HYPE·kraken is "not evaluable" every tick.
+exit on HYPE·kraken is "not evaluable" every tick. **Diagnosed 2026-09-12** —
+see the next paragraph — which means HYPE·kraken's run-2 journal rows say
+nothing about the basis rule and must not be read as if they did.
+
+**The step-1.6 silent-subscription debt reproduced, was diagnosed and is
+fixed (2026-09-12, for the next run's binary only).** `bybit_spot` delivered
+not one frame in 19h45 because Bybit's public SPOT socket accepts at most 10
+`args` per subscribe request and the 13-pair list sends 26 — the venue refuses
+the whole request, says so, and goes quiet; nothing read the answer, and the
+keepalive pongs kept every health signal green. The connector now batches the
+spot subscribe under the documented ceiling and logs a refusal, and the shared
+lifecycle gained a second clock: `StreamConfig.Handle` reports whether a frame
+became a message, a session that answers keepalives while producing no data
+ends with `exchanges.ErrDataSilence` and re-subscribes on the next dial, and
+the per-source threshold lives in `config.yaml` beside `stale_after_sec`
+(`data_silence_sec`, shipped 600s, absent = off). Measured with the production
+connectors on the shipped config, same tool before and after: bybit_spot went
+from **0 messages in 20 minutes** to **9,592 in 6**. The running gate was not
+touched.
 
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
@@ -846,6 +864,7 @@ re-research these; do verify before writing the integration.
 | **OKX** | `fundingTime` is the NEXT settlement; `nextFundingTime` is the one AFTER that. Mapping it like Binance's `T` is off by one period. |
 | **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). Its WS `next_funding_rate_time` is an **absolute epoch-ms stamp** even though the doc prose says "time until" — probed live twice; see §3.3⑥. And its WS `relative_funding_rate` is the **already-settled** figure of the last completed hour (the forming estimate lives in `relative_funding_rate_prediction`), so `IsEstimated=false` there and the rate does NOT forecast the next stamp. |
 | **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite — and publish only when a FUNDING field actually changed, or the ~100ms delta stream refreshes `RecvAt` ten times a second and a dead subscription looks permanently fresh. Its `fundingIntervalHour` is the string `"8"`, not a number: declared as `int64` the whole frame fails to decode and the venue silently produces no funding at all. It publishes `fundingCap` and **no floor**, so cap and floor need separate flags. |
+| **Bybit** | The public **SPOT** WebSocket takes at most **10 `args` per subscribe request** ("Spot can input up to 10 args for each subscription request sent to one connection"; "No args limit for Futures and Spread for now"). Over the limit it REFUSES THE WHOLE REQUEST — `{"success":false,"ret_msg":"args size >10"}` — and then delivers nothing, rather than truncating. Measured live 2026-09-12: 26 args → 0 data frames in 12s, 8 args → 99. This is what silenced `bybit_spot` for 19 hours of step-3.5 run 2 when the pair list grew from 4 to 13. Batch the topics, and READ the reply: the venue says exactly what is wrong. |
 | **Binance** | `fundingInfo` documents itself as returning ONLY symbols whose config differs from default — as of 2026-09-03 it happens to cover every TRADING perpetual (777 symbols, BTCUSDT included via its adjusted ±0.3% cap), but the docs promise no such coverage. Default to 8h and override; do not read it as the source of truth for all symbols. Intervals seen: 4h (majority), 8h, and 1h. Also filter `rateType: "Special"` in backtests. |
 | **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. Its `predictedFundings` also lists BinPerp and BybitPerp beside its own **HlPerp** row — read the wrong row and an 8h cadence lands on an hourly venue. And `nextFundingTime` there is the settlement of the period ALREADY RUNNING (measured across an hour boundary 2026-09-04: 02:47→02:00, 03:01→03:00), so the upcoming one is that stamp plus one interval. |
 | **Paradex** | Funding V2 accrues continuously via a funding index. There is no settlement timestamp. |
@@ -1136,13 +1155,31 @@ phase 1.
   no recording** - hermes.pyth.network answers 401 - so its fixture is synthetic
   and labelled as such; it proves the arithmetic, not that Pyth's current format
   still matches what the connector decodes.
-- A subscription the venue silently drops is never re-established. The read
-  deadline is refreshed by ANY frame, and Bybit, OKX and Hyperliquid answer
-  keepalives with ordinary data frames, so a socket that stays open with a dead
-  subscription looks healthy to the connector forever. The scanner notices
-  (silence downgrades the state) but cannot act. Found in review at step 1.6.
-  The 72h soak did not trigger it — all 36 series were live at 91h — which is
-  absence over one run, not a fix.
+- ~~A subscription the venue silently drops is never re-established.~~ **Fixed
+  2026-09-12, after it happened**: `bybit_spot` delivered NOT ONE frame in 19h45
+  of step-3.5 run 2 (`last_msg_at_ms: 0` on the live wire, 0 price samples
+  against 7,904 per other source) because a 26-arg subscribe exceeded Bybit
+  spot's documented 10-arg ceiling and was refused whole — see the trap table.
+  The connector never read the refusal and the pongs kept the read deadline
+  fresh, which is exactly the shape this entry described, reached by a different
+  road: the venue did not go quiet, it ANSWERED and nobody listened. Both halves
+  are now closed. `StreamConfig.Handle` returns whether the frame produced a
+  message on a feed, so `runSession` runs two clocks — one for silence of any
+  kind, one for silence of DATA — and a session that keeps answering while
+  producing nothing ends with `exchanges.ErrDataSilence`, backs off and
+  re-subscribes; `shouldResetBackoff` counts data frames, so a permanently
+  refused subscription escalates to the 60s ceiling instead of cycling at the
+  floor. The threshold is per source in `config.yaml`
+  (`default_data_silence_sec`, shipped 600s, floored at 60s by
+  `config.MinDataSilenceSec` because below the socket's own 60s read deadline
+  the data clock would always fire first on a merely quiet feed). The number is
+  chosen on ASYMMETRIC COST — a wasted reconnect against a dead-feed window
+  that just cost 19 hours — not on a ratio to the worst measured gap, which is
+  not stable: bybit_futures measured 0.69s in one window and 18.38s in another
+  minutes later. Absent means OFF, so the config the 3.5 process loaded still
+  means what it meant, and the oracle is skipped because Pyth is SSE with its
+  own read loop. The fix is in the NEXT run's binary — run 2 was not
+  restarted.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new

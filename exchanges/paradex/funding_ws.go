@@ -50,24 +50,29 @@ type paradexFundingEvent struct {
 	} `json:"params"`
 }
 
-// handleParadexFunding publishes one reading per funding_data event and
-// reports whether the frame belonged to that channel.
-func handleParadexFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+// handleParadexFunding publishes one reading per funding_data event.
+//
+// It reports two things: whether the frame belonged to this channel at all —
+// which tells the caller to stop trying other shapes — and whether it PRODUCED
+// a reading on the feed. The stream lifecycle needs the second answer to tell a
+// live subscription from a socket that only answers keepalives
+// (exchanges.StreamConfig.Handle, 2026-09-12).
+func handleParadexFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) (handled, produced bool) {
 	var event paradexFundingEvent
 	if !exchanges.Decode(raw, &event) || !strings.HasPrefix(event.Params.Channel, paradexFundingChannelPrefix) {
-		return false
+		return false, false
 	}
 	if event.Method != "subscription" {
-		return true // the subscription acknowledgement names the same channel
+		return true, false // the subscription acknowledgement names the same channel
 	}
 
 	standard := exchanges.StandardOf(symbols, event.Params.Data.Market)
 	if standard == "" {
-		return true // a market this connector never subscribed to
+		return true, false // a market this connector never subscribed to
 	}
 	rateFrac, err := strconv.ParseFloat(event.Params.Data.FundingRate, 64)
 	if err != nil {
-		return true
+		return true, false
 	}
 
 	data, err := normalizeParadexFunding(paradexFundingInput{
@@ -81,12 +86,11 @@ func handleParadexFunding(source string, symbols []exchanges.Symbol, f exchanges
 		PeriodHours: event.Params.Data.FundingPeriodHours,
 	})
 	if err != nil {
-		return true
+		return true, false
 	}
 	// A continuously accruing rate is always "still moving": there is no
 	// moment at which this venue's figure is final for a period.
 	data.IsEstimated = true
 
-	f.SendFunding(data)
-	return true
+	return true, f.SendFunding(data)
 }

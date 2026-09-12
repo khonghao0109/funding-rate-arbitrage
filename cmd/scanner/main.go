@@ -263,13 +263,26 @@ func startConnectors(ctx context.Context, cfg config.Config, s *scanner.Scanner)
 		log.Printf("Starting %s (%s) for %d symbols", source.Source, source.Connector, len(symbols))
 
 		running.Add(1)
-		go func(source config.Source, symbols []exchanges.Symbol) {
+		go func(source config.Source, symbols []exchanges.Symbol, sourceFeeds exchanges.Feeds) {
 			defer running.Done()
-			connect(source.Source, symbols, feeds)
-		}(source, symbols)
+			connect(source.Source, symbols, sourceFeeds)
+		}(source, symbols, feedsFor(feeds, source))
 	}
 
 	return &running
+}
+
+// feedsFor gives one connector its own view of the shared feeds. The channels
+// are the same for every source; the data-silence deadline is not, because how
+// long a socket may deliver nothing before it is presumed dead is a property of
+// the venue and is measured per venue (config.yaml data_silence_sec).
+//
+// Feeds is a value type exactly so this copy costs nothing, and passing a
+// modified copy is what keeps the threshold out of the nine connector
+// signatures — the reason Feeds exists at all (step 1.5).
+func feedsFor(shared exchanges.Feeds, source config.Source) exchanges.Feeds {
+	shared.DataSilenceTimeout = time.Duration(source.DataSilenceSec) * time.Second
+	return shared
 }
 
 // venueSymbols translates the configured pairs into the identifiers this source

@@ -5,8 +5,6 @@ import (
 
 	"strconv"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type ParadexWSRequest struct {
@@ -72,7 +70,7 @@ func paradexStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds)
 	return exchanges.StreamConfig{
 		Source: source,
 		URL:    "wss://ws.api.prod.paradex.trade/v1",
-		Subscribe: func(conn *websocket.Conn) error {
+		Subscribe: func(conn exchanges.Subscriber) error {
 			// markets_summary carries bid and ask for every market at once, so
 			// one subscription covers whatever symbols are configured.
 			//
@@ -104,46 +102,51 @@ func paradexStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds)
 			}
 			return nil
 		},
-		Handle: func(raw []byte, recvAt time.Time) {
-			handleParadexFrame(source, symbols, f, raw, recvAt)
+		Handle: func(raw []byte, recvAt time.Time) bool {
+			return handleParadexFrame(source, symbols, f, raw, recvAt)
 		},
 	}
 }
 
-func handleParadexFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) {
-	if handleParadexFunding(source, symbols, f, raw, recvAt) {
-		return
+// handleParadexFrame reports whether the frame became a message on a feed — the
+// contract exchanges.StreamConfig.Handle documents. False is the answer for
+// the keepalive reply and for a subscribe acknowledgement or refusal, which
+// is what lets the lifecycle tell a live subscription from a socket that is
+// merely open (docs/PLAN.md step 1.6).
+func handleParadexFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+	if handled, produced := handleParadexFunding(source, symbols, f, raw, recvAt); handled {
+		return produced
 	}
 
 	// The subscription acknowledgement shares the envelope with the data.
 	var subResponse ParadexWSResponse
 	if exchanges.Decode(raw, &subResponse) && subResponse.Result.Channel == "markets_summary" {
-		return
+		return false
 	}
 
 	var marketEvent ParadexMarketSummaryEvent
 	if !exchanges.Decode(raw, &marketEvent) ||
 		marketEvent.Method != "subscription" ||
 		marketEvent.Params.Channel != "markets_summary" {
-		return
+		return false
 	}
 
 	symbol := exchanges.StandardOf(symbols, marketEvent.Params.Data.Symbol)
 	if symbol == "" {
-		return // a market this connector never subscribed to
+		return false // a market this connector never subscribed to
 	}
 
 	bidPrice, err1 := strconv.ParseFloat(marketEvent.Params.Data.Bid, 64)
 	askPrice, err2 := strconv.ParseFloat(marketEvent.Params.Data.Ask, 64)
 	if err1 != nil || err2 != nil {
-		return
+		return false
 	}
 
 	// BestBidQtyCoin/BestAskQtyCoin stay 0: markets_summary publishes a bid and
 	// an ask price and no size at all, so there is nothing to collect here. A
 	// depth channel would be needed, and phase 2 takes book depth over REST
 	// instead - see docs/PLAN.md §7.4.
-	f.SendOrderbook(exchanges.OrderbookData{
+	return f.SendOrderbook(exchanges.OrderbookData{
 		Symbol:  symbol,
 		Source:  source,
 		BestBid: bidPrice,

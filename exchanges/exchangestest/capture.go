@@ -72,17 +72,23 @@ func CaptureFrames(t *testing.T, source string, cfg exchanges.StreamConfig) [][]
 	done := make(chan struct{})
 
 	recording := cfg
-	recording.Handle = func(raw []byte, _ time.Time) {
+	// The capture keeps frames; it publishes nothing, so it answers false to
+	// StreamConfig.Handle's "did this produce a message". That is honest and
+	// harmless here: Feeds carries no DataSilenceTimeout in this harness, so
+	// the data deadline is off and a capture session is never torn down for
+	// producing nothing.
+	recording.Handle = func(raw []byte, _ time.Time) bool {
 		kind := frameKind(raw, Symbols(source))
 		limit := framesPerKind
 		if strings.HasPrefix(kind, sequenceKindPrefix) {
 			limit = framesPerSequenceKind
 		}
 		if kept[kind] >= limit {
-			return
+			return false
 		}
 		kept[kind]++
 		frames = append(frames, bytes.Clone(raw))
+		return false
 	}
 
 	go func() {

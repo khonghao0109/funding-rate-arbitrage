@@ -106,8 +106,8 @@ func binanceStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds,
 	return exchanges.StreamConfig{
 		Source: source,
 		URL:    binanceStreamURL(host, symbols),
-		Handle: func(raw []byte, recvAt time.Time) {
-			handleBinanceFrame(source, symbols, f, raw, recvAt)
+		Handle: func(raw []byte, recvAt time.Time) bool {
+			return handleBinanceFrame(source, symbols, f, raw, recvAt)
 		},
 	}
 }
@@ -118,23 +118,29 @@ func binanceStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds,
 // they share this. The two connectors stay separate because their URLs, their
 // venues and their fee schedules are different things that happen to speak the
 // same dialect today.
-func handleBinanceFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) {
+//
+// It reports whether the frame became a message on a feed — the contract
+// exchanges.StreamConfig.Handle documents. Binance answers a protocol ping
+// with a protocol pong, which gorilla consumes inside ReadMessage and never
+// shows here, so on this venue false means "a stream we do not read" and
+// nothing else (docs/PLAN.md step 1.6).
+func handleBinanceFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
 	var message binanceEnvelope
 	if !exchanges.Decode(raw, &message) {
-		return
+		return false
 	}
 
 	switch {
 	case strings.Contains(message.Stream, "@bookTicker"):
 		var bookTicker BinanceBookTicker
 		if !exchanges.Decode(message.Data, &bookTicker) {
-			return
+			return false
 		}
 
 		bidPrice, err1 := strconv.ParseFloat(bookTicker.BestBidPrice, 64)
 		askPrice, err2 := strconv.ParseFloat(bookTicker.BestAskPrice, 64)
 		if err1 != nil || err2 != nil {
-			return
+			return false
 		}
 
 		// A quantity that will not parse must not discard a good price: the book
@@ -145,10 +151,10 @@ func handleBinanceFrame(source string, symbols []exchanges.Symbol, f exchanges.F
 
 		standardSymbol := exchanges.StandardOf(symbols, bookTicker.Symbol)
 		if standardSymbol == "" {
-			return // a market this connector never subscribed to
+			return false // a market this connector never subscribed to
 		}
 
-		f.SendOrderbook(exchanges.OrderbookData{
+		return f.SendOrderbook(exchanges.OrderbookData{
 			Symbol:         standardSymbol,
 			Source:         source,
 			BestBid:        bidPrice,
@@ -162,12 +168,12 @@ func handleBinanceFrame(source string, symbols []exchanges.Symbol, f exchanges.F
 	case strings.Contains(message.Stream, "@aggTrade"):
 		var trade BinanceAggTrade
 		if !exchanges.Decode(message.Data, &trade) {
-			return
+			return false
 		}
 
 		price, err := strconv.ParseFloat(trade.Price, 64)
 		if err != nil {
-			return
+			return false
 		}
 
 		// Normalize trade side (isMaker: false = buy aggressor, true = sell aggressor)
@@ -178,10 +184,10 @@ func handleBinanceFrame(source string, symbols []exchanges.Symbol, f exchanges.F
 
 		standardSymbol := exchanges.StandardOf(symbols, trade.Symbol)
 		if standardSymbol == "" {
-			return
+			return false
 		}
 
-		f.SendTrade(exchanges.TradeData{
+		return f.SendTrade(exchanges.TradeData{
 			Symbol:      standardSymbol,
 			Source:      source,
 			Price:       price,
@@ -191,4 +197,5 @@ func handleBinanceFrame(source string, symbols []exchanges.Symbol, f exchanges.F
 			RecvAt:      recvAt,
 		})
 	}
+	return false
 }

@@ -5,8 +5,6 @@ import (
 
 	"strconv"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type OKXFuturesTrade struct {
@@ -66,7 +64,7 @@ func okxStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds) exc
 	return exchanges.StreamConfig{
 		Source: source,
 		URL:    "wss://ws.okx.com:8443/ws/v5/public",
-		Subscribe: func(conn *websocket.Conn) error {
+		Subscribe: func(conn exchanges.Subscriber) error {
 			// config.yaml supplies the venue identifier (symbol_format
 			// "{base}-{quote}-SWAP").
 			args := make([]okxChannelArg, 0, len(symbols)*3)
@@ -83,16 +81,22 @@ func okxStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds) exc
 		Ping:        exchanges.TextPing("ping"),
 		PingEvery:   okxPingEvery,
 		ReadTimeout: okxReadTimeout,
-		Handle: func(raw []byte, recvAt time.Time) {
-			handleOKXFrame(source, symbols, f, raw, recvAt)
+		Handle: func(raw []byte, recvAt time.Time) bool {
+			return handleOKXFrame(source, symbols, f, raw, recvAt)
 		},
 	}
 }
 
-func handleOKXFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) {
-	if handleOKXFunding(source, symbols, f, raw, recvAt) {
-		return
+// handleOKXFrame reports whether the frame became a message on a feed — the
+// contract exchanges.StreamConfig.Handle documents. False is the answer for
+// the keepalive reply and for a subscribe acknowledgement or refusal, which
+// is what lets the lifecycle tell a live subscription from a socket that is
+// merely open (docs/PLAN.md step 1.6).
+func handleOKXFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+	if handled, produced := handleOKXFunding(source, symbols, f, raw, recvAt); handled {
+		return produced
 	}
+	sent := false
 
 	// The keepalive reply is the literal text "pong", which is not JSON and
 	// falls through both decodes below.
@@ -125,10 +129,11 @@ func handleOKXFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds
 				VenueTimeMs: timestamp,
 				RecvAt:      recvAt,
 			}) {
-				return
+				return sent
 			}
+			sent = true
 		}
-		return
+		return sent
 	}
 
 	var orderbookMsg OKXFuturesOrderbook
@@ -178,8 +183,10 @@ func handleOKXFrame(source string, symbols []exchanges.Symbol, f exchanges.Feeds
 				VenueTimeMs:         timestamp,
 				RecvAt:              recvAt,
 			}) {
-				return
+				return sent
 			}
+			sent = true
 		}
 	}
+	return sent
 }

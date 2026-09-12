@@ -43,12 +43,17 @@ type okxFundingMessage struct {
 	} `json:"data"`
 }
 
-// handleOKXFunding publishes one reading per funding-rate entry and reports
-// whether the frame belonged to that channel.
-func handleOKXFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
+// handleOKXFunding publishes one reading per funding-rate entry.
+//
+// It reports two things: whether the frame belonged to this channel at all —
+// which tells the caller to stop trying other shapes — and whether it PRODUCED
+// a reading on the feed. The stream lifecycle needs the second answer to tell a
+// live subscription from a socket that only answers keepalives
+// (exchanges.StreamConfig.Handle, 2026-09-12).
+func handleOKXFunding(source string, symbols []exchanges.Symbol, f exchanges.Feeds, raw []byte, recvAt time.Time) (handled, produced bool) {
 	var message okxFundingMessage
 	if !exchanges.Decode(raw, &message) || message.Arg.Channel != "funding-rate" {
-		return false
+		return false, false
 	}
 
 	for _, entry := range message.Data {
@@ -104,8 +109,9 @@ func handleOKXFunding(source string, symbols []exchanges.Symbol, f exchanges.Fee
 		data.IsEstimated = entry.SettState != "processing"
 
 		if !f.SendFunding(data) {
-			return true // shutting down
+			return true, produced // shutting down
 		}
+		produced = true
 	}
-	return true
+	return true, produced
 }

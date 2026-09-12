@@ -509,6 +509,8 @@ Giới hạn của phán quyết — ghi để không ai đọc "ĐẠT" thành 
   sau 91 giờ không chuỗi nào stale. Nhưng scanner không ghi log staleness, nên
   chỉ đo được trạng thái cuối chứ không đo được "có lúc nào stale kéo dài
   không" — nợ vẫn mở; 72 giờ không xảy ra không phải bằng chứng không thể xảy ra.
+  **Và nó đã xảy ra thật**: `bybit_spot`, 19 giờ 45 phút im lặng ở lần chạy 2 của
+  cổng 3.5, nguyên nhân và bản sửa ghi ở Bước 1.6.
 - Vế `ctx` huỷ ≤5 s không đo lại ở cuối kỳ: tiến trình được để chạy tiếp sau
   hạn. Dừng nó bằng SIGINT rồi đọc các dòng `stopped` trong `.soak/scanner.log`
   sẽ cho số đo sau 91 giờ chạy — việc nhỏ, nên làm khi tắt.
@@ -737,19 +739,89 @@ Sửa:
   socket gộp độ trễ hàng đợi vào tuổi dữ liệu — nên ùn tắc **hiện ra** thành
   staleness thay vì bị giấu. Vị trí code vẫn đúng; chỉ lời giải thích sai.
 
-**Nợ ghi nhận, chưa xử lý:**
-- 🔴 **Subscription bị sàn âm thầm huỷ thì không có gì buộc nối lại.** Read deadline
-  được gia hạn bởi **mọi** frame, mà Bybit/OKX/Hyperliquid trả lời keepalive bằng
-  frame **dữ liệu**. Nên một socket còn mở nhưng đã mất subscription sẽ không bao
-  giờ bị dựng lại: scanner *phát hiện* được (suy luận từ im lặng hạ trạng thái
-  xuống `disconnected`) nhưng **không hành động được**. Đúng dạng hỏng mà phiên
-  72h sinh ra để loại trừ. Cách sửa cần watchdog dữ liệu trong connector, hoặc
-  giới hạn tuổi phiên rồi nối lại định kỳ. *Soak 72h (phán quyết 2026-09-07)
-  không tái hiện được nó — 36/36 chuỗi `live` sau 91 giờ — nhưng scanner không
-  ghi log staleness nên chỉ trạng thái cuối được đo; nợ vẫn mở.*
-- `framesRead` trong `shouldResetBackoff` đếm cả frame keepalive, nên trên ba sàn
-  đó một phiên chỉ toàn pong vẫn đủ điều kiện reset backoff. Muốn phân biệt thì
-  `Handle` phải báo lại nó có sinh ra dữ liệu thị trường hay không.
+**Nợ ghi nhận — ✅ TRẢ 2026-09-12 sau khi nó tái hiện thật:**
+- ✅ 🔴 **Subscription chết thì không có gì buộc nối lại.** *(Ghi 2026-09-03: read
+  deadline được gia hạn bởi **mọi** frame, mà Bybit/OKX/Hyperliquid trả lời
+  keepalive bằng frame **dữ liệu**. Nên một socket còn mở nhưng đã mất
+  subscription không bao giờ bị dựng lại: scanner phát hiện được — im lặng hạ
+  trạng thái xuống `disconnected` — nhưng không hành động được. Soak 72h
+  2026-09-07 **không tái hiện**: 36/36 chuỗi `live` sau 91 giờ.)*
+- ✅ `framesRead` trong `shouldResetBackoff` đếm cả frame keepalive. *(Ghi
+  2026-09-03: muốn phân biệt thì `Handle` phải báo lại nó có sinh ra dữ liệu
+  thị trường hay không.)*
+
+> **🔴 Nó tái hiện ở lần chạy 2 của cổng 3.5, và nguyên nhân KHÔNG đúng như
+> khoản nợ mô tả.** `bybit_spot` nối lúc 2026-09-11 14:15:48 rồi **không giao
+> một message nào trong 19 giờ 45 phút** — đo trên chính tiến trình đang chạy
+> (client WebSocket CHỈ ĐỌC tới `ws://localhost:8085/ws`, 2026-09-12 10:01:53
+> +07, không chạm tiến trình): `state: "disconnected"`, **`last_msg_at_ms: 0`**,
+> `reconnect_count: 9`, `uptime_sec: 0` — trong khi `binance_spot` cạnh nó báo
+> `connected`, `uptime_sec: 3651`, cùng `reconnect_count: 9`. Trong kho:
+> **0 mẫu giá bybit_spot** so với **7.904** ở mỗi nguồn khác (binance_spot 7.296
+> vì nó không phục vụ HYPE) trong cửa sổ lần 2.
+>
+> **Nguyên nhân đo được, không phải giả thuyết.** Bybit ghi trong tài liệu:
+> *"Spot can input up to 10 args for each subscription request sent to one
+> connection"*, và *"No args limit for Futures and Spread for now"*
+> (https://bybit-exchange.github.io/docs/v5/ws/connect). Ngày 2026-09-09 danh
+> sách cặp tăng từ 4 lên 13, nên `bybitSubscribe` gửi 13 × 2 topic = **26 args**
+> trên socket spot. Dò trực tiếp vào sàn 2026-09-12 (chỉ đọc, không credential):
+>
+> ```
+> 13 symbol / 26 args → {"success":false,"ret_msg":"args size >10",...} → 0 frame dữ liệu / 12 s
+>  4 symbol /  8 args → {"success":true,"ret_msg":"subscribe",...}      → 99 frame dữ liệu / 12 s
+> ```
+>
+> Tức sàn **từ chối cả yêu cầu**, không cắt bớt. Lần chạy 1 sống sót vì nó nạp
+> config 4 cặp = 8 args; lần chạy 2 là lần đầu tiên chạy 13 cặp. Và **lỗi hiện
+> ở spot chứ không ở futures đúng vì trần 10 args chỉ áp cho spot.**
+>
+> **Khác khoản nợ ở một điểm quan trọng:** sàn KHÔNG âm thầm huỷ gì cả — nó
+> **nói thẳng** vì sao, ngay giây đầu tiên. Cái im lặng là ở phía chúng ta:
+> không ai đọc câu trả lời của subscribe. Nhưng *hệ quả* thì đúng hệt khoản nợ
+> mô tả — socket mở, pong đều, mọi tín hiệu sức khoẻ báo bình thường — nên cả
+> hai nửa đều được sửa.
+>
+> **Sửa (vào binary của LẦN CHẠY KẾ, không triển khai vào lần 2):**
+> 1. *Riêng connector* — `exchanges/bybit` cắt subscribe thành lô ≤ 10 args
+>    **chỉ trên spot** (futures không có trần nên gửi nguyên), và **đọc** câu
+>    trả lời: một `{"success":false}` được log kèm `ret_msg` của sàn.
+> 2. *Tầng chung* — `exchanges/stream.go` có **hai đồng hồ** thay vì một.
+>    `StreamConfig.Handle` nay trả `bool` ("frame này có sinh ra message trên
+>    feed không"), `Feeds.DataSilenceTimeout` là ngưỡng theo từng nguồn, và một
+>    phiên vẫn trả lời keepalive mà không giao được dữ liệu nào sẽ kết thúc bằng
+>    sentinel `exchanges.ErrDataSilence` → backoff → dial lại → **đăng ký lại**.
+>    `shouldResetBackoff` nay đếm frame DỮ LIỆU, nên một subscription bị từ chối
+>    vĩnh viễn leo lên trần 60 s thay vì quay vòng ở đáy. Đây chính là khoản nợ
+>    thứ hai ở trên.
+> 3. *Ngưỡng nằm ở config, không hardcode* — `scanner.default_data_silence_sec`
+>    và `data_silence_sec` theo từng nguồn, đúng cách `stale_after_sec` đang
+>    làm; config **từ chối nạp** nếu nó ≤ `stale_after_sec` của cùng nguồn hoặc
+>    dưới sàn cứng 60 s (`MinDataSilenceSec` — dưới đó đồng hồ khung 60 s của
+>    chính socket không bao giờ là cái nổ trước). Số xuất xưởng **600 s**; lý
+>    do là **chi phí bất đối xứng** (đặt nhỏ mất một lần nối lại thừa, đặt lớn
+>    mất cả cửa sổ feed chết — 19 giờ), KHÔNG phải một tỉ số: chính
+>    bybit_futures cho 0,69 s ở cửa sổ đo này và 18,38 s ở cửa sổ kia cách vài
+>    phút, nên "số tệ nhất" không ổn định. Bảng đo đầy đủ nằm trong comment
+>    của `config.yaml`. Oracle (`pyth`) **không** nhận mặc định: nó chạy SSE
+>    với vòng đọc riêng mà đồng hồ này không với tới, và một con số ở đó là
+>    bảo vệ giả. Khoá vắng mặt = **tắt**, nên config mà tiến trình 3.5 đang
+>    chạy vẫn nghĩa y như cũ.
+>
+> **Nghiệm thu, cùng công cụ / cùng config / cùng connector production, chỉ
+> khác binary** (tiến trình đo không mở cổng nào và không ghi vào kho):
+>
+> | | trước khi sửa (20 phút) | sau khi sửa (6 phút) |
+> |---|---|---|
+> | `bybit_spot` | **0 message** | **9.592 message**, cái đầu tiên sau 0,60 s |
+> | mọi nguồn khác | 13.654 – 1.026.954 | 4.439 – 252.755 |
+>
+> Cộng với test: server WS giả "mở socket, trả pong, không bao giờ gửi dữ liệu"
+> kết thúc phiên bằng `ErrDataSilence` và KHÔNG reset backoff; một feed vẫn đang
+> đẩy thì không bị đụng tới; đồng hồ dữ liệu đo từ **message cuối** chứ không từ
+> lúc nối; và khoá vắng mặt giữ nguyên hành vi cũ. Frame từ chối thật của sàn
+> được lưu thành testdata (`bybit_spot_subscribe_refused.json`) vì nó là **bằng
+> chứng**, không phải ví dụ.
 - Bản ghi `binance_futures` **không có frame aggTrade nào** trong 30 giây. Probe
   sau đó không kết luận được: fstream ngừng gửi *mọi thứ* cho host này (giống bị
   giới hạn số kết nối sau đợt capture), và lần chạy scanner sau đó thì Binance
@@ -3046,9 +3118,27 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > là 2026-09-09 18:10 UTC, trước khi máy khởi động lại), trong khi REST depth
 > của nó vẫn có 52 hàng. Hệ quả: HYPE·kraken (chân spot bybit_spot) không có
 > giá spot sống nên `basis_widened` ở đường sống báo "chưa đo được" ở mọi
-> tick, và sổ giấy đánh dấu chân đó là stale. Hình dạng giống khoản nợ
-> "subscription bị huỷ âm thầm" của Bước 1.6; ghi ở đây để phiên phán quyết
-> đọc, và để lần chạy 3 kiểm `source_status` của bybit_spot ngay sau khi lên.
+> tick, và sổ giấy đánh dấu chân đó là stale.
+>
+> **Điều tra xong 2026-09-12 — nguyên nhân đo được, đầy đủ ở Bước 1.6.** Bybit
+> ghi trong tài liệu trần **10 args mỗi yêu cầu subscribe, chỉ trên SPOT**;
+> danh sách 13 cặp làm `bybitSubscribe` gửi 26 args, và sàn **từ chối cả yêu
+> cầu** với `{"success":false,"ret_msg":"args size >10"}` rồi không gửi gì nữa.
+> Connector không đọc câu trả lời, pong giữ read deadline tươi mãi. Số đo trên
+> chính tiến trình đang chạy (client WS chỉ đọc tới cổng 8085 lúc 2026-09-12
+> 10:01:53 +07, **không chạm tiến trình**): bybit_spot `state: "disconnected"`,
+> **`last_msg_at_ms: 0`** — chưa từng nhận một frame nào — `reconnect_count: 9`,
+> `uptime_sec: 0`; cạnh nó binance_spot `connected`, `uptime_sec: 3651`, cùng
+> `reconnect_count: 9`. Trong kho, cửa sổ lần 2: **bybit_spot 0 mẫu giá** so với
+> **7.904** ở mỗi nguồn khác (binance_spot 7.296 vì không phục vụ HYPE).
+>
+> **Hệ quả cho phiên phán quyết, đọc kỹ:** mọi hàng nhật ký của HYPE·kraken
+> trong lần chạy 2 được quyết định với `basis_widened` = "chưa đo được", nên
+> cặp đó **không phải là bằng chứng về luật basis**; và mọi cặp có chân spot
+> bybit_spot mất một nguồn giá sống. Bản sửa nằm trong binary của **lần chạy
+> kế**, KHÔNG triển khai vào lần 2 (Bước 1.6), nên con số trên đứng nguyên cho
+> tới hết lần 2. Lần chạy 3: kiểm `source_status` của bybit_spot ngay sau khi
+> lên, và `prices.tick_status` sẽ nói nếu máy ngủ.
 >
 > **Giới hạn của dữ liệu đầu vào, ghi ở `internal/paper/doc.go` và khối giả
 > định của báo cáo (review 2026-09-11):** `sampled_at_ms` của

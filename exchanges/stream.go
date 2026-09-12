@@ -3,6 +3,7 @@ package exchanges
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -140,14 +141,15 @@ func (b *Backoff) Reset() {
 // instead of escalating to the ceiling. Frames alone are not enough either: a
 // venue that sends one frame and drops the connection is still flapping.
 //
-// framesRead counts every frame off the socket, INCLUDING the keepalive replies
-// that Bybit, OKX and Hyperliquid send as ordinary data messages. So on those
-// three a session carrying nothing but pongs still qualifies once it passes
-// HealthySession. Distinguishing market data from a pong needs the per-venue
-// handler to report what it produced, which is recorded as debt in docs/PLAN.md
-// rather than guessed at here.
-func shouldResetBackoff(framesRead int64, lasted time.Duration) bool {
-	return framesRead > 0 && lasted >= HealthySession
+// dataFrames counts only the frames the venue's handler turned into a message
+// on a feed channel. Until 2026-09-12 this counted EVERY frame off the socket,
+// keepalive replies included — and Bybit, OKX and Hyperliquid answer a
+// keepalive with an ordinary data message, so on those three a session carrying
+// nothing but pongs qualified as healthy and reset the backoff forever. That
+// was recorded as debt in docs/PLAN.md step 1.6 and paid when bybit_spot spent
+// 19 hours in exactly that state; Handle now reports what it produced.
+func shouldResetBackoff(dataFrames int64, lasted time.Duration) bool {
+	return dataFrames > 0 && lasted >= HealthySession
 }
 
 // wait sleeps for the next delay, or returns false immediately if the context is
@@ -165,6 +167,13 @@ func (b *Backoff) Wait(ctx context.Context) bool {
 	}
 }
 
+// Subscriber is all a Subscribe function needs from a socket: every one of the
+// six connectors that has a subscription sends it with WriteJSON.
+// *websocket.Conn satisfies it.
+type Subscriber interface {
+	WriteJSON(v any) error
+}
+
 // StreamConfig is everything venue-specific about one WebSocket feed.
 type StreamConfig struct {
 	// Source is the configured source name, used for logs and ConnEvents.
@@ -175,10 +184,24 @@ type StreamConfig struct {
 	// connector resets per-connection state: anything cached from the previous
 	// socket (an assembled order book, for instance) describes a session that no
 	// longer exists.
-	Subscribe func(conn *websocket.Conn) error
+	//
+	// It takes a Subscriber rather than a *websocket.Conn so a connector's
+	// subscription can be exercised without dialling the venue. That matters
+	// because the subscription is where a venue's own limits live — Bybit spot
+	// refuses more than 10 topics per request and answers with silence — and a
+	// limit nothing tests is a limit that comes back (docs/PLAN.md step 1.6).
+	Subscribe func(conn Subscriber) error
 
-	// Handle is given one frame and the instant it was read off the socket.
-	Handle func(raw []byte, recvAt time.Time)
+	// Handle is given one frame and the instant it was read off the socket. It
+	// reports whether the frame produced at least one message on a feed
+	// channel — which is what separates market data from a keepalive reply, a
+	// subscribe acknowledgement, or an error the venue sent back.
+	//
+	// "Produced" means a Send* call accepted it. A frame this connector could
+	// not use is not a fault: every connector speculatively decodes each frame
+	// into several shapes, so false is the ordinary answer for most frames on
+	// most venues. What matters is that SOMETHING returns true regularly.
+	Handle func(raw []byte, recvAt time.Time) bool
 
 	// Ping sends the venue's keepalive. nil means a protocol-level ping frame
 	// (RFC 6455), which every compliant server answers with a pong. A venue that
@@ -214,6 +237,16 @@ var streamDialer = &websocket.Dialer{
 	HandshakeTimeout: dialTimeout,
 }
 
+// ErrDataSilence ends a session that kept answering while delivering nothing
+// usable. It is a sentinel so a caller — and a test — can tell this apart from
+// an ordinary read timeout, which means the socket went quiet altogether.
+//
+// The two are different failures. A read timeout is a socket that died; this is
+// a socket that is alive, answers every keepalive, and is subscribed to
+// nothing. The second is the one that hides, because every other signal the
+// lifecycle has says the venue is healthy.
+var ErrDataSilence = errors.New("socket kept answering but delivered no usable data")
+
 // RunStream connects, reads until the connection dies, then reconnects with
 // exponential backoff - until the context is cancelled.
 //
@@ -229,7 +262,7 @@ func RunStream(f Feeds, cfg StreamConfig) {
 		}
 
 		startedAt := time.Now()
-		framesRead, err := runSession(f, cfg)
+		dataFrames, err := runSession(f, cfg)
 		lasted := time.Since(startedAt)
 
 		if f.Ctx.Err() != nil {
@@ -240,7 +273,7 @@ func RunStream(f Feeds, cfg StreamConfig) {
 			return
 		}
 
-		if shouldResetBackoff(framesRead, lasted) {
+		if shouldResetBackoff(dataFrames, lasted) {
 			retry.Reset()
 		}
 
@@ -259,14 +292,15 @@ func RunStream(f Feeds, cfg StreamConfig) {
 }
 
 // runSession owns exactly one connection, from dial to death. It returns how
-// many frames the connection delivered, which is what tells a real connection
-// apart from a socket that was accepted and then ignored.
+// many frames the connection turned into DATA, which is what tells a real
+// connection apart both from a socket that was accepted and then ignored and
+// from one that answers every keepalive with nothing behind it.
 func runSession(f Feeds, cfg StreamConfig) (int64, error) {
-	var framesRead int64
+	var framesRead, dataFrames int64
 
 	conn, _, err := streamDialer.DialContext(f.Ctx, cfg.URL, nil)
 	if err != nil {
-		return framesRead, fmt.Errorf("dial: %w", err)
+		return dataFrames, fmt.Errorf("dial: %w", err)
 	}
 
 	// gorilla has no context-aware read, and ReadMessage blocks until a frame,
@@ -285,11 +319,34 @@ func runSession(f Feeds, cfg StreamConfig) (int64, error) {
 	}()
 
 	readTimeout := cfg.readTimeout()
+	dataSilence := f.DataSilenceTimeout
+
+	// Two clocks, one deadline. readTimeout measures silence of any kind and
+	// catches a dead socket; dataSilence measures silence of USABLE data and
+	// catches a live socket with nothing behind it. The socket gets whichever
+	// expires first, so no second goroutine and no extra lock: every write to
+	// lastDataAt below happens on this same reading goroutine, including the
+	// ones inside the pong and ping handlers, which gorilla runs inside
+	// ReadMessage.
+	//
+	// lastDataAt starts at the session's beginning rather than at zero, so a
+	// session that never delivers anything is killed dataSilence after CONNECT
+	// — which is the bybit_spot case exactly.
+	lastDataAt := time.Now()
+	deadlineFrom := func(now time.Time) time.Time {
+		deadline := now.Add(readTimeout)
+		if dataSilence > 0 {
+			if byData := lastDataAt.Add(dataSilence); byData.Before(deadline) {
+				deadline = byData
+			}
+		}
+		return deadline
+	}
 	extendDeadline := func() error {
-		return conn.SetReadDeadline(time.Now().Add(readTimeout))
+		return conn.SetReadDeadline(deadlineFrom(time.Now()))
 	}
 	if err := extendDeadline(); err != nil {
-		return framesRead, fmt.Errorf("set read deadline: %w", err)
+		return dataFrames, fmt.Errorf("set read deadline: %w", err)
 	}
 
 	// A pong is proof the socket is alive even though no data crossed it, so it
@@ -317,10 +374,10 @@ func runSession(f Feeds, cfg StreamConfig) (int64, error) {
 
 	if cfg.Subscribe != nil {
 		if err := conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
-			return framesRead, fmt.Errorf("set write deadline: %w", err)
+			return dataFrames, fmt.Errorf("set write deadline: %w", err)
 		}
 		if err := cfg.Subscribe(conn); err != nil {
-			return framesRead, fmt.Errorf("subscribe: %w", err)
+			return dataFrames, fmt.Errorf("subscribe: %w", err)
 		}
 	}
 
@@ -344,15 +401,37 @@ func runSession(f Feeds, cfg StreamConfig) (int64, error) {
 		recvAt := time.Now()
 
 		if err != nil {
-			return framesRead, err
+			// A timeout with the DATA clock expired is the failure that hides:
+			// the socket was alive the whole time. Name it, so the log says
+			// which of the two silences ended the session and the caller can
+			// test for it.
+			var netErr net.Error
+			if dataSilence > 0 && errors.As(err, &netErr) && netErr.Timeout() &&
+				time.Since(lastDataAt) >= dataSilence {
+				return dataFrames, fmt.Errorf("%w in the last %s: the session read %d frames and %d of them "+
+					"carried data — the subscription is refused, expired or was dropped; re-dialling to re-subscribe",
+					ErrDataSilence, dataSilence, framesRead, dataFrames)
+			}
+			return dataFrames, err
 		}
 		framesRead++
 
-		if err := conn.SetReadDeadline(recvAt.Add(readTimeout)); err != nil {
-			return framesRead, fmt.Errorf("extend read deadline: %w", err)
+		// Handle runs BEFORE the deadline is extended so the new deadline can
+		// take this frame's verdict into account, and it is still measured from
+		// recvAt rather than from now: a handler that blocked on a full channel
+		// must not buy the socket extra silence. The cost of that choice is a
+		// label, not a teardown: a handler blocked longer than dataSilence ends
+		// the session it was already ending (the pre-existing readTimeout would
+		// have done it) and the error says ErrDataSilence although the frame
+		// did carry data. A backed-up scanner is a real problem either way.
+		if cfg.Handle(raw, recvAt) {
+			dataFrames++
+			lastDataAt = recvAt
 		}
 
-		cfg.Handle(raw, recvAt)
+		if err := conn.SetReadDeadline(deadlineFrom(recvAt)); err != nil {
+			return dataFrames, fmt.Errorf("extend read deadline: %w", err)
+		}
 	}
 }
 

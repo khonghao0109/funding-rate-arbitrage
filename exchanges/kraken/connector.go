@@ -5,8 +5,6 @@ import (
 
 	"sort"
 	"time"
-
-	"github.com/gorilla/websocket"
 )
 
 type KrakenOrderBookEntry struct {
@@ -46,14 +44,18 @@ type KrakenOrderBook struct {
 // an RFC 6455 ping frame. Half the documented interval is used - see
 // defaultPingEvery - so one lost ping is not fatal.
 
+// processKrakenOrderbook publishes the assembled book and reports whether it
+// produced a message. Until 2026-09-12 the two early exits below answered true,
+// meaning "not shutting down"; the value is now the one StreamConfig.Handle
+// needs — a half-assembled book is not data.
 func processKrakenOrderbook(source string, symbols []exchanges.Symbol, productID string, orderBook *KrakenOrderBook, f exchanges.Feeds, recvAt time.Time) bool {
 	if len(orderBook.Bids) == 0 || len(orderBook.Asks) == 0 {
-		return true
+		return false
 	}
 
 	symbol := exchanges.StandardOf(symbols, productID)
 	if symbol == "" {
-		return true // a product this connector never subscribed to
+		return false // a product this connector never subscribed to
 	}
 
 	// The Qty is a CONTRACT count, and step 2.3 settled the apparent
@@ -105,7 +107,7 @@ func krakenStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds) 
 	return exchanges.StreamConfig{
 		Source: source,
 		URL:    "wss://futures.kraken.com/ws/v1",
-		Subscribe: func(conn *websocket.Conn) error {
+		Subscribe: func(conn exchanges.Subscriber) error {
 			// Books assembled over the previous socket describe a session that
 			// no longer exists, and Kraken resends a full book_snapshot on
 			// subscribe. Keeping them across a reconnect would leave levels that
@@ -134,8 +136,8 @@ func krakenStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds) 
 			}
 			return nil
 		},
-		Handle: func(raw []byte, recvAt time.Time) {
-			handleKrakenFrame(source, symbols, orderbooks, f, raw, recvAt)
+		Handle: func(raw []byte, recvAt time.Time) bool {
+			return handleKrakenFrame(source, symbols, orderbooks, f, raw, recvAt)
 		},
 	}
 }
@@ -148,10 +150,17 @@ func krakenStream(source string, symbols []exchanges.Symbol, f exchanges.Feeds) 
 // to be maintained locally and the connector's output depends on every frame
 // that came before. orderbooks is that state, keyed by the venue's product id
 // and reset on each reconnect by Subscribe.
-func handleKrakenFrame(source string, symbols []exchanges.Symbol, orderbooks map[string]*KrakenOrderBook, f exchanges.Feeds, raw []byte, recvAt time.Time) {
+//
+// It reports whether the frame became a message on a feed — the contract
+// exchanges.StreamConfig.Handle documents. False is the answer for the
+// keepalive reply, a heartbeat, and a subscribe acknowledgement, which is what
+// lets the lifecycle tell a live subscription from a socket that is merely open
+// (docs/PLAN.md step 1.6). A delta that moves a level without changing the top
+// of book still counts: it produced a publish.
+func handleKrakenFrame(source string, symbols []exchanges.Symbol, orderbooks map[string]*KrakenOrderBook, f exchanges.Feeds, raw []byte, recvAt time.Time) bool {
 	var data KrakenOrderBookData
 	if !exchanges.Decode(raw, &data) || data.Feed == "" {
-		return
+		return false
 	}
 	// Dispatched on the feed this Decode already read, rather than by
 	// speculatively unmarshalling every frame into the funding shape first: a
@@ -159,13 +168,13 @@ func handleKrakenFrame(source string, symbols []exchanges.Symbol, orderbooks map
 	// whole document even to read one field, so a second pass would double the
 	// cost of the busiest connector's hottest path.
 	if data.Feed == "ticker" {
-		handleKrakenFunding(source, symbols, f, raw, recvAt)
-		return
+		_, produced := handleKrakenFunding(source, symbols, f, raw, recvAt)
+		return produced
 	}
 
 	orderbook, exists := orderbooks[data.ProductID]
 	if !exists {
-		return
+		return false
 	}
 
 	switch data.Feed {
@@ -186,10 +195,10 @@ func handleKrakenFrame(source string, symbols []exchanges.Symbol, orderbooks map
 		updateKrakenOrderbook(orderbook, data)
 	default:
 		// Subscription acknowledgements, the pong, heartbeats.
-		return
+		return false
 	}
 
-	processKrakenOrderbook(source, symbols, data.ProductID, orderbook, f, recvAt)
+	return processKrakenOrderbook(source, symbols, data.ProductID, orderbook, f, recvAt)
 }
 
 func updateKrakenOrderbook(orderbook *KrakenOrderBook, data KrakenOrderBookData) {

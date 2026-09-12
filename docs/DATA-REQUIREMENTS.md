@@ -273,6 +273,37 @@ này không bao giờ trả funding âm".
 
 ---
 
+### 3.5. Trần `args` của Bybit spot (đo trực tiếp 2026-09-12, probe WS chỉ đọc)
+
+⑩ **WebSocket công khai của Bybit nhận tối đa 10 `args` mỗi yêu cầu subscribe —
+CHỈ trên SPOT.** Tài liệu ghi nguyên văn *"Spot can input up to 10 args for each
+subscription request sent to one connection"* và *"No args limit for Futures and
+Spread for now"* (https://bybit-exchange.github.io/docs/v5/ws/connect).
+
+Vượt trần thì sàn **từ chối CẢ yêu cầu**, không cắt bớt. Dò trực tiếp 2026-09-12
+(hai kết nối chỉ đọc, không credential, vào `wss://stream.bybit.com/v5/public/spot`):
+
+```
+13 symbol × 2 topic = 26 args → {"success":false,"ret_msg":"args size >10",...}
+                               → 0 frame dữ liệu trong 12 giây
+ 4 symbol × 2 topic =  8 args → {"success":true,"ret_msg":"subscribe",...}
+                               → 99 frame dữ liệu trong 12 giây
+```
+
+Vì sao nó đáng một mục riêng: **một socket bị từ chối trông y hệt một socket
+khoẻ.** Kết nối mở, sàn vẫn trả pong cho keepalive, `ConnConnected` đã báo,
+read deadline được làm mới mãi mãi — và không có một byte dữ liệu nào. Đó là
+cách `bybit_spot` im lặng suốt 19 giờ 45 phút của lần chạy 2 cổng 3.5 sau khi
+danh sách cặp tăng từ 4 lên 13 ngày 2026-09-09 (PLAN Bước 1.6). Hai việc phải
+làm cùng lúc: **cắt subscribe thành lô** theo trần của sàn, và **đọc câu trả
+lời** — sàn nói rõ vì sao ngay giây đầu tiên, im lặng là ở phía mình.
+
+Trần này là con số của SÀN nên nó nằm trong connector kèm trích dẫn tài liệu
+(quy tắc 5), khác với ngưỡng "im lặng bao lâu thì coi là chết" — con số VẬN
+HÀNH, đo được, nằm ở `config.yaml` (`data_silence_sec`).
+
+---
+
 ## 4. THIẾT KẾ `FundingData`
 
 ### 4.1. Ba yêu cầu rút ra từ khảo sát

@@ -25,6 +25,57 @@ scanner:
   # Ngưỡng mặc định cho nguồn không khai `stale_after_sec` riêng.
   default_stale_after_sec: 10
 
+  # Một PHIÊN WebSocket được phép còn sống mà không giao ĐƯỢC dữ liệu nào
+  # trong bao lâu, trước khi connector tự dựng lại nó (nối lại = đăng ký lại).
+  # 0 = tắt. Nguồn khai `data_silence_sec` riêng thì số riêng thắng.
+  #
+  # KHÁC hẳn `stale_after_sec`, và luôn LỚN HƠN nhiều. `stale_after_sec` nói
+  # "đừng tin con số này nữa"; số dưới đây nói "cái subscription sau socket
+  # này đã chết". Đặt ngược lại thì scanner nối lại một sàn mà chính nó vẫn
+  # coi là tươi — bão reconnect đội lốt kiểm tra sức khoẻ. Config từ chối
+  # nạp nếu số này ≤ `stale_after_sec` của cùng nguồn.
+  #
+  # ĐO ĐƯỢC 2026-09-12 bằng chính connector production, 13 cặp: khoảng cách
+  # lớn nhất giữa hai message CHUẨN HOÁ liên tiếp của một nguồn, tính trên cả
+  # socket chứ không theo từng cặp. Hai cửa sổ, trước và sau khi sửa lỗi
+  # bybit_spot (PLAN 1.6):
+  #
+  #   nguồn                20 phút    6 phút
+  #   bybit_futures          0,69s    18,38s
+  #   okx_futures            6,09s    18,23s
+  #   bybit_spot        KHÔNG CÓ      17,59s   ← 0 message trong 20 phút đầu
+  #   kraken_futures        10,97s     3,87s
+  #   paradex_futures       10,64s     9,00s
+  #   gate_futures           7,11s     2,71s
+  #   binance_spot           6,60s     2,73s
+  #   binance_futures        4,88s     2,77s
+  #   hyperliquid_futures    1,65s     1,51s
+  #
+  # Lý do chọn 600 là CHI PHÍ BẤT ĐỐI XỨNG, không phải một tỉ số. Đặt nhỏ:
+  # mất một lần nối lại thừa (một snapshot + một lần đăng ký). Đặt lớn: mất
+  # cả cửa sổ feed chết — bybit_spot vừa trả 19 giờ cho cửa sổ vô hạn. Nên
+  # nghiêng hẳn về phía an toàn.
+  #
+  # Đừng đọc "600 ≈ 33× số tệ nhất" như bằng chứng mạnh: chính bybit_futures
+  # cho 0,69s ở cửa sổ này và 18,38s ở cửa sổ kia, cách nhau vài phút — biên
+  # độ dao động 27×, nên con số tệ nhất KHÔNG ổn định và không phải thứ để
+  # siết ngưỡng theo. Một cửa sổ vài chục phút cũng không đo được đuôi: §10
+  # DATA-REQUIREMENTS đã ghi Paradex cho 18s sau bốn phút và 71s sau bốn
+  # mươi phút. `internal/config` chặn cứng dưới 60s
+  # (`MinDataSilenceSec`) vì dưới đó đồng hồ khung 60s của chính socket
+  # không bao giờ là cái nổ trước.
+  #
+  # Chưa khai theo từng nguồn: chín nguồn đo được nằm gọn trong 0,69–18,38s
+  # và thứ hạng ĐẢO giữa hai cửa sổ (bybit_futures tệ nhất ở cửa sổ này, tốt
+  # nhất ở cửa sổ kia), nên chia chín con số riêng là độ chính xác giả. Khi
+  # một sàn chứng minh nó cần số khác, khai `data_silence_sec` ở ngay nguồn đó.
+  #
+  # `pyth` KHÔNG nhận mặc định này và cố tình như vậy: oracle chạy SSE với
+  # vòng đọc riêng mà đồng hồ dữ liệu của vòng đời WebSocket không với tới.
+  # Điền số ở đó là một thiết lập trông như bảo vệ mà không bảo vệ gì —
+  # đúng kiểu sai lầm đã để Pyth trả 401 suốt 72 giờ soak mà không ai thấy.
+  default_data_silence_sec: 600
+
 # Lưu trữ SQLite (Bước 2.6).
 #
 # Mọi chu kỳ dưới đây là một HỆ SỐ NHÂN SỐ DÒNG, nên chúng nằm ở config chứ

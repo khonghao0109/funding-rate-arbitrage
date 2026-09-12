@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/config"
@@ -216,5 +218,40 @@ func TestHedgeLegs_ABridgedLegCarriesTheQuoteWarning(t *testing.T) {
 		if !strings.Contains(leg.NoteVI, want) {
 			t.Errorf("the note must contain %q: %s", want, leg.NoteVI)
 		}
+	}
+}
+
+// Each connector must get its OWN data-silence deadline. Sharing one Feeds
+// value across every source would give all nine venues whichever number was
+// assigned last — and the venues differ by an order of magnitude in how long a
+// legitimate quiet spell lasts.
+func TestFeedsFor_GivesEachSourceItsOwnSilenceDeadlineAndNothingElse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	price := make(chan exchanges.PriceData, 1)
+	shared := exchanges.Feeds{Ctx: ctx, Price: price}
+
+	fast := feedsFor(shared, config.Source{Source: "binance_futures", DataSilenceSec: 300})
+	slow := feedsFor(shared, config.Source{Source: "bybit_futures", DataSilenceSec: 1800})
+	off := feedsFor(shared, config.Source{Source: "legacy"})
+
+	if fast.DataSilenceTimeout != 300*time.Second {
+		t.Errorf("fast source got %s, want 5m", fast.DataSilenceTimeout)
+	}
+	if slow.DataSilenceTimeout != 1800*time.Second {
+		t.Errorf("slow source got %s, want 30m", slow.DataSilenceTimeout)
+	}
+	if off.DataSilenceTimeout != 0 {
+		t.Errorf("a source with no key got %s, want 0 (off)", off.DataSilenceTimeout)
+	}
+	// The shared value itself must be untouched, or the order sources are
+	// started in would decide what the last one gets.
+	if shared.DataSilenceTimeout != 0 {
+		t.Errorf("feedsFor mutated the shared Feeds to %s", shared.DataSilenceTimeout)
+	}
+	// Everything else is the SAME plumbing: a copy that quietly dropped a
+	// channel would take a whole feed off the air.
+	if fast.Price != shared.Price || fast.Ctx != shared.Ctx {
+		t.Error("feedsFor changed more than the deadline")
 	}
 }
