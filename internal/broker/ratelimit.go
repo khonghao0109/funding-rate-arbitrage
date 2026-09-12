@@ -11,18 +11,30 @@ import (
 	"time"
 )
 
-// The documented IP request-weight budgets, one minute each.
+// The per-minute IP request-weight budgets, and READ THE PROVENANCE — they are
+// not equally well attested (CLAUDE.md rule 5).
 //
-//   - USDⓈ-M futures: exchangeInfo reports {"rateLimitType":"REQUEST_WEIGHT",
-//     "interval":"MINUTE","intervalNum":1,"limit":2400}
-//     https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Check-Server-Time
-//   - Spot: the same array with limit 6000
+//   - SPOT, 6000: quoted from the documentation, which shows the exchangeInfo
+//     response carrying {"rateLimitType":"REQUEST_WEIGHT","interval":"MINUTE",
+//     "intervalNum":1,"limit":6000}.
 //     https://developers.binance.com/docs/binance-spot-api-docs/rest-api/general-endpoints
 //
-// They are constants here AND pinned by test, because the failure mode of
-// getting one wrong is not a slow program: it is a 429, then an automatic IP
-// ban that "scale[s] in duration for repeat offenders, from 2 minutes to 3
-// days".
+//   - FUTURES, 2400: **UNVERIFIED**. The USDⓈ-M general-info page describes the
+//     headers, the 429 and the 418 but states NO number; it says instead that
+//     "the /fapi/v1/exchangeInfo rateLimits array contains objects related to
+//     the exchange's RAW_REQUEST, REQUEST_WEIGHT, and ORDER rate limits" — i.e.
+//     the documented way to learn this figure is to ASK THE VENUE. 2400 is the
+//     widely reported value and could not be quoted from any official page
+//     reachable on 2026-09-12, so it stands here as a CONSERVATIVE DEFAULT,
+//     labelled, not as a documented fact.
+//     https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
+//
+// Being too LOW is the safe direction — it only throttles this client harder —
+// which is why an unverified number is tolerable here at all. Being too high is
+// not: it is a 429, then an automatic IP ban that "scale[s] in duration for
+// repeat offenders, from 2 minutes to 3 days". Debt recorded in PLAN 4.1:
+// confirm both figures against each venue's own exchangeInfo on the acceptance
+// run, and replace this comment with the measurement.
 const (
 	BinanceFuturesWeightPerMin = 2400
 	BinanceSpotWeightPerMin    = 6000

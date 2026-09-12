@@ -183,14 +183,16 @@ func TestNewClient_RefusesAWeightBudgetNobodyLookedUp(t *testing.T) {
 	}
 }
 
-// The documented per-venue limits, so a typo in one of them is a test failure
-// rather than a 418 in production.
-func TestDocumentedWeightLimits(t *testing.T) {
+// The two budgets, pinned so a typo is a test failure rather than a 418. Their
+// PROVENANCE differs and the constants' comment says so: spot's 6000 is quoted
+// from the docs, futures' 2400 is an unverified conservative default because
+// the official page gives no number and points at exchangeInfo instead.
+func TestWeightLimits_AreThePinnedFigures(t *testing.T) {
 	if BinanceFuturesWeightPerMin != 2400 {
-		t.Errorf("futures REQUEST_WEIGHT = %d, the docs say 2400/minute", BinanceFuturesWeightPerMin)
+		t.Errorf("futures REQUEST_WEIGHT = %d, want the pinned conservative 2400", BinanceFuturesWeightPerMin)
 	}
 	if BinanceSpotWeightPerMin != 6000 {
-		t.Errorf("spot REQUEST_WEIGHT = %d, the docs say 6000/minute", BinanceSpotWeightPerMin)
+		t.Errorf("spot REQUEST_WEIGHT = %d, the docs show 6000/minute in the exchangeInfo example", BinanceSpotWeightPerMin)
 	}
 }
 

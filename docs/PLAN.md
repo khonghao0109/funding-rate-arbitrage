@@ -3408,6 +3408,18 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > lệch đồng hồ (ms), weight đã dùng, SỐ tài sản và TÊN tài sản của cả hai tài
 > khoản — **không bao giờ dán giá trị key, chữ ký, hay số dư**.
 >
+> **Nợ cho phiên nghiệm thu (quy tắc 5).** Ngân sách weight của SPOT (6000/phút)
+> trích được từ tài liệu — trang general-endpoints in thẳng mảng `exchangeInfo`
+> với `{"rateLimitType":"REQUEST_WEIGHT","interval":"MINUTE","intervalNum":1,
+> "limit":6000}`. Ngân sách FUTURES (2400/phút) thì **KHÔNG**: trang
+> general-info của USDⓈ-M mô tả header, 429 và 418 nhưng **không nêu con số
+> nào**, mà bảo đọc `/fapi/v1/exchangeInfo` để lấy. 2400 là số được nhắc rộng
+> rãi nhưng không trích được từ trang chính thức nào đọc được ngày 2026-09-12,
+> nên nó nằm trong mã với nhãn **"mặc định thận trọng, CHƯA XÁC MINH"**. Thấp
+> hơn thực tế là chiều AN TOÀN (chỉ tự bóp mình chặt hơn), cao hơn thì không —
+> đó là 429 rồi cấm IP. Khi có key, đọc `exchangeInfo` của cả hai sàn, ghi số
+> thật vào đây và thay nhãn trong `internal/broker/ratelimit.go`.
+>
 > **Hai điều phải nhắc lại, vì chúng dễ bị đọc nhầm thành "đã mở GĐ 4":**
 > (1) **Không có lệnh nào được đặt** — kể cả trên testnet. Mọi phương thức của
 > `broker.Client` là GET; `PlaceOrder`/`CancelOrder` thuộc **4.2** và chưa tồn
