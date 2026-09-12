@@ -620,21 +620,37 @@ and fees match on all 4,355 rows (exit 1, not 2), (c) = 0, and on the two
 settlements both sides entered the projected net APR agrees inside the cost
 band. What it cannot do is judge, with 430 of 708 settlements carrying no
 journal row. Details and the two tooling defects it exposed are in PLAN 3.5.
+**On that measurement the operator stopped run 2 the same day** — see the next
+paragraph.
 
 **Step 3.4 (alerts) is deferred by the user's decision, and step 3.5 is
-RUNNING AGAIN — run 2, launched 2026-09-11 14:15:50 +07 from a clean tree
-at `59d3707`** (port **8085**, PID in `.paper/scanner.pid`, log
+RUNNING AGAIN — run 3, launched 2026-09-12 16:09:41 +07 from a clean tree
+at `b481346`** (port **8085**, PID in `.paper/scanner.pid`, log
 `.paper/scanner.log`, launch record `.paper/launch-state.txt`, verdict no
-earlier than 2026-09-25 14:15:50 +07; `caffeinate -i -s` holds the machine
-awake and the machine must stay on AC power with the lid open). Run 1 ran
+earlier than 2026-09-26 16:09:41 +07; `caffeinate -i -s` holds the machine
+awake and the machine must stay on AC power with the lid open — verified at
+this launch: `AC Power`, clamshell `No`). **Run 2 was ENDED 2026-09-12
+16:08:17 +07 by the operator, on the rehearsal's measurement** — the one
+exception ever taken to "never restart a running gate", and taken because the
+window was already unsalvageable rather than inconvenient: 67 ticks in 25.9
+hours, gaps of 610/177/123 minutes, 430 of 708 settlements with no journal
+row, and 58 sleeps every one of them on battery. Its record is archived in
+`.paper/run2-2026-09-11/` (`ENDED`, the database as it left it, 9,997 rows /
+5,993 in the window / 67 ticks, and its pid, log and launch state). Run 3 is
+the first gate run to carry the bybit_spot batching, both data clocks, the
+late-tick counter and an EMPTY paper book — verified in its first two
+minutes: 9/9 tradable sources connected with a live `last_msg_at_ms`,
+bybit_spot among them with 52 price samples against run 2's 0 in 26 hours,
+`tick_status` on the wire at `late_ticks: 0`, and a first journal tick of 91
+rows over all 13 pairs. Run 1 ran
 from 2026-09-07 09:39:52 +07 until the machine rebooted at about 2026-09-10
 01:13 +07 (its record is archived in `.paper/run1-2026-09-07/`; 4,004 rows,
 2 days 15.5 hours of the 14 needed, and the phase-1 soak on 8082 died with
 it). PLAN 3.5 ③ step 1 says what the relaunch means — the window restarts
-from the launch, 14 unbroken days, no stitching — and run 2 runs the
-verified fees and every key added since `2328307`, so its journal compares
-against `cmd/backtest` on the CURRENT block with `-compare-journal -from
-"2026-09-11 14:15:50 +0700"`; the fee and key state are in the launch log,
+from the launch, 14 unbroken days, no stitching — and run 3, like run 2,
+runs the verified fees and every key added since `2328307`, so its journal
+compares against `cmd/backtest` on the CURRENT block with
+`-compare-journal -from "2026-09-12 16:09:41 +0700"`; the fee and key state are in the launch log,
 in `.paper/launch-state.txt`, and in every journal row. Since 2026-09-10 every journal row also carries the fee
 state of both legs it was priced with (`params_json.fees`, PLAN 3.5 ④), and
 the launch log prints every source's taker bps and verified flag — the
@@ -678,7 +694,9 @@ a server that cannot count late ticks must not appear to be reporting none. And 
 lookback is `max(30, trailing_mean_days + 7)` days with the config capped at
 199 so the replay's 200-day lookback always covers what the live path
 judges. Run 1 lost 16 of 32 settlements to a sleeping machine with no line
-saying so; run 3 will say so.
+saying so, run 2 lost nearly fifteen hours of 22.7 the same way; run 3 is
+live on that binary since 2026-09-12 16:09:41 +07 and reports `late_ticks`
+on the wire — 0 at launch.
 
 **Step 4.3 (paper ledger) shipped 2026-09-11, beside the running gate (Q12).**
 `internal/paper` is the ledger arithmetic — fills through
@@ -1086,8 +1104,11 @@ sqlite3 data/scanner.db "SELECT datetime(evaluated_at_ms/1000,'unixepoch'), symb
 # Exit 0 passed, 1 failed, 2 the journal was not written with this block.
 # -db points it at a COPY, which is how it is run while a gate is writing the
 # live file; the corpus is opened read-only either way since 2026-09-12.
-sqlite3 -readonly "file:data/scanner.db?mode=ro" ".backup '/tmp/run2.db'"
-go run ./cmd/backtest -compare-journal -db /tmp/run2.db   -from "2026-09-11 14:15:50 +0700" -to "2026-09-25 14:15:50 +0700" -csv /tmp/compare.csv
+sqlite3 -readonly "file:data/scanner.db?mode=ro" ".backup '/tmp/run3.db'"
+# Candles must cover the window first, or the basis input is unverifiable on
+# every series and (b) swallows divergences that should have been examined.
+go run ./cmd/backfill -prices -db /tmp/run3.db
+go run ./cmd/backtest -compare-journal -db /tmp/run3.db   -from "2026-09-12 16:09:41 +0700" -to "2026-09-26 16:09:41 +0700" -csv /tmp/compare.csv
 
 
 # Re-measure what a stored price sample costs on disk before changing
@@ -1233,8 +1254,12 @@ phase 1.
   stopped publishing prices while still heartbeating would have held the stream
   open forever, which is this same failure on another transport. `streamPyth`
   now runs the same two clocks, the oracle exception in `internal/config` is
-  gone, and every source in `config.yaml` is covered. The fix is in the NEXT
-  run's binary — run 2 was not restarted.
+  gone, and every source in `config.yaml` is covered. Both halves shipped into
+  **run 3's binary** (`b481346`, launched 2026-09-12 16:09:41 +07); run 2 was
+  never touched and was stopped instead. Measured in run 3's first two
+  minutes: bybit_spot `connected` with a live `last_msg_at_ms` and **52 price
+  samples**, the same as every other source, against **0 in 26 hours** for the
+  whole of run 2.
 - Bybit's `orderbook.1` pushes snapshot **and** delta and the connector does not
   distinguish them, so a delta deleting the top level (size `"0"`) is taken at
   face value. This predates step 1.2 and affects the price as well as the new

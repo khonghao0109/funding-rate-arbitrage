@@ -99,7 +99,7 @@
 | **0** | Nền tảng scanner | 5 | — | ✅ **90% xong** | Scanner real-time 10 nguồn |
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
-| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 2 từ 09-11** | Tín hiệu có kiểm chứng lịch sử |
+| **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
 | **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **1/6 · 4.3 sổ paper ✅ (2026-09-11, tiến trình đọc nhật ký — Q12) · còn lại chờ cổng 3.5** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
@@ -2784,7 +2784,7 @@ thống như alt kraken 2025–26: ở đó 1,5 × 90 ngày loại đúng 4 chu�
 chuỗi lãi với giá −0,10 điểm/năm vào muộn trên phần còn lại. Luật 2 (chuyển
 vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyết.
 
-#### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY LẦN 2 (khởi động 2026-09-11 14:15:50 +07, phán quyết sớm nhất 2026-09-25 14:15:50 +07)
+#### Bước 3.5 — Cổng quyết định 🚦 ĐANG CHẠY LẦN 3 (khởi động 2026-09-12 16:09:41 +07, phán quyết sớm nhất 2026-09-26 16:09:41 +07)
 - Chạy đường tín hiệu SỐNG tối thiểu **2 tuần liên tục**: `cmd/scanner`
   gọi đúng `EvaluateEntry` / `EvaluateExit` production trên dữ liệu sống, ghi
   mỗi quyết định vào `signal_journal` bằng máy (①), giữ một **sổ vị thế giấy**
@@ -2796,7 +2796,12 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
   có và đường equity là việc của **Bước 4.3**, được làm song song với cổng này
   như một tiến trình ĐỌC nhật ký (Q12) — nó bổ sung "góc nhìn tiền" cho phán
   quyết, không thay giao thức ③ và **không bao giờ khởi động lại tiến trình
-  lần 2** (cửa sổ tính lại từ đầu nếu tiến trình chết — ③ bước 1).
+  đang giữ cổng** (cửa sổ tính lại từ đầu nếu tiến trình chết — ③ bước 1).
+  Luật đó đã được miễn **đúng một lần**, có chủ ý và có lý do đo được: người
+  vận hành dừng lần chạy 2 ngày 2026-09-12 vì cửa sổ của nó **đã đứt từ ngày
+  đầu** và ③ bước 1 không thể thoả dù có chờ thêm mười ba ngày (xem khối "Lần
+  chạy 3" ngay dưới). Miễn trừ này không lặp lại: một lần chạy bị dừng vì
+  "chưa thấy lệnh nào" hay "muốn đổi tham số" là đúng thứ luật đóng băng cấm.
 - **Luật đóng băng trong cửa sổ:** không nới ngưỡng, không đổi tham số vì
   "chưa có lệnh nào để xem". Một cửa sổ gần như không lệnh là **kết quả hợp
   lệ** của cổng — nó nói chiến lược ở tham số này không giao dịch — không phải
@@ -2805,8 +2810,90 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
   Bước 3.2, không được sang 4.1.** Đạt → 3.4 làm ngay trước 4.1; 4.3 (nếu đã
   có) tiếp tục chạy như sổ paper của GĐ 4.
 
-> **Khởi động lại (2026-09-11 14:15:50 +07).** Theo quyết định của người
-> vận hành ngày 2026-09-11. Binary build từ working tree sạch ở `59d3707`
+> ### Lần chạy 3 — khởi động 2026-09-12 16:09:41 +07 (ĐANG CHẠY)
+>
+> Theo quyết định của người vận hành ngày 2026-09-12: **dừng lần 2, lên lần 3**.
+> Binary build từ working tree sạch ở **`b481346`** (`.paper/scanner-bin`,
+> sha256 `922608c0a51304b1e81fe2d8de6d16941ffe53802f349562c5d75e67d83971cb`),
+> chạy `-config config.yaml -started-at-file .paper/started_at`, cổng **8085**,
+> PID trong `.paper/scanner.pid`, log `.paper/scanner.log`, hồ sơ lúc lên
+> `.paper/launch-state.txt`, `caffeinate -i -s -w <pid>`. Khối `strategy:` là
+> khối hiện tại của `config.yaml` — **không đổi một số nào** trong phiên này —
+> và biểu phí đã xác minh ở cả 9 nguồn giao dịch được, cả hai được log lúc lên
+> và mỗi hàng nhật ký tự mang (`params_json.fees`). `data_silence_sec` = **600 s
+> cho mọi nguồn** qua `scanner.default_data_silence_sec`, không nguồn nào khai
+> riêng, **kể cả `pyth`**. **Mốc seed sổ giấy = mốc lên**, và log lúc lên ghi
+> `sổ giấy: seed từ 0 hàng kể từ 2026-09-12 09:09:41 UTC, mở 0 vị thế` — sổ
+> giấy lên **TRỐNG**, cùng trạng thái replay bắt đầu (③ bước 1).
+> **Nguồn điện lúc lên — điều kiện mà lần 1 và lần 2 đều trượt:** `pmset -g batt`
+> = `Now drawing from 'AC Power'` (pin 100%, đã sạc đầy), `AppleClamshellState`
+> = `No` (màn hình MỞ). Phán quyết **không sớm hơn 2026-09-26 16:09:41 +07**.
+>
+> ```
+> go run ./cmd/backfill  -prices -db <bản sao>          # nến phải phủ hết cửa sổ TRƯỚC
+> go run ./cmd/backtest  -compare-journal -db <bản sao> \
+>   -from "2026-09-12 16:09:41 +0700" -to <mốc phán quyết> -csv <scratch>
+> ```
+>
+> **Lần 3 có gì lần 2 không có** (tất cả chỉ nằm trong binary này — lần 2 chạy
+> `59d3707` và không được đụng tới):
+>
+> - **`bybit_spot` thật sự chạy.** Connector chia lô subscribe dưới trần 10
+>   `args` mỗi yêu cầu mà Bybit ghi cho SPOT, và ĐỌC câu trả lời từ chối. Lần 2
+>   gửi 26 args, bị từ chối cả yêu cầu và sinh **0 mẫu giá** suốt đời nó.
+> - **Đồng hồ thứ hai ở vòng đời chung.** Một phiên trả lời keepalive mà không
+>   sinh dữ liệu kết thúc bằng `exchanges.ErrDataSilence`, lùi và đăng ký lại.
+> - **Pyth (SSE) chạy đúng hai đồng hồ đó**, nên oracle cũng được che.
+> - **Đếm tick trễ.** `tickLoop` đo trên đồng hồ TƯỜNG và đưa lên wire ở
+>   `prices.tick_status`; cả sáu job chu kỳ cố định, kể cả top-up funding, nằm
+>   trên một bộ lập lịch. Nếu máy ngủ lần nữa, lần này tiến trình NÓI RA.
+> - **Sổ giấy lên trống** (`-paper-seed-since` / `-started-at-file`), nên không
+>   chuỗi nào vào bảng so sánh với vị thế thừa kế của lần chạy trước.
+>
+> **Nghiệm thu 15 phút sau khi lên — số đo thật, đọc trên wire và trên kho:**
+>
+> | mục | yêu cầu | đo được |
+> |---|---|---|
+> | nguồn giao dịch có `last_msg_at_ms` > 0 | 9/9 | **9/9** `connected`, `reconnect_count: 0` |
+> | trong đó `bybit_spot` | có | **có** — `connected`, `last_msg_at_ms` mới |
+> | `price_snapshots` của `bybit_spot` | > 0 | **52 hàng** trong 2 phút đầu, bằng mọi nguồn khác |
+> | `prices.tick_status` trên wire | có | **có** — `late_ticks: 0` |
+> | log `sổ giấy: seed …` | `mở 0 vị thế` | **`seed từ 0 hàng … mở 0 vị thế`** |
+> | tick nhật ký đầu tiên | đủ 13 cặp | **91 hàng, 13/13 cặp**, 09:12:48 UTC (đúng 3 phút warmup sau khi lên) |
+> | tick thứ hai (nhịp) | +10 phút | **09:22:48 UTC, 91 hàng, 13/13 cặp** — đúng nhịp |
+> | dòng `tick trễ` | 0 | **0** (đọc lại lúc 16:23:01 +07, `uptime_sec` 791 ở mọi nguồn, `reconnect_count` vẫn 0) |
+> | `pmset -g batt` | AC | **AC Power**, clamshell `No` |
+>
+> `pyth` vẫn `reconnecting` / `last_msg_at_ms: 0`: hermes.pyth.network trả
+> **401 Unauthorized** — đúng như từ 2026-09-03, không phải hồi quy của lần
+> chạy này, và oracle không tham gia nhóm so sánh nào (Bước 1.2).
+>
+> **Sổ giấy 4.3 — chưa chạy, chờ người vận hành.** `cmd/paperledger` đọc kho
+> CHỈ ĐỌC nên chạy nó không chạm cổng, nhưng nó không được lên tự động: nếu
+> muốn xem góc nhìn tiền của lần 3 thì
+> `go run ./cmd/paperledger -started-at-file .paper/started_at -port 8086`
+> (cổng 8086, loopback, tự từ chối 8082/8085).
+>
+> **Lần chạy 2 ĐÃ KẾT THÚC — 2026-09-12 16:08:17 +07, `kill -TERM`, thoát
+> sạch dưới 2 giây.** Không phải tiến trình hỏng: nó vẫn đúng PID đầu
+> (35370, `lstart` Fri Sep 11 14:15:48 2026) và vẫn đang ghi tick lúc bị
+> dừng. Lý do là cửa sổ: **67 tick trong 25,9 giờ** thay vì ~155, ba lỗ hổng
+> **610 / 177 / 123 phút**, và 430/708 mốc không có hàng nhật ký trong diễn
+> tập — ③ bước 1 không thoả và không thể thoả. Nguyên nhân đo được là VẬN
+> HÀNH, đúng lỗi đã giết cửa sổ lần 1: **58 lần ngủ trong cửa sổ, 100% trong
+> số đó `Using Batt`** (39 'Sleep Service Back to Sleep', 18 'Maintenance
+> Sleep', 1 'Clamshell Sleep'), lần đầu **2026-09-11 18:03:37 +07 — 3 giờ 48
+> phút sau khi lên**. Chờ thêm mười ba ngày chỉ để tới cùng một lời từ chối.
+> Hồ sơ đầy đủ ở `.paper/run2-2026-09-11/` (`ENDED`, `scanner-run2.db` =
+> `data/scanner.db` như lần 2 để lại, `PRAGMA integrity_check` OK và số hàng
+> khớp đúng bản `.backup` chụp hai phút trước lúc TERM: **9.997 hàng tổng,
+> 5.993 hàng trong cửa sổ, 67 tick**, mốc cuối 2026-09-12 08:59:16 UTC; kèm
+> `scanner.pid`, `scanner.log`, `launch-state.txt`, `started_at`, `log_path`,
+> `caffeinate.pid`, `deadline_min14d`, `scanner-bin`). Cổng 8085 và 8082
+> trống ngay sau đó, `caffeinate` (PID 35378, `-w 35370`) tự thoát.
+>
+> **Khởi động lại (2026-09-11 14:15:50 +07) — lần chạy 2, đã kết thúc.** Theo
+> quyết định của người vận hành ngày 2026-09-11. Binary build từ working tree sạch ở `59d3707`
 > (`.paper/scanner-bin`), khối `strategy:` hiện tại của `config.yaml` (bộ
 > đã áp dụng 2026-09-09; `min_trailing_mean_bps`, `trailing_mean_days`,
 > `trailing_mean_min_cost_frac`, `perp_margin_frac` đều 0), biểu phí đã xác
@@ -2856,6 +2943,10 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > đối chiếu hợp lệ cho một phép so 2,6 ngày, nhưng không phải phán quyết.
 
 > ### Diễn tập 2026-09-12 trên bản sao — KHÔNG PHẢI PHÁN QUYẾT
+>
+> *(Hồ sơ của LẦN CHẠY 2, giữ nguyên như lúc viết. Lần 2 đã kết thúc
+> 2026-09-12 16:08:17 +07 — mọi mốc dưới đây là của cửa sổ đã đóng, không
+> phải hạn hiện hành; hạn hiện hành ở khối "Lần chạy 3".)*
 >
 > Chạy để tập giao thức và để tìm lỗi tooling TRƯỚC ngày phán quyết, trên bản
 > sao `sqlite3 -readonly ".backup"` chụp lúc **2026-09-12 13:00:15 +07**. Tiến
@@ -3414,8 +3505,11 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > hiện rằng REPLAY cũng mù basis vì `price_history` không có nến nào trong
 > cửa sổ, nằm ở **③ bước 3b** — đọc bước đó trước khi đếm (a)/(b)/(c). Bản sửa nằm trong binary của **lần chạy
 > kế**, KHÔNG triển khai vào lần 2 (Bước 1.6), nên con số trên đứng nguyên cho
-> tới hết lần 2. Lần chạy 3: kiểm `source_status` của bybit_spot ngay sau khi
-> lên, và `prices.tick_status` sẽ nói nếu máy ngủ.
+> tới hết lần 2. **Đã kiểm ở lần chạy 3 (2026-09-12 16:09:41 +07):**
+> `bybit_spot` lên `connected` với `last_msg_at_ms` mới và **52 mẫu giá trong
+> hai phút đầu**, bằng đúng mọi nguồn khác — so với **0 mẫu trong 26 giờ** ở
+> lần 2. `prices.tick_status` có trên wire với `late_ticks: 0`, nên lần này
+> nếu máy ngủ thì tiến trình nói ra.
 >
 > **Giới hạn của dữ liệu đầu vào, ghi ở `internal/paper/doc.go` và khối giả
 > định của báo cáo (review 2026-09-11):** `sampled_at_ms` của
@@ -3528,7 +3622,7 @@ chứng minh bằng parity với fixture của gói, rồi đi qua đúng các c
 funding phải đi. Chạy trong cùng tiến trình Go, cùng ingestion / store / config
 (Q7, Q8), nhưng **vòng quyết định riêng**: nến 4h UTC, không phải sự kiện settle.
 **Thời gian:** 4–6 tuần cho 6.1–6.3 · **5 bước** · **chỉ 6.1 được làm ngay**;
-6.2 trở đi chờ cổng 3.5 kết luận (lần chạy 2, phán quyết sớm nhất 2026-09-25)
+6.2 trở đi chờ cổng 3.5 kết luận (lần chạy 3, phán quyết sớm nhất 2026-09-26)
 và 3.4, vì một nhánh mới không được đẩy cổng của track funding ra sau. *(Sửa
 2026-09-11: bản đầu của đoạn này viết trên snapshot cũ còn ghi GĐ 1 và 3.3
 chưa xong.)*
