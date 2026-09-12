@@ -467,7 +467,7 @@ func (s *compareStats) add(p pairing, holdingDays float64) {
 	// It used to sum each side's entries independently while bounding the
 	// difference by a band computed only where both entered. Whenever the two
 	// sides entered at different settlements — which is the interesting case,
-	// and was every case in the 2026-09-13 rehearsal — the sums covered
+	// and was every case in the 2026-09-12 rehearsal — the sums covered
 	// different sets and the band could not bound them even in principle:
 	// measured Σ difference 1.2365 against a band of ±0.0001. A bound that
 	// cannot bound its quantity is worse than no bound, because it is printed

@@ -609,7 +609,7 @@ winners). Rule 2 (moving capital between series) is recorded under PLAN step
 `internal/backtest`, a capital/position object in Go, and the operator's
 decision on how much may sit on one quote-bridged venue.
 
-**A rehearsal of the 3.5 verdict on 2026-09-13 (a read-only copy, NOT a
+**A rehearsal of the 3.5 verdict on 2026-09-12 (a read-only copy, NOT a
 verdict) found the run-2 window already broken, and by the same operational
 fault as run 1**: the journal holds 49 evaluation ticks in 22.7 hours instead
 of ~136, with gaps of 177, 610 and 123 minutes, because the machine slept 58
@@ -702,7 +702,7 @@ samples in run 2** (connected at launch, REST depth fine), so the live basis
 exit on HYPE·kraken is "not evaluable" every tick. **Diagnosed 2026-09-12** —
 see the next paragraph — which means HYPE·kraken's run-2 journal rows say
 nothing about the basis rule and must not be read as if they did. Counted
-2026-09-13 on a read-only copy (PLAN ③ step 3b): every bybit_spot row in the
+2026-09-12 on a read-only copy (PLAN ③ step 3b): every bybit_spot row in the
 window is HYPEUSDT, 335 rows over 7 perp sources, and all **46** that reach
 the exit path report the basis "not measurable" — against binance_spot's
 556 of 556 measured. The same count turned up a second hole that matters
@@ -1078,7 +1078,7 @@ sqlite3 data/scanner.db "SELECT datetime(evaluated_at_ms/1000,'unixepoch'), symb
 # run's window against a replay of config.yaml's block, decision by decision.
 # Exit 0 passed, 1 failed, 2 the journal was not written with this block.
 # -db points it at a COPY, which is how it is run while a gate is writing the
-# live file; the corpus is opened read-only either way since 2026-09-13.
+# live file; the corpus is opened read-only either way since 2026-09-12.
 sqlite3 -readonly "file:data/scanner.db?mode=ro" ".backup '/tmp/run2.db'"
 go run ./cmd/backtest -compare-journal -db /tmp/run2.db   -from "2026-09-11 14:15:50 +0700" -to "2026-09-25 14:15:50 +0700" -csv /tmp/compare.csv
 
@@ -1184,7 +1184,7 @@ phase 1.
   pagers have loops that only run against live venues. Their parsers and the
   cadence arithmetic are golden-tested against recorded payloads; the loops are
   not, and pretending otherwise with a mock HTTP server would test the mock.
-  Since 2026-09-13 every one of those replays also holds the connector to the
+  Since 2026-09-12 every one of those replays also holds the connector to the
   `StreamConfig.Handle` contract — true if and only if the frame produced a
   message on a feed — because `exchangestest.Replay` counts what really
   reached the channels around each frame and calls `CheckHandleContract`. It
@@ -1220,7 +1220,7 @@ phase 1.
   that just cost 19 hours — not on a ratio to the worst measured gap, which is
   not stable: bybit_futures measured 0.69s in one window and 18.38s in another
   minutes later. Absent means OFF, so the config the 3.5 process loaded still
-  means what it meant. **Pyth was covered on 2026-09-13**: it is SSE with its
+  means what it meant. **Pyth was covered on 2026-09-12**: it is SSE with its
   own read loop, and that loop's watchdog was reset by every line — including
   the SSE comments and `data: heartbeat` Hermes sends — so a Hermes that
   stopped publishing prices while still heartbeating would have held the stream

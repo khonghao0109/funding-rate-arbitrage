@@ -132,7 +132,7 @@ func TestDataSilence_TheOracleIsCoveredToo(t *testing.T) {
 // The shipped file is the one that runs, so its numbers are asserted here
 // rather than described in a comment somebody has to trust.
 //
-// Every source, the oracle included since 2026-09-13: Pyth keeps its own read
+// Every source, the oracle included since 2026-09-12: Pyth keeps its own read
 // loop but now runs the same two watchdogs.
 func TestShippedConfig_GivesEverySourceASilenceDeadline(t *testing.T) {
 	cfg, err := Load(filepath.Join("..", "..", "config.yaml"))

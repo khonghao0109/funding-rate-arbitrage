@@ -101,7 +101,7 @@ func main() {
 		}
 	}
 	// READ-ONLY, always. This command documents itself as replaying the corpus
-	// and writing nothing back, and until 2026-09-13 it took that on trust:
+	// and writing nothing back, and until 2026-09-12 it took that on trust:
 	// store.Open creates the file if it is missing, applies the schema and
 	// stamps the version. Pointed at the database a step-3.5 gate is writing —
 	// which is the same file config.yaml names — that is a migration waiting

@@ -139,7 +139,7 @@ func TestHandlePythLine_IgnoresEverythingThatIsNotOurPriceUpdate(t *testing.T) {
 	}
 }
 
-// --- the data watchdog (2026-09-13) ---
+// --- the data watchdog (2026-09-12) ---
 
 // sseTestServer streams lines to every client until the client goes away. Each
 // line is flushed on its own so the reader sees it immediately, which is what
@@ -175,7 +175,7 @@ func sseTestServer(t *testing.T, lines func(write func(string) bool)) string {
 
 // The failure this exists for, in Pyth's transport: a stream that keeps sending
 // and never sends a PRICE. Hermes carries SSE comments and `data: heartbeat`,
-// and the frame watchdog is reset by every one of them — so before 2026-09-13 a
+// and the frame watchdog is reset by every one of them — so before 2026-09-12 a
 // Hermes that stopped publishing while still heartbeating would have held this
 // connection open for as long as the process ran, with no price on it and every
 // health signal green. That is the bybit_spot failure in another transport, and

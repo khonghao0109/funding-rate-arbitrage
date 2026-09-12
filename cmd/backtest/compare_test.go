@@ -330,7 +330,7 @@ func enterPair(liveAction, btAction strategy.Action, liveAPR, btAPR, liveCost, b
 // Step 5 says the two sums are compared "cùng đơn vị, cùng thời điểm". Summing
 // each side's own entries independently while bounding the difference by a band
 // measured only where both entered gives a bound that cannot bound its own
-// quantity: in the 2026-09-13 rehearsal the difference was 1.2365 against a
+// quantity: in the 2026-09-12 rehearsal the difference was 1.2365 against a
 // band of ±0.0001, because the two sides entered at almost entirely different
 // settlements. Only settlements BOTH sides entered at may go into the sums.
 func TestMoneyCheck_SumsOnlyTheSettlementsBothSidesEnteredAt(t *testing.T) {

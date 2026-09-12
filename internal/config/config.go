@@ -475,11 +475,11 @@ func (c *Config) applyDefaults() {
 		// and "written wrong" are different mistakes and only one of them is
 		// safe to fix silently.
 		//
-		// The oracle was skipped here between 2026-09-12 and 2026-09-13,
-		// because Pyth is SSE with its own read loop and a number there would
-		// have been protection it did not have. It has the same two watchdogs
-		// now (exchanges/pyth), so the exception is gone and every source is
-		// covered.
+		// The oracle was skipped here when this field first arrived, earlier
+		// the same day, because Pyth is SSE with its own read loop and a
+		// number there would have been protection it did not have. It has the
+		// same two watchdogs now (exchanges/pyth), so the exception is gone
+		// and every source is covered.
 		if c.Sources[i].DataSilenceSec == 0 {
 			c.Sources[i].DataSilenceSec = c.Scanner.DefaultDataSilenceSec
 		}

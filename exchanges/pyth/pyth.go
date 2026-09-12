@@ -170,7 +170,7 @@ func streamPyth(source string, symbols []exchanges.Symbol, f exchanges.Feeds, ss
 	//
 	// dataDog is silence of PRICES, reset only by a line that published one. It
 	// is off when Feeds carries no threshold, which is what every harness and
-	// every pre-2026-09-13 config gets.
+	// every pre-2026-09-12 config gets.
 	watchdog := time.AfterFunc(pythReadTimeout, cancel)
 	defer watchdog.Stop()
 

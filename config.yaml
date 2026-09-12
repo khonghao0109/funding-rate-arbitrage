@@ -70,8 +70,8 @@ scanner:
   # nhất ở cửa sổ kia), nên chia chín con số riêng là độ chính xác giả. Khi
   # một sàn chứng minh nó cần số khác, khai `data_silence_sec` ở ngay nguồn đó.
   #
-  # `pyth` CŨNG nhận mặc định này từ 2026-09-13. Oracle chạy SSE với vòng đọc
-  # riêng, không dùng `runSession`, nên trong một ngày nó được miễn — nhưng
+  # `pyth` CŨNG nhận mặc định này từ 2026-09-12. Oracle chạy SSE với vòng đọc
+  # riêng, không dùng `runSession`, nên lúc đầu nó được miễn — nhưng
   # `exchanges/pyth` nay có đúng hai đồng hồ đó (khung: mọi dòng; dữ liệu: chỉ
   # dòng sinh ra giá), vì stream Hermes mang cả comment SSE lẫn
   # `data: heartbeat` và một Hermes ngừng công bố giá mà vẫn heartbeat sẽ giữ

@@ -816,7 +816,7 @@ Sửa:
 > | `bybit_spot` | **0 message** | **9.592 message**, cái đầu tiên sau 0,60 s |
 > | mọi nguồn khác | 13.654 – 1.026.954 | 4.439 – 252.755 |
 >
-> **Test chung cho cả 9 nguồn WebSocket, thêm 2026-09-13.** Hợp đồng
+> **Test chung cho cả 9 nguồn WebSocket, thêm 2026-09-12.** Hợp đồng
 > `StreamConfig.Handle` ("trả true KHI VÀ CHỈ KHI frame này sinh ra message
 > trên feed") trước đó chỉ được bảo đảm gián tiếp qua kênh đầu ra — không có
 > assert nào nói thẳng. Nay `exchangestest.Replay` đếm số message thật sự ra
@@ -835,7 +835,7 @@ Sửa:
 > cho bybit báo "có dữ liệu" trên frame nó không đẩy gì → đỏ ở frame 13 và 51.
 > Bỏ đột biến, cả cây xanh.
 >
-> **Pyth (SSE) được che nốt, 2026-09-13.** Bản sửa 2026-09-12 miễn oracle khỏi
+> **Pyth (SSE) được che nốt, 2026-09-12.** Bản sửa bybit_spot cùng ngày miễn oracle khỏi
 > `data_silence_sec` vì Pyth không đi qua `runSession`: nó là server-sent
 > events trên HTTP, có vòng đọc riêng và một watchdog riêng. Nhưng watchdog đó
 > là **đồng hồ KHUNG** — nó được `Reset` bởi **mọi dòng**, mà stream Hermes
@@ -2855,7 +2855,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > "thiếu hàng" trong bảng so sánh và không đếm vào (a)/(b)/(c). Đoạn `2026-09-07 → 09-10` vẫn là 4.004 hàng dữ liệu
 > đối chiếu hợp lệ cho một phép so 2,6 ngày, nhưng không phải phán quyết.
 
-> ### Diễn tập 2026-09-13 trên bản sao — KHÔNG PHẢI PHÁN QUYẾT
+> ### Diễn tập 2026-09-12 trên bản sao — KHÔNG PHẢI PHÁN QUYẾT
 >
 > Chạy để tập giao thức và để tìm lỗi tooling TRƯỚC ngày phán quyết, trên bản
 > sao `sqlite3 -readonly ".backup"` chụp lúc **2026-09-12 13:00:15 +07**. Tiến
@@ -2983,7 +2983,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > 3. **Chạy backtest** trên đúng cửa sổ đó (`-months` không đủ mịn: thêm
 >    `-from/-to` — nợ tooling, ghi ở dưới) với cùng 4 chuỗi binance.
 > 3b. **Khoanh vùng chuỗi có ĐẦU VÀO BASIS hỏng, TRƯỚC khi đếm (a)/(b)/(c)**
->    *(thêm 2026-09-13, đo trên bản sao chụp lúc 2026-09-12 13:00:15 +07)*.
+>    *(thêm 2026-09-12, đo trên bản sao chụp lúc 2026-09-12 13:00:15 +07)*.
 >    Điều kiện basis là đầu vào lệch duy nhất mà giao thức cho phép đổ lỗi
 >    (bước 4), nên phải biết TRƯỚC nó đo được ở đâu — nếu không, một lệch thật
 >    sẽ được tha vào (b) bằng một lý do không tồn tại.
