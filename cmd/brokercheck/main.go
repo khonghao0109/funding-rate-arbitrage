@@ -49,6 +49,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/internal/broker"
+	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
 
 	"github.com/joho/godotenv"
 )
@@ -91,7 +92,13 @@ type venue struct {
 func main() {
 	recvWindowMs := flag.Int64("recv-window-ms", broker.DefaultRecvWindowMs,
 		"recvWindow sent with every signed request, in milliseconds (documented default 5000, maximum 60000)")
-	timeout := flag.Duration("timeout", 30*time.Second, "overall deadline for the run")
+	timeout := flag.Duration("timeout", 60*time.Second, "overall deadline for the run")
+	placeCancel := flag.Bool("place-cancel", false,
+		"step 4.2 acceptance: place a resting LIMIT GTC BUY on testnet, query it, cancel it, and prove it is gone")
+	marketFlag := flag.String("market", "", "which market for -place-cancel: futures_usdm | spot (empty = both that have a key)")
+	symbolFlag := flag.String("symbol", "BTCUSDT", "symbol for -place-cancel")
+	farFrac := flag.Float64("far-frac", 0.5,
+		"how far BELOW the market to rest the buy, as a fraction: 0.5 means half price, so it cannot fill")
 	flag.Parse()
 
 	// .env is gitignored and is where an operator normally puts these. Its
@@ -123,6 +130,11 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
+
+	if *placeCancel {
+		runPlaceCancelAcceptance(ctx, venues, *marketFlag, *symbolFlag, *recvWindowMs, *farFrac)
+		return
+	}
 
 	var all []check
 	var skipped []string
@@ -333,4 +345,89 @@ func decode(raw json.RawMessage, into any) error {
 		return errors.New("không giải mã được câu trả lời của sàn (thân phản hồi không in ra): " + err.Error())
 	}
 	return nil
+}
+
+// runPlaceCancelAcceptance is the step-4.2 acceptance across the markets that
+// have a key. A market without one is SKIPPED and reported as "chưa nghiệm
+// thu" — it is not a failure, and it is not an acceptance either.
+func runPlaceCancelAcceptance(ctx context.Context, venues []venue, marketFilter, symbol string, recvWindowMs int64, farFrac float64) {
+	fmt.Println("BROKERCHECK — nghiệm thu Bước 4.2, TESTNET: đặt LIMIT GTC MUA xa thị trường, tra, huỷ, kiểm lại")
+	fmt.Printf("symbol %s · giá đặt cách thị trường %.0f%% về phía dưới, để lệnh NẰM CHỜ chứ không khớp\n\n", symbol, farFrac*100)
+
+	var all []check
+	var skipped []string
+	attempted, filled := 0, false
+
+	for _, v := range venues {
+		market := marketOf(v)
+		if marketFilter != "" && string(market) != marketFilter {
+			continue
+		}
+		creds, err := broker.CredentialsFromEnvAny(v.EnvPairs...)
+		switch {
+		case errors.Is(err, broker.ErrNoCredentials):
+			fmt.Printf("── %s · BỎ QUA — chưa có key, nên CHƯA NGHIỆM THU cho sàn này\n\n", v.NameVI)
+			skipped = append(skipped, v.NameVI)
+			continue
+		case err != nil:
+			fmt.Printf("── %s · LỖI CẤU HÌNH\n   %v\n\n", v.NameVI, err)
+			all = append(all, check{v.NameVI + ": credential", false, err.Error()})
+			attempted++
+			continue
+		}
+		attempted++
+
+		var capture *binancebroker.CaptureTransport
+		if binancebroker.CaptureEnabled() {
+			capture = &binancebroker.CaptureTransport{Dir: recordingDir}
+		}
+		res := runPlaceCancel(ctx, market, symbol, creds, recvWindowMs, farFrac, capture)
+		all = append(all, res.Checks...)
+		filled = filled || res.Filled
+		if capture != nil && len(capture.Written) > 0 {
+			fmt.Printf("   đã ghi recording: %s\n\n", strings.Join(capture.Written, ", "))
+		}
+	}
+
+	fmt.Println()
+	failed := 0
+	for _, c := range all {
+		mark := "ĐẠT "
+		if !c.Pass {
+			mark, failed = "HỎNG", failed+1
+		}
+		fmt.Printf("[%s] %s — %s\n", mark, c.NameVI, c.DetailVI)
+	}
+	for _, s := range skipped {
+		fmt.Printf("[BỎ QUA] %s — chưa có key\n", s)
+	}
+	fmt.Println()
+
+	switch {
+	case attempted == 0:
+		fmt.Println("Bước 4.2: KHÔNG sàn nào có key — không thử gì cả, CHƯA NGHIỆM THU.")
+		os.Exit(exitNoCredentia)
+	case filled:
+		fmt.Println("Bước 4.2: có lệnh KHỚP ngoài ý muốn. Đã gửi lệnh đối ứng; KHÔNG ✅ cho tới khi rõ lý do.")
+		os.Exit(exitFailed)
+	case failed > 0:
+		fmt.Printf("Bước 4.2: %d/%d mục hỏng — CHƯA NGHIỆM THU.\n", failed, len(all))
+		os.Exit(exitFailed)
+	case len(skipped) > 0:
+		fmt.Printf("Bước 4.2: %d/%d mục đạt, nhưng còn %s chưa có key — 🟡, chưa ✅ cho cả bước.\n",
+			len(all), len(all), strings.Join(skipped, ", "))
+		os.Exit(exitFailed)
+	}
+	fmt.Printf("Bước 4.2: %d/%d mục đạt trên CẢ HAI sàn testnet. Đặt và huỷ được, không lệnh nào khớp.\n", len(all), len(all))
+	os.Exit(exitOK)
+}
+
+// recordingDir is where CAPTURE_TESTDATA=1 writes the venue's real answers.
+const recordingDir = "internal/broker/binance/testdata"
+
+func marketOf(v venue) broker.Market {
+	if v.BaseURL == broker.BinanceFuturesTestnetBaseURL {
+		return broker.MarketFuturesUSDM
+	}
+	return broker.MarketSpot
 }
