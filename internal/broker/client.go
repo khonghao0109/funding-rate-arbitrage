@@ -190,6 +190,20 @@ func (c *Client) GetSigned(ctx context.Context, ep Endpoint, params []Param, int
 	return c.do(ctx, ep, SignedQuery(c.creds.APISecret, signed), true, into)
 }
 
+// How much of an answer is read, and how much of a failed one is quoted.
+//
+// These are two different questions and were one constant until the step-4.1
+// acceptance run of 2026-09-13 found it. A SUCCESS body is parsed, so its
+// ceiling only has to be larger than any answer the venue legitimately sends —
+// a spot /api/v3/account lists hundreds of assets and an exchangeInfo is
+// megabytes, both far past the 4 KiB that was in force. An ERROR body is
+// venue-controlled text that lands in an error message, a log and a report, so
+// its ceiling stays small however large the success one grows.
+const (
+	maxResponseBytes  = 16 << 20 // 16 MiB: past any documented payload, still bounded
+	maxErrorBodyBytes = 4096
+)
+
 func (c *Client) do(ctx context.Context, ep Endpoint, query string, signed bool, into any) error {
 	// Reserved BEFORE the request. A limiter that notices afterwards has
 	// already earned the 429 it exists to avoid.
@@ -226,14 +240,22 @@ func (c *Client) do(ctx context.Context, ep Endpoint, query string, signed bool,
 	// including the failures — a 429 is exactly when the number matters.
 	c.budget.Observe(resp.Header)
 
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	// Read one byte past the ceiling so an oversized answer can be NAMED
+	// rather than handed to the decoder as truncated JSON.
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if resp.StatusCode != http.StatusOK {
 		retryAfter := parseRetryAfterSeconds(resp.Header.Get("Retry-After"))
 		c.budget.NoteStatus(resp.StatusCode, retryAfter)
+		// The ERROR body stays short: it is venue-controlled text on its way
+		// into an error message, a log and a report.
+		shown := body
+		if len(shown) > maxErrorBodyBytes {
+			shown = shown[:maxErrorBodyBytes]
+		}
 		err := &HTTPError{
 			StatusCode: resp.StatusCode,
 			URL:        redactURL(full),
-			Body:       c.scrub(strings.TrimSpace(string(body))),
+			Body:       c.scrub(strings.TrimSpace(string(shown))),
 			RetryAfter: retryAfter,
 		}
 		if resp.StatusCode == http.StatusTeapot {
@@ -245,6 +267,10 @@ func (c *Client) do(ctx context.Context, ep Endpoint, query string, signed bool,
 	}
 	if into == nil {
 		return nil
+	}
+	if len(body) > maxResponseBytes {
+		return fmt.Errorf("%s: câu trả lời quá lớn (hơn %d byte) — không giải mã, vì cắt ngắn JSON rồi báo lỗi giải mã sẽ đổ tội cho sàn",
+			redactURL(full), maxResponseBytes)
 	}
 	if err := json.Unmarshal(body, into); err != nil {
 		return fmt.Errorf("%s: decode: %s", redactURL(full), c.scrub(err.Error()))

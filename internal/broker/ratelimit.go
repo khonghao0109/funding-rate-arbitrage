@@ -11,32 +11,40 @@ import (
 	"time"
 )
 
-// The per-minute IP request-weight budgets, and READ THE PROVENANCE — they are
-// not equally well attested (CLAUDE.md rule 5).
+// The per-minute IP request-weight budgets, MEASURED from each venue's own
+// exchangeInfo on 2026-09-13 during the step-4.1 acceptance run.
 //
-//   - SPOT, 6000: quoted from the documentation, which shows the exchangeInfo
-//     response carrying {"rateLimitType":"REQUEST_WEIGHT","interval":"MINUTE",
-//     "intervalNum":1,"limit":6000}.
-//     https://developers.binance.com/docs/binance-spot-api-docs/rest-api/general-endpoints
+// Both venues answer the same figure, and the documented way to learn it is to
+// ask: the USDⓈ-M general-info page states no number at all and says instead
+// that "the /fapi/v1/exchangeInfo rateLimits array contains objects related to
+// the exchange's RAW_REQUEST, REQUEST_WEIGHT, and ORDER rate limits".
+// https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
+// https://developers.binance.com/docs/binance-spot-api-docs/rest-api/general-endpoints
 //
-//   - FUTURES, 2400: **UNVERIFIED**. The USDⓈ-M general-info page describes the
-//     headers, the 429 and the 418 but states NO number; it says instead that
-//     "the /fapi/v1/exchangeInfo rateLimits array contains objects related to
-//     the exchange's RAW_REQUEST, REQUEST_WEIGHT, and ORDER rate limits" — i.e.
-//     the documented way to learn this figure is to ASK THE VENUE. 2400 is the
-//     widely reported value and could not be quoted from any official page
-//     reachable on 2026-09-12, so it stands here as a CONSERVATIVE DEFAULT,
-//     labelled, not as a documented fact.
-//     https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info
+// What was actually read, HTTP 200 both:
 //
-// Being too LOW is the safe direction — it only throttles this client harder —
-// which is why an unverified number is tolerable here at all. Being too high is
-// not: it is a 429, then an automatic IP ban that "scale[s] in duration for
-// repeat offenders, from 2 minutes to 3 days". Debt recorded in PLAN 4.1:
-// confirm both figures against each venue's own exchangeInfo on the acceptance
-// run, and replace this comment with the measurement.
+//	GET https://demo-fapi.binance.com/fapi/v1/exchangeInfo   (739 symbols)
+//	  REQUEST_WEIGHT MINUTE 1 -> 6000
+//	  ORDERS MINUTE 1 -> 1200 · ORDERS SECOND 10 -> 300
+//	GET https://testnet.binance.vision/api/v3/exchangeInfo   (1363 symbols)
+//	  REQUEST_WEIGHT MINUTE 1 -> 6000
+//	  ORDERS SECOND 10 -> 50 · ORDERS DAY 1 -> 160000
+//	  RAW_REQUESTS MINUTE 5 -> 300000
+//
+// This CORRECTS the 2400 that shipped on 2026-09-12 as an unverified
+// conservative default: the real ceiling on the host this client is restricted
+// to is 6000, and 2400 was throttling it to 40% of its budget. Too low is the
+// safe direction, which is why shipping it was tolerable; too high is not — it
+// is a 429, then an automatic IP ban that "scale[s] in duration for repeat
+// offenders, from 2 minutes to 3 days".
+//
+// THESE ARE TESTNET'S NUMBERS. The client cannot reach any other host (hosts.go),
+// so they are the right ones today, but a venue is free to give mainnet a
+// different ceiling and step 4.6 must re-read both before it points anywhere
+// else. The ORDERS limits above are recorded for step 4.2, which is the first
+// step that spends them; nothing enforces them yet.
 const (
-	BinanceFuturesWeightPerMin = 2400
+	BinanceFuturesWeightPerMin = 6000
 	BinanceSpotWeightPerMin    = 6000
 )
 

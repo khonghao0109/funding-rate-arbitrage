@@ -183,16 +183,19 @@ func TestNewClient_RefusesAWeightBudgetNobodyLookedUp(t *testing.T) {
 	}
 }
 
-// The two budgets, pinned so a typo is a test failure rather than a 418. Their
-// PROVENANCE differs and the constants' comment says so: spot's 6000 is quoted
-// from the docs, futures' 2400 is an unverified conservative default because
-// the official page gives no number and points at exchangeInfo instead.
-func TestWeightLimits_AreThePinnedFigures(t *testing.T) {
-	if BinanceFuturesWeightPerMin != 2400 {
-		t.Errorf("futures REQUEST_WEIGHT = %d, want the pinned conservative 2400", BinanceFuturesWeightPerMin)
+// The two budgets, pinned so a typo is a test failure rather than a 418.
+//
+// Both were READ from the venues' own exchangeInfo on 2026-09-13 (the numbers
+// and the two URLs are in the constants' comment), which is what the
+// documentation itself says to do — the USDⓈ-M page states no figure and points
+// at exchangeInfo. This replaced the 2400 that shipped a day earlier as an
+// unverified conservative default.
+func TestWeightLimits_AreTheMeasuredFigures(t *testing.T) {
+	if BinanceFuturesWeightPerMin != 6000 {
+		t.Errorf("futures REQUEST_WEIGHT = %d, want 6000 as read from demo-fapi's exchangeInfo on 2026-09-13", BinanceFuturesWeightPerMin)
 	}
 	if BinanceSpotWeightPerMin != 6000 {
-		t.Errorf("spot REQUEST_WEIGHT = %d, the docs show 6000/minute in the exchangeInfo example", BinanceSpotWeightPerMin)
+		t.Errorf("spot REQUEST_WEIGHT = %d, want 6000 as read from testnet.binance.vision's exchangeInfo on 2026-09-13", BinanceSpotWeightPerMin)
 	}
 }
 
