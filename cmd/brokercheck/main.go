@@ -12,15 +12,28 @@
 // budget, and two read-only account endpoints. Placing and cancelling an order
 // on testnet is step 4.2, and 4.4–4.6 wait for the step-3.5 verdict.
 //
-// Credentials come from BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET,
-// read from the environment (or a .env file, which .gitignore already covers).
+// # Two venues, two accounts
+//
+// Binance's USDⓈ-M futures testnet and its spot testnet are SEPARATE systems
+// with separate registrations, measured 2026-09-13: a futures key presented to
+// testnet.binance.vision is refused with -2015. So each venue reads its own
+// pair of variables, and a venue with no key is SKIPPED rather than failed —
+// having only one of the two accounts is a normal state, not a defect.
+//
+//	futures  BINANCE_FUTURES_TESTNET_API_KEY / _SECRET
+//	         falling back to BINANCE_TESTNET_API_KEY / _SECRET
+//	spot     BINANCE_SPOT_TESTNET_API_KEY / _SECRET
+//
+// Half a pair is NOT a skip: it is a failure, because a typo reported as "no
+// key" would leave a venue untested while the operator believes otherwise.
+//
 // Nothing here prints a key, a secret, a signature, or a balance amount: what
 // it prints is the HTTP status, the measured clock skew in milliseconds, the
 // weight the venue says this IP has spent, and the NUMBER and NAMES of the
 // assets each account returned.
 //
-// Exit codes: 0 every check passed · 1 a check failed · 2 no testnet
-// credentials were configured, so nothing was attempted.
+// Exit codes: 0 every venue that had a key passed · 1 a venue with a key failed
+// a check · 2 no venue had a key, so nothing was attempted.
 package main
 
 import (
@@ -40,9 +53,16 @@ import (
 	"github.com/joho/godotenv"
 )
 
-const (
-	keyVar    = "BINANCE_TESTNET_API_KEY"
-	secretVar = "BINANCE_TESTNET_API_SECRET"
+// The credential variables, per venue. The legacy pair stays readable as the
+// FUTURES fallback so an existing .env keeps working without an edit.
+var (
+	futuresEnv = []broker.EnvPair{
+		{KeyVar: "BINANCE_FUTURES_TESTNET_API_KEY", SecretVar: "BINANCE_FUTURES_TESTNET_API_SECRET"},
+		{KeyVar: "BINANCE_TESTNET_API_KEY", SecretVar: "BINANCE_TESTNET_API_SECRET"},
+	}
+	spotEnv = []broker.EnvPair{
+		{KeyVar: "BINANCE_SPOT_TESTNET_API_KEY", SecretVar: "BINANCE_SPOT_TESTNET_API_SECRET"},
+	}
 )
 
 // exit codes
@@ -56,6 +76,16 @@ type check struct {
 	NameVI   string
 	Pass     bool
 	DetailVI string
+}
+
+type venue struct {
+	NameVI       string
+	BaseURL      string
+	TimePath     string
+	WeightPerMin int
+	Account      broker.Endpoint
+	Parse        func(json.RawMessage) (assets []string, nonZero int, err error)
+	EnvPairs     []broker.EnvPair
 }
 
 func main() {
@@ -73,38 +103,50 @@ func main() {
 	fmt.Printf("recv_window_ms: %d (mặc định %d, tối đa %d)\n\n",
 		*recvWindowMs, broker.DefaultRecvWindowMs, broker.MaxRecvWindowMs)
 
-	creds, err := broker.CredentialsFromEnv(keyVar, secretVar)
-	if err != nil {
-		// The error names the VARIABLES and never their contents.
-		fmt.Printf("CHƯA CÓ KEY TESTNET: %v\n\n", err)
-		fmt.Printf("Cách nạp: chép .env.example thành .env rồi điền %s và %s\n", keyVar, secretVar)
-		fmt.Println("  - Futures testnet: https://demo-fapi.binance.com")
-		fmt.Println("  - Spot testnet:    https://testnet.binance.vision")
-		fmt.Println("  - Quyền: bật giao dịch, TẮT rút tiền. Không dán giá trị vào bất kỳ file nào được commit.")
-		fmt.Println()
-		fmt.Println("Bước 4.1: code xong, CHƯA NGHIỆM THU. Không đánh dấu ✅ khi chưa gọi được số dư testnet thật.")
-		os.Exit(exitNoCredentia)
-	}
-	fmt.Printf("credential: nạp từ %s\n\n", creds.SourceVI)
-
-	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	defer cancel()
-
-	var all []check
-	all = append(all, runVenue(ctx, "binance futures testnet", venue{
+	venues := []venue{{
+		NameVI:       "binance futures testnet",
 		BaseURL:      broker.BinanceFuturesTestnetBaseURL,
 		TimePath:     broker.BinanceFuturesTimePath,
 		WeightPerMin: broker.BinanceFuturesWeightPerMin,
 		Account:      broker.FuturesAccountBalance,
 		Parse:        parseFuturesBalance,
-	}, creds, *recvWindowMs)...)
-	all = append(all, runVenue(ctx, "binance spot testnet", venue{
+		EnvPairs:     futuresEnv,
+	}, {
+		NameVI:       "binance spot testnet",
 		BaseURL:      broker.BinanceSpotTestnetBaseURL,
 		TimePath:     broker.BinanceSpotTimePath,
 		WeightPerMin: broker.BinanceSpotWeightPerMin,
 		Account:      broker.SpotAccount,
 		Parse:        parseSpotAccount,
-	}, creds, *recvWindowMs)...)
+		EnvPairs:     spotEnv,
+	}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	defer cancel()
+
+	var all []check
+	var skipped []string
+	attempted := 0
+
+	for _, v := range venues {
+		creds, err := broker.CredentialsFromEnvAny(v.EnvPairs...)
+		switch {
+		case errors.Is(err, broker.ErrNoCredentials):
+			// A normal state, not a defect: the two testnets are separate
+			// registrations and an operator may hold only one.
+			fmt.Printf("── %s · BỎ QUA — chưa có key\n   %v\n   Cách nạp: %s\n\n", v.NameVI, err, envHint(v.EnvPairs))
+			skipped = append(skipped, v.NameVI)
+			continue
+		case err != nil:
+			// Half a pair, or a caller bug. Loud, never skipped.
+			fmt.Printf("── %s · LỖI CẤU HÌNH\n   %v\n\n", v.NameVI, err)
+			all = append(all, check{v.NameVI + ": credential", false, err.Error()})
+			attempted++
+			continue
+		}
+		attempted++
+		all = append(all, runVenue(ctx, v, creds, *recvWindowMs)...)
+	}
 
 	fmt.Println()
 	failed := 0
@@ -115,25 +157,39 @@ func main() {
 		}
 		fmt.Printf("[%s] %s — %s\n", mark, c.NameVI, c.DetailVI)
 	}
+	for _, s := range skipped {
+		fmt.Printf("[BỎ QUA] %s — chưa có key, không tính là hỏng\n", s)
+	}
 	fmt.Println()
+
+	if attempted == 0 {
+		fmt.Println("Bước 4.1: KHÔNG sàn nào có key — không thử gì cả, CHƯA NGHIỆM THU.")
+		fmt.Println("Không đánh dấu ✅ khi chưa gọi được số dư testnet thật.")
+		os.Exit(exitNoCredentia)
+	}
 	if failed > 0 {
 		fmt.Printf("Bước 4.1: %d/%d mục hỏng — CHƯA NGHIỆM THU.\n", failed, len(all))
 		os.Exit(exitFailed)
 	}
 	fmt.Printf("Bước 4.1: %d/%d mục đạt trên TESTNET. Không lệnh nào được đặt.\n", len(all), len(all))
+	if len(skipped) > 0 {
+		fmt.Printf("Còn %s chưa nghiệm thu vì chưa có key riêng cho sàn đó.\n", strings.Join(skipped, ", "))
+	}
 	os.Exit(exitOK)
 }
 
-type venue struct {
-	BaseURL      string
-	TimePath     string
-	WeightPerMin int
-	Account      broker.Endpoint
-	Parse        func(json.RawMessage) (assets []string, nonZero int, err error)
+// envHint names the variables that would configure a venue. Names only.
+func envHint(pairs []broker.EnvPair) string {
+	out := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		out = append(out, p.KeyVar+" + "+p.SecretVar)
+	}
+	return strings.Join(out, "  hoặc  ")
 }
 
-func runVenue(ctx context.Context, nameVI string, v venue, creds broker.Credentials, recvWindowMs int64) []check {
-	fmt.Printf("── %s · %s\n", nameVI, v.BaseURL)
+func runVenue(ctx context.Context, v venue, creds broker.Credentials, recvWindowMs int64) []check {
+	fmt.Printf("── %s · %s\n", v.NameVI, v.BaseURL)
+	fmt.Printf("   credential: %s\n", creds.SourceVI)
 
 	client, err := broker.NewClient(broker.Config{
 		BaseURL:           v.BaseURL,
@@ -145,7 +201,7 @@ func runVenue(ctx context.Context, nameVI string, v venue, creds broker.Credenti
 	})
 	if err != nil {
 		fmt.Printf("   client: %v\n\n", err)
-		return []check{{nameVI + ": dựng client", false, err.Error()}}
+		return []check{{v.NameVI + ": dựng client", false, err.Error()}}
 	}
 
 	var out []check
@@ -157,12 +213,12 @@ func runVenue(ctx context.Context, nameVI string, v venue, creds broker.Credenti
 	elapsed := time.Since(startedAt)
 	if err != nil {
 		fmt.Printf("   giờ server: %v\n\n", err)
-		return append(out, check{nameVI + ": giờ server", false, err.Error()})
+		return append(out, check{v.NameVI + ": giờ server", false, err.Error()})
 	}
 	fmt.Printf("   giờ server %s · HTTP 200 · lệch %d ms · vòng %s · %s\n",
 		v.TimePath, skewMs, elapsed.Round(time.Millisecond), client.Budget().ReportVI())
 	out = append(out, check{
-		nameVI + ": giờ server", true,
+		v.NameVI + ": giờ server", true,
 		fmt.Sprintf("HTTP 200, lệch %d ms so với đồng hồ máy (recv_window_ms %d)", skewMs, client.RecvWindowMs()),
 	})
 
@@ -174,13 +230,13 @@ func runVenue(ctx context.Context, nameVI string, v venue, creds broker.Credenti
 	elapsed = time.Since(startedAt)
 	if err != nil {
 		fmt.Printf("   %s: %v\n\n", v.Account.Path, err)
-		return append(out, check{nameVI + ": " + v.Account.Path, false, err.Error()})
+		return append(out, check{v.NameVI + ": " + v.Account.Path, false, err.Error()})
 	}
 
 	assets, nonZero, err := v.Parse(raw)
 	if err != nil {
 		fmt.Printf("   %s: %v\n\n", v.Account.Path, err)
-		return append(out, check{nameVI + ": " + v.Account.Path, false, err.Error()})
+		return append(out, check{v.NameVI + ": " + v.Account.Path, false, err.Error()})
 	}
 	sort.Strings(assets)
 	shown := assets
@@ -199,12 +255,12 @@ func runVenue(ctx context.Context, nameVI string, v venue, creds broker.Credenti
 	fmt.Printf("   tài liệu: %s\n\n", v.Account.DocURL)
 
 	out = append(out, check{
-		nameVI + ": " + v.Account.Path, len(assets) > 0,
+		v.NameVI + ": " + v.Account.Path, len(assets) > 0,
 		fmt.Sprintf("HTTP 200, %d tài sản trả về (%d khác 0), weight %d, %s",
 			len(assets), nonZero, v.Account.WeightIP, client.Budget().ReportVI()),
 	})
 	if banned, until := client.Budget().Banned(); banned {
-		out = append(out, check{nameVI + ": rate limit", false,
+		out = append(out, check{v.NameVI + ": rate limit", false,
 			fmt.Sprintf("IP bị cấm (HTTP 418) tới %s — KHÔNG thử lại, thử lại làm lệnh cấm dài ra", until)})
 	}
 	return out

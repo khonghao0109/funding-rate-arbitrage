@@ -83,25 +83,73 @@ type Credentials struct {
 	SourceVI string
 }
 
-// ErrNoCredentials means the environment did not carry the pair. It is a
-// distinct error because "no key configured" and "key rejected by the venue"
-// are different operational facts and only one of them is a mistake.
+// ErrNoCredentials means the environment carried NOTHING for this account. It
+// is a distinct error because "no key configured" and "key rejected by the
+// venue" are different operational facts and only one of them is a mistake —
+// and because a caller checking several venues skips the unconfigured ones
+// rather than reporting them as failures.
 var ErrNoCredentials = errors.New("broker: no credentials in the environment")
 
-// CredentialsFromEnv reads a key pair from two environment variables.
+// ErrIncompleteCredentials means HALF a pair was set: one variable filled in,
+// the other not.
 //
-// It reports the variable NAMES in every error and never their contents — an
-// error saying "the secret 'abc123' is empty" is the leak this whole file
-// exists to prevent, and it is the shape such a bug usually takes.
-func CredentialsFromEnv(keyVar, secretVar string) (Credentials, error) {
-	key, secret := NewSecret(os.Getenv(keyVar)), NewSecret(os.Getenv(secretVar))
-	switch {
-	case key.Empty() && secret.Empty():
-		return Credentials{}, fmt.Errorf("%w: %s and %s are unset", ErrNoCredentials, keyVar, secretVar)
-	case key.Empty():
-		return Credentials{}, fmt.Errorf("%w: %s is set but %s is not — a pair is needed", ErrNoCredentials, secretVar, keyVar)
-	case secret.Empty():
-		return Credentials{}, fmt.Errorf("%w: %s is set but %s is not — a pair is needed", ErrNoCredentials, keyVar, secretVar)
+// It is deliberately NOT ErrNoCredentials. A caller that skips unconfigured
+// venues must not skip this one: "nothing configured" is a choice, a half-typed
+// pair is a typo, and silently skipping it reports a venue as untested when the
+// operator believes they configured it.
+var ErrIncompleteCredentials = errors.New("broker: only half of a credential pair is set")
+
+// EnvPair names the two environment variables that carry one account's key
+// pair. It exists so a caller can list candidates in preference order without
+// the order living in a comment.
+type EnvPair struct{ KeyVar, SecretVar string }
+
+// CredentialsFromEnvAny reads the first COMPLETE pair from the candidates, in
+// order, and reports through SourceVI which one it used.
+//
+// Why more than one name (measured 2026-09-13): Binance's USDⓈ-M futures
+// testnet and its spot testnet are separate systems with separate
+// registrations, so ONE KEY PAIR DOES NOT SERVE BOTH — a futures key presented
+// to the spot host is refused with -2015 ("Invalid API-key, IP, or permissions
+// for action"). Each venue therefore reads its own variables, and the original
+// BINANCE_TESTNET_API_* names remain readable as the FUTURES fallback so an
+// operator's existing .env keeps working unchanged.
+//
+// It reports variable NAMES in every error and never their contents — an error
+// saying "the secret 'abc123' is empty" is the leak this whole file exists to
+// prevent, and it is the shape such a bug usually takes.
+func CredentialsFromEnvAny(pairs ...EnvPair) (Credentials, error) {
+	if len(pairs) == 0 {
+		// Deliberately neither sentinel: this is a caller bug, and reporting it
+		// as a missing credential sends the operator to edit a .env that is
+		// already correct.
+		return Credentials{}, errors.New("broker: CredentialsFromEnvAny called with no candidate variables")
 	}
-	return Credentials{APIKey: key, APISecret: secret, SourceVI: "biến môi trường " + keyVar + " / " + secretVar}, nil
+	var names []string
+	for _, p := range pairs {
+		key, secret := NewSecret(os.Getenv(p.KeyVar)), NewSecret(os.Getenv(p.SecretVar))
+		switch {
+		case key.Empty() && secret.Empty():
+			// Not configured under these names. Try the next candidate.
+			names = append(names, p.KeyVar, p.SecretVar)
+			continue
+		case key.Empty():
+			return Credentials{}, fmt.Errorf("%w: %s is set but %s is not — a pair is needed, and the missing half is NOT filled in from another pair",
+				ErrIncompleteCredentials, p.SecretVar, p.KeyVar)
+		case secret.Empty():
+			return Credentials{}, fmt.Errorf("%w: %s is set but %s is not — a pair is needed, and the missing half is NOT filled in from another pair",
+				ErrIncompleteCredentials, p.KeyVar, p.SecretVar)
+		}
+		return Credentials{
+			APIKey: key, APISecret: secret,
+			SourceVI: "biến môi trường " + p.KeyVar + " / " + p.SecretVar,
+		}, nil
+	}
+	return Credentials{}, fmt.Errorf("%w: none of %s is set", ErrNoCredentials, strings.Join(names, ", "))
+}
+
+// CredentialsFromEnv reads a key pair from exactly two environment variables.
+// It is CredentialsFromEnvAny with one candidate.
+func CredentialsFromEnv(keyVar, secretVar string) (Credentials, error) {
+	return CredentialsFromEnvAny(EnvPair{KeyVar: keyVar, SecretVar: secretVar})
 }

@@ -43,6 +43,12 @@ type pinnedTransport struct {
 	// test about the BALANCE path must not be a test about the clock path.
 	serverTimeMs int64
 
+	// timePath is which path that answer is given on. Empty means the futures
+	// one; the spot testnet serves its clock at a different path, and a
+	// transport that answered only the futures path would make a spot test
+	// fail in the clock instead of reaching the call under test.
+	timePath string
+
 	// beforeRoundTrip lets a test move its own clock across the call, which is
 	// how the round-trip midpoint is measured.
 	beforeRoundTrip func()
@@ -52,7 +58,11 @@ func (t *pinnedTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if t.beforeRoundTrip != nil {
 		t.beforeRoundTrip()
 	}
-	if t.serverTimeMs > 0 && r.URL.Path == BinanceFuturesTimePath {
+	timePath := t.timePath
+	if timePath == "" {
+		timePath = BinanceFuturesTimePath
+	}
+	if t.serverTimeMs > 0 && r.URL.Path == timePath {
 		return jsonResponse(r, fmt.Sprintf(`{"serverTime":%d}`, t.serverTimeMs)), nil
 	}
 	t.lastURL = r.URL.String()
@@ -253,4 +263,104 @@ func signatureOf(t *testing.T, raw string) string {
 		return ""
 	}
 	return u.Query().Get("signature")
+}
+
+// The same leak proof, run once per VENUE credential pair (2026-09-13).
+//
+// Splitting the credential by venue added a second way for a secret to enter
+// the process — a different pair of environment variables, a different base URL
+// and a different time path — and a redaction proven on one path is not proven
+// on the other. This drives the whole thing from the environment, the way the
+// command really loads it, so the loader and SourceVI are on the covered path
+// too: SourceVI is a string built next to a secret, which is precisely where a
+// well-meant "…and the key starts with" gets appended one day.
+func TestClient_NeitherVenuesCredentialPairReachesALogOrAnError(t *testing.T) {
+	venues := []struct {
+		nameVI   string
+		baseURL  string
+		timePath string
+		account  Endpoint
+		weight   int
+		pairs    []EnvPair
+	}{
+		{
+			nameVI: "futures", baseURL: BinanceFuturesTestnetBaseURL,
+			timePath: BinanceFuturesTimePath, account: FuturesAccountBalance,
+			weight: BinanceFuturesWeightPerMin,
+			pairs: []EnvPair{
+				{KeyVar: "BROKER_LEAK_FUT_KEY", SecretVar: "BROKER_LEAK_FUT_SECRET"},
+				{KeyVar: "BROKER_LEAK_LEGACY_KEY", SecretVar: "BROKER_LEAK_LEGACY_SECRET"},
+			},
+		},
+		{
+			nameVI: "spot", baseURL: BinanceSpotTestnetBaseURL,
+			timePath: BinanceSpotTimePath, account: SpotAccount,
+			weight: BinanceSpotWeightPerMin,
+			pairs:  []EnvPair{{KeyVar: "BROKER_LEAK_SPOT_KEY", SecretVar: "BROKER_LEAK_SPOT_SECRET"}},
+		},
+	}
+
+	for _, v := range venues {
+		for _, via := range v.pairs {
+			t.Run(v.nameVI+" via "+via.KeyVar, func(t *testing.T) {
+				t.Setenv(via.KeyVar, "KEY-"+sentinel)
+				t.Setenv(via.SecretVar, sentinel)
+
+				creds, err := CredentialsFromEnvAny(v.pairs...)
+				if err != nil {
+					t.Fatalf("loading %s: %v", via.KeyVar, err)
+				}
+				// SourceVI is built beside the secret; it must name variables.
+				if strings.Contains(creds.SourceVI, sentinel) {
+					t.Fatalf("SourceVI carries a credential value: %q", scrubValue(creds.SourceVI, sentinel))
+				}
+
+				// The venue's own time path must answer, or this becomes a
+				// test about the clock instead of about the balance call.
+				tr := &pinnedTransport{
+					failErr:      errors.New("dial tcp: connection refused"),
+					serverTimeMs: time.Now().UnixMilli(),
+					timePath:     v.timePath,
+				}
+				client, err := NewClient(Config{
+					BaseURL: v.baseURL, Credentials: creds, RecvWindowMs: 5000,
+					TimePath: v.timePath, WeightLimitPerMin: v.weight,
+					HTTPClient: &http.Client{Transport: tr, Timeout: 5 * time.Second},
+				})
+				if err != nil {
+					t.Fatalf("NewClient: %v", err)
+				}
+
+				var logged bytes.Buffer
+				restore := log.Writer()
+				log.SetOutput(&logged)
+				defer log.SetOutput(restore)
+
+				var into map[string]any
+				err = client.GetSigned(context.Background(), v.account, nil, &into)
+				if err == nil {
+					t.Fatal("this case must fail; a success proves nothing about the error path")
+				}
+				log.Printf("%s balance failed: %v", v.nameVI, err)
+
+				signature := signatureOf(t, tr.lastURL)
+				for name, s := range map[string]string{
+					"err.Error()": err.Error(),
+					"%v":          fmt.Sprintf("%v", err),
+					"%+v":         fmt.Sprintf("%+v", err),
+					"%#v":         fmt.Sprintf("%#v", err),
+					"wrapped":     fmt.Errorf("reading the testnet balance: %w", err).Error(),
+					"creds %+v":   fmt.Sprintf("%+v", creds),
+					"log output":  logged.String(),
+				} {
+					if strings.Contains(s, sentinel) {
+						t.Errorf("%s leaked the credential: %q", name, scrubValue(s, sentinel))
+					}
+					if signature != "" && strings.Contains(s, signature) {
+						t.Errorf("%s leaked the SIGNATURE: %q", name, strings.ReplaceAll(s, signature, Redacted))
+					}
+				}
+			})
+		}
+	}
 }
