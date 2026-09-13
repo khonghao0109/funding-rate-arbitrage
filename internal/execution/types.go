@@ -146,6 +146,16 @@ type Config struct {
 	// state this package exists to prevent.
 	UnwindTimeout time.Duration
 
+	// OrderSettleTimeout bounds how long ONE order is read back for after it
+	// has been sent, waiting for the venue to say what it did.
+	//
+	// It is separate from UnwindTimeout because a close has two legs to pay
+	// for: a single leg that waited out the whole close-out budget would leave
+	// the second leg no time at all, which is how a close that meant to flatten
+	// a pair flattens half of it. NewOpener therefore also caps it at a third
+	// of UnwindTimeout.
+	OrderSettleTimeout time.Duration
+
 	// PollEvery is how often an open order is re-read from the venue while
 	// working.
 	PollEvery time.Duration
@@ -181,6 +191,7 @@ func DefaultConfig() Config {
 	return Config{
 		MaxEntryCostWidenBps: 5,
 		MaxSlippageBps:       DefaultMaxSlippageBps,
+		OrderSettleTimeout:   5 * time.Second,
 		LegOrder:             LegOrderSequentialSpotFirst,
 		LegTimeout:           DefaultLegTimeout,
 		UnwindTimeout:        30 * time.Second,

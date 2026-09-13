@@ -324,3 +324,61 @@ func TestClose_ContextCancelledMidway_StillReachesTheInvariant(t *testing.T) {
 }
 
 var _ = fmt.Sprintf
+
+// A MARKET order's ANSWER is not always its RESULT, and believing it cost a
+// naked leg on the real venue.
+//
+// Binance USDⓈ-M replies to POST /fapi/v1/order with an acknowledgement —
+// status NEW, executedQty 0 — and reports the fill only on a read-back; spot,
+// on the same exchange, answers with the fills attached. Measured on testnet
+// 2026-09-13 during the 4.5 acceptance: the closing perp order came back NEW,
+// the machine read it as "nothing filled", reported both legs intact, and the
+// venue had already flattened the perp side — leaving 0.0008 BTC of spot long
+// with no hedge.
+//
+// This is the same class of mistake as believing our own cancel, and it is
+// fixed the same way: ask the venue.
+func TestClose_AMarketAcknowledgementIsNotAFill(t *testing.T) {
+	h := newCloseHarness(t, nil)
+	h.perp.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, MarketAckIsNotAFill: true})
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, MarketAckIsNotAFill: true})
+
+	res, err := h.opener.Close(context.Background(), h.req)
+	if err != nil {
+		t.Fatalf("Close: %v%s", err, h.rec.Dump())
+	}
+	if res.Outcome != OutcomeBothFlat {
+		t.Fatalf("outcome = %q, want both_flat — the orders DID fill, the venue simply said so a moment later%s",
+			res.Outcome, h.rec.Dump())
+	}
+	if res.ClosedQtyCoin <= 0 {
+		t.Fatalf("closed %v: an acknowledgement was read as a result", res.ClosedQtyCoin)
+	}
+	// The venues, which is where the naked leg would show.
+	spotNet := netQtyCoin(h.spot, broker.MarketSpot)
+	perpNet := netQtyCoin(h.perp, broker.MarketFuturesUSDM)
+	if math.Abs(spotNet) > 1e-12 || math.Abs(perpNet) > 1e-12 {
+		t.Fatalf("INVARIANT VIOLATED at the venues: spot net %v, perp net %v", spotNet, perpNet)
+	}
+}
+
+// The same trap on the UNWIND path, which is the one that runs when a leg has
+// already been left naked and is therefore the one that must not repeat it.
+func TestOpen_UnwindDoesNotBelieveAMarketAcknowledgement(t *testing.T) {
+	h := newHarness(t, nil)
+	// Leg 1 half-fills so the run unwinds; the unwind's MARKET order is then
+	// acknowledged rather than reported filled.
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 0.5, MarketAckIsNotAFill: true})
+
+	res, err := h.opener.Open(context.Background(), h.intent)
+	if err == nil {
+		t.Fatal("a leg that fell short must report an error")
+	}
+	h.assertInvariant(t, res)
+	if res.Outcome != OutcomeBothFlat {
+		t.Fatalf("outcome = %q, want both_flat%s", res.Outcome, h.rec.Dump())
+	}
+	if res.Spot.UnwoundQtyCoin <= 0 {
+		t.Errorf("the unwind reported closing nothing, though the venue filled it%s", h.rec.Dump())
+	}
+}

@@ -65,6 +65,17 @@ type Behaviour struct {
 	// which is the race a two-leg unwind must survive.
 	CancelRacesAFill bool
 
+	// MarketAckIsNotAFill models what Binance USDⓈ-M really does: the answer
+	// to POST /fapi/v1/order is an ACKNOWLEDGEMENT — status NEW, executedQty 0
+	// — and the fill is reported only when the order is read back. Spot is not
+	// like this: its answer carries the fills.
+	//
+	// Measured on testnet 2026-09-13, and it is in this file because the
+	// difference cost a naked leg: a closing MARKET order was read as "nothing
+	// filled", the pair was reported intact, and the venue had already flattened
+	// the perp side.
+	MarketAckIsNotAFill bool
+
 	// MarketFillFraction makes a MARKET order fill only part of its quantity.
 	// 0 means the whole of it, which is the default and what a liquid venue
 	// does.
@@ -427,6 +438,21 @@ func (f *Fake) PlaceOrder(ctx context.Context, req broker.PlaceOrderRequest) (br
 		if filled > 0 {
 			applyFill(&o, filled, 1)
 			f.settle(o, filled)
+		}
+		if o.FilledQtyCoin < o.QtyCoin {
+			// A MARKET order does not rest. What it could not fill is gone, so
+			// the order is FINISHED — leaving it PARTIALLY_FILLED would model a
+			// venue that holds a market order open forever, and a caller
+			// waiting for it to settle would wait until its deadline.
+			o.Status = broker.OrderStatusExpired
+		}
+		if f.behaviour.MarketAckIsNotAFill {
+			// Recorded as filled, ANSWERED as merely accepted. Only a read-back
+			// can tell the difference — which is the whole point.
+			f.orders = append(f.orders, o)
+			ack := o
+			ack.Status, ack.FilledQtyCoin, ack.AvgFillPriceQuote = broker.OrderStatusNew, 0, 0
+			return ack, nil
 		}
 	case f.behaviour.FillFractionOnPlace > 0:
 		if filled := f.onGrid(req.QtyCoin * f.behaviour.FillFractionOnPlace); filled > 0 {

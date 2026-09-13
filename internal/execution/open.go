@@ -58,6 +58,14 @@ func NewOpener(spotBroker, perpBroker broker.Broker, cfg Config, rec Recorder) (
 	if cfg.MaxBookAge <= 0 {
 		cfg.MaxBookAge = d.MaxBookAge
 	}
+	if cfg.OrderSettleTimeout <= 0 {
+		cfg.OrderSettleTimeout = d.OrderSettleTimeout
+	}
+	// One leg may not spend the whole close-out budget waiting to hear about
+	// itself: the second leg has to be paid for out of the same clock.
+	if cap := cfg.UnwindTimeout / 3; cfg.OrderSettleTimeout > cap {
+		cfg.OrderSettleTimeout = cap
+	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
@@ -706,16 +714,19 @@ func (o *Trader) closeLeg(ctx context.Context, intent Intent, leg LegName, b bro
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventUnwindLeg, Leg: leg,
 		ClientOrderID: req.ClientOrderID, QtyCoin: req.QtyCoin})
 
+	q := broker.OrderQuery{Market: market, Symbol: intent.Symbol, ClientOrderID: req.ClientOrderID}
 	order, err := b.PlaceOrder(ctx, req)
 	if err != nil {
 		// Same ambiguity contract as the open: ask before concluding.
-		q := broker.OrderQuery{Market: market, Symbol: intent.Symbol, ClientOrderID: req.ClientOrderID}
 		found, qErr := o.resolveByID(ctx, b, q, o.cfg.Now().Add(o.cfg.UnwindTimeout))
 		if qErr != nil {
 			return 0, fmt.Errorf("lệnh đóng %s hỏng và không xác nhận được: %w", leg, err)
 		}
 		order = found
 	}
+	// An acknowledgement is not a fill — see settleOrder. The unwind is the
+	// last place that may believe one.
+	order = o.settleOrder(ctx, b, q, order)
 	if order.FilledQtyCoin <= 0 {
 		return 0, fmt.Errorf("lệnh đóng %s không khớp được gì (trạng thái %s)", leg, order.Status)
 	}
@@ -823,11 +834,16 @@ func minInt64(a, b int64) int64 {
 	return b
 }
 
-// unwindClientOrderID derives the closing order's id. Distinct from the
-// opening leg's, and derived the same way, so a restarted process can ask about
-// the CLOSE as well as the open.
-func unwindClientOrderID(intentID string, leg LegName) string {
+// UnwindClientOrderID derives the unwinding order's id. Distinct from the
+// opening leg's and from the close's, and derived the same way, so a restarted
+// process — or a diagnostic holding nothing but the intent id — can ask the
+// venue about every order this intent could have produced.
+func UnwindClientOrderID(intentID string, leg LegName) string {
 	return LegClientOrderID(intentID+"|unwind", leg)
+}
+
+func unwindClientOrderID(intentID string, leg LegName) string {
+	return UnwindClientOrderID(intentID, leg)
 }
 
 // definiteRejection reports whether the order was positively refused, as

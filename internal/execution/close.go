@@ -373,19 +373,52 @@ func (o *Trader) closeLegWithID(ctx context.Context, intent Intent, leg LegName,
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventCloseLeg, Leg: leg,
 		ClientOrderID: clientOrderID, QtyCoin: qtyCoin})
 
+	q := broker.OrderQuery{Market: market, Symbol: intent.Symbol, ClientOrderID: clientOrderID}
 	order, err := b.PlaceOrder(ctx, req)
 	if err != nil {
 		// The same ambiguity contract as the open: ask the venue by the id we
 		// chose before sending, never guess.
-		q := broker.OrderQuery{Market: market, Symbol: intent.Symbol, ClientOrderID: clientOrderID}
 		found, qErr := o.resolveByID(ctx, b, q, o.cfg.Now().Add(o.cfg.UnwindTimeout))
 		if qErr != nil {
 			return 0, fmt.Errorf("lệnh đóng %s hỏng và không xác nhận được: %s", leg, err.Error())
 		}
 		order = found
 	}
+
+	order = o.settleOrder(ctx, b, q, order)
 	if order.FilledQtyCoin <= 0 {
 		return 0, fmt.Errorf("lệnh đóng %s không khớp được gì (trạng thái %s)", leg, order.Status)
 	}
 	return order.FilledQtyCoin, nil
+}
+
+// settleOrder reads an order back until the VENUE says it has finished.
+//
+// A MARKET order's answer is not always its result. Binance USDⓈ-M replies to
+// POST /fapi/v1/order with an ACKNOWLEDGEMENT — status NEW, executedQty 0 —
+// and reports the fill only when the order is read back; spot, on the same
+// exchange, answers with the fills attached. Measured on testnet 2026-09-13.
+//
+// This function exists because that difference cost a naked leg. A closing
+// MARKET order was believed at its word, read as "nothing filled", and the pair
+// was reported intact while the venue had already flattened the perp side and
+// left 0.0008 BTC of spot long with no hedge. Reading a fill off an
+// acknowledgement is the same class of mistake as believing our own cancel —
+// and it is fixed the same way, by asking the venue.
+func (o *Trader) settleOrder(ctx context.Context, b broker.Broker, q broker.OrderQuery, order broker.Order) broker.Order {
+	deadline := o.cfg.Now().Add(o.cfg.OrderSettleTimeout)
+	for !order.Status.Done() {
+		if o.cfg.Now().After(deadline) {
+			return order
+		}
+		if err := o.sleep(ctx, o.cfg.PollEvery); err != nil {
+			return order
+		}
+		latest, err := b.GetOrder(ctx, q)
+		if err != nil {
+			continue
+		}
+		order = latest
+	}
+	return order
 }

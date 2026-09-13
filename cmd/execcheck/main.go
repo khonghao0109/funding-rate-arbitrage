@@ -84,10 +84,12 @@ var (
 
 func main() {
 	var (
-		doOpen   = flag.Bool("open", false, "open one delta-neutral position on testnet")
-		doStatus = flag.Bool("status", false, "read one intent's orders, position and balances back FROM THE VENUE")
-		doClose  = flag.Bool("close", false, "close one intent's position on testnet")
-		doList   = flag.Bool("list", false, "list the intents this machine has a state file for")
+		doOpen      = flag.Bool("open", false, "open one delta-neutral position on testnet")
+		doStatus    = flag.Bool("status", false, "read one intent's orders, position and balances back FROM THE VENUE")
+		doClose     = flag.Bool("close", false, "close one intent's position on testnet")
+		doList      = flag.Bool("list", false, "list the intents this machine has a state file for")
+		doReconcile = flag.Bool("reconcile", false, "read this intent's own orders back from the venues and square an unbalanced pair")
+		apply       = flag.Bool("apply", false, "with -reconcile: actually send the squaring order (without it, only say what would be sent)")
 
 		symbol        = flag.String("symbol", "BTCUSDT", "symbol, the same string on both markets")
 		notionalQuote = flag.Float64("notional-quote", 0,
@@ -121,6 +123,8 @@ func main() {
 			FailLeg2: *failLeg2, MarginFrac: *marginFr, MaxSlippageBps: *slipBps,
 			LegTimeout: *legTmo, MaxWidenBps: *widenBps, JSON: *jsonOut,
 		}))
+	case *doReconcile:
+		os.Exit(runReconcile(ctx, *intentID, *apply))
 	case *doStatus:
 		os.Exit(runStatus(ctx, *intentID, *jsonOut))
 	case *doClose:

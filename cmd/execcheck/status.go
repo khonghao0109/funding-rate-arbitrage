@@ -118,6 +118,25 @@ func runStatus(ctx context.Context, intentID string, asJSON bool) int {
 		}
 	}
 
+	// THE question, and it is not "does the cache match the venue" — a cache
+	// that agrees with the venue about a pair that is not hedged is two
+	// consistent descriptions of a naked position. So the hedge is computed
+	// from the VENUE's own record of this intent's own orders, every id
+	// derived, and it is checked even when nothing else disagreed.
+	spotNet, perpNet := intentNets(ctx, cl, intentID, symbol)
+	residual := spotNet.QtyCoin + perpNet.QtyCoin
+	fmt.Println("\nPHÒNG HỘ, theo lệnh CỦA CHÍNH Ý ĐỊNH NÀY (đọc từ sàn):")
+	fmt.Printf("  spot ròng  %+.8f coin  [%s]\n", spotNet.QtyCoin, joinOr(spotNet.SeenVI, "không lệnh nào khớp"))
+	fmt.Printf("  perp ròng  %+.8f coin  [%s]\n", perpNet.QtyCoin, joinOr(perpNet.SeenVI, "không lệnh nào khớp"))
+	fmt.Printf("  LỆCH       %+.8f coin\n", residual)
+	for _, u := range append(spotNet.Unreadab, perpNet.Unreadab...) {
+		fmt.Printf("  ⚠ KHÔNG đọc được %s — con số trên chưa đầy đủ\n", u)
+	}
+	if math.Abs(residual) > 1e-9 {
+		fmt.Println("  ⚠ CẶP KHÔNG PHÒNG HỘ — chạy -reconcile để xem cách cân lại")
+		mismatches = append(mismatches, fmt.Sprintf("cặp lệch %+.8f coin theo chính lệnh của ý định này", residual))
+	}
+
 	if len(mismatches) > 0 {
 		fmt.Println("\nLỆCH GIỮA CACHE VÀ SÀN — in cả hai, KHÔNG tự hoà giải:")
 		for _, m := range mismatches {
