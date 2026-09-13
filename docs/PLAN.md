@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **1/6 · 4.3 sổ paper ✅ (2026-09-11, tiến trình đọc nhật ký — Q12) · còn lại chờ cổng 3.5** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **3/6 · 4.1 REST có ký ✅ + 4.2 giao diện lệnh ✅ (nghiệm thu 2026-09-13, CHỈ testnet — Q14) · 4.3 sổ paper ✅ (2026-09-11, tiến trình đọc nhật ký — Q12) · 4.4 🟡 4.4a xong trên broker giả (2026-09-13) · 4.4b/4.5/4.6 chờ cổng 3.5** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -4641,8 +4641,8 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 0  Nền tảng scanner              5/5 bước
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
-[  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 2 từ 2026-09-11 14:15 +07 (lần 1 đứt 09-10 vì máy khởi động lại), phán quyết ≥ 09-25   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              1/6 bước · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger` đọc nhật ký, cổng riêng — Q12) · 4.1/4.2/4.4–4.6 chờ cổng 3.5
+[  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
+[  ] GĐ 4  Execution Engine              3/6 bước · 4.1 ✅ + 4.2 ✅ 2026-09-13 (REST có ký + giao diện lệnh, CHỈ testnet, chưa chạm mainnet — Q14) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger` đọc nhật ký, cổng riêng — Q12) · 4.4 🟡 4.4a xong trên broker giả 2026-09-13 · 4.4b/4.5/4.6 chờ cổng 3.5
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá
