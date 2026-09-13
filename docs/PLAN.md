@@ -3339,10 +3339,18 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > gọi được số dư testnet thật; và **4.2 chỉ bắt đầu sau khi 4.1 được review
 > đạt**. Đọc Q14 ở §7.1 trước khi đụng vào bước này.
 >
-> **4.4/4.5 (hai chân thật) và 4.6 (vốn thật) vẫn đứng sau phán quyết 3.5** —
-> Q14 không đổi điều đó. Máy trạng thái khớp-một-phần của 4.4 được phép thiết
-> kế và unit-test với broker giả trong lúc chờ, nhưng không được đánh dấu xong
-> trước cổng.
+> **Đã sửa lần nữa theo Q15 (2026-09-13):** **4.4b (hai chân thật) và 4.5 (đóng
+> vị thế) được làm TRÊN TESTNET** trong lúc chờ phán quyết, với năm giới hạn ở
+> §7.1 Q15 — chỉ host testnet, không nối vào `cmd/scanner`, không tiền thật,
+> **4.6 vẫn sau phán quyết 3.5**, và **nối tín hiệu sống → lệnh vẫn sau 3.5 VÀ
+> 3.4**. Lệnh duy nhất đặt được là lệnh do người vận hành gõ qua
+> `cmd/execcheck`; không có đường nào từ `EvaluateEntry` tới `PlaceOrder`.
+>
+> Trước Q15, câu ở đây là: "4.4/4.5 và 4.6 vẫn đứng sau phán quyết 3.5 — Q14
+> không đổi điều đó; máy trạng thái khớp-một-phần của 4.4 được phép thiết kế và
+> unit-test với broker giả trong lúc chờ, nhưng không được đánh dấu xong trước
+> cổng." Đó là luật đã sinh ra 4.4a; Q15 nới đúng phần "trên sàn thật" của
+> 4.4b/4.5 và giữ nguyên phần vốn thật.
 
 #### Bước 4.1 — Hạ tầng REST có ký — ✅ (nghiệm thu 2026-09-13)
 - Package riêng `internal/broker/`, tách hoàn toàn khỏi `exchanges/` (đọc-only).
@@ -4283,6 +4291,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q5** | **Kênh alert: Telegram.** Discord là tuỳ chọn thêm sau, không phải kênh thứ hai bắt buộc. `internal/notify` ở Bước 3.4 (hoãn sau cổng 3.5) làm Telegram trước | 2026-09-11 |
 | **Q13** | **Track crowding giữ NGUYÊN quy ước biên của fixture: bucket `(T−4h, T]`, `label="right", closed="right"`** — close tại T là close của nến **1 phút MỞ tại T**, nên quyết định sớm nhất ở **T+60s**. KHÔNG dùng nến 4h của sàn, KHÔNG sinh lại fixture bằng `strict_completed_panel`. **Quyết định LỘ TRÌNH, đảo ngược được** cho tới khi 6.2 ghi dòng đầu tiên; sau đó đảo ngược nghĩa là sinh lại fixture và chạy lại nghiệm thu 6.1 | 2026-09-12 |
 | **Q14** | **Bước 4.1 (REST có ký) được làm SONG SONG với cổng 3.5 lần 3**, với ba giới hạn: (1) chỉ credential **TESTNET** — `broker.NewClient` từ chối mọi host ngoài danh sách testnet và không có cờ mở mainnet cho tới **4.6**; (2) 4.1 chỉ ✅ khi đã **gọi được số dư testnet thật**, chưa có key thì ghi "chưa nghiệm thu"; (3) **4.2 chỉ bắt đầu sau khi 4.1 được review đạt**; 4.4–4.6 vẫn sau phán quyết 3.5. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-12 |
+| **Q15** | **Bước 4.4b (hai chân thật) và 4.5 (đóng vị thế) được làm TRÊN TESTNET trong lúc chờ phán quyết 3.5**, mở rộng Q14 với năm giới hạn: (1) **chỉ host testnet** — guard của 4.1 giữ nguyên, không thêm cờ mainnet; (2) **không nối vào `cmd/scanner`** — binary giữ cổng vẫn không link `internal/broker` lẫn `internal/execution`, kiểm bằng test `go list -deps`; (3) **không tiền thật**; (4) **4.6 (vốn thật) vẫn sau phán quyết 3.5**; (5) **nối tín hiệu sống → lệnh vẫn sau 3.5 VÀ 3.4** — không có đường nào từ `EvaluateEntry` tới `PlaceOrder` trong phiên này. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-13 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -4450,6 +4459,54 @@ chữ ký nằm trên query string; thân phản hồi của sàn được chà 
 một thông báo; và một test chạy cả client với secret mồi rồi bắt toàn bộ log và
 mọi chuỗi lỗi để khẳng định không có gì lọt. Nếu một trong bốn thứ đó hỏng,
 quyết định này phải được xem lại.
+
+#### Q15 — Vì sao 4.4b và 4.5 được làm trên testnet trong lúc cổng còn chạy
+
+**Quyết định của người vận hành, 2026-09-13. Quyết định LỘ TRÌNH, đảo ngược
+được** — không phải kết luận rằng cổng 3.5 đã hết ý nghĩa, và không phải cho
+phép chạm tiền thật.
+
+Q12 đẩy toàn bộ GĐ 4 ra sau cổng trừ sổ paper; Q14 nới đúng một bước (4.1) và
+kéo theo 4.2 sau review. Q15 nới tiếp **hai** bước — 4.4b và 4.5 — và lý do có
+cùng hình dạng với Q14: thứ được nới là **đường vận chuyển**, không phải đường
+quyết định.
+
+1. **Không có tín hiệu sống nào chạm lệnh.** Điều được phép là mở và đóng một
+   vị thế hai chân do NGƯỜI VẬN HÀNH ra lệnh qua `cmd/execcheck`, trên testnet.
+   `EvaluateEntry`/`EvaluateExit` không gọi `internal/execution`, và không có
+   đường nào từ `signal_journal` tới `PlaceOrder`. Việc nối hai thứ đó lại là
+   bước riêng và nó đứng sau **cả 3.5 lẫn 3.4** (giới hạn 5).
+2. **Binary của cổng không đổi.** `internal/broker` và `internal/execution` chỉ
+   được `cmd/brokercheck` và `cmd/execcheck` liên kết; `boundary_test.go` chạy
+   `go list -deps` trên mọi lệnh còn lại và bắt lỗi nếu một trong hai xuất hiện.
+   Tiến trình lần chạy 3 vẫn không mang một dòng credential nào.
+3. **Thứ 4.4a KHÔNG chứng minh được nếu không có sàn.** Bản báo cáo 4.4a tự nêu
+   năm điểm chưa chắc, và ba trong số đó chỉ có sàn thật mới trả lời: cửa sổ
+   trần dài bao nhiêu mili-giây, gỡ vị thế mất bao lâu khi có lỗi thật, và một
+   REST snapshot có đủ để chặn slippage ở cỡ này không (quy tắc 10). Trên broker
+   trong bộ nhớ, "unwind 8 µs" không nói gì về tiêu chí "trong vòng vài giây"
+   của 4.4 — nó đo máy trạng thái, không đo sàn.
+
+**Năm giới hạn, mỗi cái là một test hoặc một số đo, không phải một lời hứa:**
+
+- **Chỉ host testnet.** `broker.NewClient` vẫn từ chối mọi host ngoài
+  `demo-fapi.binance.com` và `testnet.binance.vision`, vẫn từ chối `http://`,
+  và vẫn có test đọc mã nguồn để bắt ai đó thêm cờ mainnet. `cmd/execcheck`
+  không nhận cờ đổi host.
+- **Không nối vào `cmd/scanner`.** Kiểm bằng máy ở mỗi lần commit.
+- **Không tiền thật.** Testnet không có tiền thật; 4.6 là nơi điều đó đổi.
+- **4.6 vẫn sau phán quyết 3.5.** Q15 không đụng tới nó.
+- **Nối tín hiệu → lệnh vẫn sau 3.5 và 3.4.** Đây là giới hạn dễ trôi nhất, vì
+  khi cả hai nửa đã chạy được thì nối chúng chỉ là vài dòng; ghi ra để lần sau
+  ai định viết vài dòng đó phải mở lại quyết định này trước.
+
+**Cái giá phải nói ra.** Từ nay repo có một tiến trình ĐẶT LỆNH hai chân, nên
+lần đầu tiên tồn tại khả năng để lại một vị thế mở mà không ai biết. Đổi lại là
+ba thứ kiểm được: bất biến của `internal/execution` (cả hai chân mở, hoặc cả hai
+phẳng — không có trạng thái thứ ba), `ClientOrderID` suy ra từ intent nên một
+tiến trình chết vẫn hỏi được sàn về chính lệnh của mình, và `-status` đọc lại
+lệnh/vị thế/số dư **TỪ SÀN** chứ không từ file cache (quy tắc 7). Báo cáo cuối
+phiên phải nêu số vị thế và lệnh mở còn lại trên cả hai testnet.
 
 #### Q11 — Vì sao bỏ Basis Trade, và vì sao KHÔNG kết luận gì về nó
 
