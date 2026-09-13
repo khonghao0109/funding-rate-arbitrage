@@ -77,27 +77,56 @@ func TestNoCommandBinaryLinksTheBroker(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skipf("no go toolchain on PATH: %v", err)
 	}
-	// Every command, not only the scanner. The gate's binary is the one that
-	// runs for a fortnight, but none of these is supposed to hold a credential
-	// at step 4.1; cmd/brokercheck is the deliberate exception and is absent.
-	for _, pkg := range []string{
-		"./cmd/scanner", "./cmd/backtest", "./cmd/backfill",
-		"./cmd/paperledger", "./cmd/pairscreen", "./cmd/fundingcheck",
-	} {
-		t.Run(strings.TrimPrefix(pkg, "./cmd/"), func(t *testing.T) {
-			cmd := exec.Command("go", "list", "-deps", pkg)
-			cmd.Dir = filepath.Join("..", "..")
+	root := filepath.Join("..", "..")
+
+	// The command list is READ FROM DISK rather than typed out, so a new
+	// binary cannot escape this test by nobody remembering to add it. The two
+	// exceptions are named, and naming them is the point: they are the only
+	// binaries allowed to hold a credential or to place an order.
+	allowed := map[string]string{
+		"brokercheck": "step 4.1/4.2 diagnostic — the one command that reads a balance and places a test order",
+		"execcheck":   "step 4.4b/4.5 diagnostic — the one command that opens and closes a position (PLAN Q15)",
+	}
+	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
+	if err != nil {
+		t.Fatalf("read cmd/: %v", err)
+	}
+	// Both packages, not just the broker: internal/execution places orders
+	// through it, so a binary linking execution reaches the venue even if it
+	// never names the broker itself.
+	forbidden := []string{
+		"futures-arbitrage-scanner/internal/broker",
+		"futures-arbitrage-scanner/internal/execution",
+	}
+	checked := 0
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if reason, ok := allowed[e.Name()]; ok {
+			t.Logf("cmd/%s is exempt: %s", e.Name(), reason)
+			continue
+		}
+		checked++
+		t.Run(e.Name(), func(t *testing.T) {
+			cmd := exec.Command("go", "list", "-deps", "./cmd/"+e.Name())
+			cmd.Dir = root
 			out, err := cmd.Output()
 			if err != nil {
-				t.Fatalf("go list -deps %s: %v", pkg, err)
+				t.Fatalf("go list -deps ./cmd/%s: %v", e.Name(), err)
 			}
 			for _, line := range strings.Split(string(out), "\n") {
-				if strings.TrimSpace(line) == "futures-arbitrage-scanner/internal/broker" {
-					t.Fatalf("%s links internal/broker — the binary now carries the ONE package that holds credentials, "+
-						"and step 3.5's gate process runs unattended for a fortnight", pkg)
+				for _, bad := range forbidden {
+					if strings.TrimSpace(line) == bad {
+						t.Fatalf("cmd/%s links %s — the binary now reaches a venue with a credential, "+
+							"and step 3.5's gate process runs unattended for a fortnight", e.Name(), bad)
+					}
 				}
 			}
 		})
+	}
+	if checked == 0 {
+		t.Fatal("no command was checked; the exemption list has swallowed the whole cmd/ tree")
 	}
 }
 

@@ -177,11 +177,16 @@ var (
 	ErrCloseLeavesDust = errors.New("execution: phần dư không nằm trên lưới của sàn nên không lệnh nào đóng được")
 )
 
-// closeClientOrderID derives the closing order's id, distinct from both the
+// CloseClientOrderID derives the closing order's id, distinct from both the
 // opening leg's and the unwind's, and derived the same way — so a restarted
-// process can ask the venue about the CLOSE as well as the open (step 5.3).
-func closeClientOrderID(intentID string, leg LegName) string {
+// process, or a diagnostic holding nothing but the intent id, can ask the venue
+// about the CLOSE as well as the open (step 5.3).
+func CloseClientOrderID(intentID string, leg LegName) string {
 	return LegClientOrderID(intentID+"|close", leg)
+}
+
+func closeClientOrderID(intentID string, leg LegName) string {
+	return CloseClientOrderID(intentID, leg)
 }
 
 // Close closes both legs of one position and reports what it made.

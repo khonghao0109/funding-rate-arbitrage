@@ -169,3 +169,70 @@ func (c *Client) FetchPriceQuote(ctx context.Context, symbol string) (float64, e
 	}
 	return price, nil
 }
+
+// MaintenanceBracket is one tier of the venue's maintenance-margin schedule.
+//
+// It is deliberately NOT internal/risk.Bracket: this package sits on the
+// credential side of the dependency line and has no business importing the risk
+// model. The caller maps it, and in mapping it is the one that decides the
+// schedule is "verified" — which it is, because it came from the venue.
+//
+// PLAN's Q1 named this as Binance's one real cost: `leverageBracket` needs an
+// API key, so `margin.verified: false` in config.yaml and internal/strategy
+// REFUSES to open a levered position there rather than assuming a rate. A
+// testnet key is what turns that refusal into a number.
+type MaintenanceBracket struct {
+	Symbol             string
+	Tier               int
+	NotionalFloorQuote float64
+	NotionalCapQuote   float64
+	MaintMarginFrac    float64
+	MaxLeverage        float64
+}
+
+// FetchMaintenanceBracket reads the tier that covers one notional.
+//
+// GET /fapi/v1/leverageBracket — USER_DATA, "Request Weight: 1 IP weight", read
+// 2026-09-13. Response rows carry {symbol, bracket, initialLeverage,
+// notionalCap, notionalFloor, maintMarginRatio, cum}.
+// https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Notional-and-Leverage-Brackets
+//
+// A notional that falls in no published tier is an ERROR, not the first tier: a
+// schedule that does not cover the size being traded says nothing about that
+// size, and picking the nearest tier would understate the requirement exactly
+// where the position is largest.
+func (c *Client) FetchMaintenanceBracket(ctx context.Context, symbol string, notionalQuote float64) (MaintenanceBracket, error) {
+	if c.market != broker.MarketFuturesUSDM {
+		return MaintenanceBracket{}, fmt.Errorf("%w: %q publishes no maintenance schedule", broker.ErrNotSupported, c.market)
+	}
+	var rows []struct {
+		Symbol   string `json:"symbol"`
+		Brackets []struct {
+			Bracket          int     `json:"bracket"`
+			InitialLeverage  float64 `json:"initialLeverage"`
+			NotionalCap      float64 `json:"notionalCap"`
+			NotionalFloor    float64 `json:"notionalFloor"`
+			MaintMarginRatio float64 `json:"maintMarginRatio"`
+			Cum              float64 `json:"cum"`
+		} `json:"brackets"`
+	}
+	if err := c.http.GetSigned(ctx, broker.FuturesLeverageBracket,
+		[]broker.Param{{Key: "symbol", Value: symbol}}, &rows); err != nil {
+		return MaintenanceBracket{}, classify(err)
+	}
+	for _, row := range rows {
+		if row.Symbol != symbol {
+			continue
+		}
+		for _, b := range row.Brackets {
+			if notionalQuote >= b.NotionalFloor && (b.NotionalCap <= 0 || notionalQuote <= b.NotionalCap) {
+				return MaintenanceBracket{
+					Symbol: symbol, Tier: b.Bracket,
+					NotionalFloorQuote: b.NotionalFloor, NotionalCapQuote: b.NotionalCap,
+					MaintMarginFrac: b.MaintMarginRatio, MaxLeverage: b.InitialLeverage,
+				}, nil
+			}
+		}
+	}
+	return MaintenanceBracket{}, fmt.Errorf("binance: %s publishes no maintenance tier covering a notional of %v", symbol, notionalQuote)
+}

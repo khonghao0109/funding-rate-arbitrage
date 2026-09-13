@@ -104,6 +104,37 @@ var (
 		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Account-Information-V3",
 	}
 
+	// GET /fapi/v1/leverageBracket — USER_DATA, "Request Weight: 1 IP weight",
+	// read 2026-09-13. Rows are {symbol, brackets:[{bracket, initialLeverage,
+	// notionalCap, notionalFloor, maintMarginRatio, cum}]}.
+	//
+	// This is the endpoint PLAN's Q1 names as Binance's cost: it needs a key,
+	// so until step 4.1 there was none, config.yaml carries
+	// `margin.verified: false` for binance_futures, and internal/strategy
+	// REFUSES a levered position there rather than assuming a rate.
+	FuturesLeverageBracket = Endpoint{
+		Path: "/fapi/v1/leverageBracket", WeightIP: 1,
+		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Notional-and-Leverage-Brackets",
+	}
+
+	// GET /fapi/v1/depth — PUBLIC. "Valid limits:[5, 10, 20, 50, 100, 500,
+	// 1000]" with weights 2 / 5 / 10 / 20 for 5-50 / 100 / 500 / 1000, read
+	// 2026-09-13. Answers {lastUpdateId, E, T, bids, asks} where each level is
+	// a [price, quantity] pair of STRINGS. This package always asks for 100, so
+	// the constant below is the exact documented figure rather than a maximum.
+	FuturesDepth = Endpoint{
+		Path: "/fapi/v1/depth", WeightIP: 5,
+		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Order-Book",
+	}
+
+	// GET /api/v3/depth — PUBLIC. "Adjusted based on the limit: 1-100 → 5,
+	// 101-500 → 25, 501-1000 → 50, 1001-5000 → 250", read 2026-09-13. Answers
+	// {lastUpdateId, bids, asks}. Always asked at 100 here, so 5 is exact.
+	SpotDepth = Endpoint{
+		Path: "/api/v3/depth", WeightIP: 5,
+		DocURL: "https://developers.binance.com/docs/binance-spot-api-docs/rest-api/market-data-endpoints",
+	}
+
 	// GET /fapi/v1/userTrades — USER_DATA, "IP Weight5", read 2026-09-13.
 	// Parameters: symbol (required), timestamp (required), orderId, startTime,
 	// endTime, fromId, limit (default 500, max 1000), recvWindow (max 60000).
