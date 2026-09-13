@@ -88,6 +88,7 @@ func main() {
 		doStatus    = flag.Bool("status", false, "read one intent's orders, position and balances back FROM THE VENUE")
 		doClose     = flag.Bool("close", false, "close one intent's position on testnet")
 		doList      = flag.Bool("list", false, "list the intents this machine has a state file for")
+		doFunding   = flag.Bool("funding-check", false, "compare the venue's own FUNDING_FEE rows with rate x notional computed here")
 		doReconcile = flag.Bool("reconcile", false, "read this intent's own orders back from the venues and square an unbalanced pair")
 		apply       = flag.Bool("apply", false, "with -reconcile: actually send the squaring order (without it, only say what would be sent)")
 
@@ -123,6 +124,8 @@ func main() {
 			FailLeg2: *failLeg2, MarginFrac: *marginFr, MaxSlippageBps: *slipBps,
 			LegTimeout: *legTmo, MaxWidenBps: *widenBps, JSON: *jsonOut,
 		}))
+	case *doFunding:
+		os.Exit(runFundingCheck(ctx, *intentID))
 	case *doReconcile:
 		os.Exit(runReconcile(ctx, *intentID, *apply))
 	case *doStatus:

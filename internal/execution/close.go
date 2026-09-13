@@ -264,9 +264,10 @@ func (o *Trader) Close(ctx context.Context, req CloseRequest) (CloseResult, erro
 
 	// PERP FIRST — the leg whose failure would leave the liquidatable side
 	// naked goes before the leg whose failure would not.
-	perpClosed, perpErr := o.closeLegWithID(safe, intent, LegPerp, o.perp, broker.MarketFuturesUSDM,
+	perpClosed, perpFill, perpErr := o.closeLegWithID(safe, intent, LegPerp, o.perp, broker.MarketFuturesUSDM,
 		broker.SideBuy, perpRounded.QtyCoin, intent.PerpPriceQuote, res.Perp.ClientOrderID, true)
 	res.Perp.UnwoundQtyCoin = perpClosed
+	res.Perp = mergeCloseFill(res.Perp, perpFill)
 	if perpErr != nil && perpClosed <= 0 {
 		// Nothing moved on either leg.
 		return res, fmt.Errorf("%w: chân perp không đóng được và chân spot chưa gửi: %s", ErrCloseRefused, perpErr.Error())
@@ -287,9 +288,10 @@ func (o *Trader) Close(ctx context.Context, req CloseRequest) (CloseResult, erro
 		res.ReasonVI = joinVI([]string{res.ReasonVI, fmt.Sprintf("chân spot không đóng được %v coin: %s", spotTargetQtyCoin, err.Error())})
 		return o.finishClose(safe, req, &res, startedAt, ErrCloseIncomplete)
 	}
-	spotClosed, spotErr := o.closeLegWithID(safe, intent, LegSpot, o.spot, broker.MarketSpot,
+	spotClosed, spotFill, spotErr := o.closeLegWithID(safe, intent, LegSpot, o.spot, broker.MarketSpot,
 		broker.SideSell, spotRounded.QtyCoin, intent.SpotPriceQuote, res.Spot.ClientOrderID, false)
 	res.Spot.UnwoundQtyCoin = spotClosed
+	res.Spot = mergeCloseFill(res.Spot, spotFill)
 	if spotErr != nil {
 		res.ReasonVI = joinVI([]string{res.ReasonVI, "chân spot: " + spotErr.Error()})
 	}
@@ -364,7 +366,7 @@ func (o *Trader) finishClose(ctx context.Context, req CloseRequest, res *CloseRe
 // closeLegWithID sends one closing MARKET order under a caller-chosen id and
 // returns what the VENUE says it filled.
 func (o *Trader) closeLegWithID(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
-	market broker.Market, side broker.Side, qtyCoin, priceQuote float64, clientOrderID string, reduceOnly bool) (float64, error) {
+	market broker.Market, side broker.Side, qtyCoin, priceQuote float64, clientOrderID string, reduceOnly bool) (float64, broker.Order, error) {
 
 	req := broker.PlaceOrderRequest{
 		Market: market, Symbol: intent.Symbol, Side: side, Type: broker.OrderTypeMarket,
@@ -380,16 +382,36 @@ func (o *Trader) closeLegWithID(ctx context.Context, intent Intent, leg LegName,
 		// chose before sending, never guess.
 		found, qErr := o.resolveByID(ctx, b, q, o.cfg.Now().Add(o.cfg.UnwindTimeout))
 		if qErr != nil {
-			return 0, fmt.Errorf("lệnh đóng %s hỏng và không xác nhận được: %s", leg, err.Error())
+			return 0, broker.Order{}, fmt.Errorf("lệnh đóng %s hỏng và không xác nhận được: %s", leg, err.Error())
 		}
 		order = found
 	}
 
 	order = o.settleOrder(ctx, b, q, order)
 	if order.FilledQtyCoin <= 0 {
-		return 0, fmt.Errorf("lệnh đóng %s không khớp được gì (trạng thái %s)", leg, order.Status)
+		return 0, order, fmt.Errorf("lệnh đóng %s không khớp được gì (trạng thái %s)", leg, order.Status)
 	}
-	return order.FilledQtyCoin, nil
+	return order.FilledQtyCoin, order, nil
+}
+
+// mergeCloseFill carries the CLOSING order's own figures onto the leg result.
+//
+// Without it the exit price is never recorded, and two of the four fills the
+// slippage arithmetic needs are simply missing — measured on testnet
+// 2026-09-13, where the close reported "CHƯA tính được: đóng spot, đóng perp"
+// and PairPriceDriftQuote came out 0 on a position that had really moved. A
+// figure that is absent because nobody stored it is the worst kind of zero.
+func mergeCloseFill(base LegResult, order broker.Order) LegResult {
+	if order.VenueOrderID != "" {
+		base.VenueOrderID = order.VenueOrderID
+	}
+	if order.Status != "" {
+		base.Status = order.Status
+	}
+	if order.AvgFillPriceQuote > 0 {
+		base.AvgFillPriceQuote = order.AvgFillPriceQuote
+	}
+	return base
 }
 
 // settleOrder reads an order back until the VENUE says it has finished.

@@ -389,3 +389,33 @@ func TestOpen_UnwindDoesNotBelieveAMarketAcknowledgement(t *testing.T) {
 		t.Errorf("the unwind reported closing nothing, though the venue filled it%s", h.rec.Dump())
 	}
 }
+
+// The CLOSING fills' prices have to be recorded, or half the slippage
+// arithmetic is silently missing.
+//
+// Measured on testnet 2026-09-13: a complete lifecycle reported "CHƯA tính
+// được: đóng spot, đóng perp" and a pair price drift of exactly 0 on a position
+// whose legs had really moved — because LegResult was built fresh for the close
+// and nothing ever wrote the exit price onto it. A figure that is absent
+// because nobody stored it is the worst kind of zero: it reads as a
+// measurement.
+func TestClose_RecordsTheExitPricesSoAllFourFillsCanBePriced(t *testing.T) {
+	h := newCloseHarness(t, nil)
+	res, err := h.opener.Close(context.Background(), h.req)
+	if err != nil {
+		t.Fatalf("Close: %v%s", err, h.rec.Dump())
+	}
+	if res.Spot.AvgFillPriceQuote <= 0 || res.Perp.AvgFillPriceQuote <= 0 {
+		t.Fatalf("exit prices are spot %v and perp %v; the closing fills were never recorded",
+			res.Spot.AvgFillPriceQuote, res.Perp.AvgFillPriceQuote)
+	}
+	if res.Spot.VenueOrderID == "" || res.Perp.VenueOrderID == "" {
+		t.Errorf("the closing orders' venue ids were not recorded: %q, %q", res.Spot.VenueOrderID, res.Perp.VenueOrderID)
+	}
+	if strings.Contains(res.PriceDriftPricedVI, "chưa đủ bốn giá khớp") {
+		t.Errorf("the drift is still unpriced with four fills present: %s", res.PriceDriftPricedVI)
+	}
+	if strings.Contains(res.PriceDriftPricedVI, "đóng spot") || strings.Contains(res.PriceDriftPricedVI, "đóng perp") {
+		t.Errorf("a closing fill is still reported as unpriceable: %s", res.PriceDriftPricedVI)
+	}
+}
