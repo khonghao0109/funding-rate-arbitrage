@@ -767,8 +767,20 @@ is a GET** — and it is kept off the ingestion path by machine: an AST walk
 asserts `exchanges/` imports no `internal/` package at all, and `go list
 -deps` asserts that none of the six other commands links the broker, so the
 gate's unattended binary carries no credential. `cmd/brokercheck` is the one
-command that links it; run on this machine it exits 2 ("no testnet
-credentials"), which is why PLAN 4.1 reads 🟡 CODE XONG, CHƯA NGHIỆM THU.
+command that links it. **Accepted 2026-09-13**: it exits 0 with 4/4 checks
+passed, having read a real balance on BOTH testnets — futures
+`/fapi/v3/balance` HTTP 200, clock skew 273 ms, weight 5, 8 assets (3
+non-zero); spot `/api/v3/account` HTTP 200, skew 284 ms, weight 20, 502
+assets. The run found two defects in the code it was accepting and both are
+fixed: the success body was being truncated at the 4 KiB meant for error
+bodies, so a 502-asset account read as malformed JSON; and the futures weight
+ceiling, shipped at 2400 as an unverified conservative default, is **6000**
+read from `/fapi/v1/exchangeInfo` (spot 6000 too; futures ORDERS 1200/min and
+300/10s, recorded for 4.2). One credential pair does NOT serve both venues —
+a futures key on the spot host is refused -2015 — so each venue reads its own
+variables and a venue with no key is SKIPPED rather than failed. Open, and
+the operator's to fix: the spot key still has WITHDRAWAL enabled, which 4.1
+requires off.
 
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with

@@ -3344,7 +3344,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > kế và unit-test với broker giả trong lúc chờ, nhưng không được đánh dấu xong
 > trước cổng.
 
-#### Bước 4.1 — Hạ tầng REST có ký — 🟡 CODE XONG, **CHƯA NGHIỆM THU** (2026-09-12)
+#### Bước 4.1 — Hạ tầng REST có ký — ✅ (nghiệm thu 2026-09-13)
 - Package riêng `internal/broker/`, tách hoàn toàn khỏi `exchanges/` (đọc-only).
 - HMAC-SHA256 signing, xử lý `recvWindow`, đồng bộ đồng hồ với server sàn.
 - Rate limiter theo weight của từng sàn.
@@ -3354,8 +3354,11 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > **Đã làm 2026-09-12 (Q14 — song song với cổng 3.5 lần 3).** `internal/broker`
 > có bốn phần, mỗi phần kèm test:
 >
-> - **`Secret` / `Credentials`** — nạp từ `BINANCE_TESTNET_API_KEY` /
->   `BINANCE_TESTNET_API_SECRET`. `Format` thắng `String`/`GoString` ở MỌI
+> - **`Secret` / `Credentials`** — nạp từ biến môi trường, **một cặp key cho
+>   mỗi sàn** (`BINANCE_FUTURES_TESTNET_API_KEY` / `_SECRET` và
+>   `BINANCE_SPOT_TESTNET_API_KEY` / `_SECRET`; cặp tên cũ
+>   `BINANCE_TESTNET_API_*` vẫn đọc được như dự phòng cho futures).
+>   `Format` thắng `String`/`GoString` ở MỌI
 >   động từ `fmt` nên `%v`, `%s`, `%q`, `%+v`, `%#v`, `%x` đều ra `[redacted]`,
 >   kể cả khi Secret nằm trong struct/slice/map ai đó in ra lúc gỡ lỗi;
 >   `MarshalJSON` **từ chối** thay vì thay bằng chỗ trống — một bản dump ghi
@@ -3376,8 +3379,8 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   vì cầu may: không đo được đồng hồ thì không ký, và `|lệch| ≥ recv_window_ms`
 >   thì từ chối tại chỗ kèm cả hai con số — để khỏi nhận `-1021` lúc 3 giờ
 >   sáng, một mã lỗi không nói gì về đồng hồ của ta.
-> - **Ngân sách weight** — đặt chỗ TRƯỚC khi gọi (2400/phút futures,
->   6000/phút spot, đều từ tài liệu và ghim bằng test), đọc
+> - **Ngân sách weight** — đặt chỗ TRƯỚC khi gọi (6000/phút cả hai sàn, **đọc
+>   từ `exchangeInfo` của chính sàn** ngày 2026-09-13 và ghim bằng test), đọc
 >   `X-MBX-USED-WEIGHT-*` của sàn làm SỐ CHÍNH THỨC (trong một cửa sổ nó chỉ
 >   được phép NÂNG con số lên), 429 lùi theo **max(Retry-After, phần còn lại
 >   của phút)** — bẫy Hyperliquid đã ghi ở bảng trap — và **418 là dừng hẳn**:
@@ -3390,35 +3393,93 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > KHÔNG có trong đồ thị của chúng — tiến trình cổng 3.5 chạy hai tuần không
 > mang credential. `cmd/brokercheck` là lệnh DUY NHẤT liên kết gói này.
 >
-> **Trạng thái 2026-09-12: CHƯA ĐÁNH DẤU ✅, và đây là lý do bằng số.**
-> Chạy `go run ./cmd/brokercheck` trên máy người vận hành:
+> **NGHIỆM THU 2026-09-13 — ĐẠT 4/4, mã thoát 0.** `go run ./cmd/brokercheck`
+> trên máy người vận hành, với key testnet thật của CẢ HAI sàn:
 >
 > ```
-> CHƯA CÓ KEY TESTNET: broker: no credentials in the environment:
->   BINANCE_TESTNET_API_KEY and BINANCE_TESTNET_API_SECRET are unset
-> Bước 4.1: code xong, CHƯA NGHIỆM THU.
+> ── binance futures testnet · https://demo-fapi.binance.com
+>    giờ server /fapi/v1/time  · HTTP 200 · lệch  273 ms · vòng 449ms
+>    /fapi/v3/balance          · HTTP 200 · weight 5  · vòng 102ms
+>      8 tài sản (3 khác 0): BNB, BTC, ETH, FDUSD, U, USD1, USDC, USDT
+>      sàn báo X-MBX-USED-WEIGHT-1M = 6   (6/6000 trong phút đó)
+>
+> ── binance spot testnet · https://testnet.binance.vision
+>    giờ server /api/v3/time   · HTTP 200 · lệch  284 ms · vòng 471ms
+>    /api/v3/account           · HTTP 200 · weight 20 · vòng 115ms
+>      502 tài sản (502 khác 0): 0G, 1000CAT, 1000CHEEMS, 1000SATS, 1INCH,
+>      1MBABYDOGE, 2Z, 456, A, AAOIB, AAPLB, AAVE, … +490
+>      sàn báo X-MBX-USED-WEIGHT-1M = 21  (21/6000 trong phút đó)
+>
+> Bước 4.1: 4/4 mục đạt trên TESTNET. Không lệnh nào được đặt.
 > ```
-> **mã thoát 2** ("không có credential, không thử gì cả"; 0 = đạt, 1 = hỏng).
-> `.env` chỉ có `PORT`. Không gọi mạng nào được thực hiện.
 >
-> Nghiệm thu của bước này là **"gọi được endpoint đọc số dư trên testnet"** —
-> một phép đo, không phải một đoạn code chạy được. Chừng nào chưa có hai biến
-> môi trường thì mục này ở **🟡**, và bất kỳ ai đánh ✅ cho nó là đang ghi một
-> điều chưa đo. Khi có key, chạy lại đúng lệnh trên và dán vào đây: mã HTTP,
-> lệch đồng hồ (ms), weight đã dùng, SỐ tài sản và TÊN tài sản của cả hai tài
-> khoản — **không bao giờ dán giá trị key, chữ ký, hay số dư**.
+> Không giá trị key, chữ ký hay SỐ DƯ nào được in — chỉ mã HTTP, lệch ms,
+> weight, SỐ và TÊN tài sản. Đó là chủ ý: đầu ra này bị dán vào báo cáo.
 >
-> **Nợ cho phiên nghiệm thu (quy tắc 5).** Ngân sách weight của SPOT (6000/phút)
-> trích được từ tài liệu — trang general-endpoints in thẳng mảng `exchangeInfo`
-> với `{"rateLimitType":"REQUEST_WEIGHT","interval":"MINUTE","intervalNum":1,
-> "limit":6000}`. Ngân sách FUTURES (2400/phút) thì **KHÔNG**: trang
-> general-info của USDⓈ-M mô tả header, 429 và 418 nhưng **không nêu con số
-> nào**, mà bảo đọc `/fapi/v1/exchangeInfo` để lấy. 2400 là số được nhắc rộng
-> rãi nhưng không trích được từ trang chính thức nào đọc được ngày 2026-09-12,
-> nên nó nằm trong mã với nhãn **"mặc định thận trọng, CHƯA XÁC MINH"**. Thấp
-> hơn thực tế là chiều AN TOÀN (chỉ tự bóp mình chặt hơn), cao hơn thì không —
-> đó là 429 rồi cấm IP. Khi có key, đọc `exchangeInfo` của cả hai sàn, ghi số
-> thật vào đây và thay nhãn trong `internal/broker/ratelimit.go`.
+> **⚠ Một phát hiện của lần nghiệm thu, CHƯA XỬ LÝ: key SPOT đang có quyền RÚT
+> TIỀN.** `brokercheck` in cảnh báo (`canWithdraw: true` trong
+> `/api/v3/account`) nhưng không tính là hỏng — quyền của key là việc của
+> người vận hành. Bước này yêu cầu **bật giao dịch, TẮT rút tiền**; sửa ở
+> trang testnet. Trên testnet thiệt hại bằng 0, nhưng thói quen mới là thứ đi
+> theo sang 4.6.
+>
+> **Một cặp key KHÔNG phục vụ được hai sàn** (đo 2026-09-13). Futures testnet
+> và spot testnet là hai hệ thống đăng ký tách nhau: đưa key futures sang
+> `testnet.binance.vision` thì sàn trả `-2015` "Invalid API-key, IP, or
+> permissions for action". Nên credential tách theo sàn, và sàn nào chưa có
+> key thì `brokercheck` ghi **"BỎ QUA — chưa có key"** và KHÔNG tính là hỏng —
+> giữ đúng một trong hai tài khoản là trạng thái bình thường. Nhưng đặt NỬA
+> cặp (có key, thiếu secret) thì **báo hỏng**, không bỏ qua: lỗi gõ mà báo
+> thành "chưa có key" sẽ để một sàn không được kiểm trong khi người vận hành
+> tin là đã cấu hình xong.
+>
+> **Hai lỗi do chính lần nghiệm thu tìm ra, đã sửa** (`46cea6e`) — đây là việc
+> mà một lần nghiệm thu tồn tại để làm:
+>
+> 1. **Thân phản hồi bị cắt ở 4096 byte.** Giới hạn đó đúng cho thân LỖI (văn
+>    bản do sàn kiểm soát, đi thẳng vào thông báo lỗi và log) nhưng bị áp cho
+>    cả thân THÀNH CÔNG. Số dư futures có 8 tài sản nên lọt; `/api/v3/account`
+>    trả 502 tài sản nên không: sàn trả HTTP 200 với JSON đúng, client báo
+>    `decode: unexpected end of JSON input` — tức **đổ tội cho sàn vì chỗ
+>    client tự cắt**. Điều đáng ngại không phải thông báo lỗi, mà là kích
+>    thước gây ra nó phụ thuộc vào số tài sản tài khoản tình cờ đang giữ: thử
+>    trên tài khoản nhỏ thì xanh, hỏng sau này trên tài khoản lớn hơn. Nay hai
+>    câu hỏi có hai hằng số — 16 MiB cho thân được PHÂN TÍCH, 4096 cho thân
+>    được TRÍCH DẪN — và vượt trần thì báo "quá lớn" chứ không đưa JSON cụt
+>    cho bộ giải mã.
+> 2. **Ngân sách weight futures sai 2,5 lần** — xem khối ngay dưới.
+>
+> **Nợ quy tắc 5: ĐÃ TRẢ 2026-09-13.** Ngày 2026-09-12 ngân sách weight futures
+> là **2400/phút** mang nhãn "mặc định thận trọng, CHƯA XÁC MINH": trang
+> general-info của USDⓈ-M không nêu con số nào, nó bảo đọc
+> `/fapi/v1/exchangeInfo`. Đã đọc, HTTP 200 cả hai:
+>
+> ```
+> GET https://demo-fapi.binance.com/fapi/v1/exchangeInfo      739 mã · 898 KB
+>   REQUEST_WEIGHT MINUTE 1 → 6000
+>   ORDERS MINUTE 1 → 1200 · ORDERS SECOND 10 → 300
+> GET https://testnet.binance.vision/api/v3/exchangeInfo     1363 mã · 2,5 MB
+>   REQUEST_WEIGHT MINUTE 1 → 6000
+>   ORDERS SECOND 10 → 50 · ORDERS DAY 1 → 160000
+>   RAW_REQUESTS MINUTE 5 → 300000
+> ```
+>
+> Trần thật là **6000**, tức 2400 đang bóp client xuống 40% ngân sách của nó.
+> Thấp hơn thực tế là chiều AN TOÀN — đó là lý do phát hành nó chấp nhận được
+> — còn cao hơn thì không: đó là 429 rồi cấm IP. (Hai payload này 898 KB và
+> 2,5 MB, nên lỗi cắt 4096 byte ở trên chặn luôn phép đo này: phải sửa lỗi đó
+> trước mới đọc được con số này.)
+>
+> **Đây là số của TESTNET.** Client không với tới host nào khác được
+> (`hosts.go`), nên hôm nay chúng đúng; sàn hoàn toàn có thể cho mainnet một
+> trần khác, và **4.6 phải đọc lại cả hai** trước khi trỏ đi đâu. Các giới hạn
+> `ORDERS` ghi lại cho **4.2** — bước đầu tiên tiêu tới chúng; hiện chưa có gì
+> cưỡng chế chúng.
+>
+> **Còn chưa xác minh:** `testnet.binancefuture.com` vẫn nằm NGOÀI allow-list
+> vì không trang chính thức nào đọc được từ máy này nêu nó; và `recvWindow`
+> tối đa 60000 ms cùng `Retry-After` tính bằng GIÂY chỉ trích được từ tài liệu
+> **spot**, được áp cho cả hai sàn và ghi rõ trong comment cạnh chỗ dùng.
 >
 > **Hai điều phải nhắc lại, vì chúng dễ bị đọc nhầm thành "đã mở GĐ 4":**
 > (1) **Không có lệnh nào được đặt** — kể cả trên testnet. Mọi phương thức của
@@ -3429,8 +3490,8 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > tới trong phiên này.
 
 #### Bước 4.2 — Trừu tượng hoá lệnh
-> **Chưa bắt đầu.** Theo Q14, 4.2 chỉ khởi động sau khi 4.1 **được review đạt**
-> (P5 của WORKFLOW) — mà 4.1 còn ở 🟡 vì chưa có key testnet để nghiệm thu.
+> **4.1 đã nghiệm thu 2026-09-13 (mã thoát 0, 4/4), nên cổng Q14 mở.** Theo
+> Q14, 4.2 chỉ khởi động sau khi 4.1 **được review đạt** (P5 của WORKFLOW).
 - Interface chung: `PlaceOrder`, `CancelOrder`, `GetPosition`, `GetBalance`.
 - Hiện thực cho **1 sàn duy nhất trước** (đề xuất Binance — tài liệu tốt nhất, có testnet).
 - Xử lý làm tròn theo `stepSize` / `tickSize` / `minNotional` của từng cặp.
@@ -4204,8 +4265,11 @@ ba lý do đo được chứ không vì sốt ruột:
   gỡ lỗi. Host mainnet là việc của **4.6**, và khi thêm thì thêm kèm URL tài
   liệu, không phải bằng cách nới phép so thành so tiền tố.
 - **4.1 chỉ ✅ khi ĐÃ GỌI ĐƯỢC số dư testnet thật.** Code chạy được không phải
-  nghiệm thu. Chưa có key thì `cmd/brokercheck` in "chưa có key testnet", thoát
-  mã 2, và bước này ở 🟡 — đúng trạng thái nó đang ở lúc viết dòng này.
+  nghiệm thu. Điều kiện này đã được thoả **2026-09-13**: `cmd/brokercheck`
+  thoát mã 0, 4/4 mục đạt, đọc được số dư trên CẢ HAI sàn testnet (số đo ở
+  Bước 4.1). Ngày 2026-09-12 nó thoát mã 2 và bước này ở 🟡 — giữ lại câu này
+  vì nó ghi đúng cái giá của luật: một ngày ở 🟡 là một ngày không ai đánh dấu
+  một điều chưa đo.
 - **4.2 chỉ bắt đầu sau khi 4.1 được review đạt** (P5 của WORKFLOW). 4.4–4.6
   vẫn đứng sau phán quyết 3.5 và Q14 không đụng tới điều đó.
 
