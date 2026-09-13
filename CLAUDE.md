@@ -813,6 +813,31 @@ weight, so the budget cannot see it), and `GET /fapi/v3/account` publishes no
 `entryPrice` in V3, so those `Position` fields stay zero instead of being filled
 from an invented field name.
 
+**Step 4.4a (the two-leg open) shipped 2026-09-13, against a FAKE broker, and
+4.4 stays 🟡.** PLAN's Q12 ordering note permits the partial-fill state machine
+to be designed and unit-tested with a fake while the gate runs, and forbids
+marking it done before the verdict. `internal/execution` now holds that machine
+with ONE invariant and two states: when `Open` returns — for any reason,
+including a cancelled context — either BOTH legs are open within the coarser of
+the two venues' step sizes, or BOTH are flat. There is no third state and no
+"fix it next tick". Measured: **8 named cases, 240 randomised runs, 0 invariant
+violations**, 77.1% coverage, unwind in 8–39 µs — and that last figure times
+the STATE MACHINE on an in-memory broker, not a venue, so it says nothing yet
+about the acceptance criterion's "within a few seconds". Every assertion reads
+the fake VENUES rather than the returned Result, because a machine that has lost
+a leg reports both_flat with complete confidence. The property test found three
+faults the eight hand-written cases all missed: `classify` asked only whether
+the two quantities were CLOSE, so one flat leg beside a dust position passed as
+hedged; a closing order rounded DOWN (right for an open, wrong for a close) left
+a sliver no correctly-rounded order could reach, now reported loudly instead of
+silently subtracted; and the fake itself was reporting fills between two points
+of its own quantity grid, which no venue does. The named mutation is checked —
+replacing the post-cancel read-back with our own belief about the cancel goes
+red with a full naked 0.3333 BTC spot position. **Nothing here has placed a
+two-leg order on any venue**; real two legs on testnet, incremental WS depth
+during entry, persisting transitions through the `Recorder` interface, and the
+real unwind timing are all 4.4b, behind the 3.5 verdict.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1100,7 +1125,16 @@ internal/
                      accepted it, the same timeout before it arrived, a partial
                      fill, and a cancel racing a fill. It is what lets 4.4 be
                      unit-tested with no network and no credential
-  execution/         delta-neutral position open and close
+  execution/         delta-neutral position open and close. Step 4.4a: the
+                     two-leg state machine, ONE invariant — after Open, both
+                     legs open within the coarser step, or both flat, never a
+                     third state. Sizing goes through instruments (2.3) and
+                     broker.RoundOrder, the book is re-checked at the real size
+                     immediately before placing, ClientOrderIDs are DERIVED
+                     from the intent id so a restarted process can ask the
+                     venue about its own orders (5.3), and every cancel is
+                     followed by a read-back because a cancel can race a fill.
+                     Tested only against brokertest — no venue, no credential
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
                      holds the perp liquidation model strategy calls
 static/              vanilla JS dashboard
@@ -1129,8 +1163,9 @@ written one for; `connector:` picks from `exchanges.Connectors()`, and
 Per-venue symbol naming lives there too (`symbol_format`, `symbol_map`), which is
 what removed six hardcoded translation tables from `exchanges/`.
 
-**Two packages under `internal/` are still empty** — `execution` and `notify`
-contain only `doc.go` stating their responsibility and boundaries. `broker`
+**One package under `internal/` is still empty** — `notify` contains only
+`doc.go` stating its responsibility and boundaries. `execution` became real on
+2026-09-13 (step 4.4a, the two-leg state machine, fake-broker only). `broker`
 became real on 2026-09-12 (step 4.1, decision Q14), grew the order interface and
 its Binance implementation on 2026-09-13 (step 4.2), and is still the only
 package that may hold a credential.

@@ -3771,7 +3771,85 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > chung sổ này cho track crowding (một chân perp, funding ở nến settle) là
 > việc của 6.3/6.5.
 
-#### Bước 4.4 — Mở vị thế delta-neutral
+#### Bước 4.4 — Mở vị thế delta-neutral — 🟡 4.4a XONG TRÊN BROKER GIẢ (2026-09-13)
+> **4.4a xong, 4.4b chờ phán quyết 3.5.** Theo ghi chú thứ tự sau Q12, máy
+> trạng thái khớp-một-phần được phép **thiết kế và unit-test với broker giả**
+> trong lúc cổng còn chạy, và **không được đánh dấu xong trước cổng**. Đây
+> đúng là trạng thái đó: `internal/execution` có máy trạng thái đầy đủ, chạy
+> với `internal/broker/brokertest`, **không mạng, không key, chưa từng đặt một
+> lệnh hai chân nào trên sàn thật**.
+>
+> **Bất biến — chỉ có MỘT, và chỉ hai trạng thái.** Khi `Open` trả về, vì bất
+> kỳ lý do gì (thành công, từ chối, lỗi sàn, ctx bị huỷ): hoặc **CẢ HAI CHÂN
+> MỞ** với `|qty_spot − qty_perp|` không quá bước **thô hơn** của hai sàn và
+> phần dư trị giá **dưới minNotional cả hai bên**, hoặc **CẢ HAI PHẲNG**.
+> Không có trạng thái thứ ba, không có "để tick sau sửa": một chân trần là một
+> cược có hướng mà chiến lược không hề cho phép, và khoảng giữa hai tick đúng
+> là lúc giá chạy.
+>
+> **Số đo:**
+>
+> | Hạng mục | Số |
+> |---|---|
+> | Ca test có tên | **8** (mỗi ca một tình huống, xem bảng dưới) |
+> | Hàm test trong gói | 21 |
+> | Lần chạy ngẫu nhiên (property test) | **240** |
+> | Vi phạm bất biến | **0** |
+> | Thời gian gỡ vị thế (unwind) | **8–39 µs** |
+> | Độ phủ câu lệnh | 77,1% |
+>
+> **Đọc con số unwind cho đúng:** 8–39 µs là thời gian của MÁY TRẠNG THÁI trên
+> broker trong bộ nhớ — không có mạng, không có độ trễ sàn, không có hàng đợi
+> khớp lệnh. Nó chứng minh không có chỗ nào ngủ hay chờ nhầm trong đường gỡ
+> vị thế; nó **không** chứng minh "vài giây" của tiêu chí nghiệm thu, vì tiêu
+> chí đó nói về sàn thật. Phép đo thật thuộc **4.4b**.
+>
+> **Tám ca test và kết cục theo bất biến** (mọi khẳng định đọc trạng thái ở
+> SÀN GIẢ, không đọc `Result` — một máy trạng thái đã lạc mất một chân vẫn sẽ
+> báo `both_flat` rất tự tin):
+>
+> | Tình huống | Kết cục |
+> |---|---|
+> | Cả hai chân khớp đủ | `both_open`, dư 0 |
+> | Chân 2 từ chối ngay (dưới minNotional) | `both_flat` — chân 1 được gỡ |
+> | Chân 2 từ chối ngay (sai precision) | `both_flat` — chân 1 được gỡ |
+> | Chân 2 timeout **trước khi** tới sàn | `both_open` — gửi lại **một** lần; sàn giữ đúng **1** lệnh |
+> | Chân 2 timeout **sau khi** sàn nhận | `both_open` — phát hiện qua `GetOrder`, **không** gửi lại; sàn giữ đúng **1** lệnh |
+> | Chân 1 khớp một phần rồi hết hạn | `both_flat` — gỡ đúng **phần đã khớp**, chân 2 **chưa từng** được đặt |
+> | Huỷ đua với khớp | `both_open` — đọc lại sàn thấy đã khớp thật, nên **phòng hộ** nó thay vì bỏ mặc |
+> | ctx bị huỷ giữa chừng | `both_flat` — unwind chạy trên ctx **không** bị huỷ theo |
+> | Sổ mỏng đi | `both_flat` — **0 lệnh** được đặt |
+>
+> **Đột biến bắt buộc, đã kiểm:** bỏ bước "đọc lại từ sàn sau khi huỷ" và tin
+> vào lệnh huỷ của chính mình → **đỏ**, cả ca có tên lẫn property test, với
+> `spot net 0.3333, perp net 0` — tức một vị thế spot **trần nguyên cỡ**.
+>
+> **Property test tìm ra ba lỗi mà tám ca viết tay đều bỏ sót**, và đó là lý
+> do nó tồn tại:
+> 1. `classify` chỉ hỏi hai số có **GẦN** nhau không, nên `(0, 0.00007)` — một
+>    chân phẳng, chân kia giữ bụi — được coi là phòng hộ, vì 0,00007 đúng là
+>    nằm trong một bước của 0. Đó không phải phòng hộ; đó là một vị thế trần
+>    nhỏ, và đó là cách một tài khoản tích cả ngăn kéo những thứ như thế.
+> 2. Lệnh đóng làm tròn **XUỐNG** — đúng cho lệnh mở, sai cho lệnh đóng: một
+>    fill nằm giữa hai nấc lưới để lại phần dư mà không lệnh làm tròn đúng nào
+>    với tới được. Nay phần dư đó **báo to** thay vì bị trừ đi âm thầm.
+> 3. Bản thân broker giả đang báo fill **nằm giữa hai nấc lưới của chính nó**,
+>    điều không sàn nào làm — nên nó tự chế ra phần dư kẹt rồi đổ lỗi cho code
+>    đang được kiểm.
+>
+> **CÒN LẠI Ở 4.4b, chưa làm:** (1) **hai chân thật trên testnet** — chưa một
+> lệnh hai chân nào rời khỏi máy này; (2) **depth incremental qua WS** lúc
+> vào/ra lệnh (§7.4, quy tắc 10) — 4.4a là bản **REST-snapshot**, và tuổi của
+> sổ được báo cáo trong `Result.BookAgeMs` chứ không giấu; (3) **ghi chuyển
+> trạng thái xuống store** — interface `Recorder` đã có, bản in-memory đã có,
+> nhưng thêm bảng nghĩa là migration dưới chân một tiến trình đang mở
+> `data/scanner.db` suốt hai tuần; (4) **phép đo unwind trên sàn thật**, tức
+> tiêu chí "vài giây"; (5) **thu nhỏ chân lớn cho khớp chân nhỏ** thay vì gỡ
+> về phẳng — kinh tế hơn thật, nhưng cần thêm một lần kiểm minNotional, một
+> lần kiểm sổ ở cỡ mới và một cơ hội nữa để hỏng giữa chừng; (6) **phí sàn
+> báo** — `broker.Order` không mang trường hoa hồng nào, spot báo trong mảng
+> `fills`, futures chỉ báo qua `userTrades`, và đọc cái nào cũng là **4.5**.
+
 - Đặt đồng thời Spot Long + Perp Short cùng notional.
 - Tính chính xác khối lượng để `|Delta| ≈ 0` sau khi làm tròn.
 - **Bật WS `depth` incremental trong lúc vào/ra lệnh, tắt khi đang giữ vị thế** — đây là chỗ duy nhất trong lộ trình cần sổ lệnh realtime ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
