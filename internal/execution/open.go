@@ -442,21 +442,35 @@ func unwindClientOrderID(intentID string, leg LegName) string {
 	return LegClientOrderID(intentID+"|unwind", leg)
 }
 
-// definiteRejection reports whether the venue (or this package) positively
-// refused the order, as opposed to leaving its fate unknown.
+// definiteRejection reports whether the order was positively refused, as
+// opposed to having its fate left unknown.
 //
-// The general rule, and it is the only one that works across venues: THE VENUE
-// ANSWERED means definite; the venue did not answer means ambiguous. A
-// broker.HTTPError is by construction an answer — the venue sent a status code
-// and a body. A timeout, a refused dial or a closed connection is not.
+// The rule that works across venues is not "the venue answered" — it is "the
+// answer came from the thing that would have executed the order". A 4xx is the
+// venue's own matching engine saying no: the order does not exist and never
+// will. A 5xx is not. A 502 or a 503 typically comes from a gateway IN FRONT
+// of the venue, which may have forwarded the order perfectly well before
+// failing to relay the reply — so it carries exactly the same ambiguity as a
+// timeout, and must be resolved by asking, not by assuming.
+//
+// Getting this backwards is the expensive direction: treating a 502 as a
+// refusal skips the GetOrder resolution entirely, so the state machine unwinds
+// leg 1 while leg 2 may be live at the venue — which is the precise failure
+// this package exists to prevent, arrived at through the code meant to prevent
+// it.
 func definiteRejection(err error) bool {
+	// This package's own validation, and venue rules checked before sending.
+	// Nothing was transmitted, so nothing can be pending.
 	if errors.Is(err, broker.ErrInvalidOrder) || errors.Is(err, broker.ErrBelowMinNotional) ||
 		errors.Is(err, broker.ErrBelowMinQty) || errors.Is(err, broker.ErrAboveMaxQty) ||
 		errors.Is(err, broker.ErrNotTrading) || errors.Is(err, broker.ErrRulesUnknown) {
 		return true
 	}
 	var httpErr *broker.HTTPError
-	return errors.As(err, &httpErr)
+	if !errors.As(err, &httpErr) {
+		return false // no answer at all: ambiguous
+	}
+	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500
 }
 
 // reachedTarget reports whether a leg filled its whole intended quantity.

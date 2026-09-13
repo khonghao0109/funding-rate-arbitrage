@@ -389,3 +389,51 @@ func TestOpen_InvariantHoldsUnderRandomBehaviour(t *testing.T) {
 	}
 	t.Logf("%d randomised runs, %d invariant violations", runs, violations)
 }
+
+// A 5xx is NOT a refusal, and the difference is the whole ambiguity contract.
+//
+// A 4xx comes from the matching engine: the order does not exist and never
+// will, so resending is pointless and asking wastes the deadline. A 502 or 503
+// typically comes from a gateway in FRONT of the venue, which may have
+// forwarded the order perfectly well before failing to relay the reply. Treating
+// it as a refusal skips the GetOrder resolution, so leg 1 gets unwound while
+// leg 2 may be live — the exact failure this package exists to prevent, reached
+// through the code meant to prevent it.
+func TestOpen_AGatewayErrorIsAmbiguousWhileAClientErrorIsDefinite(t *testing.T) {
+	cases := []struct {
+		name       string
+		statusCode int
+		wantAsk    bool
+	}{
+		{"400 from the matching engine is definite", 400, false},
+		{"422 is definite", 422, false},
+		{"500 leaves the order's fate unknown", 500, true},
+		{"502 from a gateway leaves it unknown", 502, true},
+		{"503 leaves it unknown", 503, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t, nil)
+			h.perp.SetBehaviour(brokertest.Behaviour{
+				RejectWith: &broker.HTTPError{StatusCode: tc.statusCode, URL: "https://demo-fapi.binance.com/fapi/v1/order", Body: "{}"},
+			})
+
+			res, err := h.opener.Open(context.Background(), h.intent)
+			if err == nil {
+				t.Fatal("a rejected leg must be an error")
+			}
+			// Whatever the classification, the invariant holds.
+			h.assertInvariant(t, res)
+
+			asked := h.rec.Has(EventLegAmbiguous)
+			if asked != tc.wantAsk {
+				verb := "did not ask"
+				if asked {
+					verb = "asked"
+				}
+				t.Errorf("on HTTP %d the machine %s the venue whether the order exists; want ask=%v%s",
+					tc.statusCode, verb, tc.wantAsk, h.rec.Dump())
+			}
+		})
+	}
+}
