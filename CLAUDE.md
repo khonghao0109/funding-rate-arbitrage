@@ -833,10 +833,65 @@ a sliver no correctly-rounded order could reach, now reported loudly instead of
 silently subtracted; and the fake itself was reporting fills between two points
 of its own quantity grid, which no venue does. The named mutation is checked —
 replacing the post-cancel read-back with our own belief about the cancel goes
-red with a full naked 0.3333 BTC spot position. **Nothing here has placed a
-two-leg order on any venue**; real two legs on testnet, incremental WS depth
-during entry, persisting transitions through the `Recorder` interface, and the
-real unwind timing are all 4.4b, behind the 3.5 verdict.
+red with a full naked 0.3333 BTC spot position. Nothing in 4.4a had placed a two-leg order on any
+venue; **4.4b and 4.5 did, on the testnet, the same day — see the next
+paragraph (decision Q15).**
+
+**Steps 4.4b and 4.5 (two real legs, and the close) shipped 2026-09-13 on
+TESTNET.** The operator's decision Q15 widened Q14 by two steps, under five
+limits that are tests rather than promises: testnet hosts only with no mainnet
+flag, no link into `cmd/scanner` (a `go list -deps` test now reads `cmd/` from
+disk so a new binary cannot escape it, and forbids `internal/execution` as well
+as `internal/broker`), no real money, 4.6 still behind the 3.5 verdict, and —
+the limit most likely to drift, because by then it is a few lines — wiring a
+live signal to an order stays behind BOTH 3.5 and 3.4. Every position is one a
+person typed into `cmd/execcheck`.
+
+**Measured: 10 opens, 10/10 hedged, residual 0 on every one.** The unhedged
+window is **464-628 ms placing sequentially and 313-387 ms in parallel** - the
+figure 4.4a could only guess at, since an in-memory broker times the state
+machine and not an exchange. Parallel is ~151 ms shorter and the default did
+NOT move: 151 ms has to be set against both legs being live at once when one
+fails. With leg 2 made to fail at the venue for real, leg 1 was flat again in
+**225-284 ms** (the closing order itself 120-171 ms) against an acceptance
+criterion that says "a few seconds". One complete lifecycle held a position
+across a settlement: funding read from the venue **+0.19975549 USDT** against
+the book's **+0.19980099**, a difference of **-0.0228%** which is entirely the
+mark price - the venue settles on the mark AT the stamp and does not republish
+it. Worst slippage over 20 fills was **0.00 bps** against a 10 bps cap, so WS
+incremental depth is recorded as a NAMED DEBT (4.4c) with its number and its
+trigger rather than built or waved away; that number does not transfer, because
+testnet's spot book returned the same best ask four opens running and the size
+was $65.
+
+**The acceptance found four defects in the code it was accepting, and one rule
+this file had backwards.** (1) A futures MARKET order's answer is an
+ACKNOWLEDGEMENT - `status NEW`, `executedQty 0` - and the fill appears only on a
+read-back, while spot on the same exchange answers with the fills attached;
+believing it left 0.0008 BTC of spot long with no hedge, which `-reconcile`
+then squared. (2) `MIN_NOTIONAL` **does** exempt a `reduceOnly` order on
+USDⓈ-M - the exemption is on the error-code page, inside a parenthesis, and the
+parenthesis is the rule: *"-4164 MIN_NOTIONAL: Order's notional must be no
+smaller than 5.0 (unless you choose reduce only)"*. The filter's own description
+page states none, so reading that page alone had produced a paragraph in
+`execution/doc.go` saying such a leg could be neither kept nor closed. **A
+venue's rules are not all on the page named after them.** (3) `VenueError`
+wrapped only its mapped sentinel, so `errors.As` could not find the
+`broker.HTTPError` underneath and every venue rejection reached
+`internal/execution` as AMBIGUOUS - a `-1111` was resolved with a `GetOrder` and
+then RESENT before the machine gave up. (4) The closing fills' prices were never
+recorded, so two of the four fills the slippage arithmetic needs were missing
+and the pair's price drift came out exactly 0 on a position that had really
+moved. A fifth, about the clock: every signed request is now stamped
+deliberately 1000 ms BEHIND the venue, because the venue's two limits are not
+symmetric - a stale timestamp is accepted for the whole of `recvWindow` while
+one AHEAD of the server is refused past a second, and a skew read as +730 ms
+produced a `-1021` minutes later.
+
+**Nothing is left open.** All 16 intents of that session read back from the
+venues by their own derived ids at residual 0.00000000 coin, perp position 0,
+0 open orders on both markets, and the spot BTC balance back at exactly the
+figure it started from.
 
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
@@ -1066,6 +1121,17 @@ cmd/brokercheck/     step-4.1/4.2 diagnostic against Binance TESTNET. Default:
                      position/balance read back from the VENUE. Prints no key,
                      no signature and no amount. The ONE command that links
                      internal/broker; a test asserts every other one does not
+cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
+                     delta-neutral position, reads it back, closes it — every
+                     position typed by a person, no path from a live signal to
+                     an order (PLAN Q15). -open / -status / -close /
+                     -funding-check / -reconcile / -list, and -fail-leg2 makes
+                     the VENUE refuse a leg for real so an unwind can be timed.
+                     The intent lives in .paper/exec/<id>.json, which is a CACHE
+                     and says so: -status and -close rebuild every
+                     ClientOrderID from the intent id and read the orders,
+                     position and balances back from the venue, printing both
+                     when they disagree (rule 7). No database, no schema
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
                      the root package is the shared KERNEL: types, Feeds, the
                      RunStream lifecycle, FetchJSON, and the normalization
@@ -1106,7 +1172,7 @@ internal/
                      makes one; rule 7's one exception, bounded in
                      execution/doc.go
   notify/            Telegram and Discord alerts — step 3.4, DEFERRED behind 3.5
-  broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS — steps 4.1-4.2,
+  broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS — steps 4.1-4.5,
                      and TESTNET ONLY: NewClient refuses any host outside the
                      documented testnet list and there is no flag to widen it
                      before 4.6. Signing, clock skew, weight budget, the Broker
@@ -1114,7 +1180,12 @@ internal/
                      ingestion path: an AST walk over exchanges/, and
                      `go list -deps` over every cmd/ binary
     binance/         Broker for USDⓈ-M futures and spot on testnet: place,
-                     cancel, query, open orders, position, balance. One Client
+                     cancel, query, open orders, position, balance — plus three
+                     OPTIONAL capabilities step 4.5 needs and the order
+                     interface has no room for: the fills of one order (the only
+                     place either venue states a commission), the FUNDING_FEE
+                     rows that actually settled, and premiumIndex's
+                     nextFundingTime. One Client
                      per market holding one credential, because the two
                      testnets are separate registrations. testdata/ holds the
                      venue's REAL answers, sanitized, replayed by golden tests
@@ -1125,16 +1196,24 @@ internal/
                      accepted it, the same timeout before it arrived, a partial
                      fill, and a cancel racing a fill. It is what lets 4.4 be
                      unit-tested with no network and no credential
-  execution/         delta-neutral position open and close. Step 4.4a: the
-                     two-leg state machine, ONE invariant — after Open, both
-                     legs open within the coarser step, or both flat, never a
-                     third state. Sizing goes through instruments (2.3) and
+  execution/         delta-neutral position open and close (4.4, 4.5). ONE
+                     invariant, and Close holds the same sentence as Open: when
+                     the call returns the two legs hold the same quantity within
+                     the coarser step — either zero, or the same smaller amount.
+                     Never a third state, never one leg. Sizing goes through instruments (2.3) and
                      broker.RoundOrder, the book is re-checked at the real size
                      immediately before placing, ClientOrderIDs are DERIVED
                      from the intent id so a restarted process can ask the
                      venue about its own orders (5.3), and every cancel is
                      followed by a read-back because a cancel can race a fill.
-                     Tested only against brokertest — no venue, no credential
+                     Unit-tested against brokertest alone — no venue, no
+                     credential — and accepted on Binance testnet through
+                     cmd/execcheck. RealizedQuote is exactly funding minus
+                     commission minus slippage, each READ FROM THE VENUE, and
+                     the word "net" appears nowhere (rule 2): the basis drift
+                     between entry and exit, commission in a non-quote asset,
+                     and the cost of capital are reported BESIDE it, never
+                     folded in
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
                      holds the perp liquidation model strategy calls
 static/              vanilla JS dashboard
@@ -1165,7 +1244,8 @@ what removed six hardcoded translation tables from `exchanges/`.
 
 **One package under `internal/` is still empty** — `notify` contains only
 `doc.go` stating its responsibility and boundaries. `execution` became real on
-2026-09-13 (step 4.4a, the two-leg state machine, fake-broker only). `broker`
+2026-09-13 (4.4a on a fake broker in the morning, 4.4b and 4.5 on the testnet
+the same day under Q15). `broker`
 became real on 2026-09-12 (step 4.1, decision Q14), grew the order interface and
 its Binance implementation on 2026-09-13 (step 4.2), and is still the only
 package that may hold a credential.
@@ -1247,6 +1327,15 @@ go run ./cmd/backtest -compare-journal -db /tmp/run3.db   -from "2026-09-12 16:0
 # storage.price_sample_every_sec — the row count is linear in it.
 MEASURE_STORE=1 go test -run TestPriceSnapshotRowCost -v ./internal/store/
 go test -race ./...   # required for any goroutine change
+
+# Steps 4.4b/4.5 on Binance TESTNET (network, real orders on a testnet, no real
+# money). Every position is one a person typed: there is no path from a live
+# signal to an order, and there will not be before 3.5 AND 3.4 (PLAN Q15).
+go run ./cmd/execcheck -open -symbol BTCUSDT     # smallest size clearing both minimums
+go run ./cmd/execcheck -status -intent <id>      # reads orders/position/balance FROM THE VENUE
+go run ./cmd/execcheck -close  -intent <id>
+go run ./cmd/execcheck -funding-check -intent <id>   # the venue's FUNDING_FEE rows vs rate x notional
+go run ./cmd/execcheck -reconcile -intent <id>       # add -apply to square an unbalanced pair
 
 # Re-record each venue's testdata/ from the live venues. Opens real sockets, so
 # it is skipped by default; run it when a venue changes its payloads.

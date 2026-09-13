@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **3/6 · 4.1 REST có ký ✅ + 4.2 giao diện lệnh ✅ (nghiệm thu 2026-09-13, CHỈ testnet — Q14) · 4.3 sổ paper ✅ (2026-09-11, tiến trình đọc nhật ký — Q12) · 4.4 🟡 4.4a xong trên broker giả (2026-09-13) · 4.4b/4.5/4.6 chờ cổng 3.5** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · 4.6 vốn thật, và việc nối tín hiệu sống → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -3779,7 +3779,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > chung sổ này cho track crowding (một chân perp, funding ở nến settle) là
 > việc của 6.3/6.5.
 
-#### Bước 4.4 — Mở vị thế delta-neutral — 🟡 4.4a XONG TRÊN BROKER GIẢ (2026-09-13)
+#### Bước 4.4 — Mở vị thế delta-neutral — ✅ TRÊN TESTNET (2026-09-13)
 > **4.4a xong, 4.4b chờ phán quyết 3.5.** Theo ghi chú thứ tự sau Q12, máy
 > trạng thái khớp-một-phần được phép **thiết kế và unit-test với broker giả**
 > trong lúc cổng còn chạy, và **không được đánh dấu xong trước cổng**. Đây
@@ -3858,6 +3858,120 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > báo** — `broker.Order` không mang trường hoa hồng nào, spot báo trong mảng
 > `fills`, futures chỉ báo qua `userTrades`, và đọc cái nào cũng là **4.5**.
 
+> ## 4.4b — NGHIỆM THU TRÊN TESTNET, 2026-09-13 (quyết định Q15)
+>
+> Q15 cho phép làm 4.4b trên testnet trong lúc cổng 3.5 còn chạy. Công cụ là
+> `cmd/execcheck`; mọi vị thế dưới đây do **người vận hành gõ lệnh**, không có
+> đường nào từ tín hiệu sống tới lệnh. Cỡ mỗi chân **65,43 quote** — cỡ nhỏ
+> nhất qua được cả hai mức tối thiểu, tính từ luật của chính hai sàn testnet.
+>
+> ### Bảng 10 lần mở
+>
+> Trượt giá đo bằng **giá khớp so với giá tốt nhất của snapshot REST chụp ≤ 2 s
+> trước** (spot so với giá chào bán, perp so với giá chào mua). Dấu **dương là
+> xấu hơn giá chạm**; âm là tốt hơn.
+>
+> | # | thứ tự | cửa sổ trần (ms) | trượt spot (bps) | trượt perp (bps) | delta dư sau mở | kết cục |
+> |---|---|---|---|---|---|---|
+> | 1 | tuần tự | 518 | −0,00 | −0,00 | 0 | both_open |
+> | 2 | tuần tự | 464 | −0,00 | −0,00 | 0 | both_open |
+> | 3 | tuần tự | 466 | −0,00 | −0,00 | 0 | both_open |
+> | 4 | tuần tự | 501 | −0,00 | −0,00 | 0 | both_open |
+> | 5 | tuần tự | 628 | −0,00 | −0,00 | 0 | both_open |
+> | 6 | song song | 387 | **−1,18** | −0,00 | 0 | both_open |
+> | 7 | song song | 313 | −0,00 | −0,00 | 0 | both_open |
+> | 8 | song song | 386 | −0,00 | −0,00 | 0 | both_open |
+> | 9 | song song | 378 | −0,00 | −0,00 | 0 | both_open |
+> | 10 | song song | 358 | −0,00 | −0,00 | 0 | both_open |
+>
+> **10/10 `both_open`, delta dư 0,0000000000 coin ở cả mười** (dung sai là bước
+> thô hơn của hai sàn, 0,0001). Cả mười đều được `-close` ngay sau đó và cả
+> mười về `both_flat`.
+>
+> **Cửa sổ trần: tuần tự 464–628 ms (trung bình 515), song song 313–387 ms
+> (trung bình 364).** Song song ngắn hơn **≈ 151 ms**, tức khoảng 29%. Đây là
+> con số mà 4.4a chỉ đoán được: bản trên broker giả đo máy trạng thái, không đo
+> sàn. **Mặc định KHÔNG đổi trong phiên này** — 151 ms phải đặt cạnh cái giá
+> của song song (cả hai chân cùng sống khi một chân hỏng), và ở cỡ 65 quote
+> chưa có gì bắt phải đổi.
+>
+> ### Bơm lỗi thật — con số "vài giây" của tiêu chí nghiệm thu
+>
+> Chân 2 bị làm cho sàn **thật sự từ chối** (lệnh được gửi đi, sàn trả mã lỗi
+> của chính nó), rồi đo từ lúc chân 1 khớp tới lúc chân 1 đã phẳng ở sàn:
+>
+> | kiểu bơm | sàn trả | cửa sổ trần (ms) | riêng lệnh gỡ (ms) | kết cục |
+> |---|---|---|---|---|
+> | cỡ dưới minNotional, đúng lưới | `-4164 MIN_NOTIONAL` | **284** | 171 | both_flat |
+> | symbol không tồn tại | `-1121 Invalid symbol` | **225** | 120 | both_flat |
+>
+> Tiêu chí nói "trong vài giây". Đo được **0,2–0,3 giây**, và bằng chứng phẳng
+> khớp cả hai chiều ở cả hai lần: số dư sàn 1 → 1 (lệch 0), và sổ của ta mở
+> 0,0008 đóng 0,0008.
+>
+> ### Depth incremental (quy tắc 10): NỢ CÓ TÊN, KÈM SỐ ĐO
+>
+> **Trượt tệ nhất trong 20 fill là 0,00 bps** — không fill nào tệ hơn giá chạm
+> của snapshot, một fill tốt hơn 1,18 bps. Trần đang đặt là
+> `MaxSlippageBps = 10`. Vậy ở cỡ này REST snapshot là đủ, và WS depth
+> incremental được ghi thành **nợ 4.4c** chứ không làm trong phiên này.
+>
+> **Cái số đo này KHÔNG chứng minh:** sổ của testnet gần như đứng yên — giá
+> chào bán tốt nhất của spot ra **cùng một giá 77166,02 suốt bốn lần mở liên
+> tiếp** — và cỡ là 65 quote, tức một mức giá duy nhất ở đỉnh sổ cũng nuốt
+> trọn. Nó nói **cơ chế đúng**: trần tính từ giá chạm, lệnh không bao giờ khớp
+> xấu hơn trần. Nó **không** nói REST snapshot đủ ở cỡ thật trên sàn thật.
+> **4.4c bắt buộc trước 4.6 nếu** một trong hai điều sau xảy ra: cỡ vượt mức
+> mà một mức giá đỉnh sổ nuốt được, hoặc bất kỳ fill nào đo được trượt vượt
+> `MaxSlippageBps`.
+>
+> ### Ba lỗi mà chính lượt nghiệm thu này tìm ra
+>
+> Không lỗi nào trong ba lỗi dưới đây bị test trên broker giả bắt được, vì cả
+> ba là **giả định về sàn** chứ không phải lỗi logic — đúng loại mà chỉ sàn
+> thật trả lời được.
+>
+> 1. **ACK của lệnh MARKET không phải là fill.** Binance USDⓈ-M trả
+>    `POST /fapi/v1/order` bằng một **biên nhận** — `status NEW`,
+>    `executedQty 0` — rồi mới báo khớp khi đọc lại; spot cùng sàn thì trả kèm
+>    `fills`. Lệnh đóng chân perp về `NEW`, máy đọc thành "không khớp gì", báo
+>    "hai chân còn nguyên", trong khi sàn **đã** làm phẳng chân perp: còn lại
+>    **0,0008 BTC spot trần, không phòng hộ**. Đúng thất bại mà cả gói này sinh
+>    ra để chặn, đến qua một giả định chưa ai kiểm. Sửa: mọi lệnh đóng được
+>    **đọc lại tới khi SÀN nói đã xong**. Vị thế trần đã được `-reconcile` dọn
+>    ngay trong phiên.
+> 2. **`MIN_NOTIONAL` có miễn trừ cho `reduceOnly`, và tài liệu tôi đọc trước
+>    đó nói ngược.** Trang mô tả bộ lọc không nêu miễn trừ nào, nên
+>    `execution/doc.go` đã ghi rằng một chân khớp dưới mức tối thiểu thì **không
+>    giữ được mà cũng không đóng được**. Miễn trừ nằm ở **trang mã lỗi**, trong
+>    một dấu ngoặc, và dấu ngoặc đó là luật: *"-4164 MIN_NOTIONAL: Order's
+>    notional must be no smaller than 5.0 (unless you choose reduce only)"*.
+>    Chính sàn nói lại câu đó khi bơm lỗi. Bài học ghi lại đúng hình dạng của
+>    nó: **luật của một sàn không nằm hết ở trang mang tên luật đó.**
+> 3. **Từ chối của sàn đang tới `internal/execution` dưới dạng MƠ HỒ.**
+>    `VenueError` chỉ bọc sentinel đã ánh xạ, nên `errors.As` không còn tìm ra
+>    `broker.HTTPError` bên dưới và phép thử 4xx — thứ quyết định "sàn có thật
+>    sự nói không hay không" — không bao giờ thấy mã trạng thái. Đo được: một
+>    `-1111` bị đem đi `GetOrder` rồi **GỬI LẠI** trước khi bỏ cuộc. An toàn, và
+>    sai, và tốn hạn để làm việc đó.
+>
+> Một phát hiện thứ tư, về đồng hồ: mọi request có chữ ký nay được đóng dấu
+> **CHẬM hơn** giờ sàn ước lượng 1000 ms, vì hai giới hạn của sàn không đối
+> xứng — dấu thời gian quá cũ được chấp nhận suốt `recvWindow` (5000 ms) còn
+> dấu **sớm hơn** giờ máy chủ bị từ chối quá một giây. Đo tại chỗ: lệch đọc ra
+> +730 ms, vài phút sau một lệnh có chữ ký trả về *"-1021 Timestamp for this
+> request was 1000ms ahead of the server's time"*.
+>
+> ### Còn lại sau 4.4b
+>
+> - **4.4c — depth incremental**, với điều kiện kích hoạt ở trên.
+> - **Ghi chuyển trạng thái xuống store**: interface `Recorder` và bản in-memory
+>   đã có; thêm bảng nghĩa là migration dưới chân tiến trình đang mở
+>   `data/scanner.db` suốt hai tuần. Sau phán quyết 3.5.
+> - **Nối tín hiệu sống → lệnh**: sau **cả** 3.5 lẫn 3.4 (Q15, giới hạn 5).
+> - **Mặc định `LegOrder`** vẫn tuần tự-spot-trước; đổi hay không là quyết định
+>   cần số đo ở cỡ thật, không phải ở 65 quote.
+
 - Đặt đồng thời Spot Long + Perp Short cùng notional.
 - Tính chính xác khối lượng để `|Delta| ≈ 0` sau khi làm tròn.
 - **Bật WS `depth` incremental trong lúc vào/ra lệnh, tắt khi đang giữ vị thế** — đây là chỗ duy nhất trong lộ trình cần sổ lệnh realtime ([§7.4](#74-chiến-lược-độ-sâu-sổ-lệnh)).
@@ -3865,10 +3979,102 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 - **Xử lý khớp lệnh một phần** — rủi ro lớn nhất của bước này: nếu 1 chân khớp còn chân kia không, bot đang **trần (unhedged)**. Bắt buộc có logic rollback/hedge khẩn cấp.
 - **Nghiệm thu:** test tình huống bơm lỗi (chân 2 thất bại) → bot tự đóng chân 1 trong vài giây.
 
-#### Bước 4.5 — Đóng vị thế
+#### Bước 4.5 — Đóng vị thế — ✅ TRÊN TESTNET (2026-09-13)
+
+> ## VÒNG ĐỜI HOÀN CHỈNH, QUA MỘT MỐC SETTLE — và một sai lệch phải nói trước
+>
+> **Sai lệch so với điều kiện được giao:** yêu cầu là mở trước mốc settle **≥ 15
+> phút**. Vị thế này được mở **68 giây** trước mốc. Lý do: khi đọc
+> `nextFundingTime` từ `premiumIndex` của testnet thì mốc kế tiếp là
+> **15:00:00 +07** và lúc đó đã là 14:58:16; mốc sau nữa là **23:00:00 +07**
+> (chu kỳ 8h ở symbol này, sàn này), ngoài tầm của phiên. Chọn lấy mốc đang có
+> thay vì để một vị thế mở qua đêm chờ người vận hành. Người vận hành có thể
+> yêu cầu chạy lại với biên 15 phút đầy đủ; bản chất điều kiện — **vị thế có
+> mặt tại đúng mốc settle** — thì đã thoả và có dòng income của sàn làm chứng.
+>
+> ### Vòng đời
+>
+> | mốc | giờ (+07) | việc |
+> |---|---|---|
+> | mở | 14:58:52 | `-open -notional-quote 2000` → `both_open`, **0,02590000 coin mỗi chân**, dư 0, cửa sổ trần **631 ms** |
+> | giữ | 15:00:00 | **mốc settle đi qua** — sàn ghi một dòng `FUNDING_FEE` |
+> | đóng | 15:01:19 | `-close` → `both_flat`, đóng 0,02590000 coin cả hai chân, còn lại 0 |
+>
+> Bằng chứng phẳng khớp **cả hai chiều**: số dư sàn **1,0259 → 1,0000** (giảm
+> đúng 0,0259), và sổ của ta đóng đúng 0,0259. Ý định `xbtcusdt-20260913-075852`.
+>
+> ### Ba số funding
+>
+> | | giá trị | nguồn |
+> |---|---|---|
+> | (1) SÀN | **+0,19975549 USDT** | `/fapi/v1/income?incomeType=FUNDING_FEE`, 1 dòng, `tranId 1514270458178603870`, đóng dấu 15:00:00 |
+> | (2) SỔ | **+0,19980099 USDT** | `rate × cỡ × giá đánh dấu` = 0,00010000 × 0,02590000 × 77143,2378 |
+> | (3) SAI SỐ | **−0,00004550 USDT** = **−0,0228%** | |
+>
+> **Sai số đi đâu, và số nào là bằng chứng.** Số của sàn là khoản **thật sự đã
+> ghi vào tài khoản**. Số của sổ dùng `lastFundingRate` và **giá đánh dấu đọc
+> lúc đối chiếu**, không phải giá đánh dấu **tại đúng mốc settle** — sàn không
+> công bố lại giá đó. Giải ngược từ số của sàn cho giá đánh dấu tại mốc là
+> **77125,67**, còn lúc đối chiếu là 77143,24: chênh 0,023%, đúng bằng sai số.
+> Vậy đây là sai số của **phép dựng lại**, không phải của khoản tiền.
+>
+> Quy tắc 6 được giữ đúng chỗ nó phải giữ: con số của sàn là **một dòng cho một
+> sự kiện**, và không chỗ nào trong đường tính nhân một APR với thời gian nắm
+> giữ. Vị thế không có mặt tại mốc thì đơn giản là không có dòng nào.
+>
+> ### Phép đối chiếu này bắt lỗi của chính tôi ngay lần chạy đầu
+>
+> Bản đầu của `-funding-check` tính `(−rate) × cỡ × giá`, theo lập luận "SHORT
+> thì NHẬN nên dấu đảo". Sàn tính funding = **giá trị vị thế × rate**, và **bên
+> LONG trả** khi rate dương — nên thu nhập của bên SHORT **cùng dấu** với rate.
+> Độ lớn khớp tới bốn chữ số thập phân và dấu thì không, nên nó lộ ra trong một
+> lượt chạy. Đó đúng là việc mà một phép so **hai số in cạnh nhau** làm được
+> còn một dòng chú thích tự tin thì không.
+>
+> ### Con số của vòng đời, GỘP — và thứ KHÔNG nằm trong nó
+>
+> | khoản | giá trị (USDT) | ghi chú |
+> |---|---|---|
+> | funding nhận | **+0,19975549** | đọc từ sàn, 1 mốc settle |
+> | hoa hồng | **−1,59812116** | đọc từ sàn: mở perp 0,79899738 + đóng perp 0,79912378. **Spot testnet thu 0** (sàn báo `commissionAsset: BTC`, số lượng 0) |
+> | trượt giá | **−0,15811950** | ⚠ lượt này mới tính **2 trong 4** fill — xem lỗi bên dưới |
+> | **RealizedQuote** | **−1,55648517** | = funding − hoa hồng − trượt. **KHÔNG phải lãi ròng** |
+>
+> **KHÔNG nằm trong `RealizedQuote`, và được báo cạnh nó chứ không gộp vào:**
+> trôi giá của cặp giữa vào và ra (basis — tiền thật, không chỗ nào ở đây trừ
+> nó), hoa hồng thu bằng tài sản **không phải quote** (quy đổi cần một giá tại
+> một thời điểm, bịa ra là đúng thứ quy tắc 5 cấm), và chi phí vốn. Chữ "net"
+> không xuất hiện ở đâu trong gói này (quy tắc 2) — chỉ `internal/strategy` được
+> nói, và chỉ về một con số đã trừ cả bốn fill lẫn sổ lệnh đo được.
+>
+> **Một chi phí thật cần đọc cho đúng:** giữ 2,5 phút, thu 0,1998 funding và trả
+> 1,5981 hoa hồng. Đó **không** phải kết luận về chiến lược — đó là một vòng đời
+> **để kiểm cơ chế**, và một vị thế funding thật được giữ hàng chục ngày để một
+> vòng phí như thế đáng. PLAN §3.3 và mục "hold" đã đo đúng chuyện đó: điểm hoà
+> vốn ở BTC là **21–52 ngày**.
+>
+> ### Lỗi thứ tư mà lượt nghiệm thu này tìm ra
+>
+> **Giá khớp của hai lệnh ĐÓNG không được ghi lại.** `Close` dựng `LegResult`
+> mới và `closeLegWithID` chỉ trả về **số lượng**, nên hai trong bốn fill mà
+> phép tính trượt giá cần bị thiếu: lượt chạy trên báo *"CHƯA tính được: đóng
+> spot, đóng perp"* và `PairPriceDriftQuote` ra **đúng 0** trên một vị thế mà
+> hai chân đã thực sự dịch. Một con số vắng mặt vì không ai lưu là loại số 0 tệ
+> nhất: nó đọc như một phép đo. Đã sửa, và kiểm lại bằng một vòng đời nữa ngay
+> sau đó (`xbtcusdt-20260913-080418`): cả bốn fill tính được, trượt 0,26055400
+> và trôi giá cặp **−0,26184900**.
+>
+> ### Sau phiên: không còn gì mở
+>
+> 16 ý định của phiên, mỗi ý định được đọc lại từ sàn theo chính
+> `ClientOrderID` suy ra từ id của nó: **lệch 0,00000000 coin ở cả 16**. Vị thế
+> perp **0**, lệnh mở **0** trên cả hai sàn, số dư BTC spot về đúng
+> **1,00000000** — con số nó có trước khi phiên bắt đầu.
+
 - Đóng cả hai chân khi tín hiệu thoát kích hoạt.
 - Ghi nhận PnL thực tế: funding thu được − phí − slippage.
-- **Nghiệm thu:** vòng đời mở→giữ→đóng hoàn chỉnh trên testnet.
+- **Nghiệm thu:** vòng đời mở→giữ→đóng hoàn chỉnh trên testnet. **ĐẠT
+  2026-09-13** — bảng ở trên; sai lệch về biên 15 phút được nêu ở dòng đầu.
 
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
@@ -4699,7 +4905,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              3/6 bước · 4.1 ✅ + 4.2 ✅ 2026-09-13 (REST có ký + giao diện lệnh, CHỈ testnet, chưa chạm mainnet — Q14) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger` đọc nhật ký, cổng riêng — Q12) · 4.4 🟡 4.4a xong trên broker giả 2026-09-13 · 4.4b/4.5/4.6 chờ cổng 3.5
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu sống → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

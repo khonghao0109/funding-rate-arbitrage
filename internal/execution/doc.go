@@ -296,5 +296,41 @@
 // nobody looked up is not zero, and treating it as zero puts the liquidation
 // price further away than the venue would ever allow.
 //
+// # Step 4.4b and 4.5 — measured on the venue, 2026-09-13
+//
+// Everything above was proven against a fake. PLAN's Q15 then allowed the same
+// machine to run on Binance TESTNET while the step-3.5 gate continued, through
+// cmd/execcheck, with every position typed by a person — there is no path from
+// a live signal to an order here and there will not be before both 3.5 and 3.4.
+// Closing is in close.go, which carries its own contract; the figures it
+// reports are in realized.go.
+//
+// What the venue said, and what it is worth:
+//
+//   - 10 opens, 10/10 hedged, residual 0 coin on every one.
+//   - The unhedged window is 464-628 ms placing SEQUENTIALLY and 313-387 ms in
+//     PARALLEL. This is the number this file could previously only reason
+//     about. Parallel is ~151 ms shorter and the default did not move: 151 ms
+//     has to be weighed against both legs being live when one fails, and
+//     nothing at a $65 size forces the choice.
+//   - With leg 2 refused BY THE VENUE for real, leg 1 was flat again in
+//     225-284 ms, the closing order itself taking 120-171 ms. PLAN 4.4's
+//     acceptance says "within a few seconds".
+//   - Worst slippage over 20 fills: 0.00 bps against a 10 bps cap, one fill
+//     1.18 bps BETTER than the touch. So the marketable-limit design does what
+//     it says. It does NOT establish that a REST snapshot is enough at a real
+//     size: testnet's spot book returned the same best ask four opens running,
+//     and $65 is swallowed by one level. 4.4c is a named debt with a trigger.
+//
+// And four things the venue taught that no fake could have:
+//
+//  1. A futures MARKET order's answer is an ACKNOWLEDGEMENT, not a result —
+//     see settleOrder. Believing it left a naked leg.
+//  2. MIN_NOTIONAL exempts reduceOnly, which this file had backwards.
+//  3. A venue rejection was reaching here as ambiguous, because VenueError hid
+//     the HTTP status that definiteRejection tests.
+//  4. The closing fills' prices were not being recorded, so half the slippage
+//     arithmetic was quietly missing and the pair's drift read as exactly 0.
+//
 // Introduced in: PLAN.md phase 4, step 4.3-4.5.
 package execution
