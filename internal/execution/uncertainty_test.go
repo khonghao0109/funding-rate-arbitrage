@@ -211,46 +211,52 @@ func TestOpen_TheBookCannotAbsorbTheReduction_UnwindsFlatInstead(t *testing.T) {
 	}
 }
 
-// A leg that fills BELOW the venue's own minimum notional can be neither kept
-// nor closed, and this test exists to pin that the machine says so loudly
-// rather than quietly holding it.
+// A leg that fills BELOW the venue's own minimum notional cannot be KEPT — but
+// it CAN be closed, and the difference is a rule of the venue that its own
+// error message states:
 //
-// It is a real limitation of the venue, not of this package. Binance USDⓈ-M
-// publishes MIN_NOTIONAL as "the minimum notional value allowed for an order on
-// a symbol. An order's notional value is the price * quantity", with NO
-// exemption for reduceOnly or closing orders
-// (https://developers.binance.com/docs/derivatives/usds-margined-futures/common-definition,
-// read 2026-09-13). So a $18 perp position on a venue whose minimum is $50 is
-// one no order can close. On BTCUSDT that means every perp fill under $50 is
-// stuck by construction, whatever this code does — the defence is a size that
-// cannot partially fill into that range, not a cleverer unwind.
+//	-4164 MIN_NOTIONAL: "Order's notional must be no smaller than 5.0
+//	(unless you choose reduce only)"
+//	https://developers.binance.com/docs/derivatives/usds-margined-futures/error-code
 //
-// What the package owes here is honesty: ErrUnwindIncomplete, the quantity, and
-// the venue's own refusal, so an operator knows there is something to clean up
-// by hand.
-func TestOpen_AFillUnderTheVenueMinimumIsStuckAndSaysSo(t *testing.T) {
+// So the pair unwinds to flat rather than being stuck. An earlier version of
+// this test asserted the opposite — that such a leg was un-closeable and had to
+// be reported loudly — because the filter's own description page states no
+// exemption and was read on its own. The error-code page has it, in a
+// parenthesis, and the parenthesis is the rule.
+//
+// The economics still stand: a $18 position on a venue whose minimum is $50 is
+// not one to keep, because every rule that would later resize or hedge it is
+// blocked by the same minimum. It is closed, not held.
+func TestOpen_AFillUnderTheVenueMinimumIsClosedRatherThanKept(t *testing.T) {
 	h := newHarness(t, nil)
 	// ~0.0003 BTC at $60k is $18, under the perp venue's $50 minimum.
 	h.perp.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 0.001})
 
 	res, err := h.opener.Open(context.Background(), h.intent)
-	if !errors.Is(err, ErrUnwindIncomplete) {
-		t.Fatalf("err = %v, want ErrUnwindIncomplete — a position no order can close must be loud%s", err, h.rec.Dump())
+	if err == nil {
+		t.Fatal("a pair that could not be kept must report why")
+	}
+	if errors.Is(err, ErrUnwindIncomplete) {
+		t.Fatalf("the unwind gave up on a leg the venue would have closed reduceOnly: %v%s", err, h.rec.Dump())
+	}
+	h.assertInvariant(t, res)
+	if res.Outcome != OutcomeBothFlat {
+		t.Fatalf("outcome = %q, want both_flat%s", res.Outcome, h.rec.Dump())
 	}
 	if res.ReducedToMatch {
 		t.Error("the pair claims to have been reduced to a size neither venue would trade")
 	}
-	// The message has to carry the number and the venue's own words, or the
-	// operator cannot act on it.
+	// The reason has to name the number and the venue's own refusal, or an
+	// operator cannot tell a rule from a bug.
 	for _, want := range []string{"0.0003", "minNotional"} {
 		if !strings.Contains(res.ReasonVI, want) {
 			t.Errorf("the reason does not mention %q: %s", want, res.ReasonVI)
 		}
 	}
-	// And the venue really is left holding it — the test asserts the truth
-	// rather than the comfortable answer.
-	if got := netQtyCoin(h.perp, broker.MarketFuturesUSDM); got == 0 {
-		t.Error("the fake venue holds nothing, so this test is no longer about a stuck position")
+	// And the venue really is flat again.
+	if got := netQtyCoin(h.perp, broker.MarketFuturesUSDM); got != 0 {
+		t.Errorf("the perp venue still holds %v coin", got)
 	}
 }
 

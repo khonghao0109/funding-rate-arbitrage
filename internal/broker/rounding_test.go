@@ -311,3 +311,42 @@ func TestRoundOrder_ProducesARequestTheInterfaceAccepts(t *testing.T) {
 		t.Fatalf("the rounded order is not a valid request: %v", err)
 	}
 }
+
+// A reduceOnly order is exempt from the venue's minimum notional, and the
+// exemption is the VENUE's own, stated in the text of its error:
+//
+//	-4164 MIN_NOTIONAL: "Order's notional must be no smaller than 5.0
+//	(unless you choose reduce only)"
+//	https://developers.binance.com/docs/derivatives/usds-margined-futures/error-code
+//
+// It matters more than it reads. Without it, a perp leg that filled below the
+// minimum could be neither kept as a position nor closed by any order, and
+// internal/execution would have had to report a position nothing could exit.
+func TestRoundOrder_AReduceOnlyOrderIsExemptFromTheMinimumNotional(t *testing.T) {
+	rules := futBTCUSDT
+	req := RoundRequest{
+		Rules: rules, Side: SideBuy, Type: OrderTypeMarket,
+		QtyCoin: 0.0003, PriceQuote: 60_000, // $18 against a $50 minimum
+	}
+
+	if _, err := RoundOrder(req); !errors.Is(err, ErrBelowMinNotional) {
+		t.Fatalf("an ordinary order of $18 against a $50 minimum returned %v, want ErrBelowMinNotional", err)
+	}
+
+	req.ReduceOnly = true
+	out, err := RoundOrder(req)
+	if err != nil {
+		t.Fatalf("a reduceOnly close of the same size was refused: %v", err)
+	}
+	if out.QtyCoin != 0.0003 {
+		t.Errorf("qty = %v, want the 0.0003 that is actually held", out.QtyCoin)
+	}
+
+	// The exemption is for the MINIMUM only. Everything else still applies:
+	// a quantity under the venue's minQty is not a quantity the venue trades,
+	// reduceOnly or not.
+	req.QtyCoin = rules.MinQtyCoin / 2
+	if _, err := RoundOrder(req); err == nil {
+		t.Error("reduceOnly was read as a licence to ignore minQty and the step grid too")
+	}
+}

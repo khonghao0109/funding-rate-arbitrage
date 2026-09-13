@@ -696,9 +696,14 @@ func (o *Trader) closeLeg(ctx context.Context, intent Intent, leg LegName, b bro
 	if leg == LegPerp {
 		rules = intent.PerpInstrument
 	}
+	// A closing order on USDⓈ-M is reduceOnly, and that is what exempts it
+	// from the venue's minimum notional (-4164's own message says so). Without
+	// the exemption a perp leg that filled below the minimum could be neither
+	// kept nor closed.
+	reduceOnly := market == broker.MarketFuturesUSDM
 	rounded, err := broker.RoundOrder(broker.RoundRequest{
 		Rules: rules, Side: side, Type: broker.OrderTypeMarket,
-		QtyCoin: qtyCoin, PriceQuote: priceQuote,
+		QtyCoin: qtyCoin, PriceQuote: priceQuote, ReduceOnly: reduceOnly,
 	})
 	if err != nil {
 		// A partial fill too small for the venue to trade away is a real and
@@ -709,7 +714,7 @@ func (o *Trader) closeLeg(ctx context.Context, intent Intent, leg LegName, b bro
 	req := broker.PlaceOrderRequest{
 		Market: market, Symbol: intent.Symbol, Side: side, Type: broker.OrderTypeMarket,
 		ClientOrderID: unwindClientOrderID(intent.ID, leg), QtyCoin: rounded.QtyCoin,
-		ReduceOnly: market == broker.MarketFuturesUSDM,
+		ReduceOnly: reduceOnly,
 	}
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventUnwindLeg, Leg: leg,
 		ClientOrderID: req.ClientOrderID, QtyCoin: req.QtyCoin})

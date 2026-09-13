@@ -98,9 +98,12 @@ func TestClient_SendsATimestampInTheVenuesFrameNotOurs(t *testing.T) {
 	if got := client.ClockSkewMs(); got != 30_000 {
 		t.Errorf("ClockSkewMs = %d, want 30000 (server − local)", got)
 	}
-	// The local clock never moved, so the sent timestamp is exactly local+skew.
-	if got := venue.sentTimestampMs(t); got != serverMs {
-		t.Errorf("timestamp sent = %d, want %d (local %d + skew 30000)", got, serverMs, localMs)
+	// The local clock never moved, so the sent timestamp is local+skew, held
+	// back by the safety margin — see TestClient_StampsRequestsBehindTheVenue-
+	// NotAhead for why the correction deliberately undershoots.
+	if want := serverMs - ClockSafetyMarginMs; venue.sentTimestampMs(t) != want {
+		t.Errorf("timestamp sent = %d, want %d (local %d + skew 30000 − %d ms margin)",
+			venue.sentTimestampMs(t), want, localMs, ClockSafetyMarginMs)
 	}
 	if venue.timeCalls.Load() != 1 {
 		t.Errorf("the time endpoint was called %d times, want exactly 1 before the first signed call", venue.timeCalls.Load())
@@ -210,4 +213,38 @@ func indexOf(s, sub string) int {
 		}
 	}
 	return -1
+}
+
+// Every request is stamped deliberately BEHIND the venue's estimated time, and
+// the reason is that the venue's two limits are not symmetric.
+//
+// A timestamp that is too old is accepted for the whole of recvWindow — 5000 ms
+// by default. A timestamp AHEAD of the server is refused past one second:
+// "-1021 INVALID_TIMESTAMP: Timestamp for this request was 1000ms ahead of the
+// server's time." Our correction is an estimate from a round trip's midpoint
+// and the clock drifts after it, so the estimate WILL sometimes overshoot — and
+// it must overshoot in the direction that is merely early, not the one that is
+// refused. Measured on testnet 2026-09-13: a skew read as +730 ms, and a signed
+// read minutes later came back -1021.
+func TestClient_StampsRequestsBehindTheVenueNotAhead(t *testing.T) {
+	if ClockSafetyMarginMs <= 0 {
+		t.Fatal("the safety margin is zero, so an overshooting skew estimate lands AHEAD of the venue")
+	}
+	if ClockSafetyMarginMs >= DefaultRecvWindowMs {
+		t.Fatalf("the margin %d eats the whole default recvWindow %d", ClockSafetyMarginMs, DefaultRecvWindowMs)
+	}
+
+	nowMs := int64(1_789_000_000_000)
+	c := &Client{now: func() time.Time { return time.UnixMilli(nowMs) }}
+	for _, skewMs := range []int64{0, +730, -500, +2500} {
+		c.clockSkewMs = skewMs
+		venueEstimateMs := nowMs + skewMs
+		sent := c.timestampMs()
+		if ahead := sent - venueEstimateMs; ahead > 0 {
+			t.Errorf("at skew %d the stamp is %d ms AHEAD of the venue's estimated time", skewMs, ahead)
+		}
+		if behind := venueEstimateMs - sent; behind != ClockSafetyMarginMs {
+			t.Errorf("at skew %d the stamp is %d ms behind, want exactly the %d ms margin", skewMs, behind, ClockSafetyMarginMs)
+		}
+	}
 }

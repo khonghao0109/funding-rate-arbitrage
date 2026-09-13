@@ -94,6 +94,23 @@ type RoundRequest struct {
 	// Price is the rounding direction. Required for LIMIT_GTC; there is no
 	// default, deliberately. Ignored for MARKET, which has no price to round.
 	Price PriceRounding
+
+	// ReduceOnly says this order can only SHRINK a position, which on USDⓈ-M
+	// futures exempts it from the minimum notional.
+	//
+	// That exemption is the venue's, stated in the text of its own error:
+	// "-4164 MIN_NOTIONAL: Order's notional must be no smaller than 5.0
+	// (unless you choose reduce only)"
+	// (https://developers.binance.com/docs/derivatives/usds-margined-futures/error-code,
+	// read 2026-09-13). It matters more than it looks: without it a perp leg
+	// that filled below the minimum could be neither kept nor closed, and this
+	// package would have reported a position nothing could get out of.
+	//
+	// Set it only for a FUTURES order. PlaceOrderRequest.Validate refuses
+	// ReduceOnly on spot, so the two cannot disagree, and spot publishes no
+	// such exemption — its NOTIONAL filter applies to a sell as much as to a
+	// buy.
+	ReduceOnly bool
 }
 
 // RoundedOrder is what may actually be sent.
@@ -201,7 +218,7 @@ func RoundOrder(req RoundRequest) (RoundedOrder, error) {
 		out.NotionalQuote = out.QtyCoin * priceForNotional
 		// 0 means the venue publishes none — nothing to check, never "zero is
 		// acceptable" (the same reading internal/instruments takes).
-		if r.MinNotionalQuote > 0 && out.NotionalQuote < r.MinNotionalQuote {
+		if r.MinNotionalQuote > 0 && out.NotionalQuote < r.MinNotionalQuote && !req.ReduceOnly {
 			return out, fmt.Errorf(
 				"%w: %s on %s would trade %.8g x %.8g = %.8g, under its minNotional %v — raise the SIZE deliberately or do not send it; this function will not top it up",
 				ErrBelowMinNotional, r.Symbol, r.Source, out.QtyCoin, priceForNotional, out.NotionalQuote, r.MinNotionalQuote)

@@ -75,15 +75,34 @@ type VenueError struct {
 	MsgVI      string // the venue's text, already scrubbed by broker.Client
 	StatusCode int
 	mapped     error
+	httpErr    error
 }
 
 func (e *VenueError) Error() string {
 	return fmt.Sprintf("binance: HTTP %d, mã %d: %s", e.StatusCode, e.Code, e.MsgVI)
 }
 
-// Unwrap exposes the mapped sentinel so errors.Is works on the meaning rather
-// than on the number.
-func (e *VenueError) Unwrap() error { return e.mapped }
+// Unwrap exposes BOTH the mapped sentinel and the underlying transport error,
+// so errors.Is works on the meaning and errors.As still finds the
+// broker.HTTPError underneath.
+//
+// Keeping the HTTP error reachable is not tidiness. internal/execution decides
+// whether a failed order was DEFINITELY refused by asking whether the answer
+// carried a 4xx — the matching engine saying no — as opposed to a 5xx or a
+// timeout, which say nothing. Hiding the status behind this type made every
+// venue rejection look ambiguous: measured on testnet 2026-09-13, a -1111 was
+// resolved by a GetOrder and then RESENT before the machine gave up. Safe, and
+// wrong, and it spent the deadline doing it.
+func (e *VenueError) Unwrap() []error {
+	out := make([]error, 0, 2)
+	if e.mapped != nil {
+		out = append(out, e.mapped)
+	}
+	if e.httpErr != nil {
+		out = append(out, e.httpErr)
+	}
+	return out
+}
 
 // classify turns a broker.HTTPError into a typed error. Anything that is not a
 // venue error body passes through untouched: a transport failure must NOT be
@@ -108,7 +127,7 @@ func classify(err error) error {
 		return err
 	}
 
-	ve := &VenueError{Code: payload.Code, MsgVI: payload.Msg, StatusCode: httpErr.StatusCode}
+	ve := &VenueError{Code: payload.Code, MsgVI: payload.Msg, StatusCode: httpErr.StatusCode, httpErr: err}
 	ve.mapped = mapCode(payload.Code, payload.Msg)
 	return ve
 }
@@ -136,8 +155,12 @@ func mapCode(code int, msg string) error {
 		return ErrDuplicateClientOrderID
 	case -2010:
 		return ErrOrderRejected
-	// -4164 MIN_NOTIONAL (futures): "Order's notional must be no smaller than
-	// %s (unless you choose reduce only)".
+	// -4164 MIN_NOTIONAL (futures). The message is quoted in full because of
+	// its parenthesis, which is a RULE and not a footnote: "Order's notional
+	// must be no smaller than 5.0 (unless you choose reduce only)". A closing
+	// order on USDⓈ-M is therefore exempt from the minimum — see
+	// RoundRequest.ReduceOnly, and the correction it forced in
+	// internal/execution/doc.go.
 	case -4164:
 		return broker.ErrBelowMinNotional
 	// -1013 INVALID_MESSAGE (spot): "The request is rejected by the API",

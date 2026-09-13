@@ -125,9 +125,16 @@ func TestClose_RefusalsHappenBeforeAnythingIsSent(t *testing.T) {
 			wantErr: ErrPositionDisagrees,
 		},
 		{
-			name: "the size is under a venue minimum",
+			// The SPOT leg is the one a minimum can still block. A closing
+			// order on USDⓈ-M is reduceOnly and therefore exempt ("-4164
+			// MIN_NOTIONAL: Order's notional must be no smaller than 5.0
+			// (unless you choose reduce only)"), while spot publishes no such
+			// exemption: its NOTIONAL filter applies to a sell as much as to a
+			// buy. A symbol whose spot minimum is above the position's value
+			// is a position the spot leg cannot close.
+			name: "the spot leg's minimum notional is above the whole position",
 			mutate: func(c *closeHarness) {
-				c.perp.SetPosition(broker.Position{Market: broker.MarketFuturesUSDM, Symbol: c.intent.Symbol, QtyCoin: -0.0001})
+				c.req.Intent.SpotInstrument.MinNotionalQuote = 10_000_000
 			},
 			wantErr: ErrCloseRefused,
 		},

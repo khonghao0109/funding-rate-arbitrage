@@ -243,7 +243,7 @@ func (o *Trader) Close(ctx context.Context, req CloseRequest) (CloseResult, erro
 	}
 	perpRounded, err := broker.RoundOrder(broker.RoundRequest{
 		Rules: intent.PerpInstrument, Side: broker.SideBuy, Type: broker.OrderTypeMarket,
-		QtyCoin: qtyCoin, PriceQuote: intent.PerpPriceQuote,
+		QtyCoin: qtyCoin, PriceQuote: intent.PerpPriceQuote, ReduceOnly: true,
 	})
 	if err != nil {
 		return res, fmt.Errorf("%w: chân perp: %s", ErrCloseRefused, err.Error())

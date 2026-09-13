@@ -202,15 +202,25 @@
 // reducing is optional, so it may refuse on a bad price; unwinding is
 // mandatory, so it may not.
 //
-// One state is reachable and neither branch can fix it: a leg that fills BELOW
-// the venue's own minimum notional can be neither kept nor closed, because
-// MIN_NOTIONAL applies to every order and Binance's USDⓈ-M documentation states
-// no exemption for reduceOnly or closing orders
-// (https://developers.binance.com/docs/derivatives/usds-margined-futures/common-definition,
-// read 2026-09-13). On BTCUSDT every perp fill under $50 is stuck by
-// construction. The defence is a size that cannot partially fill into that
-// range, not a cleverer unwind, and what this package owes is to say so loudly:
-// ErrUnwindIncomplete, the quantity, and the venue's own refusal.
+// A leg that fills BELOW the venue's own minimum notional cannot be KEPT, and
+// it unwinds. It CAN be closed, and that difference is a rule of the venue
+// stated in the text of its own error:
+//
+//	-4164 MIN_NOTIONAL: "Order's notional must be no smaller than 5.0
+//	(unless you choose reduce only)"
+//	https://developers.binance.com/docs/derivatives/usds-margined-futures/error-code
+//
+// Every closing order on USDⓈ-M is therefore sent reduceOnly, and
+// broker.RoundRequest.ReduceOnly skips the minimum for it. This paragraph first
+// said the opposite — that such a leg was stuck, un-closeable by any order —
+// because the MIN_NOTIONAL filter's own description page states no exemption
+// and was read on its own. The exemption lives on the error-code page, in a
+// parenthesis, and the parenthesis is the rule. Worth recording as the shape of
+// the mistake: a venue's rules are not all on the page named after them.
+//
+// Spot publishes no such exemption, so a spot remainder under its NOTIONAL
+// filter genuinely is unreachable, and that case is still reported loudly with
+// the quantity and the venue's own refusal.
 //
 // ## Unwinding
 //

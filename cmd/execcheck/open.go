@@ -105,7 +105,8 @@ func runOpen(ctx context.Context, a openArgs) int {
 
 	var spotB, perpB broker.Broker = cl.spot, cl.perp
 	if a.FailLeg2 != "" {
-		second := &faultInjector{Broker: perpB, mode: a.FailLeg2, symbol: a.Symbol}
+		second := &faultInjector{Broker: perpB, mode: a.FailLeg2, symbol: a.Symbol,
+			stepCoin: perpMkt.Rules.StepSizeCoin, minQtyCoin: perpMkt.Rules.MinQtyCoin}
 		if a.LegOrder == execution.LegOrderParallel {
 			fmt.Println("CHÚ Ý: -fail-leg2 với leg-order song song làm hỏng chân PERP, chân nào 'thứ hai' là không xác định")
 		}
@@ -249,8 +250,10 @@ func newIntentID(symbol string) string {
 // real exchange says no.
 type faultInjector struct {
 	broker.Broker
-	mode   string
-	symbol string
+	mode       string
+	symbol     string
+	stepCoin   float64
+	minQtyCoin float64
 }
 
 func (f *faultInjector) PlaceOrder(ctx context.Context, req broker.PlaceOrderRequest) (broker.Order, error) {
@@ -262,8 +265,14 @@ func (f *faultInjector) PlaceOrder(ctx context.Context, req broker.PlaceOrderReq
 	}
 	switch f.mode {
 	case "min-notional":
-		// A quantity the venue's MIN_NOTIONAL filter refuses. Sent for real.
-		req.QtyCoin = req.QtyCoin / 1000
+		// A quantity the venue's MIN_NOTIONAL filter refuses — and one that is
+		// ON the step grid, so the refusal is -4164 MIN_NOTIONAL and not -1111
+		// BAD_PRECISION. Both are real refusals, but they are different rules
+		// and a measurement should say which one it provoked.
+		req.QtyCoin = f.minQtyCoin
+		if f.stepCoin > 0 {
+			req.QtyCoin = math.Round(f.minQtyCoin/f.stepCoin) * f.stepCoin
+		}
 	case "bad-symbol":
 		req.Symbol = f.symbol + "NOSUCH"
 	default:

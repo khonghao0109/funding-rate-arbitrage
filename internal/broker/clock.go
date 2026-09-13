@@ -130,10 +130,27 @@ func (c *Client) ensureClock(ctx context.Context) error {
 	return nil
 }
 
+// ClockSafetyMarginMs is how far BEHIND the estimated venue time every request
+// is deliberately stamped.
+//
+// The venue's two limits are not symmetric. A timestamp that is too OLD is
+// accepted for the whole of recvWindow — five seconds by default, sixty at
+// most — while a timestamp AHEAD of the server is refused past one second:
+// "-1021 INVALID_TIMESTAMP: Timestamp for this request was 1000ms ahead of the
+// server's time."
+//
+// Our correction is an estimate built from the midpoint of a round trip, so it
+// carries the round trip's own error, and the machine's clock keeps drifting
+// after it. Measured here on 2026-09-13: a skew read as +730 ms, and a signed
+// read minutes later was refused for being a full second ahead. Sitting a
+// second behind costs a fifth of the tolerance we are given in that direction;
+// being a second ahead costs the request.
+const ClockSafetyMarginMs = 1000
+
 // timestampMs is the value sent as `timestamp`: our clock, moved into the
-// venue's frame by the last measurement.
+// venue's frame by the last measurement, then held back by the safety margin.
 func (c *Client) timestampMs() int64 {
-	return c.now().UnixMilli() + c.ClockSkewMs()
+	return c.now().UnixMilli() + c.ClockSkewMs() - ClockSafetyMarginMs
 }
 
 func abs64(v int64) int64 {
