@@ -13,9 +13,16 @@ import (
 //
 // It is written once, here, rather than in each implementation's own tests, for
 // the reason internal/backtest already applies to strategy: a rule asserted in
-// one place and re-described in another drifts. The Binance implementation runs
-// this same suite against recorded testdata, so "the fake behaves like the
-// venue" is checked rather than assumed.
+// one place and re-described in another drifts.
+//
+// Only the fake runs it as a unit test, and that limit is worth stating rather
+// than glossing: this suite places and cancels orders, so running it against
+// the Binance implementation would mean a live venue and a credential, which
+// `go test` may not have. What holds that implementation to the same contract
+// is cmd/brokercheck's acceptance run, which performs this same sequence —
+// place, look up by the caller's id, cancel, re-read, confirm it has left the
+// open orders, and confirm a second cancel reports not-found — against the real
+// testnet, plus the golden tests that replay what the venue actually answered.
 //
 // newBroker must return a broker with no orders on it. The suite only ever
 // places orders it invents, and cleans nothing up: give it a fresh one.

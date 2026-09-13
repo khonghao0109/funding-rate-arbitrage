@@ -1,0 +1,18 @@
+{
+  "symbol": "BTCUSDT",
+  "origClientOrderId": "recorded-order-id",
+  "orderId": 4200000000000000001,
+  "orderListId": 4200000000000000001,
+  "clientOrderId": "recorded-order-id",
+  "transactTime": 1789268564644,
+  "price": "39412.85000000",
+  "origQty": "0.00014000",
+  "executedQty": "0.00000000",
+  "origQuoteOrderQty": "0.00000000",
+  "cummulativeQuoteQty": "0.00000000",
+  "status": "CANCELED",
+  "timeInForce": "GTC",
+  "type": "LIMIT",
+  "side": "BUY",
+  "selfTradePreventionMode": "EXPIRE_MAKER"
+}

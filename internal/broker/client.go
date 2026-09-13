@@ -166,7 +166,7 @@ func (c *Client) Budget() *WeightBudget { return c.budget }
 // API key header — because an endpoint that does not need identifying should
 // not be handed an identity.
 func (c *Client) GetPublic(ctx context.Context, ep Endpoint, params []Param, into any) error {
-	return c.do(ctx, ep, QueryString(params), false, into)
+	return c.do(ctx, http.MethodGet, ep, QueryString(params), paramsInQuery, false, into)
 }
 
 // GetSigned calls a SIGNED (USER_DATA) endpoint.
@@ -187,8 +187,55 @@ func (c *Client) GetSigned(ctx context.Context, ep Endpoint, params []Param, int
 		Param{"recvWindow", fmt.Sprintf("%d", c.recvWindowMs)},
 		Param{"timestamp", fmt.Sprintf("%d", c.timestampMs())},
 	)
-	return c.do(ctx, ep, SignedQuery(c.creds.APISecret, signed), true, into)
+	return c.do(ctx, http.MethodGet, ep, SignedQuery(c.creds.APISecret, signed), paramsInQuery, true, into)
 }
+
+// PostSigned and DeleteSigned are the step-4.2 write verbs.
+//
+// WHERE the parameters travel is not a style choice — it is what each endpoint
+// documents, and Binance is not uniform about it:
+//
+//	POST   /fapi/v1/order   "Parameter Location: Request body"
+//	POST   /api/v3/order    "Parameter Location: Request Body"
+//	DELETE /api/v3/order    "Parameter Location: Query String"
+//	DELETE /fapi/v1/order   query string, as for the GET
+//
+// The signature covers the same bytes either way: "totalParams is defined as
+// the query string concatenated with the request body", so when every parameter
+// is in the body, totalParams IS the body, and the signature is appended to
+// whichever of the two carries them.
+// https://developers.binance.com/docs/binance-spot-api-docs/rest-api/endpoint-security-type
+func (c *Client) PostSigned(ctx context.Context, ep Endpoint, params []Param, into any) error {
+	return c.writeSigned(ctx, http.MethodPost, ep, params, paramsInBody, into)
+}
+
+// DeleteSigned sends the parameters on the query string, as both venues'
+// cancel endpoints document.
+func (c *Client) DeleteSigned(ctx context.Context, ep Endpoint, params []Param, into any) error {
+	return c.writeSigned(ctx, http.MethodDelete, ep, params, paramsInQuery, into)
+}
+
+func (c *Client) writeSigned(ctx context.Context, method string, ep Endpoint, params []Param, where paramPlacement, into any) error {
+	if err := c.ensureClock(ctx); err != nil {
+		return err
+	}
+	signed := make([]Param, 0, len(params)+2)
+	signed = append(signed, params...)
+	signed = append(signed,
+		Param{"recvWindow", fmt.Sprintf("%d", c.recvWindowMs)},
+		Param{"timestamp", fmt.Sprintf("%d", c.timestampMs())},
+	)
+	return c.do(ctx, method, ep, SignedQuery(c.creds.APISecret, signed), where, true, into)
+}
+
+// paramPlacement is which half of the request carries the parameters — and so
+// which half carries the signature.
+type paramPlacement int
+
+const (
+	paramsInQuery paramPlacement = iota
+	paramsInBody
+)
 
 // How much of an answer is read, and how much of a failed one is quoted.
 //
@@ -204,20 +251,30 @@ const (
 	maxErrorBodyBytes = 4096
 )
 
-func (c *Client) do(ctx context.Context, ep Endpoint, query string, signed bool, into any) error {
+func (c *Client) do(ctx context.Context, method string, ep Endpoint, query string, where paramPlacement, signed bool, into any) error {
 	// Reserved BEFORE the request. A limiter that notices afterwards has
 	// already earned the 429 it exists to avoid.
 	if err := c.budget.Reserve(ctx, ep.WeightIP); err != nil {
 		return fmt.Errorf("%s: %w", ep.Path, err)
 	}
 	full := c.baseURL + ep.Path
-	if query != "" {
+	var reqBody io.Reader
+	if where == paramsInBody {
+		// The signed parameters travel in the body; the URL keeps none of
+		// them, which incidentally puts the signature out of reach of every
+		// URL-printing error path in Go.
+		reqBody = strings.NewReader(query)
+	} else if query != "" {
 		full += "?" + query
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, full, nil)
+	req, err := http.NewRequestWithContext(ctx, method, full, reqBody)
 	if err != nil {
 		// NewRequest embeds the URL in its error; redact before it escapes.
 		return fmt.Errorf("%s: build request: %s", redactURL(full), c.scrub(err.Error()))
+	}
+	if where == paramsInBody {
+		// The content type Binance documents for body parameters.
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	}
 	if signed {
 		// "API-keys are passed into the Rest API via the X-MBX-APIKEY header."
