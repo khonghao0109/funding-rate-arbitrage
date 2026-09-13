@@ -3489,13 +3489,104 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > chứ không bằng trí nhớ. Tiến trình lần chạy 3 trên cổng 8085 không bị đụng
 > tới trong phiên này.
 
-#### Bước 4.2 — Trừu tượng hoá lệnh
-> **4.1 đã nghiệm thu 2026-09-13 (mã thoát 0, 4/4), nên cổng Q14 mở.** Theo
-> Q14, 4.2 chỉ khởi động sau khi 4.1 **được review đạt** (P5 của WORKFLOW).
-- Interface chung: `PlaceOrder`, `CancelOrder`, `GetPosition`, `GetBalance`.
-- Hiện thực cho **1 sàn duy nhất trước** (đề xuất Binance — tài liệu tốt nhất, có testnet).
+#### Bước 4.2 — Trừu tượng hoá lệnh — ✅ (nghiệm thu 2026-09-13)
+- Interface chung: `PlaceOrder`, `CancelOrder`, `GetOrder`, `OpenOrders`, `GetPosition`, `GetBalance`.
+- Hiện thực cho **1 sàn duy nhất trước** (Binance — tài liệu tốt nhất, có testnet).
 - Xử lý làm tròn theo `stepSize` / `tickSize` / `minNotional` của từng cặp.
 - **Nghiệm thu:** đặt và huỷ được lệnh trên Binance testnet.
+
+> **NGHIỆM THU 2026-09-13 — ĐẠT 17/17 trên CẢ HAI sàn testnet, mã thoát 0.**
+> `go run ./cmd/brokercheck -place-cancel -symbol BTCUSDT`:
+>
+> ```
+> futures_usdm BTCUSDT   demo-fapi.binance.com      lệch 235 ms
+>   luật đọc từ exchangeInfo CỦA CHÍNH TESTNET: tick 0,1 · step 0,0001
+>                                              minQty 0,0001 · minNotional 50
+>   ĐẶT  orderId 28582559181 · LIMIT GTC MUA 0,0014 @ 38 631,30 · NEW
+>   TRA  theo clientOrderId → cùng orderId · NEW
+>   HUỶ  → CANCELED
+>   HUỶ2 → HTTP 400 mã -2011 "Unknown order sent."  (đúng như hợp đồng)
+>   TRA  sau huỷ → CANCELED · lệnh mở: 0 · vị thế đọc từ SÀN: 0 coin
+>   SỐ DƯ đọc từ SÀN: 8 tài sản (3 khác 0)
+>   weight 58/6000 trong phút đó (sàn báo 17) · ORDER-COUNT-10S = 1
+>
+> spot BTCUSDT           testnet.binance.vision     lệch 206 ms
+>   luật: tick 0,01 · step 0,00001 · minQty 0,00001 · minNotional 5
+>         sàn giá MUA tối thiểu 0,5 × giá (PERCENT_PRICE_BY_SIDE)
+>   ĐẶT  orderId 1342042 · LIMIT GTC MUA 0,00014 @ 39 412,85 · NEW
+>   TRA/HUỶ/HUỶ2/TRA  → CANCELED · -2011 · CANCELED · lệnh mở: 0
+>   SỐ DƯ đọc từ SÀN: 502 tài sản (502 khác 0)
+>   weight 134/6000 trong phút đó (sàn báo 58) · ORDER-COUNT-1D = 1
+> ```
+>
+> **Không lệnh nào khớp.** Lệnh là LIMIT GTC MUA đặt xa **dưới** thị trường nên
+> nằm chờ; cỡ lệnh là nhỏ nhất luật sàn cho phép. Vị thế và số dư ở trên **đọc
+> từ SÀN sau khi huỷ** (quy tắc 7), không cộng dồn từ những gì tiến trình tin
+> là nó đã làm. Không in giá trị key, chữ ký hay số dư.
+>
+> **Phải chạy hai lần, và lần hỏng mới là phát hiện.** Đặt ở đúng một nửa giá
+> cuối bị spot từ chối: `-1013 Filter failure: PERCENT_PRICE_BY_SIDE`. Lệnh MUA
+> không được nằm dưới `bidMultiplierDown` × một giá **trung bình 5 phút**
+> (`avgPriceMins: 5`), nên một nửa của giá CUỐI rơi xuống dưới ngưỡng mỗi khi
+> trung bình trôi lên. Nay dải giá được đọc từ `exchangeInfo` và lệnh nằm vừa
+> bên trong nó. Futures không vướng, và lý do đáng biết chứ không nên đoán:
+> `PERCENT_PRICE` của nó chặn lệnh MUA **từ phía trên** (≤ mark × 1,05), nên
+> nằm xa bên dưới là không bị giới hạn. **Một sàn, hai thị trường, hai luật
+> khác nhau** — đó chính là lý do luật phải đọc theo TỪNG THỊ TRƯỜNG chứ không
+> theo sàn, và đọc **lúc chạy** từ testnet chứ không từ ảnh chụp mainnet trong
+> kho.
+>
+> **Làm tròn (`broker.RoundOrder`).** Số lượng LUÔN làm tròn XUỐNG bội của
+> `stepSize`; giá làm tròn theo hướng người gọi NÊU, mặc định thụ động (mua
+> xuống, bán lên) và **không có "gần nhất" ngầm** — làm tròn lệnh mua lên một
+> tick có thể vượt spread và biến lệnh maker mà mô hình phí giả định thành
+> taker. Dưới `minNotional` là **TỪ CHỐI có tên**, không bao giờ tự nâng qty:
+> nâng lên là giao dịch nhiều hơn điều người gọi yêu cầu, và trên một cặp
+> phòng hộ thì nó làm lệch hai chân trong khi trông như thành công. Việc nâng
+> cỡ để đủ `minNotional` trong lần nghiệm thu này xảy ra ở **chỗ gọi**, công
+> khai, đúng như thiết kế. Một bẫy số thực có test riêng: `0,3/0,0001` bằng
+> `2999,9999999999995` trong float64, nên `Floor` trần trụi biến 0,3 thành
+> 0,2999.
+>
+> **Timeout mơ hồ.** Mọi `PlaceOrder` nhận `ClientOrderID` do người gọi cấp và
+> từ chối khi rỗng, không tự sinh. Một lệnh đặt bị timeout để lại câu hỏi "sàn
+> có nhận không", và hai cách đọc đều nguy hiểm: cho là hỏng rồi gửi lại thì
+> khớp đôi và vị thế gấp đôi, không còn phòng hộ; cho là xong rồi chờ thì một
+> chân không tồn tại chẳng bao giờ được đặt. Nên người gọi chọn id TRƯỚC khi
+> gửi, và sau mọi lỗi mơ hồ thì hỏi sàn: `ErrOrderNotFound` nghĩa là chưa tới,
+> gửi lại an toàn; lỗi KHÁC nghĩa là **vẫn mơ hồ**, không được gửi lại. Nhánh
+> thứ ba đó là nhánh hay bị xoá đi khi ai đó dọn code, và là nhánh duy nhất
+> luôn đúng khi cẩn thận.
+>
+> **`internal/broker/brokertest`** là broker giả trong bộ nhớ, cùng interface,
+> kèm các nút tạo ra đúng những trạng thái sàn thật không tạo theo yêu cầu:
+> đặt lệnh timeout **SAU KHI** sàn đã nhận, timeout **TRƯỚC KHI** tới sàn,
+> khớp một phần, và huỷ chạy đua với khớp. Bộ test hợp đồng
+> (`RunBrokerContract`) chạy trên broker giả; bản Binance bị giữ đúng hợp đồng
+> đó bằng chính lần nghiệm thu ở trên cộng golden test phát lại câu trả lời
+> thật của sàn trong `internal/broker/binance/testdata/` (đã xoá mọi id, không
+> ghi endpoint tài khoản nào).
+>
+> **HAI ĐIỀU 4.2 CHƯA LÀM, nói rõ vì rất dễ bị đọc nhầm thành "đã xong GĐ 4".**
+> (1) **Chưa mở vị thế hai chân nào.** 4.2 đặt và huỷ MỘT lệnh, một chân, và
+> không có gì ở đây điều phối spot + perp cùng lúc, không có máy trạng thái
+> khớp-một-phần, không có đường lùi khi một chân khớp còn chân kia không —
+> đó là **Bước 4.4**, và nó vẫn đứng sau phán quyết cổng 3.5. (2) **Chưa có
+> mainnet và không thể có.** `broker.NewClient` từ chối mọi host ngoài danh
+> sách testnet, không có cờ nào mở, và một test đọc chính mã nguồn của gói để
+> bắt ai đó thêm một cái. Host thật là **Bước 4.6**. `cmd/scanner` vẫn không
+> import `internal/broker` — kiểm bằng `go list -deps`, không bằng trí nhớ —
+> nên tiến trình cổng 3.5 chạy hai tuần không mang credential.
+>
+> **Nợ ghi lại, chưa làm:** giới hạn `ORDERS` (futures 1200/phút và 300/10 giây,
+> spot 50/10 giây và 160000/ngày — đọc từ `exchangeInfo` 2026-09-13) là một
+> **thùng đếm riêng** với weight IP và hiện **chưa được đo đếm**; `POST` lệnh
+> tốn 0 weight IP nên `WeightBudget` không thấy nó. 4.2 đặt hai lệnh nên không
+> thể chạm trần; việc đo đếm thuộc **4.4**, nơi số lệnh mới thành thật. Và
+> `GET /fapi/v3/account` **không công bố `entryPrice`** (V2 có, V3 bỏ), nên
+> `Position.EntryPriceQuote` / `MarkPriceQuote` / `LiquidationPriceQuote` /
+> `LeverageX` để nguyên 0 thay vì bịa tên field — chưa bước nào trước 4.4 cần
+> tới chúng.
 
 #### Bước 4.3 — Chế độ Paper Trading ✅ (2026-09-11, song song với 3.5 — Q12)
 - **Hình dạng:** sổ paper là **người tiêu thụ nhật ký**. Nó đọc `signal_journal`

@@ -782,6 +782,37 @@ variables and a venue with no key is SKIPPED rather than failed. Open, and
 the operator's to fix: the spot key still has WITHDRAWAL enabled, which 4.1
 requires off.
 
+**Step 4.2 (order abstraction) shipped and was accepted 2026-09-13.**
+`internal/broker` now carries a `Broker` interface — `PlaceOrder`,
+`CancelOrder`, `GetOrder`, `OpenOrders`, `GetPosition`, `GetBalance` — with
+LIMIT GTC and MARKET, and `internal/broker/binance` implements it for USDⓈ-M
+futures and spot on testnet. **`cmd/brokercheck -place-cancel` scored 17/17 on
+both venues with nothing filled**: futures orderId 28582559181 and spot orderId
+1342042 each went NEW → CANCELED, each answered a second cancel with -2011, each
+left 0 open orders, and the position (0 coin) and balances were read back FROM
+THE VENUE (rule 7). Three rules the interface enforces. `ClientOrderID` is the
+caller's and is refused when empty, because an ambiguous timeout is the
+expensive failure here and only a caller-chosen id resolves it — `ErrOrderNotFound`
+means it never arrived and a resend is safe, any other error means STILL
+ambiguous and a resend doubles the position. Every filled figure is GROSS
+(rule 2). `RoundOrder` always floors quantity onto `stepSize`, rounds price the
+way the caller STATES with no implicit "nearest", and REFUSES below
+`minNotional` rather than topping the quantity up. It took two acceptance runs,
+and the failure is the finding: spot refused a buy priced at exactly half the
+last price with `-1013 PERCENT_PRICE_BY_SIDE`, because a bid may not rest below
+`bidMultiplierDown` × a FIVE-MINUTE average, while futures' `PERCENT_PRICE`
+bounds a buy only from above (≤ mark × 1.05) and does not restrict resting far
+below — one venue, two markets, two different rules, which is why the rules are
+read per market from the TESTNET's own `exchangeInfo` at run time and never from
+a mainnet snapshot (BTCUSDT is tick 0.10 / step 0.0001 / minNotional 50 on
+futures against 0.01 / 0.00001 / 5 on spot). **4.2 opens no two-leg position** —
+that is 4.4, still behind the 3.5 verdict — and it cannot reach mainnet. Two
+debts are recorded rather than hidden: the `ORDERS` count limits are a separate
+bucket from IP weight and are NOT metered yet (a `POST` order costs 0 IP
+weight, so the budget cannot see it), and `GET /fapi/v3/account` publishes no
+`entryPrice` in V3, so those `Position` fields stay zero instead of being filled
+from an invented field name.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1001,9 +1032,13 @@ cmd/paperledger/     step-4.3 paper ledger: a separate process that reads the
                      journal and the store READ-ONLY, prices every journalled
                      decision with internal/paper, serves PAPER-labelled JSON
                      and a UI on its own port; never touches cmd/scanner
-cmd/brokercheck/     step-4.1 diagnostic: signed REST against Binance TESTNET —
+cmd/brokercheck/     step-4.1/4.2 diagnostic against Binance TESTNET. Default:
                      server clock, skew, one signed balance read per venue, the
-                     weight the venue reports. Places NO order, prints no key,
+                     weight the venue reports, and NO order. -place-cancel runs
+                     the 4.2 acceptance — rules from that testnet's own
+                     exchangeInfo, a resting LIMIT GTC BUY far below the market,
+                     looked up by the caller's id, cancelled, re-read, and the
+                     position/balance read back from the VENUE. Prints no key,
                      no signature and no amount. The ONE command that links
                      internal/broker; a test asserts every other one does not
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
@@ -1046,12 +1081,25 @@ internal/
                      makes one; rule 7's one exception, bounded in
                      execution/doc.go
   notify/            Telegram and Discord alerts — step 3.4, DEFERRED behind 3.5
-  broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS — step 4.1, and
-                     TESTNET ONLY: NewClient refuses any host outside the
+  broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS — steps 4.1-4.2,
+                     and TESTNET ONLY: NewClient refuses any host outside the
                      documented testnet list and there is no flag to widen it
-                     before 4.6. It READS (GETs) and places no order. Two tests
-                     keep it off the ingestion path: an AST walk over
-                     exchanges/, and `go list -deps` over every cmd/ binary
+                     before 4.6. Signing, clock skew, weight budget, the Broker
+                     order interface and RoundOrder. Two tests keep it off the
+                     ingestion path: an AST walk over exchanges/, and
+                     `go list -deps` over every cmd/ binary
+    binance/         Broker for USDⓈ-M futures and spot on testnet: place,
+                     cancel, query, open orders, position, balance. One Client
+                     per market holding one credential, because the two
+                     testnets are separate registrations. testdata/ holds the
+                     venue's REAL answers, sanitized, replayed by golden tests
+                     that open no socket
+    brokertest/      in-memory Broker + the contract suite every implementation
+                     must pass, with knobs for the states a real venue will not
+                     produce on demand: a place that timed out AFTER the venue
+                     accepted it, the same timeout before it arrived, a partial
+                     fill, and a cancel racing a fill. It is what lets 4.4 be
+                     unit-tested with no network and no credential
   execution/         delta-neutral position open and close
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
                      holds the perp liquidation model strategy calls
@@ -1083,7 +1131,8 @@ what removed six hardcoded translation tables from `exchanges/`.
 
 **Two packages under `internal/` are still empty** — `execution` and `notify`
 contain only `doc.go` stating their responsibility and boundaries. `broker`
-became real on 2026-09-12 (step 4.1, decision Q14) and is still the only
+became real on 2026-09-12 (step 4.1, decision Q14), grew the order interface and
+its Binance implementation on 2026-09-13 (step 4.2), and is still the only
 package that may hold a credential.
 `backtest` has been real code since step 3.3 (2026-09-04) and `risk` since the
 liquidation model of 2026-09-07; `crowding` (6.1) and `paper` (4.3) arrived on
