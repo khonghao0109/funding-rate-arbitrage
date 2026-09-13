@@ -12,24 +12,36 @@ import (
 	"futures-arbitrage-scanner/internal/strategy"
 )
 
-// Opener holds the two venues and opens one pair at a time.
+// Trader holds the two venues and runs one position's whole life: Open (4.4)
+// and Close (4.5), against the SAME invariant and the same recorder.
+//
+// The two halves are one type because they share everything that matters —
+// which venues, which deadlines, which clock, which recorder — and because the
+// invariant is one sentence that has to mean the same thing in both: when the
+// call returns, the two legs hold the same quantity within the coarser step, or
+// both hold nothing. Never one leg.
 //
 // It is deliberately not concurrent-safe for a single intent: two goroutines
-// opening the same intent would place the same derived ClientOrderIDs twice,
+// acting on the same intent would place the same derived ClientOrderIDs twice,
 // and the venue's duplicate-id refusal is the only thing that would stop them.
 // One caller, one intent at a time.
-type Opener struct {
+type Trader struct {
 	spot broker.Broker
 	perp broker.Broker
 	cfg  Config
 	rec  Recorder
 }
 
+// Opener is the name step 4.4a used, kept as an alias so every existing caller
+// and test still reads. New code should say Trader: a type called Opener with a
+// Close method is a type nobody can guess the shape of.
+type Opener = Trader
+
 // NewOpener wires the two brokers. A zero field in cfg is filled from
 // DefaultConfig, EXCEPT MaxEntryCostWidenBps, where zero is a real setting
 // ("tolerate no widening at all") and defaulting it would silently loosen a
 // caller's risk limit.
-func NewOpener(spotBroker, perpBroker broker.Broker, cfg Config, rec Recorder) (*Opener, error) {
+func NewOpener(spotBroker, perpBroker broker.Broker, cfg Config, rec Recorder) (*Trader, error) {
 	if spotBroker == nil || perpBroker == nil {
 		return nil, errors.New("execution: both a spot and a perp broker are required")
 	}
@@ -68,7 +80,7 @@ func NewOpener(spotBroker, perpBroker broker.Broker, cfg Config, rec Recorder) (
 	if rec == nil {
 		rec = nopRecorder{}
 	}
-	return &Opener{spot: spotBroker, perp: perpBroker, cfg: cfg, rec: rec}, nil
+	return &Trader{spot: spotBroker, perp: perpBroker, cfg: cfg, rec: rec}, nil
 }
 
 // Open opens one delta-neutral pair, and returns having satisfied the
@@ -78,7 +90,7 @@ func NewOpener(spotBroker, perpBroker broker.Broker, cfg Config, rec Recorder) (
 // caller must branch on the RESULT's Outcome for what the account holds, and on
 // the error for why — in particular ErrUnwindIncomplete, which is the one error
 // meaning the invariant may NOT hold and a human is needed.
-func (o *Opener) Open(ctx context.Context, intent Intent) (Result, error) {
+func (o *Trader) Open(ctx context.Context, intent Intent) (Result, error) {
 	res := Result{IntentID: intent.ID, Outcome: OutcomeBothFlat}
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventIntentReceived, QtyCoin: intent.NotionalQuote})
 
@@ -195,7 +207,7 @@ type legOutcome struct {
 // the other is still working, so the unwind has two moving things to catch
 // instead of one. 4.4b measures both windows on a real venue and the default
 // moves, if it moves, on that measurement.
-func (o *Opener) placeBothAtOnce(ctx context.Context, intent Intent, plan entryPlan,
+func (o *Trader) placeBothAtOnce(ctx context.Context, intent Intent, plan entryPlan,
 	spotReq, perpReq broker.PlaceOrderRequest) (legOutcome, legOutcome) {
 
 	var spotLeg, perpLeg legOutcome
@@ -246,7 +258,7 @@ func unhedgedWindow(aMs, bMs int64) time.Duration {
 //
 // It returns "" on success, and otherwise the reason it did not shrink, in the
 // operator's language.
-func (o *Opener) reduceToMatch(ctx context.Context, intent Intent, inv pairInvariant, plan entryPlan, res *Result) string {
+func (o *Trader) reduceToMatch(ctx context.Context, intent Intent, inv pairInvariant, plan entryPlan, res *Result) string {
 	spotQty, perpQty := res.Spot.FilledQtyCoin, res.Perp.FilledQtyCoin
 	keepQtyCoin := math.Min(spotQty, perpQty)
 	if keepQtyCoin <= 0 {
@@ -366,7 +378,7 @@ func (o *Opener) reduceToMatch(ctx context.Context, intent Intent, inv pairInvar
 
 // workLeg places one leg and works it to its deadline, returning what the
 // VENUE says happened — never what this process believes.
-func (o *Opener) workLeg(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
+func (o *Trader) workLeg(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
 	req broker.PlaceOrderRequest, targetQtyCoin float64) legOutcome {
 
 	q := broker.OrderQuery{Market: req.Market, Symbol: req.Symbol, ClientOrderID: req.ClientOrderID}
@@ -450,7 +462,7 @@ func (o *Opener) workLeg(ctx context.Context, intent Intent, leg LegName, b brok
 // on Config.Now, once, at every exit from workLeg, so that the two legs'
 // instants are readings of one clock and their difference is a window rather
 // than a skew.
-func (o *Opener) seal(order broker.Order, err error) legOutcome {
+func (o *Trader) seal(order broker.Order, err error) legOutcome {
 	out := legOutcome{order: order, err: err}
 	if order.FilledQtyCoin > 0 {
 		out.filledAtMs = o.cfg.Now().UnixMilli()
@@ -464,7 +476,7 @@ func (o *Opener) seal(order broker.Order, err error) legOutcome {
 // Locked counts: while a buy is resting, part of the holding is committed to
 // the order, and a proof that read only the free half would call an account
 // with everything on the book empty.
-func (o *Opener) readSpotBaseQtyCoin(ctx context.Context, intent Intent) (float64, bool) {
+func (o *Trader) readSpotBaseQtyCoin(ctx context.Context, intent Intent) (float64, bool) {
 	asset := intent.SpotInstrument.BaseAsset
 	if asset == "" {
 		return 0, false
@@ -487,7 +499,7 @@ func (o *Opener) readSpotBaseQtyCoin(ctx context.Context, intent Intent) (float6
 
 // placeResolving sends one order and resolves an ambiguous failure the way the
 // step-4.2 contract says, never by guessing.
-func (o *Opener) placeResolving(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
+func (o *Trader) placeResolving(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
 	req broker.PlaceOrderRequest, q broker.OrderQuery, deadline time.Time) (broker.Order, error) {
 
 	var lastErr error
@@ -542,7 +554,7 @@ func (o *Opener) placeResolving(ctx context.Context, intent Intent, leg LegName,
 
 // resolveByID asks the venue about one order until it gives an answer that
 // means something, or the deadline passes.
-func (o *Opener) resolveByID(ctx context.Context, b broker.Broker, q broker.OrderQuery, deadline time.Time) (broker.Order, error) {
+func (o *Trader) resolveByID(ctx context.Context, b broker.Broker, q broker.OrderQuery, deadline time.Time) (broker.Order, error) {
 	safe := context.WithoutCancel(ctx)
 	for {
 		order, err := b.GetOrder(safe, q)
@@ -560,7 +572,7 @@ func (o *Opener) resolveByID(ctx context.Context, b broker.Broker, q broker.Orde
 
 // unwind closes whatever is open and returns having reached the invariant, or
 // says loudly that it could not.
-func (o *Opener) unwind(ctx context.Context, intent Intent, inv pairInvariant, res Result, reasonVI string) (Result, error) {
+func (o *Trader) unwind(ctx context.Context, intent Intent, inv pairInvariant, res Result, reasonVI string) (Result, error) {
 	res.ReasonVI = reasonVI
 	startedAt := o.cfg.Now()
 	// What the spot leg held when the unwind began. It is the second half of
@@ -669,7 +681,7 @@ func (o *Opener) unwind(ctx context.Context, intent Intent, inv pairInvariant, r
 // Sizing an unwind from the intended notional is how a partial fill becomes an
 // opposite position, so the quantity here is the one read back from the venue
 // and nothing else.
-func (o *Opener) closeLeg(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
+func (o *Trader) closeLeg(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
 	market broker.Market, side broker.Side, qtyCoin, priceQuote float64) (float64, error) {
 
 	rules := intent.SpotInstrument
@@ -736,7 +748,7 @@ func (o *Opener) closeLeg(ctx context.Context, intent Intent, leg LegName, b bro
 // numbers are reported, and the caller gets ErrFlatEvidenceConflict. Choosing
 // the one that matches what we expected is how a wrong belief survives contact
 // with evidence.
-func (o *Opener) confirmFlat(ctx context.Context, intent Intent, openedSpotQtyCoin float64, res *Result) error {
+func (o *Trader) confirmFlat(ctx context.Context, intent Intent, openedSpotQtyCoin float64, res *Result) error {
 	pos, err := o.perp.GetPosition(ctx, broker.MarketFuturesUSDM, intent.Symbol)
 	if err != nil && !errors.Is(err, broker.ErrNotSupported) {
 		return fmt.Errorf("không đọc được vị thế perp từ sàn để xác nhận phẳng: %s", err.Error())
@@ -877,7 +889,7 @@ func reasonFor(legVI string, err error, filled, target float64) string {
 }
 
 // sleep waits, or returns when the context dies.
-func (o *Opener) sleep(ctx context.Context, d time.Duration) error {
+func (o *Trader) sleep(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
 	select {
@@ -888,7 +900,7 @@ func (o *Opener) sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-func (o *Opener) record(ctx context.Context, ev Event) {
+func (o *Trader) record(ctx context.Context, ev Event) {
 	if ev.At.IsZero() {
 		ev.At = o.cfg.Now()
 	}

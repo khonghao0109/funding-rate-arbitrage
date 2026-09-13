@@ -43,6 +43,9 @@ const (
 	EventUnwindStarted  EventKind = "unwind_started"
 	EventUnwindLeg      EventKind = "unwind_leg"
 	EventUnwindDone     EventKind = "unwind_done"
+	EventCloseStarted   EventKind = "close_started"
+	EventCloseLeg       EventKind = "close_leg"
+	EventCloseDone      EventKind = "close_done"
 	EventResolved       EventKind = "resolved"
 )
 

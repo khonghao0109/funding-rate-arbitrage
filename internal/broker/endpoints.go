@@ -104,6 +104,61 @@ var (
 		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Account-Information-V3",
 	}
 
+	// GET /fapi/v1/userTrades — USER_DATA, "IP Weight5", read 2026-09-13.
+	// Parameters: symbol (required), timestamp (required), orderId, startTime,
+	// endTime, fromId, limit (default 500, max 1000), recvWindow (max 60000).
+	// Answers an array of {buyer, commission, commissionAsset, id, maker,
+	// orderId, price, qty, quoteQty, baseQty, marginAsset, realizedPnl, side,
+	// positionSide, symbol, pair, time}.
+	//
+	// This is the ONLY place USDⓈ-M states a commission: the order answer does
+	// not carry one, which is why step 4.2's LegResult.FeeQuote was 0 on every
+	// path and said so.
+	FuturesUserTrades = Endpoint{
+		Path: "/fapi/v1/userTrades", WeightIP: 5,
+		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/trade/rest-api/Account-Trade-List",
+	}
+
+	// GET /api/v3/myTrades — USER_DATA, "IP Weight: Without orderId: 20; With
+	// orderId: 5", read 2026-09-13. Answers an array of {symbol, id, orderId,
+	// orderListId, price, qty, quoteQty, commission, commissionAsset, time,
+	// isBuyer, isMaker, isBestMatch}.
+	//
+	// 20 is charged here, not 5, because the budget reserves BEFORE the call
+	// and this endpoint's weight depends on a parameter: over-charging the
+	// with-orderId form wastes budget, under-charging the other earns a 429,
+	// and only one of those two mistakes costs an IP ban.
+	SpotMyTrades = Endpoint{
+		Path: "/api/v3/myTrades", WeightIP: 20,
+		DocURL: "https://developers.binance.com/docs/binance-spot-api-docs/rest-api/account-endpoints",
+	}
+
+	// GET /fapi/v1/income — USER_DATA, "Request Weight: 30" (IP), read
+	// 2026-09-13. Parameters: timestamp (required), symbol, incomeType,
+	// startTime, endTime, page, limit (default 100, max 1000), recvWindow.
+	// incomeType values include TRANSFER, WELCOME_BONUS, REALIZED_PNL,
+	// FUNDING_FEE, COMMISSION, INSURANCE_CLEAR, REFERRAL_KICKBACK,
+	// COMMISSION_REBATE. Answers {symbol, incomeType, income, asset, info,
+	// time, tranId, tradeId}.
+	//
+	// FUNDING_FEE is what CLAUDE.md rule 6 means by counting settlements: each
+	// row IS one settlement that was actually paid or received, so nothing
+	// multiplies a rate by a holding time.
+	FuturesIncome = Endpoint{
+		Path: "/fapi/v1/income", WeightIP: 30,
+		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/Get-Income-History",
+	}
+
+	// GET /fapi/v1/premiumIndex — mark price and funding rate. Weight 1 for a
+	// single symbol. Carries `nextFundingTime` (ms) and `lastFundingRate`.
+	// exchanges/binance/funding_rest.go polls the same endpoint on MAINNET for
+	// public data; this is the TESTNET one, and it is here because 4.5 has to
+	// know when the next settlement is before it opens a position.
+	FuturesPremiumIndex = Endpoint{
+		Path: "/fapi/v1/premiumIndex", WeightIP: 1,
+		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Mark-Price",
+	}
+
 	// POST /api/v3/order — "IP Weight 1", parameters in the REQUEST BODY.
 	SpotNewOrder = Endpoint{
 		Path: "/api/v3/order", WeightIP: 1,

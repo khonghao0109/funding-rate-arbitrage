@@ -64,6 +64,17 @@ type Behaviour struct {
 	// CancelRacesAFill makes CancelOrder find the order already fully filled,
 	// which is the race a two-leg unwind must survive.
 	CancelRacesAFill bool
+
+	// MarketFillFraction makes a MARKET order fill only part of its quantity.
+	// 0 means the whole of it, which is the default and what a liquid venue
+	// does.
+	//
+	// It exists for the CLOSE (step 4.5), where a partial market fill is a
+	// real venue state rather than a modelling curiosity: a thin book runs out,
+	// and a reduceOnly order is clamped to the position that is actually there.
+	// A close that half-fills is exactly the case where a pair can be left
+	// unbalanced, so it has to be reachable on demand.
+	MarketFillFraction float64
 }
 
 // ErrTimeout is what an ambiguous failure looks like to a caller. It is
@@ -84,6 +95,18 @@ type Fake struct {
 
 	// nowMs is the clock, injectable so a test is not at the mercy of one.
 	nowMs int64
+
+	// funding is what FundingIncome answers, and trade commissions are
+	// synthesized from the orders — see SetFundingIncome and SetCommission.
+	funding        []broker.FundingIncome
+	commissionRate float64
+	commissionAss  string
+	markPrice      broker.MarkPrice
+
+	// baseAsset, when set, makes the fake move a SPOT balance as fills happen,
+	// the way a venue does. Without it the fake reports whatever SetBalance
+	// last wrote, which is a venue that never settles anything.
+	baseAsset string
 
 	// stepSizeCoin is the venue's quantity grid. Fills are floored onto it,
 	// because a real venue never reports a fill BETWEEN two points of its own
@@ -106,12 +129,20 @@ func New() *Fake {
 	}
 }
 
-var _ broker.Broker = (*Fake)(nil)
+var (
+	_ broker.Broker          = (*Fake)(nil)
+	_ broker.TradeReader     = (*Fake)(nil)
+	_ broker.FundingReader   = (*Fake)(nil)
+	_ broker.MarkPriceReader = (*Fake)(nil)
+)
 
 // SetBehaviour replaces the knobs.
 func (f *Fake) SetBehaviour(b Behaviour) {
 	if b.FillFractionOnPlace < 0 || b.FillFractionOnPlace > 1 {
 		panic(fmt.Sprintf("brokertest: FillFractionOnPlace must be in [0,1], got %v", b.FillFractionOnPlace))
+	}
+	if b.MarketFillFraction < 0 || b.MarketFillFraction > 1 {
+		panic(fmt.Sprintf("brokertest: MarketFillFraction must be in [0,1], got %v", b.MarketFillFraction))
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -132,6 +163,158 @@ func (f *Fake) onGrid(qtyCoin float64) float64 {
 	}
 	steps := math.Floor(qtyCoin/f.stepSizeCoin + 1e-9)
 	return math.Round(steps*f.stepSizeCoin*1e12) / 1e12
+}
+
+// SetBaseAsset makes the fake keep a SPOT balance of this asset and move it as
+// orders fill, and keep a FUTURES position and move it the same way.
+//
+// It is what makes rule 7 testable: the code under test asks the venue what it
+// holds, and the venue's answer changes because of the orders it filled rather
+// than because a test remembered to write it down.
+func (f *Fake) SetBaseAsset(asset string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.baseAsset = asset
+}
+
+// settle moves the venue's own position and balance by one fill. Caller holds
+// the lock.
+func (f *Fake) settle(o broker.Order, qtyCoin float64) {
+	if qtyCoin <= 0 {
+		return
+	}
+	signed := qtyCoin
+	if o.Side == broker.SideSell {
+		signed = -qtyCoin
+	}
+	switch o.Market {
+	case broker.MarketFuturesUSDM:
+		key := string(o.Market) + "|" + o.Symbol
+		p, ok := f.positions[key]
+		if !ok {
+			p = broker.Position{Market: o.Market, Symbol: o.Symbol}
+		}
+		p.QtyCoin = roundGrid(p.QtyCoin + signed)
+		p.UpdatedAtMs = f.nowMs
+		f.positions[key] = p
+	case broker.MarketSpot:
+		if f.baseAsset == "" {
+			return
+		}
+		list := f.balances[broker.MarketSpot]
+		for i := range list {
+			if list[i].Asset == f.baseAsset {
+				list[i].FreeQtyCoin = roundGrid(list[i].FreeQtyCoin + signed)
+				f.balances[broker.MarketSpot] = list
+				return
+			}
+		}
+		f.balances[broker.MarketSpot] = append(list, broker.Balance{
+			Market: broker.MarketSpot, Asset: f.baseAsset, FreeQtyCoin: roundGrid(signed)})
+	}
+}
+
+// roundGrid removes the float dust that repeated addition leaves, so a balance
+// that returned to where it started reads as equal rather than as 1e-17.
+func roundGrid(v float64) float64 { return math.Round(v*1e12) / 1e12 }
+
+// SetFundingIncome replaces what FundingIncome answers for the futures market.
+func (f *Fake) SetFundingIncome(rows ...broker.FundingIncome) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.funding = append([]broker.FundingIncome(nil), rows...)
+}
+
+// SetCommission makes every fill report a commission of rateFrac x the fill's
+// notional, denominated in asset.
+//
+// The asset is NOT converted anywhere, on purpose: a real venue charges spot
+// commission in the asset received (BTC on a buy) or in BNB, and a caller that
+// silently priced those in USDT would be inventing a rate. An empty asset means
+// the venue stated no commission, which is not the same as zero.
+func (f *Fake) SetCommission(rateFrac float64, asset string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.commissionRate, f.commissionAss = rateFrac, asset
+}
+
+// SetMarkPrice replaces what MarkPrice answers.
+func (f *Fake) SetMarkPrice(m broker.MarkPrice) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.markPrice = m
+}
+
+// OrderTrades implements broker.TradeReader: one synthesized fill per order
+// that filled anything.
+func (f *Fake) OrderTrades(ctx context.Context, q broker.OrderQuery) ([]broker.Trade, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := q.Validate(); err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i := f.indexOf(q)
+	if i < 0 {
+		return nil, fmt.Errorf("%w: %s", broker.ErrOrderNotFound, describe(q))
+	}
+	o := f.orders[i]
+	if o.FilledQtyCoin <= 0 {
+		return nil, nil
+	}
+	t := broker.Trade{
+		Market: o.Market, Symbol: o.Symbol, TradeID: o.VenueOrderID + "-1",
+		VenueOrderID: o.VenueOrderID, Side: o.Side,
+		QtyCoin: o.FilledQtyCoin, PriceQuote: o.AvgFillPriceQuote,
+		CommissionAsset: f.commissionAss, TimeMs: o.UpdatedAtMs,
+	}
+	if f.commissionAss != "" {
+		t.CommissionQtyInAsset = f.commissionRate * o.FilledQtyCoin * o.AvgFillPriceQuote
+	}
+	return []broker.Trade{t}, nil
+}
+
+// FundingIncome implements broker.FundingReader.
+func (f *Fake) FundingIncome(ctx context.Context, market broker.Market, symbol string, startMs, endMs int64) ([]broker.FundingIncome, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if market != broker.MarketFuturesUSDM {
+		return nil, fmt.Errorf("%w: %q settles no funding", broker.ErrNotSupported, market)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []broker.FundingIncome
+	for _, r := range f.funding {
+		if symbol != "" && r.Symbol != symbol {
+			continue
+		}
+		if startMs > 0 && r.SettledAtMs < startMs {
+			continue
+		}
+		if endMs > 0 && r.SettledAtMs > endMs {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// MarkPrice implements broker.MarkPriceReader.
+func (f *Fake) MarkPrice(ctx context.Context, market broker.Market, symbol string) (broker.MarkPrice, error) {
+	if err := ctx.Err(); err != nil {
+		return broker.MarkPrice{}, err
+	}
+	if market != broker.MarketFuturesUSDM {
+		return broker.MarkPrice{}, fmt.Errorf("%w: %q publishes no mark price", broker.ErrNotSupported, market)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	m := f.markPrice
+	m.Market, m.Symbol = market, symbol
+	return m, nil
 }
 
 // SetBalance replaces one market's balances.
@@ -163,6 +346,7 @@ func (f *Fake) Fill(clientOrderID string, qtyCoin, priceQuote float64) error {
 		}
 		applyFill(o, qtyCoin, priceQuote)
 		o.UpdatedAtMs = f.nowMs
+		f.settle(*o, qtyCoin)
 		return nil
 	}
 	return fmt.Errorf("%w: %s", broker.ErrOrderNotFound, clientOrderID)
@@ -233,13 +417,21 @@ func (f *Fake) PlaceOrder(ctx context.Context, req broker.PlaceOrderRequest) (br
 	}
 	switch {
 	case req.Type == broker.OrderTypeMarket:
-		// A market order takes liquidity and fills, whole. See Behaviour.
-		// The fake has no book, so it prices the fill at 1 and the arithmetic
-		// a test checks is the QUANTITY.
-		applyFill(&o, req.QtyCoin, 1)
+		// A market order takes liquidity and fills, whole unless a test asks
+		// for less. The fake has no book, so it prices the fill at 1 and the
+		// arithmetic a test checks is the QUANTITY.
+		filled := req.QtyCoin
+		if frac := f.behaviour.MarketFillFraction; frac > 0 && frac < 1 {
+			filled = f.onGrid(req.QtyCoin * frac)
+		}
+		if filled > 0 {
+			applyFill(&o, filled, 1)
+			f.settle(o, filled)
+		}
 	case f.behaviour.FillFractionOnPlace > 0:
 		if filled := f.onGrid(req.QtyCoin * f.behaviour.FillFractionOnPlace); filled > 0 {
 			applyFill(&o, filled, req.PriceQuote)
+			f.settle(o, filled)
 		}
 	}
 	f.orders = append(f.orders, o)
@@ -269,7 +461,10 @@ func (f *Fake) CancelOrder(ctx context.Context, q broker.OrderQuery) (broker.Ord
 	}
 	o := &f.orders[i]
 	if f.behaviour.CancelRacesAFill {
-		applyFill(o, o.RemainingQtyCoin(), o.PriceQuote)
+		if rest := o.RemainingQtyCoin(); rest > 0 {
+			applyFill(o, rest, o.PriceQuote)
+			f.settle(*o, rest)
+		}
 	}
 	if o.Status.Done() {
 		// Cancelling something already finished is not a cancel. The caller

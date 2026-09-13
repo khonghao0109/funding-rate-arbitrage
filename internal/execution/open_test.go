@@ -47,6 +47,12 @@ func newHarness(t *testing.T, tune func(*Config)) *harness {
 		intent: testIntent(nowMs),
 		cfg:    cfg,
 	}
+	// The venues keep their own position and base balance and move them as
+	// orders fill, so every assertion about "what the venue holds" is about
+	// something the venue did rather than something the test wrote down.
+	h.spot.SetBaseAsset(h.intent.SpotInstrument.BaseAsset)
+	h.perp.SetBaseAsset(h.intent.PerpInstrument.BaseAsset)
+
 	// Fills land on each venue's own quantity grid, as a real venue's do.
 	// Without this the fake reports fills BETWEEN two grid points, which no
 	// venue does and which no correctly-rounded closing order could ever
