@@ -1,10 +1,26 @@
 // Package broker is the ONLY package that holds exchange credentials.
 //
 // It provides signed REST access: HMAC-SHA256 signing, recvWindow handling,
-// server clock skew correction, and weight-aware rate limiting. At step 4.1 it
-// reads and nothing else — every method is a GET. The order interface
-// (PlaceOrder, CancelOrder, GetPosition, GetBalance) is step 4.2 and is not
-// here.
+// server clock skew correction, and weight-aware rate limiting — step 4.1,
+// accepted 2026-09-13 against both Binance testnets.
+//
+// Step 4.2 added the ORDER INTERFACE in order.go: Broker, with PlaceOrder,
+// CancelOrder, GetOrder, OpenOrders, GetPosition and GetBalance. Defining it
+// sends nothing; the implementations are internal/broker/binance (testnet) and
+// internal/broker/brokertest (in memory, for step 4.4's unit tests).
+//
+// Two rules the interface carries, both there to be read before adding to it:
+// every filled figure is GROSS, and the word "net" belongs to internal/strategy
+// alone (CLAUDE.md rule 2); and every quantity is BASE COIN with the unit in
+// the identifier (rule 4), because three of the nine venues denominate orders
+// in contracts and the conversion belongs on the far side of the interface.
+//
+// # One credential pair per venue
+//
+// Measured 2026-09-13: Binance's USDⓈ-M futures testnet and its spot testnet
+// are separate registrations, and a futures key sent to the spot host is
+// refused -2015. CredentialsFromEnvAny reads each venue's own variables, with
+// the original BINANCE_TESTNET_API_* names kept as the futures fallback.
 //
 // # Testnet only, and there is no switch
 //
