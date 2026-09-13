@@ -38,6 +38,8 @@ const (
 	EventLegCancelling  EventKind = "leg_cancelling"
 	EventLegReadBack    EventKind = "leg_read_back"
 	EventLegFilled      EventKind = "leg_filled"
+	EventReducing       EventKind = "reducing"
+	EventReduced        EventKind = "reduced"
 	EventUnwindStarted  EventKind = "unwind_started"
 	EventUnwindLeg      EventKind = "unwind_leg"
 	EventUnwindDone     EventKind = "unwind_done"

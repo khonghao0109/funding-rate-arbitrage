@@ -113,14 +113,17 @@ func planEntry(intent Intent, cfg Config) (entryPlan, error) {
 			ErrBookWidened, out.EntryCostPct, intent.SignalEntryCostPct, out.WidenBps, cfg.MaxEntryCostWidenBps)
 	}
 
-	// The marketable limit. A BUY cap sits ABOVE the mid by as far as this size
-	// reaches into the book, plus one tick, so that rounding the cap DOWN (the
-	// passive direction, which is what keeps the fill inside the authorised
-	// price) cannot leave it a tick short of filling.
-	spotCap := intent.SpotBook.MidPriceQuote*(1+out.SpotFill.ReachedOffsetPct/100) + intent.SpotInstrument.TickSizeQuote
-	perpFloor := intent.PerpBook.MidPriceQuote*(1-out.PerpFill.ReachedOffsetPct/100) - intent.PerpInstrument.TickSizeQuote
-	if perpFloor <= 0 {
-		return out, fmt.Errorf("%w: giá sàn cho chân perp tính ra %v", ErrIntentInvalid, perpFloor)
+	// The marketable limit, from the BOOK'S OWN BEST PRICE and a stated
+	// tolerance. See Config.MaxSlippageBps for why it is no longer derived
+	// from out.SpotFill.ReachedOffsetPct: that number's error points the safe
+	// way for a cost and the unsafe way for a cap.
+	spotCap, err := marketableLimitQuote(intent.SpotBook.BestAskQuote, broker.SideBuy, cfg.MaxSlippageBps, "chân spot (mua, đo từ giá chào bán tốt nhất)")
+	if err != nil {
+		return out, err
+	}
+	perpFloor, err := marketableLimitQuote(intent.PerpBook.BestBidQuote, broker.SideSell, cfg.MaxSlippageBps, "chân perp (bán, đo từ giá chào mua tốt nhất)")
+	if err != nil {
+		return out, err
 	}
 
 	// Round each leg on its OWN grid.
@@ -188,6 +191,31 @@ func (p entryPlan) invariant(intent Intent) pairInvariant {
 // internal/broker use, for the same float64 reason: 128 x 0.0001 is not exactly
 // 0.0128, and a comparison that does not allow for it rejects valid sizes.
 const gridEpsilon = 1e-9
+
+// marketableLimitQuote prices one leg's cap from the touch.
+//
+// A BUY may pay up to bestAsk x (1 + bps/10000) and a SELL may accept down to
+// bestBid x (1 - bps/10000). Rounding happens afterwards, PASSIVELY, which
+// tightens the cap by at most one tick — a buy cap rounds DOWN and a sell floor
+// rounds UP — so the order can never end up authorised for a worse price than
+// the tolerance states. That is the opposite of the old derivation, which added
+// a tick of slack to make sure the order still filled.
+func marketableLimitQuote(bestQuote float64, side broker.Side, maxSlippageBps float64, whatVI string) (float64, error) {
+	if !positiveFinite(bestQuote) {
+		return 0, fmt.Errorf("%w: %s — giá tốt nhất là %v", ErrNoBestPrice, whatVI, bestQuote)
+	}
+	if maxSlippageBps < 0 || math.IsNaN(maxSlippageBps) || math.IsInf(maxSlippageBps, 0) {
+		return 0, fmt.Errorf("%w: MaxSlippageBps = %v", ErrIntentInvalid, maxSlippageBps)
+	}
+	if side == broker.SideBuy {
+		return bestQuote * (1 + maxSlippageBps/10_000), nil
+	}
+	limit := bestQuote * (1 - maxSlippageBps/10_000)
+	if limit <= 0 {
+		return 0, fmt.Errorf("%w: %s — sàn giá tính ra %v", ErrIntentInvalid, whatVI, limit)
+	}
+	return limit, nil
+}
 
 // validateIntent refuses anything that does not describe a position, before a
 // single venue rule is consulted.

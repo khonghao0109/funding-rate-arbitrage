@@ -117,13 +117,22 @@
 //
 // Both legs are MARKETABLE LIMIT orders: priced through the touch so they take
 // liquidity like a market order, but with a cap beyond which they will not
-// fill. The cap comes from the entry-cost estimate that just authorised the
-// trade, so the order cannot execute at a price the decision did not allow.
-// The rounding is passive — a buy cap rounds DOWN, a sell floor rounds UP —
-// which is the direction that keeps the fill inside the authorised cost. This
-// is also why entry is not a plain MARKET order: a market order accepts any
-// price, and the entire cost model (strategy.RoundTripCost, four taker fills)
-// assumes a bounded one.
+// fill. The cap is the BOOK'S OWN BEST PRICE on the side being taken, moved by
+// Config.MaxSlippageBps — a buy caps at bestAsk x (1 + bps/10000), a sell
+// floors at bestBid x (1 - bps/10000) — and the rounding is passive, so
+// rounding can only tighten it. This is also why entry is not a plain MARKET
+// order: a market order accepts any price, and the entire cost model
+// (strategy.RoundTripCost, four taker fills) assumes a bounded one.
+//
+// The cap was derived from strategy.EstimateFill's ReachedOffsetPct in the
+// first draft of 4.4a, and that was a DIRECTION ERROR, found while writing up
+// what the design was unsure of rather than by a test. EstimateFill
+// reconstructs a curve from two aggregate points and is deliberately
+// PESSIMISTIC — the safe direction for a COST, because you plan for a worse
+// fill than you get, and the UNSAFE direction for a CAP, because an estimate
+// that believes the fill reaches far into the book writes a cap far from the
+// touch and authorises a price nobody chose. EstimateFill still decides
+// whether the trade is worth doing; it no longer decides what may be paid.
 //
 // Each leg has its own timeout, a parameter. When a leg has not filled enough
 // by its deadline, the remainder is cancelled and then — always, without
@@ -150,6 +159,59 @@
 // by somebody tidying up, and it is the only branch that is always right to be
 // careful in.
 //
+// ## Which order the legs go in
+//
+// Config.LegOrder is sequential-spot-first by default and can be parallel.
+//
+// Sequential spot-first is the default for a liquidation argument: if the
+// second leg fails we hold the first one naked until the unwind completes, and
+// a naked SPOT LONG cannot be liquidated while a naked PERP SHORT can. Its cost
+// is that the naked window is as long as leg 2's whole timeout — ten seconds by
+// default — and on an alt the basis moves inside ten seconds.
+//
+// Parallel shortens that window to the difference between two fills, and pays
+// for it by having both legs live at once: a refusal on one arrives while the
+// other is still working. Neither is obviously right, so both are measurable
+// and Result.UnhedgedWindow is reported on every run. 4.4b measures both on a
+// real venue; the default does not move before that measurement exists.
+//
+// Config.LegTimeout stays at ten seconds and stays a GUESS, written down as
+// one: nothing has yet measured how long a leg takes to fill on the venue this
+// will run against. An unmeasured constant that nobody can see becomes a fact
+// by default, so it is a named parameter with a named default constant.
+//
+// ## Reducing to match, before unwinding
+//
+// When one leg stops short, the pair is first SHRUNK to what the short leg
+// really holds — the larger leg sold back down to it — and only unwound if that
+// cannot be done. 4.4a unwound unconditionally, and its own report called that
+// the design it was least sure of: a 60% fill is a hedged position, merely
+// smaller than asked for, and closing it pays a round trip to destroy
+// something that works.
+//
+// Shrinking needs three things, all checked BEFORE anything is sent:
+//
+//  1. the KEPT size is still a legal, CLOSEABLE position on both venues — a
+//     pair too small for a venue to trade is a pair we cannot get out of,
+//     which is worse than not having it;
+//  2. the REDUCTION order is placeable on the larger leg's venue;
+//  3. the book absorbs that reduction inside MaxSlippageBps.
+//
+// Any of them failing falls back to unwinding to flat. The book check belongs
+// to the reduction and NOT to the unwind, and the asymmetry is deliberate:
+// reducing is optional, so it may refuse on a bad price; unwinding is
+// mandatory, so it may not.
+//
+// One state is reachable and neither branch can fix it: a leg that fills BELOW
+// the venue's own minimum notional can be neither kept nor closed, because
+// MIN_NOTIONAL applies to every order and Binance's USDⓈ-M documentation states
+// no exemption for reduceOnly or closing orders
+// (https://developers.binance.com/docs/derivatives/usds-margined-futures/common-definition,
+// read 2026-09-13). On BTCUSDT every perp fill under $50 is stuck by
+// construction. The defence is a size that cannot partially fill into that
+// range, not a cleverer unwind, and what this package owes is to say so loudly:
+// ErrUnwindIncomplete, the quantity, and the venue's own refusal.
+//
 // ## Unwinding
 //
 // When an intent cannot reach BOTH OPEN, whatever is filled is closed at once
@@ -163,22 +225,46 @@
 //   - The PERP leg has a position at the venue, so GetPosition answers the
 //     question directly and the invariant is asserted on the venue's number.
 //   - The SPOT leg has no position, only a balance — and the account may hold
-//     the asset for reasons that have nothing to do with this intent. An
-//     absolute balance assertion would be meaningless. So the proof there is
-//     that the closing order filled the SAME quantity the opening order did,
-//     read back from the venue by its own derived id. The balance is fetched
-//     and reported, but it is a REPORT, not the proof.
+//     the asset for reasons that have nothing to do with this intent, so an
+//     absolute balance assertion would be meaningless.
 //
-// ## What is deliberately not built in 4.4a
+// 4.4a therefore proved spot flatness from this process's OWN arithmetic, which
+// is precisely what rule 7 warns against, and its report listed that as an open
+// hole. It is closed with a SECOND, INDEPENDENT piece of evidence rather than a
+// better single one:
 //
-// When one leg reaches the target and the other stops short, this unwinds to
-// flat. It does NOT reduce the larger leg to match the smaller one, which
-// would keep a smaller hedged position alive and is genuinely the better
-// economics. It is left out because it needs a second minimum-notional check,
-// a second book check at the new size, and a second chance to fail halfway —
-// and the invariant is far easier to prove when the only outcomes are
-// full size or flat. Revisit it in 4.4b with the incremental book, where the
-// information needed to re-size is actually available.
+//	A (the venue)  the base-asset balance, read before anything was placed and
+//	               again after everything was closed, is back where it started
+//	               within one step size
+//	B (our books)  the closing order filled exactly what the opening order did
+//
+// Neither is sufficient alone. A moves for reasons that have nothing to do with
+// us — another process, a deposit, a fee taken in the base asset. B is our own
+// belief about our own orders, which is the thing under test. They are worth
+// having together because they FAIL DIFFERENTLY.
+//
+// When they disagree, NOTHING is reconciled: both numbers are reported and the
+// caller gets ErrFlatEvidenceConflict, which is a different sentinel from
+// ErrUnwindIncomplete because it means a different thing — not "the unwind
+// failed" but "we cannot tell whether it succeeded". Picking the reading that
+// matches what we expected is how a wrong belief survives contact with
+// evidence, and picking the venue's silently would hide a real bug in here.
+//
+// ## What is still deliberately not built
+//
+// When leg 1 falls short in sequential mode, leg 2 is never placed and the pair
+// unwinds. It would also be possible to place leg 2 at the SMALLER size instead
+// — the mirror of reducing to match — and that is genuinely better economics
+// for the same reason. It is not done because it opens a NEW order after a
+// failure rather than closing one, which is a different risk, and because it
+// needs the whole plan re-made at the new size (a new cap, new rounding, new
+// minimum checks) at a moment when one leg is already naked.
+//
+// The book is still a REST snapshot. Incremental WebSocket depth during entry
+// is PLAN 4.4b/4.4c and CLAUDE.md rule 10's one exception; whether it is needed
+// at all is a MEASUREMENT — if the worst slippage over a run of real fills
+// sits inside MaxSlippageBps, the snapshot is enough at that size and the debt
+// is named with its number rather than assumed.
 //
 // ## Recording
 //
