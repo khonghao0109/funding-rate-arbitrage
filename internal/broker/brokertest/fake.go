@@ -19,6 +19,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"sync"
 
@@ -42,7 +43,20 @@ type Behaviour struct {
 	// FillFractionOnPlace fills this fraction of the quantity the instant the
 	// order is placed: 0 rests, 1 fills, 0.4 leaves a partial fill. Out-of-range
 	// values are a test bug and panic rather than silently clamping.
+	//
+	// It applies to LIMIT orders only. A MARKET order always fills completely
+	// here, because a market order that rests is not modelling any venue that
+	// exists, and a test needing a partial market fill would be testing this
+	// fake rather than the code under test. Use RejectWith for a market order
+	// that fails, or Fill for one that is driven by hand.
 	FillFractionOnPlace float64
+
+	// TimeoutTimes bounds how many places the timeout knobs affect. 0 means
+	// EVERY place — a permanently broken link — while N means the first N and
+	// no more. N is how a test reaches the case that matters most: the send
+	// timed out, we asked the venue, it had never arrived, we resent, and the
+	// resend worked.
+	TimeoutTimes int
 
 	// RejectWith, when set, is returned by PlaceOrder instead of accepting.
 	RejectWith error
@@ -63,12 +77,24 @@ type Fake struct {
 	mu        sync.Mutex
 	behaviour Behaviour
 	seq       int64
+	timeouts  int            // how many places have already been failed by the knobs
 	orders    []broker.Order // in placement order, so OpenOrders is stable
 	positions map[string]broker.Position
 	balances  map[broker.Market][]broker.Balance
 
 	// nowMs is the clock, injectable so a test is not at the mercy of one.
 	nowMs int64
+
+	// stepSizeCoin is the venue's quantity grid. Fills are floored onto it,
+	// because a real venue never reports a fill BETWEEN two points of its own
+	// grid — quantities there are multiples of stepSize by construction.
+	//
+	// It defaults to 0, meaning "do not round", which keeps the fake's
+	// arithmetic exact for tests that do not care. Tests that drive a partial
+	// fill DO care: an off-grid fill cannot be closed by an order rounded onto
+	// the grid, so a fake without this produces a stuck remainder that no
+	// venue would ever create, and the code under test gets blamed for it.
+	stepSizeCoin float64
 }
 
 // New returns an empty fake with a well-behaved venue.
@@ -90,6 +116,22 @@ func (f *Fake) SetBehaviour(b Behaviour) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.behaviour = b
+}
+
+// SetStepSizeCoin makes fills land on the venue's quantity grid.
+func (f *Fake) SetStepSizeCoin(step float64) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.stepSizeCoin = step
+}
+
+// onGrid floors a quantity onto the venue's grid. Caller holds the lock.
+func (f *Fake) onGrid(qtyCoin float64) float64 {
+	if f.stepSizeCoin <= 0 {
+		return qtyCoin
+	}
+	steps := math.Floor(qtyCoin/f.stepSizeCoin + 1e-9)
+	return math.Round(steps*f.stepSizeCoin*1e12) / 1e12
 }
 
 // SetBalance replaces one market's balances.
@@ -165,8 +207,10 @@ func (f *Fake) PlaceOrder(ctx context.Context, req broker.PlaceOrderRequest) (br
 	if f.behaviour.RejectWith != nil {
 		return broker.Order{}, f.behaviour.RejectWith
 	}
-	if f.behaviour.PlaceTimesOutBeforeAccepting {
+	timeoutArmed := f.behaviour.TimeoutTimes == 0 || f.timeouts < f.behaviour.TimeoutTimes
+	if f.behaviour.PlaceTimesOutBeforeAccepting && timeoutArmed {
 		// Nothing is recorded: the venue never saw it.
+		f.timeouts++
 		return broker.Order{}, ErrTimeout
 	}
 	for _, o := range f.orders {
@@ -187,19 +231,22 @@ func (f *Fake) PlaceOrder(ctx context.Context, req broker.PlaceOrderRequest) (br
 		TransactTimeMs: f.nowMs,
 		UpdatedAtMs:    f.nowMs,
 	}
-	if frac := f.behaviour.FillFractionOnPlace; frac > 0 {
-		price := req.PriceQuote
-		if req.Type == broker.OrderTypeMarket {
-			// A market order has no price of its own; the fake prices it at
-			// the caller's own reference so the arithmetic stays checkable.
-			price = 1
+	switch {
+	case req.Type == broker.OrderTypeMarket:
+		// A market order takes liquidity and fills, whole. See Behaviour.
+		// The fake has no book, so it prices the fill at 1 and the arithmetic
+		// a test checks is the QUANTITY.
+		applyFill(&o, req.QtyCoin, 1)
+	case f.behaviour.FillFractionOnPlace > 0:
+		if filled := f.onGrid(req.QtyCoin * f.behaviour.FillFractionOnPlace); filled > 0 {
+			applyFill(&o, filled, req.PriceQuote)
 		}
-		applyFill(&o, req.QtyCoin*frac, price)
 	}
 	f.orders = append(f.orders, o)
 
-	if f.behaviour.PlaceTimesOutAfterAccepting {
+	if f.behaviour.PlaceTimesOutAfterAccepting && timeoutArmed {
 		// Recorded, then the answer is lost. This is the ambiguity.
+		f.timeouts++
 		return broker.Order{}, ErrTimeout
 	}
 	return o, nil

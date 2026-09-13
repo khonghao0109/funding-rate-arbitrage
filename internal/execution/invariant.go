@@ -79,9 +79,21 @@ func flat(spotQtyCoin, perpQtyCoin float64) bool {
 // classify turns two filled quantities into the outcome, or into an error when
 // they are neither hedged nor flat — which is the state this package exists to
 // make impossible.
+//
+// "Both open" requires BOTH legs to hold something. That sounds too obvious to
+// write down, and it is exactly what the property test caught missing: an
+// earlier version asked only whether the two quantities were CLOSE, so a pair
+// of (0, 0.00007) — one leg flat and the other holding dust — was reported as
+// hedged, because 0.00007 is indeed within one step of 0. It is not hedged. It
+// is a small naked position, and small naked positions are how an account
+// accumulates a drawer full of them.
 func (p pairInvariant) classify(spotQtyCoin, perpQtyCoin float64) (Outcome, error) {
 	if flat(spotQtyCoin, perpQtyCoin) {
 		return OutcomeBothFlat, nil
+	}
+	if spotQtyCoin <= 0 || perpQtyCoin <= 0 {
+		return "", fmt.Errorf("%w: spot %.10g, perp %.10g — một chân bằng 0 còn chân kia thì không, đó là vị thế trần chứ không phải phòng hộ",
+			ErrUnwindIncomplete, spotQtyCoin, perpQtyCoin)
 	}
 	if err := p.check(spotQtyCoin, perpQtyCoin); err != nil {
 		return "", fmt.Errorf("%w: spot %.10g, perp %.10g: %s", ErrUnwindIncomplete, spotQtyCoin, perpQtyCoin, err.Error())
