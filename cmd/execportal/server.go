@@ -1,11 +1,15 @@
 package main
 
 import (
+	"bufio"
 	"embed"
+	"errors"
 	"io/fs"
 	"log"
+	"mime"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -31,6 +35,11 @@ import (
 //   - Budget exhaustion — a page looping reads at /api/orders spends the same
 //     per-minute weight an unwind needs. Reads carry the same header wall
 //     (X-Execportal-Action: read), and stop at half the budget.
+//   - Cross-site WebSocket hijacking — another page opening the scanner relay
+//     (/api/scanner/ws). A browser cannot put a custom header on a WebSocket,
+//     but it always sends Origin, and page script cannot forge it: socketGuard
+//     requires it to be this listener. The relay is public market data, and it
+//     is capped, because each session is one more client of the step-3.5 gate.
 //
 // What it does NOT stop: another process on this machine can send the headers
 // a browser cannot. That process can also read .env, so a token here would
@@ -42,6 +51,12 @@ import (
 
 //go:embed ui
 var uiFiles embed.FS
+
+func init() {
+	// Go's built-in table has no entry for the embedded fonts, and on a machine
+	// without a system mime.types they would be served as octet-stream.
+	_ = mime.AddExtensionType(".woff2", "font/woff2")
+}
 
 // actionHeader names what a request is for: "read" on every GET under /api/,
 // the action's own name on a write. Its presence is what forces a browser to
@@ -82,11 +97,16 @@ func (p *portal) handler() http.Handler {
 	post("/api/open", "open", p.handleOpen)
 	post("/api/close", "close", p.handleClose)
 	post("/api/reconcile", "reconcile", p.handleReconcile)
+	// Read-only feeds from cmd/scanner and cmd/paperledger (PLAN Q17): bytes
+	// relayed, never decoded, and not reachable from any order path.
+	get("/api/scanner/funding-history", p.feeds.ScannerHistory)
+	get("/api/paper/ledger", p.feeds.PaperLedger)
+	mux.Handle("/api/scanner/ws", onlyMethod(http.MethodGet, p.socketGuard(http.HandlerFunc(p.feeds.ScannerSocket))))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "không có endpoint "+quoteForMessage(r.URL.Path))
 	})
 
-	return logRequests(securityHeaders(p.hostGuard(mux)))
+	return logRequests(p.securityHeaders(p.hostGuard(mux)))
 }
 
 func onlyMethod(method string, next http.Handler) http.Handler {
@@ -159,6 +179,27 @@ func (p *portal) apiGuard(action string, next http.Handler) http.Handler {
 	})
 }
 
+// socketGuard is apiGuard for the WebSocket relay, where no custom header can
+// be sent: Origin is REQUIRED and must be this listener, and a Sec-Fetch-Site
+// naming another site is refused. Both are checked before the upgrade, so a
+// refused page never costs the scanner a connection.
+func (p *portal) socketGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" {
+			writeError(w, http.StatusForbidden, "cross_site_refused",
+				"WebSocket mở từ trang khác (Sec-Fetch-Site: "+quoteForMessage(site)+") — từ chối")
+			return
+		}
+		origin := r.Header.Get("Origin")
+		if origin == "" || !p.sameOrigin(origin) {
+			writeError(w, http.StatusForbidden, "cross_origin_refused",
+				"WebSocket cần Origin là chính portal này, nhận "+quoteForMessage(origin)+" — từ chối")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // writeGuard adds what only an order-sending endpoint needs: a JSON body, of
 // bounded size. A cross-site form can post neither without a preflight.
 func (p *portal) writeGuard(next http.Handler) http.Handler {
@@ -178,16 +219,29 @@ func (p *portal) sameOrigin(origin string) bool {
 	return ok && p.hosts[rest]
 }
 
-func securityHeaders(next http.Handler) http.Handler {
+// securityHeaders sets the CSP. connect-src names this listener's ws:// origins
+// explicitly: not every browser reads 'self' as covering a WebSocket.
+func (p *portal) securityHeaders(next http.Handler) http.Handler {
+	var sockets []string
+	for host := range p.hosts {
+		sockets = append(sockets, "ws://"+host)
+	}
+	slices.Sort(sockets)
+	// Trusted Types with no policy make every string-to-HTML sink throw, so a
+	// later innerHTML with feed or venue text fails loudly instead of running
+	// in the origin that can place orders. The vendored chart library's only
+	// such sink is its attribution logo, which the page turns off.
+	csp := "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' " +
+		strings.Join(sockets, " ") + "; font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; " +
+		"require-trusted-types-for 'script'; trusted-types 'none'"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
-		h.Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "+
-				"font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")
 		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
 		h.Set("X-Execution-Mode", "testnet")
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			h.Set("Cache-Control", "no-store")
@@ -205,6 +259,16 @@ type statusRecorder struct {
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
 	s.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack lets the WebSocket upgrade through the logging wrapper.
+func (s *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := s.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, errors.New("execportal: the response writer cannot be hijacked")
+	}
+	s.status = http.StatusSwitchingProtocols
+	return h.Hijack()
 }
 
 // logRequests writes one line per request: method, path, status, duration.

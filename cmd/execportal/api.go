@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"futures-arbitrage-scanner/cmd/execportal/feeds"
 	"futures-arbitrage-scanner/internal/broker"
 	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
 	"futures-arbitrage-scanner/internal/execution"
@@ -100,6 +101,11 @@ type portal struct {
 	// pingsMs is each market's last clock round trip, in milliseconds.
 	pingsMu sync.Mutex
 	pingsMs map[broker.Market]int64
+
+	// feeds are the read-only scanner and paper-ledger feeds (package feeds,
+	// PLAN Q17). All the portal can do with them is register their handlers,
+	// report their health and close them; nothing here can read what they carry.
+	feeds *feeds.Feeds
 }
 
 func newPortal(m markets, symbols []string, bindIP, port string, settings execSettings, now func() time.Time) *portal {
@@ -123,6 +129,7 @@ func newPortal(m markets, symbols []string, bindIP, port string, settings execSe
 		rules:      newTTLCache[rulesPair](now),
 		memo:       newDoneOrders(),
 		pingsMs:    map[broker.Market]int64{},
+		feeds:      feeds.New("", "", now),
 	}
 }
 
@@ -300,6 +307,7 @@ type statusView struct {
 	MaxSlippageBps   float64      `json:"max_slippage_bps"`
 	LegTimeoutMs     int64        `json:"leg_timeout_ms"`
 	LegOrders        []string     `json:"leg_orders"`
+	Feeds            feeds.View   `json:"feeds"`
 	NoticeVI         string       `json:"notice_vi"`
 }
 
@@ -326,6 +334,7 @@ func (p *portal) handleStatus(w http.ResponseWriter, r *http.Request) {
 		MaxSlippageBps:   p.exec.MaxSlippageBps,
 		LegTimeoutMs:     p.exec.LegTimeout.Milliseconds(),
 		LegOrders:        []string{string(execution.LegOrderSequentialSpotFirst), string(execution.LegOrderParallel)},
+		Feeds:            p.feeds.View(),
 		NoticeVI: "CHỈ TESTNET — không tiền thật. Mọi vị thế do người vận hành bấm; " +
 			"không có đường nào từ tín hiệu sống tới lệnh (PLAN Q15/Q16).",
 	})

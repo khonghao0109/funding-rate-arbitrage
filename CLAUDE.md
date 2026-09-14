@@ -910,6 +910,36 @@ and tested against `brokertest`. **Named debt that blocks 4.6:** the
 would carry the API key and a signed order to another host — see PLAN "Công cụ
 vận hành 4.5b".
 
+**On 2026-09-14 the portal became the unified operator page (decision Q17):**
+one loopback page on 8087 with four tabs — Market Scanner, Execution Control,
+Paper Ledger, Crowding Reversal — replacing three pages on three ports. The
+Scanner tab is a port of `static/app.js` fed by a READ-ONLY relay of the gate's
+own `/ws` (and a fixed-path proxy of `/api/funding/history`); the Paper tab
+relays `cmd/paperledger`'s `/api/ledger`; the Crowding tab draws the research
+fixture copied verbatim by a test, labelled not live (6.2 still waits). **`static/`
+was not touched, and must not be while the gate runs: `cmd/scanner` serves it
+FROM DISK.** The relay lives in package `cmd/execportal/feeds`, which exports
+only handlers, a health view and a shutdown hook, never decodes a byte, and is
+held away from the order path by `guard_test.go` (exported surface pinned, no
+HTTP client or `httptest` in the main package, sub-packages scanned for
+`EvaluateEntry`). Because `internal/scanner` writes each broadcast synchronously
+with a 2 s deadline per client, the relay's upstream reader never waits on the
+browser — a stalled page is dropped, the scanner is not slowed (tested, and the
+blocking mutation goes red after 67 frames); it connects only while the Scanner
+tab shows, at most 3 sessions and 20 a minute. Accepted through the page again:
+a SCRIPTED press on the confirm button sent nothing; $65 BTCUSDT opened
+`both_open` 0.0008 BTC a leg, residual 0, unhedged window 408 ms; closed
+`both_flat` with RealizedQuote −0.05002627 and pair drift −0.00589600 beside it;
+`execcheck -status` agreed; 0 console errors at 1440 and 400 px; the gate's log
+shows exactly the relay sessions and 0 write errors, including one unbroken
+6-minute relay of 26,386 frames. Four review rounds found 1 medium-security
+design debt and 6 major correctness defects — 2 of them introduced by earlier
+fixes (the header hedge chip watched one symbol; a guard exemption let any
+sub-package reach the strategy; a kept alarm re-wrapped its text on every
+poll…) — all fixed, each with a mutation that goes red. **New named debt that blocks 4.6:** the vendored chart
+library and the feed tabs' JavaScript run in the SAME origin as the order API —
+see PLAN "Công cụ vận hành 4.5c".
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1150,9 +1180,13 @@ cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      ClientOrderID from the intent id and read the orders,
                      position and balances back from the venue, printing both
                      when they disagree (rule 7). No database, no schema
-cmd/execportal/      Strategy 1 operator page on Binance TESTNET (PLAN Q16):
-                     cmd/execcheck's open / close / reconcile behind a vanilla
-                     web UI on LOOPBACK 127.0.0.1:8087 — same execution machine,
+cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17):
+                     four tabs on LOOPBACK 127.0.0.1:8087 — Market Scanner (a
+                     READ-ONLY relay of cmd/scanner's /ws), Execution Control,
+                     Paper Ledger (relay of cmd/paperledger), Crowding Reversal
+                     (research fixture snapshot, not live). Execution is
+                     cmd/execcheck's open / close / reconcile behind the page —
+                     same execution machine,
                      same derived ClientOrderIDs, same .paper/exec intent files.
                      Every write needs a confirmed dialog plus the
                      X-Execportal-Action header; Host, Origin and Sec-Fetch-Site
@@ -1162,6 +1196,12 @@ cmd/execportal/      Strategy 1 operator page on Binance TESTNET (PLAN Q16):
                      evidence_conflict, never reconciled. ONE position per
                      symbol, because execution.Close proves "closed" from the
                      account's whole perp position. No database, no schema
+  feeds/             the read-only relay and proxies (Q17): exports handlers,
+                     a health view and CloseAll only; decodes nothing; its
+                     upstream reader never blocks the gate's broadcast
+  ui/                vanilla ES modules + CSS tokens; fonts and Lightweight
+                     Charts VENDORED (sha256 pinned) — the order page loads no
+                     script from another host
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
                      the root package is the shared KERNEL: types, Feeds, the
                      RunStream lifecycle, FetchJSON, and the normalization
@@ -1367,10 +1407,14 @@ go run ./cmd/execcheck -close  -intent <id>
 go run ./cmd/execcheck -funding-check -intent <id>   # the venue's FUNDING_FEE rows vs rate x notional
 go run ./cmd/execcheck -reconcile -intent <id>       # add -apply to square an unbalanced pair
 
-# The same actions behind a loopback page (PLAN Q16). Run from the repo root:
-# .env and .paper/exec are resolved from the working directory. Every /api/
-# call needs the X-Execportal-Action header ("read" for a GET).
+# The same actions behind a loopback page (PLAN Q16), now the four-tab operator
+# page (Q17). Run from the repo root: .env and .paper/exec are resolved from the
+# working directory. Every /api/ call needs the X-Execportal-Action header
+# ("read" for a GET). The Scanner tab relays 127.0.0.1:8085 READ-ONLY and only
+# while it shows; the Paper tab needs cmd/paperledger on 8086 — point it at a
+# COPY of the database while the gate writes the live file.
 go run ./cmd/execportal -port 8087               # http://127.0.0.1:8087
+sqlite3 -readonly "file:data/scanner.db?mode=ro" ".backup '/tmp/paper.db'" && go run ./cmd/paperledger -db /tmp/paper.db
 curl -s -H 'X-Execportal-Action: read' 'http://127.0.0.1:8087/api/positions?symbol=BTCUSDT'
 
 # Re-record each venue's testdata/ from the live venues. Opens real sockets, so

@@ -2,11 +2,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -111,17 +115,89 @@ func TestHandler_ServesThePageWithItsSecurityHeaders(t *testing.T) {
 		t.Error("the page does not carry the testnet badge")
 	}
 	h := rec.Header()
-	if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "script-src 'self'") {
-		t.Errorf("CSP = %q", csp)
+	csp := h.Get("Content-Security-Policy")
+	for _, want := range []string{"frame-ancestors 'none'", "script-src 'self'", "style-src 'self'", "font-src 'self'",
+		"require-trusted-types-for 'script'", "trusted-types 'none'",
+		"connect-src 'self' ws://127.0.0.1:8087 ws://localhost:8087;"} {
+		if !strings.Contains(csp, want) {
+			t.Errorf("CSP lacks %q: %q", want, csp)
+		}
+	}
+	if strings.Contains(csp, "http:") || strings.Contains(csp, "https:") || strings.Contains(csp, "*") {
+		t.Errorf("CSP allows a remote origin: %q", csp)
 	}
 	if h.Get("X-Frame-Options") != "DENY" || h.Get("X-Content-Type-Options") != "nosniff" {
 		t.Errorf("framing/sniffing headers missing: %v", h)
 	}
-	for _, asset := range []string{"/app.js", "/style.css"} {
-		if rec := do(t, p, http.MethodGet, asset, ""); rec.Code != http.StatusOK {
+	for asset, contentType := range map[string]string{
+		"/js/main.js":                   "javascript",
+		"/js/scanner.js":                "javascript",
+		"/css/portal.css":               "text/css",
+		"/fonts/fonts.css":              "text/css",
+		"/fonts/inter-vietnamese.woff2": "font/woff2",
+		"/vendor/" + vendoredChartFile:  "javascript",
+		"/research/crowding-research.json":  "application/json",
+	} {
+		rec := do(t, p, http.MethodGet, asset, "")
+		if rec.Code != http.StatusOK {
 			t.Errorf("GET %s = %d", asset, rec.Code)
 		}
+		if got := rec.Header().Get("Content-Type"); !strings.Contains(got, contentType) {
+			t.Errorf("GET %s Content-Type %q, want %s — under nosniff a wrong type is a refused asset", asset, got, contentType)
+		}
 	}
+}
+
+// vendoredChartFile is TradingView Lightweight Charts 4.2.1, taken from the npm
+// registry tarball whose sha1 and sha512 matched the registry's published
+// dist.shasum and dist.integrity on 2026-09-14. It is served from the portal
+// because a page that can place orders loads no script from a CDN: whoever
+// serves that script can press the buttons.
+const (
+	vendoredChartFile   = "lightweight-charts-4.2.1.standalone.production.js"
+	vendoredChartSHA256 = "197180bdf2185bb33f3cad878d0d29d2128b4fca96ed847a0de4dc64da1c5e97"
+)
+
+func TestUI_VendoredFilesAreTheOnesThatWereVerified(t *testing.T) {
+	blob, err := os.ReadFile("ui/vendor/" + vendoredChartFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sum := sha256.Sum256(blob); hex.EncodeToString(sum[:]) != vendoredChartSHA256 {
+		t.Errorf("%s changed (sha256 %x) — re-verify it against the npm registry before trusting it with the order page", vendoredChartFile, sum)
+	}
+	for _, license := range []string{"ui/vendor/LICENSE-lightweight-charts.txt", "ui/fonts/OFL-inter.txt", "ui/fonts/OFL-jetbrainsmono.txt"} {
+		if info, err := os.Stat(license); err != nil || info.Size() < 1000 {
+			t.Errorf("%s missing: redistributing the file requires its licence", license)
+		}
+	}
+}
+
+// uiSources is every file the page is built from, vendored code excluded.
+func uiSources(t *testing.T, ext string) map[string]string {
+	t.Helper()
+	out := map[string]string{}
+	err := filepath.WalkDir("ui", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == "vendor" {
+			return filepath.SkipDir
+		}
+		if d.IsDir() || !strings.HasSuffix(path, ext) {
+			return nil
+		}
+		blob, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		out[path] = string(blob)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 // The page is served under script-src 'self' and style-src 'self', so an inline
@@ -134,22 +210,81 @@ func TestUI_HasNothingTheCSPWouldRefuse(t *testing.T) {
 	}
 	html := string(blob)
 	for name, re := range map[string]*regexp.Regexp{
-		"style attribute":       regexp.MustCompile(`\sstyle\s*=`),
-		"inline <style>":        regexp.MustCompile(`<style[\s>]`),
-		"inline script":         regexp.MustCompile(`<script(?:\s+[^>]*)?>\s*[^<\s]`),
-		"inline event handler":  regexp.MustCompile(`\son[a-z]+\s*=`),
-		"remote stylesheet/url": regexp.MustCompile(`(?:href|src)\s*=\s*"https?://`),
+		"style attribute":      regexp.MustCompile(`\sstyle\s*=`),
+		"inline <style>":       regexp.MustCompile(`<style[\s>]`),
+		"inline script":        regexp.MustCompile(`<script(?:\s+[^>]*)?>\s*[^<\s]`),
+		"inline event handler": regexp.MustCompile(`\son[a-z]+\s*=`),
+		"remote script/style":  regexp.MustCompile(`<(?:script|link|img|iframe|source)\b[^>]*\s(?:href|src)\s*=\s*"(?:https?:)?//`),
 	} {
 		if loc := re.FindStringIndex(html); loc != nil {
 			t.Errorf("index.html contains an %s near %q", name, html[loc[0]:min(loc[1]+40, len(html))])
 		}
 	}
-	js, err := os.ReadFile("ui/app.js")
-	if err != nil {
-		t.Fatal(err)
+
+	scripts := uiSources(t, ".js")
+	if len(scripts) < 6 {
+		t.Fatalf("found %d scripts under ui/ — the test is not seeing the page", len(scripts))
 	}
-	if loc := regexp.MustCompile(`\.(?:innerHTML|outerHTML)\s*[+]?=|insertAdjacentHTML\s*\(|document\.write\s*\(`).FindIndex(js); loc != nil {
-		t.Errorf("app.js writes HTML from a string near %q; venue text must go through textContent", js[loc[0]:loc[1]])
+	htmlWrite := regexp.MustCompile(`\.(?:innerHTML|outerHTML)\s*[+]?=|insertAdjacentHTML\s*\(|document\.write\s*\(|\beval\s*\(|new\s+Function\s*\(`)
+	// A WebSocket URL has to be absolute; the one allowed is this page's own
+	// host. Go's regexp has no lookahead, so that spelling is removed first.
+	absolute := regexp.MustCompile(`["'` + "`" + `](?:https?|wss?)://`)
+	for path, js := range scripts {
+		if loc := htmlWrite.FindStringIndex(js); loc != nil {
+			t.Errorf("%s writes HTML or evaluates a string near %q; venue and feed text must go through textContent", path, js[loc[0]:loc[1]])
+		}
+		scan := strings.ReplaceAll(js, "`ws://${location.host}/", "")
+		if loc := absolute.FindStringIndex(scan); loc != nil {
+			t.Errorf("%s names an absolute URL near %q — the page talks to its own origin only", path, scan[loc[0]:min(loc[1]+40, len(scan))])
+		}
+	}
+	for path, css := range uiSources(t, ".css") {
+		if strings.Contains(css, "@import") || regexp.MustCompile(`url\(\s*["']?(?:https?:)?//`).MatchString(css) {
+			t.Errorf("%s pulls a remote resource", path)
+		}
+	}
+}
+
+// The order buttons live on the Execution tab only, and only execution.js
+// sends a write or presses a button: a feed tab that could post an order, or
+// click one, would be a path from a signal to an order drawn in JavaScript
+// instead of Go. core.js holds the one fetch and the post helper; everything
+// else reaches the network through api() with no options.
+func TestUI_OnlyTheExecutionTabWrites(t *testing.T) {
+	scripts := uiSources(t, ".js")
+	forbidden := map[string]*regexp.Regexp{
+		"a POST":             regexp.MustCompile(`["'` + "`" + `]POST["'` + "`" + `]|method\s*:`),
+		"the post helper":    regexp.MustCompile(`\bpost\b`),
+		"an order endpoint":  regexp.MustCompile(`/api/(?:open|close|reconcile)|["'` + "`" + `](?:open|close|reconcile)["'` + "`" + `]`),
+		"a raw request":      regexp.MustCompile(`\bfetch\s*\(|XMLHttpRequest|sendBeacon|\bimport\s*\(`),
+		"api() with options": regexp.MustCompile(`\bapi\s*\([^()]*,`),
+		"a synthetic press":  regexp.MustCompile(`\.click\s*\(|dispatchEvent\s*\(|requestSubmit|\.submit\s*\(`),
+	}
+	allowedIn := map[string]map[string]bool{
+		"execution.js": {"a POST": true, "the post helper": true, "an order endpoint": true},
+		"core.js":      {"a POST": true, "the post helper": true, "a raw request": true, "api() with options": true},
+	}
+	sockets := regexp.MustCompile(`new\s+WebSocket\b`)
+	seenExecution := false
+	for path, js := range scripts {
+		base := filepath.Base(path)
+		if base == "execution.js" {
+			seenExecution = forbidden["an order endpoint"].MatchString(js)
+		}
+		for name, re := range forbidden {
+			if allowedIn[base][name] {
+				continue
+			}
+			if loc := re.FindStringIndex(js); loc != nil {
+				t.Errorf("%s contains %s near %q — only the Execution tab may write, and no page code presses a button", path, name, js[loc[0]:min(loc[1]+30, len(js))])
+			}
+		}
+		if base != "scanner.js" && sockets.MatchString(js) {
+			t.Errorf("%s opens a WebSocket — only the Scanner tab's relay may", path)
+		}
+	}
+	if !seenExecution {
+		t.Error("execution.js names no order endpoint — the test is not reading the real file")
 	}
 }
 

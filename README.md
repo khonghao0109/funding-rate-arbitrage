@@ -66,7 +66,8 @@ Trong crypto, dữ liệu này **không nằm sau các feed chuyên nghiệp đ�
 | **Kho lịch sử funding (SQLite)** | `cmd/backfill` nạp rate **đã settle thật** từ 7 sàn; scanner tự bổ sung mỗi giờ. Restart không mất gì — mỗi dòng khoá theo mốc settle nên chạy lại chỉ ghi phần thiếu. Kho **không đều nhau giữa các sàn** và báo cáo nói rõ độ sâu từng sàn |
 | **Lấy mẫu giá và ảnh chụp quy tắc giao dịch** | Cross-section top-of-book mỗi 30s và quy tắc giao dịch từng ngày, để backtest sau này không diễn giải dữ liệu cũ bằng luật mới |
 | **Sổ giấy có vốn ảo (Bước 4.3)** | `cmd/paperledger` là tiến trình RIÊNG, mở SQLite **chỉ đọc** (`mode=ro`), đọc `signal_journal` mà tiến trình 3.5 ghi và định giá từng quyết định: khớp hai chân qua `strategy.EstimateFill` trên snapshot sổ lệnh **trước** mốc quyết định, phí từ chính hàng nhật ký, funding ghi có đúng mốc settle, basis đánh dấu theo mid, đường equity. Giao diện riêng (mặc định cổng 8086) ghi chữ **PAPER** cạnh mọi con số, nói rõ thật / giả / giả định, và **không có nút go-live**. Nó không quyết định gì — chỉ định giá thứ 3.5 đã quyết |
-| **Cổng web vận hành trên TESTNET** | `go run ./cmd/execportal` mở trang loopback `127.0.0.1:8087` để **mở, theo dõi, đóng và làm phẳng** vị thế spot long + perp short trên Binance Testnet bằng cú bấm đã xác nhận — cùng máy trạng thái và file ý định với `cmd/execcheck`. Số dư, vị thế, lệnh và funding đọc lại **từ sàn**; trạng thái `DELTA-NEUTRAL (HEDGED)` tính từ lệnh của chính các ý định và vị thế perp sàn báo, hai nguồn lệch nhau thì báo **không khớp** chứ không tự chọn. Chỉ testnet, chỉ loopback, một vị thế mỗi symbol, **không có đường nào từ tín hiệu tới lệnh** |
+| **Trang vận hành hợp nhất (4 tab)** | `go run ./cmd/execportal` mở MỘT trang loopback `127.0.0.1:8087` thay cho ba trang ở ba cổng: **Market Scanner** (relay CHỈ ĐỌC WebSocket của scanner — ma trận chênh lệch ba nhóm, funding bps/8h, độ sâu sổ lệnh, lịch sử, đường giá và nến 1 phút dựng tại trang), **Execution Control**, **Paper Ledger** (relay của `cmd/paperledger`, PAPER cạnh mọi số) và **Crowding Reversal** (snapshot fixture nghiên cứu, chưa live). Portal không giải mã dữ liệu relay và không đường nào từ dữ liệu đó tới nút lệnh; relay không bao giờ làm scanner chờ và chỉ nối khi tab Scanner đang mở. Phông và thư viện biểu đồ đóng gói sẵn, không CDN |
+| **Cổng web vận hành trên TESTNET** | Tab Execution của trang trên: **mở, theo dõi, đóng và làm phẳng** vị thế spot long + perp short trên Binance Testnet bằng cú bấm đã xác nhận — cùng máy trạng thái và file ý định với `cmd/execcheck`. Số dư, vị thế, lệnh và funding đọc lại **từ sàn**; trạng thái `DELTA-NEUTRAL (HEDGED)` tính từ lệnh của chính các ý định và vị thế perp sàn báo, hai nguồn lệch nhau thì báo **không khớp** chứ không tự chọn. Chỉ testnet, chỉ loopback, một vị thế mỗi symbol, **không có đường nào từ tín hiệu tới lệnh** |
 
 ---
 
@@ -258,8 +259,9 @@ không còn hardcode ở Go hay JavaScript.
 ├── cmd/brokercheck/           # chẩn đoán 4.1/4.2: REST có ký trên TESTNET; -place-cancel đặt & huỷ
 ├── cmd/execcheck/             # nghiệm thu 4.4b/4.5 trên TESTNET: mở/đọc lại/đóng một vị thế hai chân,
 │                              # đối chiếu funding với sàn, cân lại cặp lệch. Ý định nằm ở .paper/exec/ — là CACHE
-├── cmd/execportal/            # cổng web vận hành Chiến lược 1 trên TESTNET (Q16): mở/đóng/làm phẳng qua trang
-│                              # loopback 127.0.0.1:8087, cùng máy trạng thái và file ý định với execcheck
+├── cmd/execportal/            # trang vận hành hợp nhất 4 tab trên TESTNET (Q16, Q17): scanner (relay chỉ đọc),
+│                              # lệnh (mở/đóng/làm phẳng, cùng máy trạng thái với execcheck), sổ giấy, crowding
+│   └── feeds/                 # relay/proxy chỉ đọc tới cmd/scanner và cmd/paperledger — không giải mã, không tới lệnh
 ├── CLAUDE.md                  # tổng quan cho AI agent
 ├── exchanges/                 # cây tích hợp sàn — CHỈ dữ liệu công khai, không credential
 │   ├── (gốc)                  # lõi dùng chung: types, Feeds, vòng đời RunStream, FetchJSON,

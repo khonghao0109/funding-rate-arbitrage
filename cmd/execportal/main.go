@@ -41,6 +41,7 @@ import (
 	"syscall"
 	"time"
 
+	"futures-arbitrage-scanner/cmd/execportal/feeds"
 	"futures-arbitrage-scanner/internal/broker"
 	"futures-arbitrage-scanner/internal/execution"
 
@@ -64,6 +65,8 @@ func main() {
 		slipBps  = flag.Float64("max-slippage-bps", execution.DefaultMaxSlippageBps, "how far past the touch a leg's marketable limit may sit, in basis points")
 		legTmo   = flag.Duration("leg-timeout", execution.DefaultLegTimeout, "how long one leg may work before its remainder is cancelled")
 		actTmo   = flag.Duration("action-timeout", 3*time.Minute, "overall deadline for one open, close or reconcile")
+		scanAddr = flag.String("scanner-addr", "127.0.0.1:8085", "loopback host:port of the running cmd/scanner whose /ws and funding history the Scanner tab relays READ-ONLY; empty turns the tab off")
+		papAddr  = flag.String("paper-addr", "127.0.0.1:8086", "loopback host:port of cmd/paperledger whose /api/ledger the Paper tab relays READ-ONLY; empty turns the tab off")
 	)
 	flag.Parse()
 	_ = godotenv.Load()
@@ -89,14 +92,26 @@ func main() {
 		log.Fatalf("execportal: -leg-timeout %s must be positive and shorter than -action-timeout %s", *legTmo, *actTmo)
 	}
 
+	scannerAddr, err := feeds.CheckAddr("scanner-addr", *scanAddr, *port)
+	if err != nil {
+		log.Fatalf("execportal: %v", err)
+	}
+	paperAddr, err := feeds.CheckAddr("paper-addr", *papAddr, *port)
+	if err != nil {
+		log.Fatalf("execportal: %v", err)
+	}
+
 	m := dialMarkets()
 	p := newPortal(m, symbolList, bindIP, *port, execSettings{
 		MarginFrac: *marginFr, MaxSlippageBps: *slipBps, LegTimeout: *legTmo, ActionTimeout: *actTmo,
 	}, time.Now)
+	p.feeds = feeds.New(scannerAddr, paperAddr, time.Now)
 
 	log.Printf("execportal: CHỈ TESTNET — host cho phép: %s", strings.Join(broker.TestnetHosts(), ", "))
 	logMarket("spot", m.spot != nil, m.spotSourceVI, m.spotErr)
 	logMarket("futures", m.perp != nil, m.perpSourceVI, m.perpErr)
+	log.Printf("execportal: nguồn CHỈ ĐỌC — scanner %s (relay /ws, chỉ khi tab Scanner mở, tối đa %d phiên) · sổ giấy %s",
+		orOff(scannerAddr), feeds.MaxScannerRelays, orOff(paperAddr))
 	if abs, err := filepath.Abs(p.stateDir); err == nil {
 		log.Printf("execportal: file ý định (CACHE, chung với cmd/execcheck): %s", abs)
 	}
@@ -130,6 +145,9 @@ func main() {
 		WriteTimeout: *actTmo + 2*time.Minute,
 		IdleTimeout:  2 * time.Minute,
 	}
+	// Shutdown does not wait for hijacked connections; the relays are ended
+	// explicitly so the scanner sees its clients leave.
+	srv.RegisterOnShutdown(p.feeds.CloseAll)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -160,6 +178,13 @@ func main() {
 	}
 	p.writeMu.Lock()
 	log.Printf("execportal: đã tắt")
+}
+
+func orOff(addr string) string {
+	if addr == "" {
+		return "TẮT"
+	}
+	return addr
 }
 
 func logMarket(name string, configured bool, sourceVI string, err error) {

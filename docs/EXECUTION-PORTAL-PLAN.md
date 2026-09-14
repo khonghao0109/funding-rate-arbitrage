@@ -115,3 +115,22 @@ Mọi endpoint đều trả về JSON chuẩn, có trường `error_vi` rõ ràn
 ### Việc còn nợ
 
 Ghi đủ ở PLAN mục 4.5b. Mục chặn 4.6: client HTTP của `internal/broker` đi theo redirect, nên một 307 từ host testnet có thể mang API key sang host khác.
+
+---
+
+## 7. HỢP NHẤT THÀNH TRANG VẬN HÀNH BỐN TAB (2026-09-14, Q17)
+
+Nhiệm vụ tiếp theo gộp ba giao diện (scanner 8085, sổ giấy 8086, cổng lệnh 8087) vào chính portal này: bốn tab Market Scanner, Execution Control, Paper Ledger, Crowding Reversal, thiết kế glassmorphism tối. Số đo, review và nợ ở [PLAN.md — "Công cụ vận hành 4.5c"](PLAN.md); quyết định **Q17** ở §7.1.
+
+| Yêu cầu | Thực tế | Lý do |
+|---|---|---|
+| "Dùng Google Fonts" | Inter + JetBrains Mono của Google Fonts, **tải về và phục vụ từ binary** (subset latin, latin-ext, vietnamese; giấy phép OFL đi kèm) | CSP `'self'`: một trang đặt lệnh không nạp tài nguyên từ host khác |
+| Lightweight Charts | 4.2.1 **đóng gói** (tarball npm khớp sha1/sha512 registry, sha256 ghim trong test), không CDN | ai phục vụ script đó thì bấm được nút lệnh |
+| Tab Scanner "kế thừa `static/app.js`" | port sang `ui/js/scanner.js`; `static/` **không đổi** | tiến trình cổng 3.5 phục vụ `static/` từ đĩa |
+| Biểu đồ nến | nến 1 phút **dựng tại trang** từ snapshot giá 200 ms, ghi rõ; giữ cả đường giá theo sàn | scanner không phát nến; không bịa nến của sàn |
+| Tab Crowding "theo dõi tỉ lệ long/short" | **snapshot fixture nghiên cứu** (365 ngày cuối, nến 4h), nhãn NGHIÊN CỨU + danh sách việc còn thiếu | ingestion là Bước 6.2, vẫn sau 3.5 và 3.4; binary giữ credential không được biết host mainnet |
+| "Tổng số dư ví Spot + Futures" | Tổng **USDT** spot + futures, ghi "không quy đổi coin"; BTC riêng | cộng coin vào USDT cần một giá mà header không nên tự chọn |
+| Header "trạng thái kết nối" | thêm chip phòng hộ **xấu nhất trên mọi symbol**, nhấp nháy ở mọi tab | chân trần không nên chỉ thấy được ở tab Execution |
+| Portal lấy dữ liệu scanner qua client | relay trong package `feeds`, không giải mã; chỉ nối khi tab Scanner mở; tối đa 3 phiên, 20 phiên/phút | `internal/scanner` ghi broadcast đồng bộ, hạn 2 s mỗi client — client chậm làm cổng chậm |
+
+Nợ mới chặn 4.6: thư viện biểu đồ và JS các tab feed chạy **cùng origin** với API đặt lệnh.

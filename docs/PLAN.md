@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16) · 4.6 vốn thật, và việc nối tín hiệu sống → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · 4.6 vốn thật, và việc nối tín hiệu sống → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -3359,6 +3359,13 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > của Q15 giữ nguyên; Q16 thêm ba: **chỉ bind loopback**, **mọi lệnh ghi phải
 > qua hộp xác nhận và header hành động**, và **MỘT vị thế mỗi symbol**. Xem mục
 > "Công cụ vận hành 4.5b" ngay trước Bước 4.6.
+>
+> **Nới thêm theo Q17 (2026-09-14):** cổng web đó thành **trang vận hành hợp nhất
+> bốn tab** (Market Scanner, Execution Control, Paper Ledger, Crowding Reversal),
+> vẫn ở `127.0.0.1:8087`. Tab Scanner và Paper là **relay CHỈ ĐỌC** của
+> `cmd/scanner` và `cmd/paperledger` qua package `cmd/execportal/feeds`, không
+> giải mã byte nào và không đường nào tới lệnh; tab Crowding vẽ snapshot fixture
+> nghiên cứu, không live. Xem mục "Công cụ vận hành 4.5c".
 
 #### Bước 4.1 — Hạ tầng REST có ký — ✅ (nghiệm thu 2026-09-13)
 - Package riêng `internal/broker/`, tách hoàn toàn khỏi `exchanges/` (đọc-only).
@@ -4197,6 +4204,119 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > - `.env` và `.paper/exec` tính theo thư mục làm việc: chạy từ gốc repo (portal
 >   cảnh báo nếu không thấy `go.mod`).
 
+#### Công cụ vận hành 4.5c — Trang vận hành hợp nhất bốn tab — ✅ TRÊN TESTNET (2026-09-14, Q17)
+
+> **Không phải một bước mới của lộ trình** — GĐ 4 vẫn 5/6. `cmd/execportal` gộp
+> ba giao diện (dashboard scanner 8085, sổ giấy 8086, cổng lệnh 8087) thành MỘT
+> trang loopback `127.0.0.1:8087` với bốn tab: **Market Scanner**, **Execution
+> Control**, **Paper Ledger**, **Crowding Reversal**. Không sửa `cmd/scanner`,
+> không đụng tiến trình cổng 3.5 (PID 55475), **không sửa `static/`** (tiến trình
+> cổng phục vụ thư mục đó TỪ ĐĨA — `http.FileServer(http.Dir("./static/"))`, cwd
+> là gốc repo — nên sửa nó là sửa trang cổng đang phát), không migrate SQLite,
+> không thêm dependency `go.mod` (gorilla/websocket đã có).
+>
+> ### Dữ liệu vào trang thế nào
+>
+> - **Scanner:** portal nối `ws://127.0.0.1:8085/ws` như một client CHỈ ĐỌC và
+>   relay nguyên văn từng frame qua `GET /api/scanner/ws`; lịch sử funding qua
+>   `GET /api/scanner/funding-history` (đường cố định, symbol theo mẫu, `days` ∈
+>   {7, 30, 90, 180, 365}, cache 60 s để không đọc DB của cổng theo từng tab).
+>   `ui/js/scanner.js` là bản port của `static/app.js` trên cùng hợp đồng WS v1:
+>   ma trận ba nhóm, basis, oracle, nguồn bị loại, funding bps/8h THÔ, chi tiết lối
+>   thoát, bảng độ sâu (tuổi tính tiếp tại trang, không đứng yên một giờ), lịch sử
+>   đã settle, cảnh báo, đường giá theo sàn và **nến 1 phút dựng tại trang** từ
+>   snapshot giá 200 ms (ghi rõ không phải nến của sàn).
+> - **Paper:** `GET /api/paper/ledger` → `cmd/paperledger` 8086, bắt buộc
+>   `X-Execution-Mode: paper`; câu trả lời đi ra với nhãn `paper`, không phải
+>   `testnet`. Portal không mở database nào. Tab giữ chữ PAPER cạnh mọi con số,
+>   APR ròng DỰ PHÓNG lúc vào đứng CẠNH P&L paper, không quy đổi.
+> - **Crowding:** **không có nguồn live** — Bước 6.2 vẫn sau phán quyết 3.5 và 3.4,
+>   và binary giữ credential không được biết host mainnet. Tab vẽ 365 ngày cuối của
+>   fixture nghiên cứu (nến 4h, BTC/ETH: tỉ lệ tài khoản long/short, crowding score,
+>   tín hiệu, mục tiêu) do `crowding_snapshot_test.go` chép nguyên (float round-trip,
+>   lệch với fixture là đỏ), gắn nhãn NGHIÊN CỨU, kèm danh sách việc còn thiếu để
+>   chạy live.
+> - **Header chung:** chip Scanner WS, API Spot/Futures (ping), lệch đồng hồ, trạng
+>   thái phòng hộ **xấu nhất trên MỌI symbol** (đỏ nhấp nháy ở mọi tab khi
+>   `unhedged`; một lần đọc không quyết được không xoá báo động cuối), số dư USDT
+>   spot, futures và "Tổng USDT — không quy đổi coin", tuổi số đọc chạy từng giây,
+>   CŨ sau 30 s.
+> - **Thiết kế:** CSS thuần có token, glassmorphism (`backdrop-filter`), nền
+>   `#08090c`/`#0e1117`, neon `#00f2fe`→`#4facfe`, đỏ `#ff4b4b`; Inter + JetBrains
+>   Mono (Google Fonts, SIL OFL) và TradingView Lightweight Charts 4.2.1 **đóng gói
+>   vào binary** — tarball npm khớp sha1/sha512 registry, sha256 ghim trong test;
+>   không CDN, vì một trang đặt lệnh không nạp script từ host khác. Chuyển tab có
+>   routing `#hash`, phím mũi tên; hiệu ứng tôn trọng `prefers-reduced-motion`
+>   (trạng thái nhấp nháy đổi sang vân sọc). Chọn qua skill `ui-ux-pro-max`; bảng
+>   màu gợi ý của skill bị bỏ vì người vận hành đã chỉ định bảng màu.
+>
+> ### Cổng 3.5 không trả giá cho trang này
+>
+> `internal/scanner` ghi mỗi broadcast ĐỒNG BỘ trên luồng ingestion, giữ một mutex
+> qua mọi client với hạn 2 s mỗi client — một client ngừng đọc tốn cổng tới 2 s MỖI
+> broadcast. Nên: goroutine đọc upstream **không bao giờ chờ trình duyệt**; hàng đợi
+> đầy (1.024 frame ≈ 14 s ở ~73 frame/s đo được trên 13 cặp) thì relay bị ngắt và
+> upstream đóng TRƯỚC; frame trình duyệt gửi bị bỏ; chỉ nối khi tab Scanner đang mở
+> và ngắt 60 s sau khi rời/ẩn, không nối lại khi ẩn; tối đa **3 phiên, 20 phiên mỗi
+> phút**. Test: scanner giả ghi y như thật với hạn 2 s, trình duyệt không đọc → không
+> lần ghi nào hết hạn, lần chậm nhất < 500 ms; **đột biến "hàng đợi chặn" → đỏ sau 67
+> frame**.
+>
+> ### Nghiệm thu 2026-09-14
+>
+> | tiêu chí (nhiệm vụ) | kết quả |
+> |---|---|
+> | 1. mở `http://127.0.0.1:8087`, chuyển tab | bốn tab, chuyển bằng chuột, phím mũi tên và `#hash`; headless Chrome ở 1440 px và 400 px: **0** lỗi console/CSP/request hỏng, không tràn ngang; CSP Trusted Types không làm hỏng biểu đồ nào |
+> | 2. tab Scanner real-time qua WebSocket | relay **LIVE 9/9 nguồn**, ~73 frame/s; ma trận ba nhóm (Perp USDT, Perp USD, Spot USDT) + basis, funding 7 sàn × 13 cặp bps/8h THÔ, 9 dòng độ sâu, lịch sử 30 ngày (BIN-F 1.101 mốc / 366,7 ngày, HYP 8.808 mốc…); một phiên relay liên tục **6 phút 13 giây, 26.386 frame, 0 lần đóng** — sống qua `WriteTimeout` 5 phút của server; log cổng ghi đúng một client nối lúc 17:58:44 và rời lúc 18:04:57 |
+> | 3. tab Execution mở/đóng thật | cú bấm BẰNG SCRIPT lên [Xác nhận] bị từ chối (0 lệnh); mở $65 BTCUSDT `pbtcusdt-20260914-105736-135` → `both_open`, **0,0008 BTC mỗi chân, lệch 0**, **DELTA-NEUTRAL (HEDGED)**, cửa sổ trần **408 ms**, trượt spot 0,00 / perp 0,00 bps, 641 ms, **0 request ghi trước khi bấm xác nhận**; đóng → `both_flat`, perp sàn báo 0, phí 0,04985827 + trượt 0,00016800 → **RealizedQuote −0,05002627**, trôi giá cặp −0,00589600 báo NGOÀI, 2.409 ms; chip đầu trang đổi theo từng bước; `execcheck -status` đọc file do portal ghi: 4 lệnh FILLED, lệch 0, **"cache và sàn khớp nhau"** |
+> | tab Paper | `cmd/paperledger` chạy trên **bản sao** DB (`sqlite3 -readonly … .backup`): 12.922 hàng nhật ký, 26 mở / 3 đóng / 34 từ chối / 29 bất thường, đường equity 50 điểm, PAPER cạnh mọi con số |
+> | tab Crowding | 2.190 nến 4h × 2 tài sản, 6 ô tóm tắt, ba biểu đồ đồng bộ trục thời gian; nhãn NGHIÊN CỨU, không live |
+> | 4. `go test ./...` | xanh; `-race` xanh ở `cmd/execportal` và `cmd/execportal/feeds`; 78 hàm test trong portal |
+> | 5. cổng 3.5 | PID 55475 sống suốt phiên, vẫn nghe 8085, log tăng; log cổng ghi đúng các cặp "client connected / disconnected" trùng các phiên trình duyệt, **0** "WebSocket write error"; `static/` không đổi |
+>
+> **Sau phiên: không còn gì mở** — vị thế perp 0, 0 lệnh mở trên cả hai sàn, BTC
+> spot 1,00000000, ETHUSDT phẳng.
+>
+> ### Review
+>
+> Bốn vòng, trong ngữ cảnh sạch. **Vòng 1** — bảo mật: 0 nghiêm trọng/cao, 2 trung
+> bình (thư viện bên thứ ba cùng origin với API lệnh; guard "feed → lệnh" bằng AST
+> bị chứng minh lách được qua `api.go`) → tách package `feeds`, Trusted Types, COOP,
+> `isTrusted`, test JS rộng hơn; 3 thấp (nhãn `testnet` trên body PAPER, cache lịch
+> sử không xoá, hàng đợi tính theo 25 frame/s trong khi đo được 73). Đúng đắn: **4
+> lớn** — chip phòng hộ chỉ nhìn symbol đang chọn (ETH trần có thể nằm sau chip xanh
+> BTC), tuổi số dư đứng yên, nguồn mất giá vẫn giữ nhãn giá cuối trên trục, tuổi độ
+> sâu đứng yên một giờ — và 11 nhỏ (nối lại khi tab ẩn, thân 200 không đọc được bị
+> coi là kết cục chắc chắn…). **Vòng 2: 1 lớn MỚI do chính bản sửa** — miễn trừ
+> import rộng ra mọi package con dưới `cmd/execportal/` và test chỉ đọc thư mục gốc,
+> nên một package con gọi `EvaluateEntry` lọt qua; cùng 8 nhỏ (lần đọc lỗi xoá báo
+> động unhedged, đường giá bị ẩn sau khi đổi symbol, `fetch` không timeout…). Mọi
+> đột biến tương ứng (package con gọi `EvaluateEntry`, `h := p.feeds`, `httptest`
+> trong `server.go`, `ServeHTTP` ngoài `server.go`, getter mới trong `feeds`,
+> `json.Unmarshal` trong `feeds`, tab Scanner bấm nút mở, tab Paper đổi tên
+> `post`) đều đỏ. **Vòng 3: 1 lớn MỚI do chính bản sửa vòng 2** — giữ báo động
+> cuối bằng cách bọc lý do cũ, nên mỗi lần đọc "unknown" lồng thêm một lớp (153.618 ký
+> tự sau một giờ, đúng lúc sự cố) — sửa bằng cách giữ báo động đã quyết MỘT lần; cùng
+> 9 nhỏ (guard HTTP client khớp chuỗi nên `new(http.Client)` lọt, field view chưa ghim,
+> `server.go` trả được handler feed ra ngoài…), các đột biến tương ứng đều đỏ.
+> **Vòng 4: ĐẠT**, 5 nhỏ đã sửa (một lần đọc báo unhedged không bao giờ bị bỏ vì dấu
+> thời gian — đồng hồ server lùi sẽ giấu báo động; handler feed chỉ được đưa thẳng vào
+> `get(...)`/`mux.Handle(...)`…).
+>
+> ### Nợ có tên
+>
+> - 🔴 **Thư viện biểu đồ và JS các tab feed chạy cùng origin với API lệnh** (Q17):
+>   tách trước 4.6.
+> - 🔴 (giữ từ 4.5b) client HTTP của `internal/broker` đi theo redirect.
+> - `/ws` của `cmd/scanner` nhận mọi Origin — một trang lạ mở client thẳng tới 8085
+>   được; có từ trước, sửa ở binary sau lần chạy 3.
+> - Guard "không đường từ feed tới lệnh" ghim bề mặt và chặn đường hiển nhiên,
+>   không phải chứng minh: tự viết `ResponseWriter` vẫn ghi lại được một handler.
+> - Tab Crowding không live; nến 1 phút là nến dựng tại trang; lựa chọn nguồn/symbol
+>   lưu `localStorage` theo từng trình duyệt.
+> - Chỉ tab Scanner được relay tối đa 3 phiên — bốn tab trình duyệt cùng mở Scanner
+>   thì tab thứ tư bị từ chối (có lý do trong trạng thái).
+
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
 - Chạy tối thiểu 4 tuần, đối chiếu từng chu kỳ funding với sổ sách bot.
@@ -4620,6 +4740,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q14** | **Bước 4.1 (REST có ký) được làm SONG SONG với cổng 3.5 lần 3**, với ba giới hạn: (1) chỉ credential **TESTNET** — `broker.NewClient` từ chối mọi host ngoài danh sách testnet và không có cờ mở mainnet cho tới **4.6**; (2) 4.1 chỉ ✅ khi đã **gọi được số dư testnet thật**, chưa có key thì ghi "chưa nghiệm thu"; (3) **4.2 chỉ bắt đầu sau khi 4.1 được review đạt**; 4.4–4.6 vẫn sau phán quyết 3.5. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-12 |
 | **Q15** | **Bước 4.4b (hai chân thật) và 4.5 (đóng vị thế) được làm TRÊN TESTNET trong lúc chờ phán quyết 3.5**, mở rộng Q14 với năm giới hạn: (1) **chỉ host testnet** — guard của 4.1 giữ nguyên, không thêm cờ mainnet; (2) **không nối vào `cmd/scanner`** — binary giữ cổng vẫn không link `internal/broker` lẫn `internal/execution`, kiểm bằng test `go list -deps`; (3) **không tiền thật**; (4) **4.6 (vốn thật) vẫn sau phán quyết 3.5**; (5) **nối tín hiệu sống → lệnh vẫn sau 3.5 VÀ 3.4** — không có đường nào từ `EvaluateEntry` tới `PlaceOrder` trong phiên này. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-13 |
 | **Q16** | **Cổng web vận hành `cmd/execportal` được đặt lệnh TRÊN TESTNET**, mở rộng Q15 từ "lệnh do người vận hành gõ qua `cmd/execcheck`" sang "lệnh do người vận hành bấm và XÁC NHẬN trên trang loopback". Năm giới hạn của Q15 giữ nguyên, thêm ba: (1) **chỉ bind loopback** (`-bind` nhận IP loopback, không nhận `0.0.0.0` hay tên máy); (2) **mọi lệnh ghi qua hộp xác nhận + header `X-Execportal-Action`**, Host/Origin/Sec-Fetch-Site phải là chính portal; (3) **MỘT vị thế mỗi symbol**. `execportal` được thêm vào danh sách `allowed` của `boundary_test.go` — nhị phân giữ cổng 3.5 vẫn không link `internal/broker` lẫn `internal/execution`. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
+| **Q17** | **Cổng vận hành hợp nhất: `cmd/execportal` (binary giữ credential testnet) RELAY CHỈ ĐỌC dữ liệu của `cmd/scanner` và `cmd/paperledger`** vào cùng trang bốn tab. Giới hạn của Q15/Q16 giữ nguyên, thêm bốn: (1) **relay nguyên văn, không giải mã** — code nằm trong package `cmd/execportal/feeds` chỉ export handler, sức khoẻ và tắt; test ghim bề mặt export, cấm import `internal/` và giải mã JSON, cấm package main đọc feed; (2) **relay không bao giờ làm scanner chờ** — đọc upstream không chặn, trình duyệt chậm thì ngắt relay; chỉ nối khi tab Scanner đang mở, tối đa 3 phiên và 20 phiên/phút; (3) **upstream chỉ là IP loopback, đường cố định**, không theo redirect; (4) **chỉ tab Execution gửi lệnh ghi**, kiểm bằng test đọc JS. Tab Crowding **không có nguồn live** (6.2 vẫn sau 3.5 và 3.4) — vẽ snapshot fixture nghiên cứu. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -4836,6 +4957,56 @@ tiến trình chết vẫn hỏi được sàn về chính lệnh của mình, v
 lệnh/vị thế/số dư **TỪ SÀN** chứ không từ file cache (quy tắc 7). Báo cáo cuối
 phiên phải nêu số vị thế và lệnh mở còn lại trên cả hai testnet.
 
+#### Q17 — Vì sao binary giữ credential được mang dữ liệu scanner, và vì sao chỉ dưới dạng byte
+
+**Quyết định của người vận hành, 2026-09-14** (nhiệm vụ "Tái cấu trúc hợp nhất toàn
+bộ giao diện dự án thành Unified Operator Portal"). **Quyết định LỘ TRÌNH, đảo ngược
+được.**
+
+Ba giao diện ở ba cổng (scanner 8085, sổ giấy 8086, lệnh 8087) được gộp vào MỘT
+trang 8087. Người vận hành chọn để portal lấy dữ liệu scanner qua một client
+WebSocket/REST CHỈ ĐỌC, để `cmd/scanner` tiếp tục không dính tới credential. Hệ quả
+phải nói ra: lần đầu tiên, tiến trình đặt được lệnh **cầm dữ liệu thị trường sống
+và các quyết định của nhật ký 3.5** trong bộ nhớ. Giới hạn 5 của Q15 ("nối tín
+hiệu sống → lệnh vẫn sau 3.5 VÀ 3.4") vốn dựa vào việc hai thứ đó ở hai tiến trình
+khác nhau; từ nay nó phải đứng trong CÙNG một binary.
+
+Nó đứng bằng ba lớp, không lớp nào là lời hứa:
+
+1. **Package, không phải quy ước.** Relay và proxy nằm trong
+   `cmd/execportal/feeds`, chỉ export ba `http.Handler`, một view sức khoẻ, `CloseAll`,
+   `New`, `CheckAddr`. Không hàm export nào trả về giá, rate hay quyết định paper —
+   trình biên dịch chặn phần lớn. `guard_test.go` ghim bề mặt export (thêm một
+   getter là đỏ và phải mở lại Q17), cấm package đó import `internal/` hay giải mã
+   JSON, và trong package main chỉ cho `server.go`/`api.go`/`main.go` nhắc tới nó,
+   qua đúng selector được phép, không đổi tên import, không HTTP client, không
+   `httptest`, không `ServeHTTP` ngoài `server.go`; mọi package con khác bị quét
+   cùng luật import `strategy`/`crowding`/`EvaluateEntry`.
+2. **Không giải mã.** Portal chuyển frame và body nguyên văn; chỉ trình duyệt đọc
+   chúng. Chỗ nối duy nhất giữa một con số trên tab Scanner và nút [MỞ VỊ THẾ] là
+   mắt người vận hành.
+3. **Chỉ tab Execution ghi.** Test đọc JS cấm POST, helper `post`, endpoint lệnh,
+   `fetch`/XHR/`import()`, `.click()`/`dispatchEvent`/`requestSubmit` ở mọi file
+   khác; nút xác nhận chỉ nhận cú bấm thật (`isTrusted`).
+
+**Cái giá phải nói ra — và nó chặn 4.6.** Thư viện biểu đồ bên thứ ba (163 KB) và
+JS của các tab feed giờ chạy CÙNG origin với API đặt lệnh. Một bản build bị sửa, hay
+một chỗ lỡ tay đưa chuỗi feed vào HTML, gọi thẳng được `/api/open` với đủ header mà
+không qua hộp thoại — tường Host/Origin/header không phân biệt được script của
+chính trang. Hôm nay nó bị chặn bằng: sha256 thư viện ghim trong test (tarball npm
+khớp sha1/sha512 registry), CSP Trusted Types (`innerHTML` với chuỗi là lỗi), và
+test đọc JS. Như thế là đủ cho testnet, không đủ cho vốn thật: **trước 4.6 phải
+tách các tab feed khỏi origin đặt lệnh** (iframe `sandbox` origin mờ nhận dữ liệu
+qua `postMessage`, hoặc một listener thứ hai không có route lệnh), rồi mở lại
+quyết định này.
+
+**Và cho cổng 3.5.** Mỗi phiên relay là một client của tiến trình cổng, và
+`internal/scanner` ghi broadcast đồng bộ trên luồng ingestion với hạn 2 s cho mỗi
+client. Relay đọc upstream không bao giờ chờ trình duyệt (test + đột biến), chỉ nối
+khi tab Scanner đang mở, và bị giới hạn 3 phiên, 20 phiên/phút. Ghi nhận thêm: `/ws`
+của chính scanner nhận mọi Origin, nên một trang lạ bất kỳ mở client thẳng tới 8085
+được — có từ trước Q17, portal không làm tệ hơn, sửa ở binary sau lần chạy 3.
+
 #### Q16 — Vì sao cổng web được đặt lệnh, và vì sao nó chặt hơn trang paper
 
 **Quyết định của người vận hành, 2026-09-14** (nhiệm vụ "Trang quản lý vận hành
@@ -5051,7 +5222,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu sống → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu sống → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

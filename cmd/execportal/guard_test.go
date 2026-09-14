@@ -4,6 +4,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io/fs"
 	"net/url"
 	"os"
 	"os/exec"
@@ -142,6 +143,10 @@ func TestExecportal_ImportsNoScannerStoreOrSignal(t *testing.T) {
 		"futures-arbitrage-scanner/internal/history",
 		"futures-arbitrage-scanner/internal/paper",
 		"futures-arbitrage-scanner/internal/notify",
+		// The phase-6 signal core and the replay engine produce decisions; the
+		// Crowding tab shows a static research snapshot and needs neither.
+		"futures-arbitrage-scanner/internal/crowding",
+		"futures-arbitrage-scanner/internal/backtest",
 		"database/sql",
 		"modernc.org/sqlite",
 	}
@@ -157,6 +162,9 @@ func TestExecportal_ImportsNoScannerStoreOrSignal(t *testing.T) {
 		files++
 		for _, spec := range file.Imports {
 			imported, _ := strconv.Unquote(spec.Path.Value)
+			if imported == feedsImportPath {
+				continue // the one sub-package the command may import; it has its own test below
+			}
 			for _, bad := range forbiddenImports {
 				if strings.HasPrefix(imported, bad) {
 					t.Errorf("%s imports %s", path, imported)
@@ -177,8 +185,301 @@ func TestExecportal_ImportsNoScannerStoreOrSignal(t *testing.T) {
 			return true
 		})
 	}
-	if files < 5 {
-		t.Fatalf("only %d files parsed — the test is not seeing the package", files)
+	if files < 8 {
+		t.Fatalf("only %d files parsed — the test is not seeing the command and its sub-packages", files)
+	}
+}
+
+const feedsImportPath = "futures-arbitrage-scanner/cmd/execportal/feeds"
+
+// PLAN Q17: the scanner and paper feeds live in this binary, so "no path from
+// a signal to an order" has to hold INSIDE it. The boundary is a package, so
+// the compiler holds most of it; these tests hold the rest:
+//
+//   - package feeds exports exactly three handlers, a health view, a shutdown
+//     hook, a constructor and an address check — adding a getter that returns
+//     feed data fails here and reopens Q17;
+//   - it links no internal/ package and decodes nothing;
+//   - in the main package only the HTTP wiring names it, only through those
+//     selectors and never under another name, and no file holds an HTTP client
+//     or records a handler's answer.
+//
+// This pins the exported surface and closes the obvious routes; it is not a
+// proof. A determined change can still write its own ResponseWriter — which
+// is why Q17 names the join as the operator's eyes and nothing else.
+func TestExecportal_NoPathFromAFeedToAnOrder(t *testing.T) {
+	fset := token.NewFileSet()
+	pkgs, err := parser.ParseDir(fset, "feeds", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg, ok := pkgs["feeds"]
+	if !ok || len(pkg.Files) < 2 {
+		t.Fatalf("package feeds not found or not whole: %v", pkgs)
+	}
+	allowedExports := map[string]bool{
+		"Feeds": true, "New": true, "CheckAddr": true, "MaxScannerRelays": true,
+		"View": true, "FeedView": true, "ScannerView": true,
+		"Feeds.ScannerSocket": true, "Feeds.ScannerHistory": true, "Feeds.PaperLedger": true,
+		"Feeds.View": true, "Feeds.CloseAll": true,
+	}
+	for name, file := range pkg.Files {
+		for _, spec := range file.Imports {
+			imported, _ := strconv.Unquote(spec.Path.Value)
+			if strings.HasPrefix(imported, "futures-arbitrage-scanner/") {
+				t.Errorf("%s imports %s — the feeds meet nothing of this repository", name, imported)
+			}
+		}
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if !d.Name.IsExported() {
+					continue
+				}
+				key := d.Name.Name
+				if d.Recv != nil && len(d.Recv.List) == 1 {
+					recv := d.Recv.List[0].Type
+					if star, ok := recv.(*ast.StarExpr); ok {
+						recv = star.X
+					}
+					if id, ok := recv.(*ast.Ident); ok {
+						key = id.Name + "." + key
+					}
+				}
+				if !allowedExports[key] {
+					t.Errorf("%s exports %s — package feeds may expose handlers, health and shutdown only (PLAN Q17)", name, key)
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					switch sp := spec.(type) {
+					case *ast.TypeSpec:
+						if sp.Name.IsExported() && !allowedExports[sp.Name.Name] {
+							t.Errorf("%s exports type %s", name, sp.Name.Name)
+						}
+						// A view carries health: numbers, flags and messages. A
+						// slice, a map or a byte field is where feed data would go.
+						if st, ok := sp.Type.(*ast.StructType); ok && sp.Name.IsExported() && sp.Name.Name != "Feeds" {
+							for _, field := range st.Fields.List {
+								typ, _ := field.Type.(*ast.Ident)
+								if typ == nil || !map[string]bool{"string": true, "bool": true, "int": true, "int64": true, "FeedView": true, "ScannerView": true}[typ.Name] {
+									t.Errorf("%s: %s has a field of type %s — views carry health, not data", name, sp.Name.Name, types(field.Type))
+								}
+							}
+						}
+					case *ast.ValueSpec:
+						for _, n := range sp.Names {
+							if n.IsExported() && !allowedExports[n.Name] {
+								t.Errorf("%s exports %s", name, n.Name)
+							}
+						}
+					}
+				}
+			}
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				switch sel.Sel.Name {
+				case "Unmarshal", "NewDecoder", "Decode", "ReadJSON", "Valid":
+					t.Errorf("%s: package feeds calls %s — a feed is relayed as bytes, never read", fset.Position(sel.Pos()), sel.Sel.Name)
+				}
+			}
+			return true
+		})
+	}
+
+	// In the main package: who may import feeds, under which name, and what
+	// they may do with it. Every use of p.feeds or of the package must be a
+	// selector on the allowlist — a bare "h := p.feeds" is refused too.
+	allowedUse := map[string]map[string]bool{
+		"server.go": {"ScannerSocket": true, "ScannerHistory": true, "PaperLedger": true},
+		"api.go":    {"New": true, "View": true, "Feeds": true},
+		"main.go":   {"New": true, "CheckAddr": true, "MaxScannerRelays": true, "CloseAll": true},
+	}
+	for _, path := range topLevelGoFiles(t, false) {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		imports := false
+		for _, spec := range file.Imports {
+			if imported, _ := strconv.Unquote(spec.Path.Value); imported == feedsImportPath {
+				imports = true
+				if spec.Name != nil {
+					t.Errorf("%s imports package feeds as %q — renaming it hides it from this test", path, spec.Name.Name)
+				}
+			}
+		}
+		allowed, wiring := allowedUse[path]
+		if imports && !wiring {
+			t.Errorf("%s imports package feeds — only the HTTP wiring may (PLAN Q17)", path)
+		}
+		// Walk with parents, so "feeds" is accepted only as the X of an
+		// allowed selector.
+		var stack []ast.Node
+		ast.Inspect(file, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			var parent ast.Node
+			if len(stack) > 0 {
+				parent = stack[len(stack)-1]
+			}
+			stack = append(stack, n)
+			isFeeds := false
+			switch x := n.(type) {
+			case *ast.Ident:
+				isFeeds = x.Name == "feeds"
+				if sel, ok := parent.(*ast.SelectorExpr); ok && sel.Sel == x {
+					isFeeds = false // a field name: handled as the selector below
+				}
+				if kv, ok := parent.(*ast.KeyValueExpr); ok && kv.Key == x {
+					isFeeds = false // the composite-literal key in newPortal
+				}
+				if field, ok := parent.(*ast.Field); ok {
+					for _, name := range field.Names {
+						if name == x {
+							isFeeds = false // the struct field declaration
+						}
+					}
+				}
+			case *ast.SelectorExpr:
+				isFeeds = x.Sel.Name == "feeds"
+			}
+			if !isFeeds {
+				return true
+			}
+			if !wiring {
+				t.Errorf("%s names feeds — no order path may (PLAN Q17)", fset.Position(n.Pos()))
+				return true
+			}
+			if assign, ok := parent.(*ast.AssignStmt); ok && path == "main.go" && len(assign.Lhs) == 1 && assign.Lhs[0] == n {
+				return true // main installs the feeds: p.feeds = feeds.New(…)
+			}
+			outer, ok := parent.(*ast.SelectorExpr)
+			if !ok || outer.X != n {
+				t.Errorf("%s: feeds used on its own — only an allowlisted selector on it is permitted (PLAN Q17)", fset.Position(n.Pos()))
+				return true
+			}
+			if !allowed[outer.Sel.Name] {
+				t.Errorf("%s uses feeds.%s, which %s may not (PLAN Q17)", fset.Position(outer.Pos()), outer.Sel.Name, path)
+			}
+			if path == "server.go" {
+				// A handler may only be registered: inside handler(), within a
+				// statement that IS a route registration — get(...) or
+				// mux.Handle(...) — and never assigned, returned or stored.
+				inHandler, registered, stored := false, false, false
+				for i := len(stack) - 1; i >= 0; i-- {
+					switch anc := stack[i].(type) {
+					case *ast.AssignStmt, *ast.ReturnStmt, *ast.ValueSpec, *ast.CompositeLit, *ast.KeyValueExpr, *ast.FuncLit:
+						stored = true
+					case *ast.ExprStmt:
+						if !registered {
+							if call, ok := anc.X.(*ast.CallExpr); ok {
+								switch fun := call.Fun.(type) {
+								case *ast.Ident:
+									registered = fun.Name == "get"
+								case *ast.SelectorExpr:
+									if x, ok := fun.X.(*ast.Ident); ok {
+										registered = x.Name == "mux" && fun.Sel.Name == "Handle"
+									}
+								}
+							}
+							if !registered {
+								stored = true
+							}
+						}
+					case *ast.FuncDecl:
+						inHandler = anc.Name.Name == "handler"
+						i = -1
+					}
+					if registered || stored {
+						for j := i - 1; j >= 0; j-- {
+							if fn, ok := stack[j].(*ast.FuncDecl); ok {
+								inHandler = fn.Name.Name == "handler"
+							}
+						}
+						break
+					}
+				}
+				if !inHandler || !registered || stored {
+					t.Errorf("%s: feeds.%s must be passed straight into a get(...) or mux.Handle(...) registration inside handler()", fset.Position(outer.Pos()), outer.Sel.Name)
+				}
+			}
+			return true
+		})
+		// No file makes an HTTP request: the selectors of net/http that build a
+		// client or send a request are refused under whatever name the file
+		// gives the package, and renaming it is refused too.
+		httpName := ""
+		for _, spec := range file.Imports {
+			if imported, _ := strconv.Unquote(spec.Path.Value); imported == "net/http" {
+				httpName = "http"
+				if spec.Name != nil {
+					t.Errorf("%s imports net/http as %q — renaming it hides it from this test", path, spec.Name.Name)
+					httpName = spec.Name.Name
+				}
+			}
+		}
+		if httpName != "" {
+			clientSide := map[string]bool{"Client": true, "Transport": true, "DefaultClient": true, "DefaultTransport": true,
+				"Get": true, "Head": true, "Post": true, "PostForm": true, "NewRequest": true, "NewRequestWithContext": true, "ReadResponse": true}
+			ast.Inspect(file, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok {
+					if id, ok := sel.X.(*ast.Ident); ok && id.Name == httpName && clientSide[sel.Sel.Name] {
+						t.Errorf("%s uses %s.%s — the command makes no HTTP request of its own (PLAN Q17)", fset.Position(sel.Pos()), httpName, sel.Sel.Name)
+					}
+				}
+				return true
+			})
+		}
+		// Reading a feed from Go without package feeds would take an HTTP
+		// client or a recorded handler. The command makes no request of its
+		// own (the broker and the feeds do), and only server.go serves.
+		src, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, bad := range []string{"net/http/httptest", "gorilla/websocket", "net.Dial", "net/rpc"} {
+			if strings.Contains(string(src), bad) {
+				t.Errorf("%s contains %s — the command reads no feed itself (PLAN Q17)", path, bad)
+			}
+		}
+		if path != "server.go" && strings.Contains(string(src), "ServeHTTP") {
+			t.Errorf("%s calls ServeHTTP — only server.go serves, and nothing else may record a handler's answer", path)
+		}
+	}
+	// No other sub-package may import feeds either.
+	for _, path := range ownGoFiles(t, false) {
+		if !strings.Contains(path, string(filepath.Separator)) || strings.HasPrefix(path, "feeds"+string(filepath.Separator)) {
+			continue
+		}
+		file, err := parser.ParseFile(fset, path, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, spec := range file.Imports {
+			if imported, _ := strconv.Unquote(spec.Path.Value); imported == feedsImportPath {
+				t.Errorf("%s imports package feeds", path)
+			}
+		}
+	}
+
+	if _, err := exec.LookPath("go"); err == nil {
+		cmd := exec.Command("go", "list", "-deps", "./cmd/execportal/feeds")
+		cmd.Dir = filepath.Join("..", "..")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list -deps ./cmd/execportal/feeds: %v", err)
+		}
+		if !strings.Contains(string(out), "github.com/gorilla/websocket") {
+			t.Fatal("the dependency list lacks gorilla/websocket — the test is not reading the real build")
+		}
+		for _, line := range strings.Split(string(out), "\n") {
+			if dep := strings.TrimSpace(line); strings.HasPrefix(dep, "futures-arbitrage-scanner/") && dep != feedsImportPath {
+				t.Errorf("package feeds links %s", dep)
+			}
+		}
 	}
 }
 
@@ -207,6 +508,8 @@ func TestExecportal_BinaryLinksNoScannerAndNoDatabase(t *testing.T) {
 		"futures-arbitrage-scanner/internal/history",
 		"futures-arbitrage-scanner/internal/paper",
 		"futures-arbitrage-scanner/internal/config",
+		"futures-arbitrage-scanner/internal/crowding",
+		"futures-arbitrage-scanner/internal/backtest",
 		"modernc.org/sqlite",
 		"database/sql",
 	} {
@@ -331,22 +634,41 @@ func TestCheckPort_RefusesTheGateAndNonsense(t *testing.T) {
 	}
 }
 
+// ownGoFiles is every Go file of the command AND its sub-packages, so a new
+// package under cmd/execportal/ is read by the same tests as the command.
 func ownGoFiles(t *testing.T, withTests bool) []string {
 	t.Helper()
-	entries, err := os.ReadDir(".")
+	var out []string
+	err := filepath.WalkDir(".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if name := d.Name(); path != "." && (name == "ui" || name == "testdata" || strings.HasPrefix(name, ".")) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || (!withTests && strings.HasSuffix(path, "_test.go")) {
+			return nil
+		}
+		out = append(out, path)
+		return nil
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+	return out
+}
+
+// topLevelGoFiles is the main package only.
+func topLevelGoFiles(t *testing.T, withTests bool) []string {
+	t.Helper()
 	var out []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") {
-			continue
+	for _, path := range ownGoFiles(t, withTests) {
+		if !strings.Contains(path, string(filepath.Separator)) {
+			out = append(out, path)
 		}
-		if !withTests && strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		out = append(out, name)
 	}
 	return out
 }
