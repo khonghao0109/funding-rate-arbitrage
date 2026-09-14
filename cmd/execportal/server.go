@@ -1,0 +1,238 @@
+package main
+
+import (
+	"embed"
+	"io/fs"
+	"log"
+	"net"
+	"net/http"
+	"strings"
+	"time"
+)
+
+// The HTTP layer, and the reason it is more guarded than cmd/paperledger's.
+//
+// Binding to loopback keeps other MACHINES out. It does not keep other WEB
+// PAGES out: any site open in the operator's browser can make that browser
+// send a request to 127.0.0.1:8087, and this server places orders. Three
+// attacks follow from that, and each has its own wall:
+//
+//   - Cross-site request forgery — a hidden form on another page POSTing to
+//     /api/open. Every write needs Content-Type application/json AND the
+//     X-Execportal-Action header, neither of which a page can send cross-origin
+//     without a CORS preflight, and this server answers no preflight. An Origin
+//     or Sec-Fetch-Site that names another site is refused outright.
+//   - DNS rebinding — a hostile name re-pointed at 127.0.0.1 so the browser
+//     treats this server as same-origin with the attacker. The Host header
+//     then carries the attacker's name, and hostGuard refuses every request
+//     whose Host is not this listener's own loopback address.
+//   - Clickjacking — this page framed invisibly under a decoy button.
+//     frame-ancestors 'none' and X-Frame-Options DENY.
+//   - Budget exhaustion — a page looping reads at /api/orders spends the same
+//     per-minute weight an unwind needs. Reads carry the same header wall
+//     (X-Execportal-Action: read), and stop at half the budget.
+//
+// What it does NOT stop: another process on this machine can send the headers
+// a browser cannot. That process can also read .env, so a token here would
+// guard a door whose key is lying next to it.
+//
+// Testnet holds no real money, so none of this protects capital today. It is
+// here because the page is the one PLAN 4.6 would be tempted to point at a
+// real account, and a guard added later is a guard added after the incident.
+
+//go:embed ui
+var uiFiles embed.FS
+
+// actionHeader names what a request is for: "read" on every GET under /api/,
+// the action's own name on a write. Its presence is what forces a browser to
+// preflight a cross-origin request. The UI sends a write's name only after the
+// operator confirmed the dialog — except the reconcile DRY RUN, which sends no
+// order and exists to fill that dialog.
+const actionHeader = "X-Execportal-Action"
+
+const maxRequestBodyBytes = 8 << 10
+
+func (p *portal) handler() http.Handler {
+	mux := http.NewServeMux()
+
+	ui, err := fs.Sub(uiFiles, "ui")
+	if err != nil {
+		// The embed directive guarantees the directory; failing here is a
+		// build defect, found at start-up.
+		log.Fatalf("execportal: embedded ui: %v", err)
+	}
+	mux.Handle("/", onlyMethod(http.MethodGet, http.FileServer(http.FS(ui))))
+
+	// API routes are registered without a method and check it themselves, so
+	// a wrong method answers 405 rather than falling through to the static
+	// file server's 404.
+	get := func(path string, h http.HandlerFunc) {
+		mux.Handle(path, onlyMethod(http.MethodGet, p.apiGuard(readAction, h)))
+	}
+	post := func(path, action string, h http.HandlerFunc) {
+		mux.Handle(path, onlyMethod(http.MethodPost, p.apiGuard(action, p.writeGuard(h))))
+	}
+	get("/api/status", p.handleStatus)
+	get("/api/account", p.handleAccount)
+	get("/api/positions", p.handlePositions)
+	get("/api/orders", p.handleOrders)
+	get("/api/funding", p.handleFunding)
+	get("/api/intents", p.handleIntents)
+	get("/api/market", p.handleMarket)
+	post("/api/open", "open", p.handleOpen)
+	post("/api/close", "close", p.handleClose)
+	post("/api/reconcile", "reconcile", p.handleReconcile)
+	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, http.StatusNotFound, "not_found", "không có endpoint "+quoteForMessage(r.URL.Path))
+	})
+
+	return logRequests(securityHeaders(p.hostGuard(mux)))
+}
+
+func onlyMethod(method string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != method && !(method == http.MethodGet && r.Method == http.MethodHead) {
+			w.Header().Set("Allow", method)
+			writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "endpoint này chỉ nhận "+method)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// allowedHosts is every spelling of this listener's own address a browser on
+// this machine may put in the Host header.
+func allowedHosts(bindIP, port string) map[string]bool {
+	hosts := map[string]bool{
+		strings.ToLower(net.JoinHostPort(bindIP, port)): true,
+		"localhost:" + port:                             true,
+	}
+	return hosts
+}
+
+// hostGuard refuses a request whose Host is not this listener — the DNS
+// rebinding wall.
+func (p *portal) hostGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !p.hosts[strings.ToLower(r.Host)] {
+			writeError(w, http.StatusForbidden, "host_refused",
+				"Host "+quoteForMessage(r.Host)+" không phải địa chỉ loopback của portal này — từ chối (chống DNS rebinding)")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// readAction is the action header every GET under /api/ must carry.
+const readAction = "read"
+
+// apiGuard is the cross-site wall in front of EVERY endpoint under /api/, reads
+// included.
+//
+// Reads are guarded too because they are not free: each one is a signed call
+// against the same per-minute weight budget the order path draws on, and a
+// hostile page looping no-cors fetches at /api/orders could fill that budget
+// and make an unwind wait for the next minute. A no-cors request cannot carry
+// the custom header, and a cors one needs a preflight this server never grants.
+func (p *portal) apiGuard(action string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
+			writeError(w, http.StatusForbidden, "cross_site_refused",
+				"yêu cầu đến từ trang khác (Sec-Fetch-Site: "+quoteForMessage(site)+") — từ chối")
+			return
+		}
+		if origin := r.Header.Get("Origin"); origin != "" && !p.sameOrigin(origin) {
+			writeError(w, http.StatusForbidden, "cross_origin_refused",
+				"yêu cầu mang Origin "+quoteForMessage(origin)+" không phải portal này — từ chối")
+			return
+		}
+		if got := r.Header.Get(actionHeader); got != action {
+			why := "— lệnh chỉ được gửi sau khi người vận hành xác nhận"
+			if action == readAction {
+				why = "— chỉ trang của portal được đọc API"
+			}
+			writeError(w, http.StatusForbidden, "action_header_missing",
+				"thiếu hoặc sai header "+actionHeader+" (cần "+quoteForMessage(action)+") "+why)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// writeGuard adds what only an order-sending endpoint needs: a JSON body, of
+// bounded size. A cross-site form can post neither without a preflight.
+func (p *portal) writeGuard(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "application/json") {
+			writeError(w, http.StatusUnsupportedMediaType, "json_required",
+				"thân yêu cầu phải là application/json")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (p *portal) sameOrigin(origin string) bool {
+	rest, ok := strings.CutPrefix(strings.ToLower(origin), "http://")
+	return ok && p.hosts[rest]
+}
+
+func securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "+
+				"font-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "no-referrer")
+		h.Set("Cross-Origin-Resource-Policy", "same-origin")
+		h.Set("X-Execution-Mode", "testnet")
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			h.Set("Cache-Control", "no-store")
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// statusRecorder captures the status for the log line.
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (s *statusRecorder) WriteHeader(code int) {
+	s.status = code
+	s.ResponseWriter.WriteHeader(code)
+}
+
+// logRequests writes one line per request: method, path, status, duration.
+// Never a body and never a query string — neither carries a credential today,
+// and a log line that never prints them cannot start to.
+func logRequests(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		startedAt := time.Now()
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(rec, r)
+		elapsed := time.Since(startedAt)
+		// The page polls every three seconds; a successful poll is not news.
+		if r.Method == http.MethodGet && rec.status < 400 && elapsed < 2*time.Second {
+			return
+		}
+		log.Printf("execportal: %s %s → %d (%s)", r.Method, r.URL.Path, rec.status, elapsed.Round(time.Millisecond))
+	})
+}
+
+// quoteForMessage bounds an attacker-controlled header before it is echoed.
+func quoteForMessage(s string) string {
+	if len(s) > 80 {
+		s = s[:80] + "…"
+	}
+	return "\"" + strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return '?'
+		}
+		return r
+	}, s) + "\""
+}

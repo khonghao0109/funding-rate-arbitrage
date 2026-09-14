@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · 4.6 vốn thật, và việc nối tín hiệu sống → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16) · 4.6 vốn thật, và việc nối tín hiệu sống → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -3351,6 +3351,14 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > unit-test với broker giả trong lúc chờ, nhưng không được đánh dấu xong trước
 > cổng." Đó là luật đã sinh ra 4.4a; Q15 nới đúng phần "trên sàn thật" của
 > 4.4b/4.5 và giữ nguyên phần vốn thật.
+>
+> **Nới thêm theo Q16 (2026-09-14):** ngoài `cmd/execcheck`, người vận hành được
+> mở, đóng và làm phẳng vị thế testnet qua **cổng web `cmd/execportal`**
+> (loopback `127.0.0.1:8087`) — cùng máy trạng thái `internal/execution`, cùng
+> `ClientOrderID` suy ra từ intent, cùng file ý định `.paper/exec/`. Năm giới hạn
+> của Q15 giữ nguyên; Q16 thêm ba: **chỉ bind loopback**, **mọi lệnh ghi phải
+> qua hộp xác nhận và header hành động**, và **MỘT vị thế mỗi symbol**. Xem mục
+> "Công cụ vận hành 4.5b" ngay trước Bước 4.6.
 
 #### Bước 4.1 — Hạ tầng REST có ký — ✅ (nghiệm thu 2026-09-13)
 - Package riêng `internal/broker/`, tách hoàn toàn khỏi `exchanges/` (đọc-only).
@@ -4076,6 +4084,119 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 - **Nghiệm thu:** vòng đời mở→giữ→đóng hoàn chỉnh trên testnet. **ĐẠT
   2026-09-13** — bảng ở trên; sai lệch về biên 15 phút được nêu ở dòng đầu.
 
+#### Công cụ vận hành 4.5b — Cổng web testnet `cmd/execportal` — ✅ TRÊN TESTNET (2026-09-14, Q16)
+
+> **Không phải một bước mới của lộ trình** — GĐ 4 vẫn 5/6. Đây là `cmd/execcheck`
+> có một trang web phía trước, làm theo [EXECUTION-PORTAL-PLAN.md](EXECUTION-PORTAL-PLAN.md)
+> và quyết định Q16. Không sửa `cmd/scanner`, không đụng tiến trình cổng 3.5
+> (PID 55475, cổng 8085), không migrate SQLite: portal không mở database nào.
+>
+> ### Có gì
+>
+> - **9 endpoint JSON**, mọi lỗi mang `error_vi`: `GET /api/status`, `/api/account`
+>   (số dư, ping, lệch đồng hồ, weight), `/api/positions`, `/api/orders`,
+>   `/api/funding` (các dòng `FUNDING_FEE` 7 ngày + đối soát theo ý định),
+>   `/api/intents` (lịch sử từ cache, trượt giá bps), `/api/market` (luật sàn, cỡ
+>   nhỏ nhất gợi ý); `POST /api/open`, `/api/close`, `/api/reconcile`. Hai
+>   endpoint `intents` và `market` là thêm so với bản kế hoạch, vì bảng lịch sử và
+>   gợi ý cỡ lệnh cần chúng.
+> - **Giao diện vanilla** nhúng vào binary (`ui/`): nền `#0a0a0a`, badge cố định
+>   `[BINANCE TESTNET DEMO]`, hai thẻ Spot Long / Futures Short với thanh Delta
+>   Residual, bảng điều khiển có **hộp xác nhận bắt buộc**, lịch sử, lệnh mở,
+>   funding; tự đọc lại mỗi 3 giây.
+> - **Trạng thái phòng hộ đọc từ sàn, theo hai đường.** Chân spot không có vị thế
+>   (ví testnet có sẵn 1 BTC), nên phần của chiến lược là tổng các lệnh CỦA CHÍNH
+>   các ý định, tra theo `ClientOrderID` suy ra; chân perp là vị thế sàn báo, và
+>   CŨNG được cộng từ lệnh của các ý định. Năm trạng thái: `both_open`,
+>   `both_flat`, `unhedged`, **`evidence_conflict`** (perp sàn báo ≠ perp các ý
+>   định giải thích — in cả hai số, không tự hoà giải) và **`unknown`** (lệnh
+>   không đọc được, còn đang chạy, hay file ý định hỏng — không bao giờ gộp vào
+>   "phẳng").
+>
+> ### Khác `execcheck` có chủ đích
+>
+> 1. **MỘT vị thế mỗi symbol.** `execution.Close` chứng minh đóng xong bằng vị
+>    thế perp của TÀI KHOẢN về phẳng; có hai ý định cùng symbol thì đóng cái đầu
+>    sẽ bị báo `ErrUnwindIncomplete` giả. Portal từ chối mở khi sàn còn perp hoặc
+>    một ý định đang theo dõi còn giữ gì, và từ chối đóng khi perp sàn ≠ perp của ý
+>    định.
+> 2. **Cỡ đóng lấy theo lệnh của chính ý định, ở chân PERP SHORT** — không phải
+>    `QtyCoin 0` (cả tài khoản) và không phải chân nhỏ hơn: hai chân lệch dưới một
+>    bước (spot 0,00079 / perp 0,0008) mà đóng theo chân nhỏ thì để lại 0,0001 perp
+>    không nút nào gỡ được. Bán spot nhiều hơn tối đa một bước thô cần ví spot có
+>    đủ coin **tự do** — không đủ thì từ chối trước khi gửi.
+> 3. **Không đánh dấu "đã đóng" khi không lệnh nào tới sàn**, và tách
+>    `sent_unconfirmed` (lệnh đóng ĐÃ tới sàn nhưng không khớp gì) ra khỏi
+>    "từ chối" dù `execution` trả cùng `ErrCloseRefused`; không tái dùng id đóng.
+> 4. **Làm phẳng quét MỌI ý định**, dừng khi có `evidence_conflict`, và **chỉ gửi
+>    đúng kế hoạch người vận hành đã xem** (`plan_digest` của lượt chạy thử). Id
+>    lệnh cân chuyển về `execution.ReconcileClientOrderID` để hai công cụ thấy
+>    lệnh của nhau.
+>
+> ### Lớp chặn web (vì loopback chặn MÁY khác, không chặn TRANG khác)
+>
+> Host phải là chính địa chỉ loopback (chống DNS rebinding); mọi `/api/` cần
+> header `X-Execportal-Action` (`read` cho GET, tên hành động cho POST) và bị từ
+> chối khi `Sec-Fetch-Site`/`Origin` chỉ trang khác (chống CSRF — không trang nào
+> gửi được header này mà không qua preflight, và server không trả preflight);
+> POST phải `application/json`, thân ≤ 8 KiB; CSP `'self'`, `frame-ancestors
+> 'none'`; `-bind` chỉ nhận IP loopback, cấm 8082/8085/8086; khoá `flock` trên
+> `.paper/exec` để hai portal không cùng gửi một lệnh; các lần ĐỌC dừng ở 50%
+> weight mỗi phút để phần còn lại dành cho lệnh; đồng hồ đo lại mỗi 30 s chứ không
+> mỗi lần đọc. Test offline: `guard_test.go` (host testnet, không cờ mainnet,
+> không import scanner/store/strategy, không `EvaluateEntry`, `go list -deps`,
+> hình dạng file ý định bằng AST so với `execcheck`), từng lớp chặn một, và **cả
+> ba lệnh ghi chạy thật qua handler với `brokertest`**.
+>
+> ### Nghiệm thu 2026-09-14 (qua CHÍNH giao diện, headless Chrome điều khiển bằng DevTools)
+>
+> | tiêu chí | kết quả |
+> |---|---|
+> | `go test ./...` | xanh; `-race` xanh ở `cmd/execportal`, `internal/execution`, `internal/broker/...` |
+> | `go run ./cmd/execportal -port 8087` | lên, cả hai credential, 0 cảnh báo |
+> | trang hiển thị số dư, không lỗi console | **0** lỗi console/CSP/request hỏng; spot USDT 10.000,04 · BTC 1,00000000, futures USDT 4.995,81 |
+> | mở $65 BTCUSDT | điền 65 → [MỞ VỊ THẾ 2 CHÂN] → hộp xác nhận (0 request ghi trước khi bấm) → `both_open`, **0,0008 BTC mỗi chân, lệch 0**, badge **DELTA-NEUTRAL (HEDGED)**; cửa sổ trần **375 ms**, trượt spot +0,51 bps / perp 0,00 bps, tổng 606 ms |
+> | đóng | `both_flat`, perp sàn báo 0, 2.187 ms; phí 0,04969794 + trượt 0,00460800 → **RealizedQuote −0,05430594** (funding 0 — giữ 11 s, không qua mốc settle), trôi giá cặp −0,00216800 báo BÊN NGOÀI; hai bằng chứng phẳng khớp |
+> | đối chiếu chéo | `go run ./cmd/execcheck -status -intent pbtcusdt-20260914-085854-757` đọc được file do portal ghi: 4 lệnh FILLED, lệch 0, **"cache và sàn khớp nhau"** |
+> | cổng 3.5 | PID 55475 sống suốt phiên, vẫn nghe 8085, log tăng liên tục |
+>
+> **Sau phiên: không còn gì mở** — vị thế perp 0, 0 lệnh mở trên cả hai sàn, BTC
+> spot về đúng 1,00000000.
+>
+> ### Review tìm ra gì (và đã sửa trước nghiệm thu)
+>
+> Review bảo mật: 0 nghiêm trọng/cao. Review đúng đắn vòng 1: **6 lỗi lớn** — hai
+> vị thế cùng symbol gây báo động giả; tái dùng id đóng; UI báo "KHÔNG thực hiện"
+> khi thật ra chưa rõ; lệnh đóng đã gửi bị gọi là "từ chối"; lệnh ghi không có
+> test; Q16 chưa ghi. Vòng 2: **1 lỗi lớn mới do chính bản sửa** — đóng theo chân
+> nhỏ để lại một bước perp khoá symbol. Vòng 3: ĐẠT. Chạy thử chỉ-đọc trên testnet
+> còn bắt thêm một lỗi: `read_at_ms` của `/api/positions` bằng 0 vì `defer` ghi
+> vào bản sao của giá trị trả về.
+>
+> ### Nợ có tên (không sửa trong công cụ này)
+>
+> - 🔴 **Client HTTP của `internal/broker` đi theo redirect**: một 307 từ host
+>   testnet trỏ sang mainnet mang theo `X-MBX-APIKEY` và thân lệnh đã ký (review
+>   bảo mật đo bằng chương trình nháp). Key testnet bị mainnet từ chối nên hôm nay
+>   không mất gì, nhưng đây là bức tường 4.6 dựa vào. **Phải sửa trước 4.6**:
+>   `CheckRedirect` từ chối + RoundTripper kiểm host trên MỌI request.
+> - **Phần còn lại của một lần đóng dở** (`ErrCloseIncomplete` /
+>   `sent_unconfirmed`) không đóng được từ portal, vì id của `execution.Close` cố
+>   định theo ý định. Cần hậu tố thế hệ trong `execution` trước cỡ lệnh mà khớp
+>   một phần là chuyện có thể.
+> - `cmd/execcheck -close` vẫn ghi "đã đóng" cả khi lần đóng bị từ chối trước khi
+>   gửi.
+> - `execution.priceFunding` cộng mọi dòng `FUNDING_FEE` bất kể tài sản; phần đối
+>   soát của portal chỉ cộng dòng bằng quote.
+> - Ý định do `execcheck` mở mà gỡ vị thế HỎNG không có ghi chú, nên portal không
+>   đọc lại chân spot của nó mỗi 3 s (chân perp vẫn lộ ra thành
+>   `evidence_conflict`; LÀM PHẲNG quét tất cả).
+> - Một tiến trình khác trên cùng máy gọi được API (không token) — chấp nhận, vì
+>   tiến trình đó cũng đọc được `.env`. Khoá `flock` chặn hai portal, không chặn
+>   `execcheck` chạy song song trên cùng ý định.
+> - `.env` và `.paper/exec` tính theo thư mục làm việc: chạy từ gốc repo (portal
+>   cảnh báo nếu không thấy `go.mod`).
+
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
 - Chạy tối thiểu 4 tuần, đối chiếu từng chu kỳ funding với sổ sách bot.
@@ -4498,6 +4619,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q13** | **Track crowding giữ NGUYÊN quy ước biên của fixture: bucket `(T−4h, T]`, `label="right", closed="right"`** — close tại T là close của nến **1 phút MỞ tại T**, nên quyết định sớm nhất ở **T+60s**. KHÔNG dùng nến 4h của sàn, KHÔNG sinh lại fixture bằng `strict_completed_panel`. **Quyết định LỘ TRÌNH, đảo ngược được** cho tới khi 6.2 ghi dòng đầu tiên; sau đó đảo ngược nghĩa là sinh lại fixture và chạy lại nghiệm thu 6.1 | 2026-09-12 |
 | **Q14** | **Bước 4.1 (REST có ký) được làm SONG SONG với cổng 3.5 lần 3**, với ba giới hạn: (1) chỉ credential **TESTNET** — `broker.NewClient` từ chối mọi host ngoài danh sách testnet và không có cờ mở mainnet cho tới **4.6**; (2) 4.1 chỉ ✅ khi đã **gọi được số dư testnet thật**, chưa có key thì ghi "chưa nghiệm thu"; (3) **4.2 chỉ bắt đầu sau khi 4.1 được review đạt**; 4.4–4.6 vẫn sau phán quyết 3.5. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-12 |
 | **Q15** | **Bước 4.4b (hai chân thật) và 4.5 (đóng vị thế) được làm TRÊN TESTNET trong lúc chờ phán quyết 3.5**, mở rộng Q14 với năm giới hạn: (1) **chỉ host testnet** — guard của 4.1 giữ nguyên, không thêm cờ mainnet; (2) **không nối vào `cmd/scanner`** — binary giữ cổng vẫn không link `internal/broker` lẫn `internal/execution`, kiểm bằng test `go list -deps`; (3) **không tiền thật**; (4) **4.6 (vốn thật) vẫn sau phán quyết 3.5**; (5) **nối tín hiệu sống → lệnh vẫn sau 3.5 VÀ 3.4** — không có đường nào từ `EvaluateEntry` tới `PlaceOrder` trong phiên này. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-13 |
+| **Q16** | **Cổng web vận hành `cmd/execportal` được đặt lệnh TRÊN TESTNET**, mở rộng Q15 từ "lệnh do người vận hành gõ qua `cmd/execcheck`" sang "lệnh do người vận hành bấm và XÁC NHẬN trên trang loopback". Năm giới hạn của Q15 giữ nguyên, thêm ba: (1) **chỉ bind loopback** (`-bind` nhận IP loopback, không nhận `0.0.0.0` hay tên máy); (2) **mọi lệnh ghi qua hộp xác nhận + header `X-Execportal-Action`**, Host/Origin/Sec-Fetch-Site phải là chính portal; (3) **MỘT vị thế mỗi symbol**. `execportal` được thêm vào danh sách `allowed` của `boundary_test.go` — nhị phân giữ cổng 3.5 vẫn không link `internal/broker` lẫn `internal/execution`. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -4714,6 +4836,30 @@ tiến trình chết vẫn hỏi được sàn về chính lệnh của mình, v
 lệnh/vị thế/số dư **TỪ SÀN** chứ không từ file cache (quy tắc 7). Báo cáo cuối
 phiên phải nêu số vị thế và lệnh mở còn lại trên cả hai testnet.
 
+#### Q16 — Vì sao cổng web được đặt lệnh, và vì sao nó chặt hơn trang paper
+
+**Quyết định của người vận hành, 2026-09-14** (nhiệm vụ "Trang quản lý vận hành
+Chiến lược 1", [EXECUTION-PORTAL-PLAN.md](EXECUTION-PORTAL-PLAN.md)). **Quyết định
+LỘ TRÌNH, đảo ngược được.**
+
+Thứ được nới vẫn là **đường vận chuyển**, không phải đường quyết định: portal gọi
+đúng `execution.Open`/`Close` mà `execcheck` gọi, và người bấm nút vẫn là người
+vận hành. Không có tín hiệu nào chạm lệnh — `guard_test.go` đọc mã nguồn của
+portal để bắt `EvaluateEntry`/`EvaluateExit`, import `internal/strategy`,
+`internal/store` hay `cmd/scanner`.
+
+Nhưng một trang web đặt lệnh có một kiểu rủi ro mà một lệnh terminal không có:
+**mọi trang đang mở trong trình duyệt của người vận hành đều gửi được request tới
+`127.0.0.1`**. Bind loopback chặn máy khác, không chặn trang khác. Vì thế Q16 thêm
+lớp chặn CSRF/DNS rebinding/clickjacking và giới hạn weight cho các lần đọc (một
+trang lạ gọi đọc liên tục có thể đốt ngân sách mà một lần gỡ vị thế cần) — mô tả ở
+mục "Công cụ vận hành 4.5b". Và vì `execution.Close` đo "đóng xong" bằng vị thế perp
+của cả tài khoản, portal giữ **một vị thế mỗi symbol**.
+
+**Cái giá phải nói ra.** Lệnh giờ cách người vận hành hai cú bấm thay vì một dòng
+lệnh gõ tay, và 4.6 sẽ bị cám dỗ trỏ trang này vào tài khoản thật. Trước khi đó:
+sửa lỗi client đi theo redirect (nợ 🔴 ở mục 4.5b), và mở lại quyết định này.
+
 #### Q11 — Vì sao bỏ Basis Trade, và vì sao KHÔNG kết luận gì về nó
 
 **Bằng chứng đã đo** — gói nghiên cứu `crowding-reversal-python-share-20260904`
@@ -4905,7 +5051,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu sống → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu sống → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

@@ -18,6 +18,7 @@ crypto-futures-arbitrage-scanner
 /paperledger
 /fundingcheck
 /brokercheck
+/execportal
 
 # macOS
 .DS_Store

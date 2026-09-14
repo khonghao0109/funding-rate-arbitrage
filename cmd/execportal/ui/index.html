@@ -1,0 +1,242 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Funding Arb · Cổng vận hành TESTNET</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="demo-badge" role="note">[BINANCE TESTNET DEMO]</div>
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>FUNDING ARB <span>· CHIẾN LƯỢC 1</span></h1>
+      <p>Spot LONG + perp SHORT cùng khối lượng · cổng vận hành · chỉ testnet, không tiền thật</p>
+    </div>
+    <div class="symbol-pick">
+      <label for="symbol">Symbol</label>
+      <select id="symbol" aria-label="Symbol đang xem"></select>
+    </div>
+    <div class="portal-state" id="portal-state" aria-live="polite">
+      <span class="dot" id="portal-dot"></span><span id="portal-line">đang kết nối portal…</span>
+    </div>
+  </header>
+
+  <main>
+    <!-- Connection and balances -->
+    <section class="tiles" aria-label="Kết nối sàn và số dư">
+      <article class="tile" id="conn-spot">
+        <div class="label"><span>Kết nối Spot</span><span class="pill idle" data-role="pill">—</span></div>
+        <div class="meta" data-role="host">—</div>
+        <dl class="kv">
+          <dt>Ping</dt><dd data-role="ping">—</dd>
+          <dt>Lệch đồng hồ</dt><dd data-role="skew">—</dd>
+          <dt>Weight / phút</dt><dd data-role="weight">—</dd>
+        </dl>
+        <div class="meter" data-role="meter"><span></span></div>
+        <div class="err" data-role="err" hidden></div>
+      </article>
+      <article class="tile" id="conn-futures">
+        <div class="label"><span>Kết nối Futures</span><span class="pill idle" data-role="pill">—</span></div>
+        <div class="meta" data-role="host">—</div>
+        <dl class="kv">
+          <dt>Ping</dt><dd data-role="ping">—</dd>
+          <dt>Lệch đồng hồ</dt><dd data-role="skew">—</dd>
+          <dt>Weight / phút</dt><dd data-role="weight">—</dd>
+        </dl>
+        <div class="meter" data-role="meter"><span></span></div>
+        <div class="err" data-role="err" hidden></div>
+      </article>
+      <article class="tile" id="bal-spot-quote">
+        <div class="label"><span>Ví Spot · <span data-role="asset">USDT</span></span></div>
+        <div class="value num" data-role="value">—</div>
+        <div class="meta" data-role="meta">tự do / khoá</div>
+      </article>
+      <article class="tile" id="bal-spot-base">
+        <div class="label"><span>Ví Spot · <span data-role="asset">BTC</span></span></div>
+        <div class="value num" data-role="value">—</div>
+        <div class="meta" data-role="meta">gồm cả số dư testnet cấp sẵn</div>
+      </article>
+      <article class="tile" id="bal-futures-quote">
+        <div class="label"><span>Ví Futures · <span data-role="asset">USDT</span></span></div>
+        <div class="value num" data-role="value">—</div>
+        <div class="meta" data-role="meta">tự do / khoá</div>
+      </article>
+    </section>
+
+    <!-- Position monitor -->
+    <section class="panel" aria-label="Theo dõi vị thế">
+      <div class="panel-head">
+        <h2>Vị thế hai chân — đọc từ sàn</h2>
+        <span class="small muted" id="pos-age">—</span>
+      </div>
+      <div class="status-banner" id="hedge-banner" data-status="unknown" role="status" aria-live="polite">
+        <span class="word" id="hedge-word">CHƯA XÁC ĐỊNH ĐƯỢC</span>
+        <span class="why" id="hedge-why">đang đọc…</span>
+      </div>
+      <div class="legs">
+        <article class="leg spot">
+          <h3>SPOT LONG</h3>
+          <div class="big" id="spot-qty">—</div>
+          <div class="unit" id="spot-unit">coin · theo lệnh của các ý định, đọc từ sàn</div>
+          <dl class="kv">
+            <dt>Ý định đang theo dõi</dt><dd id="spot-intents">—</dd>
+            <dt>Số dư ví (bối cảnh)</dt><dd id="spot-balance">—</dd>
+          </dl>
+        </article>
+        <div class="delta" id="delta" data-state="warn">
+          <div class="small muted">DELTA RESIDUAL = spot − |perp|</div>
+          <div class="big" id="delta-value">—</div>
+          <div class="track" aria-hidden="true"><span id="delta-bar"></span></div>
+          <div class="small muted" id="delta-tol">dung sai —</div>
+        </div>
+        <article class="leg perp">
+          <h3>FUTURES SHORT</h3>
+          <div class="big" id="perp-qty">—</div>
+          <div class="unit">coin · vị thế sàn báo (âm là short)</div>
+          <dl class="kv">
+            <dt>Lệnh ý định giải thích</dt><dd id="perp-intents">—</dd>
+            <dt>Lãi/lỗ chưa chốt (GỘP, sàn)</dt><dd id="perp-upnl">—</dd>
+            <dt>Sàn cập nhật</dt><dd id="perp-updated">—</dd>
+          </dl>
+        </article>
+      </div>
+      <details class="evidence" id="evidence">
+        <summary>Bằng chứng theo từng ý định (lệnh suy ra từ intent id, đọc từ sàn)</summary>
+        <ul class="warnings" id="pos-warnings" hidden></ul>
+        <div class="table-wrap mt8">
+          <table>
+            <thead><tr><th>Ý định</th><th class="r">Spot coin</th><th class="r">Perp coin</th><th class="r">Lệch</th><th>Trạng thái</th><th>Lệnh thấy trên sàn</th></tr></thead>
+            <tbody id="pos-intents"></tbody>
+          </table>
+        </div>
+      </details>
+    </section>
+
+    <!-- Control pad -->
+    <section class="panel" aria-label="Bảng điều khiển">
+      <div class="panel-head">
+        <h2>Bảng điều khiển</h2>
+        <span class="busy-line" id="busy-line" aria-live="polite"></span>
+      </div>
+      <div class="control">
+        <form class="box open-box" id="open-form" novalidate>
+          <div class="field">
+            <label for="notional">Notional mỗi chân (quote)</label>
+            <input type="number" id="notional" name="notional" min="1" max="50000" step="0.01" value="65" inputmode="decimal" required>
+            <div class="hint" id="notional-hint">cỡ nhỏ nhất gợi ý: —</div>
+          </div>
+          <div class="field">
+            <span class="lbl">Thứ tự chân</span>
+            <div class="radios" role="radiogroup" aria-label="Thứ tự chân">
+              <label><input type="radio" name="leg_order" value="sequential_spot_first" checked> Tuần tự (spot trước)</label>
+              <label><input type="radio" name="leg_order" value="parallel"> Song song</label>
+            </div>
+          </div>
+          <div class="hint" id="market-hint">—</div>
+          <button type="submit" class="btn primary" id="btn-open">[MỞ VỊ THẾ 2 CHÂN]</button>
+        </form>
+
+        <div class="box">
+          <div class="field">
+            <label for="close-intent">Ý định cần đóng</label>
+            <select id="close-intent"><option value="">— không có ý định đang giữ —</option></select>
+            <div class="hint" id="close-hint">Đóng perp trước, rồi spot đúng bằng phần perp đã đóng.</div>
+          </div>
+          <button type="button" class="btn secondary" id="btn-close" disabled>[ĐÓNG VỊ THẾ 2 CHÂN]</button>
+        </div>
+
+        <div class="box danger">
+          <div class="hint">Khẩn cấp: quét MỌI ý định của symbol, đọc lệnh từ sàn, làm phẳng phần LỆCH (chân trần). Xem kế hoạch trước khi gửi.</div>
+          <button type="button" class="btn danger" id="btn-reconcile">[LÀM PHẲNG TOÀN BỘ (RECONCILE)]</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Last action -->
+    <section class="panel result" id="result" hidden aria-live="polite">
+      <div class="panel-head">
+        <h2 id="result-title">Kết quả thao tác</h2>
+        <button type="button" class="btn ghost small" id="result-dismiss">Ẩn</button>
+      </div>
+      <div id="result-body"></div>
+    </section>
+
+    <!-- History and reconciliation -->
+    <section class="tables">
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Lịch sử ý định &amp; trượt giá (CACHE)</h2>
+          <span class="small muted">file .paper/exec — đúng tại thời điểm đã qua, không phải bằng chứng hiện tại</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>Mở lúc</th><th>Ý định</th><th>Nguồn</th><th class="r">Notional</th><th class="r">Khớp coin</th>
+              <th class="r">Giá spot</th><th class="r">Giá perp</th><th class="r">Trượt spot bps</th><th class="r">Trượt perp bps</th>
+              <th class="r">Trần ms</th><th>Kết cục</th><th>Đóng lúc</th><th class="r">Funding</th><th class="r">Phí</th>
+              <th class="r">Trượt quote</th><th class="r">Realized*</th><th>Ghi chú</th>
+            </tr></thead>
+            <tbody id="intents-body"></tbody>
+          </table>
+        </div>
+        <p class="small faint">* Realized = funding − phí (quote) − trượt giá; KHÔNG phải lãi ròng — trôi giá cặp, phí bằng tài sản khác và chi phí vốn nằm ngoài. Trượt bps dương là tệ hơn giá tốt nhất lúc chụp sổ.</p>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Lệnh đang mở trên sàn</h2>
+          <span class="small muted" id="orders-age">—</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Sàn</th><th>Side</th><th>Loại</th><th>Trạng thái</th><th class="r">Khối lượng</th><th class="r">Giá</th><th class="r">Đã khớp</th><th>Reduce-only</th><th>Ý định</th><th>Cập nhật</th></tr></thead>
+            <tbody id="orders-body"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-head">
+          <h2>Funding sàn đã trả &amp; đối soát</h2>
+          <span class="small muted" id="funding-age">—</span>
+        </div>
+        <div class="hint" id="funding-head">—</div>
+        <div class="table-wrap mt8">
+          <table>
+            <thead><tr><th>Mốc settle</th><th class="r">Thu nhập</th><th>Tài sản</th><th>tranId</th><th>Ý định giữ qua mốc</th></tr></thead>
+            <tbody id="funding-body"></tbody>
+          </table>
+        </div>
+        <div class="table-wrap mt12">
+          <table>
+            <thead><tr><th>Ý định</th><th>Giữ từ → đến</th><th class="r">Perp coin</th><th class="r">Cache: funding lúc đóng</th><th class="r">Sàn: dòng trong cửa sổ</th><th class="r">Số dòng</th><th class="r">Dòng chung</th><th>Ghi chú</th></tr></thead>
+            <tbody id="funding-intents"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
+    <footer>
+      <p>Mọi con số về vị thế, số dư, lệnh và funding đọc lại TỪ SÀN (quy tắc 7); file ý định chỉ là cache. Mọi vị thế do người vận hành bấm — không có đường nào từ tín hiệu sống tới lệnh.</p>
+      <p>Không con số nào ở đây là "lãi ròng". Portal chỉ nói chuyện với testnet: <span id="footer-hosts">—</span>.</p>
+    </footer>
+  </main>
+
+  <dialog id="confirm" aria-labelledby="confirm-title">
+    <form method="dialog" id="confirm-form">
+      <h2 id="confirm-title">Xác nhận</h2>
+      <div class="testnet-line">LỆNH THẬT trên BINANCE TESTNET — không tiền thật</div>
+      <div class="body" id="confirm-body"></div>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="confirm-cancel">Huỷ</button>
+        <button type="button" class="btn primary" id="confirm-ok">Xác nhận</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

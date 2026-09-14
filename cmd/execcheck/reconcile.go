@@ -75,9 +75,11 @@ func intentNets(ctx context.Context, cl clients, intentID, symbol string) (spot,
 }
 
 // reconcileClientOrderID is derived like every other id here, so a second run
-// of -reconcile finds the first one's order instead of sending another.
+// of -reconcile finds the first one's order instead of sending another. The
+// derivation is execution's, shared with cmd/execportal, so the two tools can
+// see each other's squaring orders.
 func reconcileClientOrderID(intentID string, leg execution.LegName) string {
-	return execution.LegClientOrderID(intentID+"|reconcile", leg)
+	return execution.ReconcileClientOrderID(intentID, leg)
 }
 
 func runReconcile(ctx context.Context, intentID string, apply bool) int {

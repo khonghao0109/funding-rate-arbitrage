@@ -80,12 +80,13 @@ func TestNoCommandBinaryLinksTheBroker(t *testing.T) {
 	root := filepath.Join("..", "..")
 
 	// The command list is READ FROM DISK rather than typed out, so a new
-	// binary cannot escape this test by nobody remembering to add it. The two
+	// binary cannot escape this test by nobody remembering to add it. The
 	// exceptions are named, and naming them is the point: they are the only
 	// binaries allowed to hold a credential or to place an order.
 	allowed := map[string]string{
 		"brokercheck": "step 4.1/4.2 diagnostic — the one command that reads a balance and places a test order",
-		"execcheck":   "step 4.4b/4.5 diagnostic — the one command that opens and closes a position (PLAN Q15)",
+		"execcheck":   "step 4.4b/4.5 diagnostic — opens and closes a position from the terminal (PLAN Q15)",
+		"execportal":  "strategy 1 execution portal — web portal for testnet demo execution (PLAN Q16)",
 	}
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {

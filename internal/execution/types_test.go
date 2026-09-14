@@ -92,6 +92,35 @@ func TestLegClientOrderID_CarriesTheSchemeVersion(t *testing.T) {
 	}
 }
 
+// The squaring order an operator sends to rebalance a pair is the fourth id
+// family, and two commands send it: cmd/execcheck -reconcile and
+// cmd/execportal's /api/reconcile. They must derive the SAME id, or a second
+// tool run after the first cannot see the order the first one sent and squares
+// the pair a second time — a hedge turned into a position by the tool meant to
+// fix one. So the derivation lives here, beside the other three, and is pinned
+// to the exact formula execcheck shipped with on 2026-09-13.
+func TestReconcileClientOrderID_IsTheSchemeExeccheckShippedAndDistinct(t *testing.T) {
+	const intentID = "xbtcusdt-20260913-074359"
+	for _, leg := range []LegName{LegSpot, LegPerp} {
+		got := ReconcileClientOrderID(intentID, leg)
+		if want := LegClientOrderID(intentID+"|reconcile", leg); got != want {
+			t.Errorf("%s: ReconcileClientOrderID = %q, want %q — the id an existing -reconcile order already carries", leg, got, want)
+		}
+		for name, other := range map[string]string{
+			"open":   LegClientOrderID(intentID, leg),
+			"close":  CloseClientOrderID(intentID, leg),
+			"unwind": UnwindClientOrderID(intentID, leg),
+		} {
+			if got == other {
+				t.Errorf("%s: the reconcile id equals the %s id %q", leg, name, other)
+			}
+		}
+	}
+	if ReconcileClientOrderID(intentID, LegSpot) == ReconcileClientOrderID(intentID, LegPerp) {
+		t.Error("both legs derive the same reconcile id")
+	}
+}
+
 func truncate(s string) string {
 	if len(s) > 40 {
 		return s[:40] + "…"

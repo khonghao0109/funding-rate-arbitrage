@@ -1,0 +1,432 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"regexp"
+	"strings"
+	"testing"
+	"time"
+
+	"futures-arbitrage-scanner/internal/broker"
+	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
+)
+
+// The HTTP walls, exercised through the real handler with no socket at all.
+// Every client built here carries a transport that FAILS THE TEST if it is
+// ever used, so a refusal that reached a venue cannot pass.
+
+const testHost = "127.0.0.1:8087"
+
+type noNetwork struct{ t *testing.T }
+
+func (n noNetwork) RoundTrip(r *http.Request) (*http.Response, error) {
+	n.t.Errorf("a request reached the network: %s %s — this path must refuse before any venue call", r.Method, r.URL.Host+r.URL.Path)
+	return nil, io.ErrUnexpectedEOF
+}
+
+func offlineClient(t *testing.T, market broker.Market) *binancebroker.Client {
+	t.Helper()
+	cfg, err := binancebroker.DefaultConfig(market, broker.Credentials{APIKey: broker.NewSecret("k"), APISecret: broker.NewSecret("s")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.HTTPClient = &http.Client{Transport: noNetwork{t}}
+	c, err := binancebroker.New(market, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// testPortal builds a portal on a temp state dir. withClients gives it
+// credentialed clients that cannot reach any network.
+func testPortal(t *testing.T, withClients bool) *portal {
+	t.Helper()
+	m := markets{spotErr: broker.ErrNoCredentials, perpErr: broker.ErrNoCredentials}
+	if withClients {
+		m = markets{spot: offlineClient(t, broker.MarketSpot), perp: offlineClient(t, broker.MarketFuturesUSDM),
+			spotSourceVI: "test", perpSourceVI: "test"}
+	}
+	p := newPortal(m, []string{"BTCUSDT", "ETHUSDT"}, "127.0.0.1", "8087", execSettings{
+		MarginFrac: 0.5, MaxSlippageBps: 10, LegTimeout: 10 * time.Second, ActionTimeout: time.Minute,
+	}, nil)
+	p.stateDir = t.TempDir()
+	return p
+}
+
+type reqOpt func(*http.Request)
+
+func withHeader(k, v string) reqOpt { return func(r *http.Request) { r.Header.Set(k, v) } }
+func withHost(h string) reqOpt      { return func(r *http.Request) { r.Host = h } }
+
+func do(t *testing.T, p *portal, method, path, body string, opts ...reqOpt) *httptest.ResponseRecorder {
+	t.Helper()
+	var reader io.Reader
+	if body != "" {
+		reader = strings.NewReader(body)
+	}
+	req := httptest.NewRequest(method, path, reader)
+	req.Host = testHost
+	if method == http.MethodGet && strings.HasPrefix(path, "/api/") {
+		// What the page's own fetch sends; tests of the guard remove it.
+		req.Header.Set(actionHeader, readAction)
+	}
+	for _, o := range opts {
+		o(req)
+	}
+	rec := httptest.NewRecorder()
+	p.handler().ServeHTTP(rec, req)
+	return rec
+}
+
+func writeOpts(action string) []reqOpt {
+	return []reqOpt{withHeader("Content-Type", "application/json"), withHeader(actionHeader, action),
+		withHeader("Origin", "http://"+testHost), withHeader("Sec-Fetch-Site", "same-origin")}
+}
+
+func errorCode(t *testing.T, rec *httptest.ResponseRecorder) string {
+	t.Helper()
+	var body errorBody
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response is not an error body: %v — %s", err, rec.Body.String())
+	}
+	if body.ErrorVI == "" {
+		t.Errorf("error response without error_vi: %s", rec.Body.String())
+	}
+	return body.ErrorCode
+}
+
+func TestHandler_ServesThePageWithItsSecurityHeaders(t *testing.T) {
+	p := testPortal(t, false)
+	rec := do(t, p, http.MethodGet, "/", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "[BINANCE TESTNET DEMO]") {
+		t.Error("the page does not carry the testnet badge")
+	}
+	h := rec.Header()
+	if csp := h.Get("Content-Security-Policy"); !strings.Contains(csp, "frame-ancestors 'none'") || !strings.Contains(csp, "script-src 'self'") {
+		t.Errorf("CSP = %q", csp)
+	}
+	if h.Get("X-Frame-Options") != "DENY" || h.Get("X-Content-Type-Options") != "nosniff" {
+		t.Errorf("framing/sniffing headers missing: %v", h)
+	}
+	for _, asset := range []string{"/app.js", "/style.css"} {
+		if rec := do(t, p, http.MethodGet, asset, ""); rec.Code != http.StatusOK {
+			t.Errorf("GET %s = %d", asset, rec.Code)
+		}
+	}
+}
+
+// The page is served under script-src 'self' and style-src 'self', so an inline
+// script, an inline handler or a style attribute would be refused by the
+// browser and logged as a console error on every load.
+func TestUI_HasNothingTheCSPWouldRefuse(t *testing.T) {
+	blob, err := os.ReadFile("ui/index.html")
+	if err != nil {
+		t.Fatal(err)
+	}
+	html := string(blob)
+	for name, re := range map[string]*regexp.Regexp{
+		"style attribute":       regexp.MustCompile(`\sstyle\s*=`),
+		"inline <style>":        regexp.MustCompile(`<style[\s>]`),
+		"inline script":         regexp.MustCompile(`<script(?:\s+[^>]*)?>\s*[^<\s]`),
+		"inline event handler":  regexp.MustCompile(`\son[a-z]+\s*=`),
+		"remote stylesheet/url": regexp.MustCompile(`(?:href|src)\s*=\s*"https?://`),
+	} {
+		if loc := re.FindStringIndex(html); loc != nil {
+			t.Errorf("index.html contains an %s near %q", name, html[loc[0]:min(loc[1]+40, len(html))])
+		}
+	}
+	js, err := os.ReadFile("ui/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loc := regexp.MustCompile(`\.(?:innerHTML|outerHTML)\s*[+]?=|insertAdjacentHTML\s*\(|document\.write\s*\(`).FindIndex(js); loc != nil {
+		t.Errorf("app.js writes HTML from a string near %q; venue text must go through textContent", js[loc[0]:loc[1]])
+	}
+}
+
+// DNS rebinding: the Host header names somebody else.
+func TestHandler_RefusesAForeignHost(t *testing.T) {
+	p := testPortal(t, false)
+	for _, host := range []string{"evil.example:8087", "127.0.0.1:9999", "attacker.test", ""} {
+		rec := do(t, p, http.MethodGet, "/api/status", "", withHost(host))
+		if rec.Code != http.StatusForbidden || errorCode(t, rec) != "host_refused" {
+			t.Errorf("Host %q → %d %s", host, rec.Code, rec.Body.String())
+		}
+	}
+	for _, host := range []string{testHost, "localhost:8087", "LOCALHOST:8087"} {
+		if rec := do(t, p, http.MethodGet, "/api/status", "", withHost(host)); rec.Code != http.StatusOK {
+			t.Errorf("Host %q → %d", host, rec.Code)
+		}
+	}
+}
+
+// Reads are guarded too: each one spends the weight budget an unwind needs.
+func TestAPIGuard_ReadsRefuseAnotherSite(t *testing.T) {
+	p := testPortal(t, false)
+	for name, opts := range map[string][]reqOpt{
+		"no action header":   {withHeader(actionHeader, "")},
+		"a write's header":   {withHeader(actionHeader, "open")},
+		"cross-site no-cors": {withHeader(actionHeader, ""), withHeader("Sec-Fetch-Site", "cross-site")},
+		"foreign origin":     {withHeader("Origin", "http://evil.example")},
+	} {
+		for _, path := range []string{"/api/status", "/api/positions?symbol=BTCUSDT", "/api/orders?symbol=BTCUSDT"} {
+			if rec := do(t, p, http.MethodGet, path, "", opts...); rec.Code != http.StatusForbidden {
+				t.Errorf("%s GET %s → %d, want 403", name, path, rec.Code)
+			}
+		}
+	}
+	// The page itself needs no header.
+	if rec := do(t, p, http.MethodGet, "/", "", withHeader("Sec-Fetch-Site", "none")); rec.Code != http.StatusOK {
+		t.Errorf("GET / = %d", rec.Code)
+	}
+}
+
+// CSRF: every missing wall on its own is a refusal, and none of them reaches a
+// venue (the offline clients would fail the test).
+func TestWriteGuard_EachWallRefusesOnItsOwn(t *testing.T) {
+	p := testPortal(t, true)
+	body := `{"symbol":"BTCUSDT","notional_quote":65,"leg_order":"sequential_spot_first"}`
+	cases := []struct {
+		name   string
+		opts   []reqOpt
+		status int
+		code   string
+	}{
+		{"no content type", []reqOpt{withHeader(actionHeader, "open")}, http.StatusUnsupportedMediaType, "json_required"},
+		{"form content type", []reqOpt{withHeader("Content-Type", "application/x-www-form-urlencoded"), withHeader(actionHeader, "open")}, http.StatusUnsupportedMediaType, "json_required"},
+		{"no action header", []reqOpt{withHeader("Content-Type", "application/json")}, http.StatusForbidden, "action_header_missing"},
+		{"another action's header", []reqOpt{withHeader("Content-Type", "application/json"), withHeader(actionHeader, "close")}, http.StatusForbidden, "action_header_missing"},
+		{"foreign origin", append(writeOpts("open"), withHeader("Origin", "http://evil.example")), http.StatusForbidden, "cross_origin_refused"},
+		{"https origin of our own host", append(writeOpts("open"), withHeader("Origin", "https://"+testHost)), http.StatusForbidden, "cross_origin_refused"},
+		{"cross-site fetch", append(writeOpts("open"), withHeader("Sec-Fetch-Site", "cross-site")), http.StatusForbidden, "cross_site_refused"},
+		{"same-site but not same-origin", append(writeOpts("open"), withHeader("Sec-Fetch-Site", "same-site")), http.StatusForbidden, "cross_site_refused"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, p, http.MethodPost, "/api/open", body, tc.opts...)
+			if rec.Code != tc.status || errorCode(t, rec) != tc.code {
+				t.Errorf("got %d %s, want %d %s", rec.Code, rec.Body.String(), tc.status, tc.code)
+			}
+		})
+	}
+	if rec := do(t, p, http.MethodGet, "/api/open", ""); rec.Code != http.StatusMethodNotAllowed {
+		t.Errorf("GET /api/open = %d, want 405", rec.Code)
+	}
+}
+
+// A write request that clears every wall but is malformed is refused before
+// the lock, the credentials or any venue.
+func TestOpen_RefusesABadRequestBeforeAnything(t *testing.T) {
+	p := testPortal(t, true)
+	for name, body := range map[string]string{
+		"not json":           `symbol=BTCUSDT`,
+		"unknown field":      `{"symbol":"BTCUSDT","notional_quote":65,"leverage":20}`,
+		"two values":         `{"symbol":"BTCUSDT","notional_quote":65}{"symbol":"BTCUSDT","notional_quote":65}`,
+		"symbol not allowed": `{"symbol":"DOGEUSDT","notional_quote":65}`,
+		"symbol injection":   `{"symbol":"BTCUSDT&side=BUY","notional_quote":65}`,
+		"zero notional":      `{"symbol":"BTCUSDT","notional_quote":0}`,
+		"negative notional":  `{"symbol":"BTCUSDT","notional_quote":-65}`,
+		"over the ceiling":   `{"symbol":"BTCUSDT","notional_quote":50000.01}`,
+		"bad leg order":      `{"symbol":"BTCUSDT","notional_quote":65,"leg_order":"perp_first"}`,
+		"notional as string": `{"symbol":"BTCUSDT","notional_quote":"65"}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			rec := do(t, p, http.MethodPost, "/api/open", body, writeOpts("open")...)
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf("got %d %s, want 400", rec.Code, rec.Body.String())
+			}
+		})
+	}
+	big := `{"symbol":"BTCUSDT","notional_quote":65,"leg_order":"` + strings.Repeat("x", maxRequestBodyBytes) + `"}`
+	if rec := do(t, p, http.MethodPost, "/api/open", big, writeOpts("open")...); rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized body → %d, want 413", rec.Code)
+	}
+}
+
+func TestOpen_WithoutCredentialsSaysWhichAndSendsNothing(t *testing.T) {
+	p := testPortal(t, false)
+	rec := do(t, p, http.MethodPost, "/api/open", `{"symbol":"BTCUSDT","notional_quote":65}`, writeOpts("open")...)
+	if rec.Code != http.StatusServiceUnavailable || errorCode(t, rec) != "no_credentials" {
+		t.Errorf("got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The double-click: a second write while one runs is REFUSED, not queued, and
+// refused before any venue is asked anything.
+func TestWrites_ASecondWriteWhileOneRunsIsRefused(t *testing.T) {
+	p := testPortal(t, true)
+	release, _, _, ok := p.acquire("open")
+	if !ok {
+		t.Fatal("could not take the lock on an idle portal")
+	}
+	defer release()
+
+	for _, tc := range []struct{ action, path, body string }{
+		{"open", "/api/open", `{"symbol":"BTCUSDT","notional_quote":65}`},
+		{"close", "/api/close", `{"symbol":"BTCUSDT","intent_id":"pbtcusdt-20260914-101500-123"}`},
+		{"reconcile", "/api/reconcile", `{"symbol":"BTCUSDT","apply":true}`},
+	} {
+		rec := do(t, p, http.MethodPost, tc.path, tc.body, writeOpts(tc.action)...)
+		if rec.Code != http.StatusConflict || errorCode(t, rec) != "busy" {
+			t.Errorf("%s while open runs → %d %s, want 409 busy", tc.action, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "open") {
+			t.Errorf("%s: the refusal does not say what is running: %s", tc.action, rec.Body.String())
+		}
+	}
+
+	var status statusView
+	rec := do(t, p, http.MethodGet, "/api/status", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &status); err != nil {
+		t.Fatal(err)
+	}
+	if !status.Busy || status.BusyAction != "open" {
+		t.Errorf("status while busy = busy %v action %q", status.Busy, status.BusyAction)
+	}
+}
+
+// The intent id becomes a file path; a path is refused before the lock.
+func TestClose_RefusesAnIntentIDThatIsAPath(t *testing.T) {
+	p := testPortal(t, true)
+	for _, id := range []string{"../../.env", "..", "a/b", "x.json", "", "UPPER", strings.Repeat("a", 65)} {
+		body, _ := json.Marshal(closeRequest{Symbol: "BTCUSDT", IntentID: id})
+		rec := do(t, p, http.MethodPost, "/api/close", string(body), writeOpts("close")...)
+		if rec.Code != http.StatusBadRequest || errorCode(t, rec) != "bad_intent_id" {
+			t.Errorf("intent id %q → %d %s", id, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+func TestClose_UnknownIntentAndWrongSymbolAreRefusedBeforeAnyVenue(t *testing.T) {
+	p := testPortal(t, true)
+	rec := do(t, p, http.MethodPost, "/api/close", `{"symbol":"BTCUSDT","intent_id":"pbtcusdt-20260914-000000-000"}`, writeOpts("close")...)
+	if rec.Code != http.StatusNotFound || errorCode(t, rec) != "intent_not_found" {
+		t.Errorf("unknown intent → %d %s", rec.Code, rec.Body.String())
+	}
+
+	if err := saveState(p.stateDir, intentState{IntentID: "pethusdt-20260914-000000-000", Symbol: "ETHUSDT", Outcome: "both_open"}); err != nil {
+		t.Fatal(err)
+	}
+	rec = do(t, p, http.MethodPost, "/api/close", `{"symbol":"BTCUSDT","intent_id":"pethusdt-20260914-000000-000"}`, writeOpts("close")...)
+	if rec.Code != http.StatusUnprocessableEntity || errorCode(t, rec) != "symbol_mismatch" {
+		t.Errorf("symbol mismatch → %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// The digest fingerprints what an apply would send; any change between the
+// dry run and the apply changes it.
+func TestPlanDigest_ChangesWithAnythingTheApplyWouldSend(t *testing.T) {
+	base := reconcileView{Symbol: "BTCUSDT", VenuePerpQtyCoin: -0.0008, Plans: []squarePlan{
+		{IntentID: testIntent, Action: "send", Market: "spot", Side: "SELL", ClientOrderID: "fa1sabc", QtyCoin: 0.0008},
+	}}
+	d := planDigest(base)
+	if d == "" || planDigest(base) != d {
+		t.Fatal("the digest is empty or not deterministic")
+	}
+	mutations := map[string]func(v *reconcileView){
+		"venue perp moved":    func(v *reconcileView) { v.VenuePerpQtyCoin = -0.0009 },
+		"quantity changed":    func(v *reconcileView) { v.Plans[0].QtyCoin = 0.0007 },
+		"side changed":        func(v *reconcileView) { v.Plans[0].Side = "BUY" },
+		"another plan":        func(v *reconcileView) { v.Plans = append(v.Plans, squarePlan{IntentID: "x", Action: "send"}) },
+		"refused now":         func(v *reconcileView) { v.Plans[0].Action = "refuse" },
+		"conflict appeared":   func(v *reconcileView) { v.ConflictVI = "x" },
+		"reduce-only flipped": func(v *reconcileView) { v.Plans[0].ReduceOnly = true },
+	}
+	for name, mutate := range mutations {
+		v := base
+		v.Plans = append([]squarePlan(nil), base.Plans...)
+		mutate(&v)
+		if planDigest(v) == d {
+			t.Errorf("%s: digest unchanged", name)
+		}
+	}
+}
+
+// Past half the per-minute weight the page stops READING, so what is left of
+// the budget belongs to an order's read-back, cancel or unwind. The offline
+// clients fail the test if any venue call is made.
+func TestReads_StopAtHalfTheWeightBudget(t *testing.T) {
+	p := testPortal(t, true)
+	budget := p.markets.spot.HTTP().Budget()
+	if err := budget.Reserve(context.Background(), budget.LimitPerMin()/2); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.markets.readBudgetError(); err == nil {
+		t.Fatal("half the spot budget spent, and reads are still allowed")
+	}
+
+	rec := do(t, p, http.MethodGet, "/api/positions?symbol=BTCUSDT", "")
+	var pos positionsView
+	if err := json.Unmarshal(rec.Body.Bytes(), &pos); err != nil {
+		t.Fatal(err)
+	}
+	if pos.Status != statusUnknown || !strings.Contains(pos.ReasonVI, "weight") {
+		t.Errorf("positions over budget = %s / %q", pos.Status, pos.ReasonVI)
+	}
+	var acct accountView
+	rec = do(t, p, http.MethodGet, "/api/account?symbol=BTCUSDT", "")
+	if err := json.Unmarshal(rec.Body.Bytes(), &acct); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(acct.Spot.ErrorVI, "weight") || acct.Spot.WeightUsed1m < budget.LimitPerMin()/2 {
+		t.Errorf("account over budget = %+v — it should say why and still show the tally", acct.Spot)
+	}
+	for _, path := range []string{"/api/orders?symbol=BTCUSDT", "/api/funding?symbol=BTCUSDT", "/api/market?symbol=BTCUSDT"} {
+		if rec := do(t, p, http.MethodGet, path, ""); !strings.Contains(rec.Body.String(), "weight") {
+			t.Errorf("GET %s over budget did not say so: %s", path, rec.Body.String())
+		}
+	}
+}
+
+func TestReadEndpoints_RefuseASymbolOffTheList(t *testing.T) {
+	p := testPortal(t, false)
+	for _, path := range []string{"/api/positions", "/api/orders", "/api/funding", "/api/market", "/api/positions?symbol=DOGEUSDT", "/api/account?symbol=x"} {
+		if rec := do(t, p, http.MethodGet, path, ""); rec.Code != http.StatusBadRequest {
+			t.Errorf("GET %s = %d, want 400", path, rec.Code)
+		}
+	}
+}
+
+// With no credentials the page still works and says what is missing.
+func TestReadEndpoints_WithoutCredentialsStillAnswer(t *testing.T) {
+	p := testPortal(t, false)
+	rec := do(t, p, http.MethodGet, "/api/positions?symbol=BTCUSDT", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("positions = %d", rec.Code)
+	}
+	var pos positionsView
+	if err := json.Unmarshal(rec.Body.Bytes(), &pos); err != nil {
+		t.Fatal(err)
+	}
+	if pos.Status != statusUnknown || !strings.Contains(pos.ReasonVI, "credential") {
+		t.Errorf("positions without credentials = %s / %q, want unknown naming the credential", pos.Status, pos.ReasonVI)
+	}
+	// A position figure without its age is a claim about now the venue never
+	// made. Found live: a defer stamping a COPY left read_at_ms at 0.
+	if pos.ReadAtMs <= 0 || pos.StatusVI == "" {
+		t.Errorf("positions carries read_at_ms %d and status_vi %q — both must be set on every return path", pos.ReadAtMs, pos.StatusVI)
+	}
+
+	rec = do(t, p, http.MethodGet, "/api/account", "")
+	var acct accountView
+	if err := json.Unmarshal(rec.Body.Bytes(), &acct); err != nil {
+		t.Fatal(err)
+	}
+	if acct.Spot.Configured || acct.Spot.ErrorVI == "" || acct.Futures.Configured {
+		t.Errorf("account without credentials = %+v", acct)
+	}
+
+	rec = do(t, p, http.MethodGet, "/api/intents", "")
+	if rec.Code != http.StatusOK {
+		t.Errorf("intents = %d", rec.Code)
+	}
+}

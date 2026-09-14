@@ -893,6 +893,23 @@ venues by their own derived ids at residual 0.00000000 coin, perp position 0,
 0 open orders on both markets, and the spot BTC balance back at exactly the
 figure it started from.
 
+**The execution portal shipped 2026-09-14 on TESTNET (decision Q16), and it is
+a tool, not a roadmap step — phase 4 stays at 5/6.** `cmd/execportal` puts
+`cmd/execcheck` behind a loopback page so the operator can open, watch, close
+and square Strategy 1's pair with a confirmed click; there is still no path from
+a live signal to an order. Accepted THROUGH THE PAGE in headless Chrome: $65
+BTCUSDT opened `both_open` at 0.0008 BTC a leg, residual 0, banner
+`DELTA-NEUTRAL (HEDGED)`, unhedged window 375 ms; closed `both_flat` with
+RealizedQuote −0.05430594 and pair drift −0.00216800 beside it; 0 console
+errors; `execcheck -status` read the portal's intent file and found cache and
+venue in agreement; nothing left open. Two reviews found 7 major defects before
+that run (two positions on one symbol, spent close ids, a sent close called
+"refused", a sub-step close leaving a perp step nobody could reach…), all fixed
+and tested against `brokertest`. **Named debt that blocks 4.6:** the
+`internal/broker` HTTP client follows redirects, so a 307 from a testnet host
+would carry the API key and a signed order to another host — see PLAN "Công cụ
+vận hành 4.5b".
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1119,8 +1136,9 @@ cmd/brokercheck/     step-4.1/4.2 diagnostic against Binance TESTNET. Default:
                      exchangeInfo, a resting LIMIT GTC BUY far below the market,
                      looked up by the caller's id, cancelled, re-read, and the
                      position/balance read back from the VENUE. Prints no key,
-                     no signature and no amount. The ONE command that links
-                     internal/broker; a test asserts every other one does not
+                     no signature and no amount. One of the three commands
+                     allowed to link internal/broker (with execcheck and
+                     execportal); a test asserts every other one does not
 cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      delta-neutral position, reads it back, closes it — every
                      position typed by a person, no path from a live signal to
@@ -1132,6 +1150,18 @@ cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      ClientOrderID from the intent id and read the orders,
                      position and balances back from the venue, printing both
                      when they disagree (rule 7). No database, no schema
+cmd/execportal/      Strategy 1 operator page on Binance TESTNET (PLAN Q16):
+                     cmd/execcheck's open / close / reconcile behind a vanilla
+                     web UI on LOOPBACK 127.0.0.1:8087 — same execution machine,
+                     same derived ClientOrderIDs, same .paper/exec intent files.
+                     Every write needs a confirmed dialog plus the
+                     X-Execportal-Action header; Host, Origin and Sec-Fetch-Site
+                     must be the portal itself (CSRF / DNS rebinding). Hedge
+                     status is computed from the venue twice — the intents' own
+                     orders and the perp position — and a disagreement is
+                     evidence_conflict, never reconciled. ONE position per
+                     symbol, because execution.Close proves "closed" from the
+                     account's whole perp position. No database, no schema
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
                      the root package is the shared KERNEL: types, Feeds, the
                      RunStream lifecycle, FetchJSON, and the normalization
@@ -1336,6 +1366,12 @@ go run ./cmd/execcheck -status -intent <id>      # reads orders/position/balance
 go run ./cmd/execcheck -close  -intent <id>
 go run ./cmd/execcheck -funding-check -intent <id>   # the venue's FUNDING_FEE rows vs rate x notional
 go run ./cmd/execcheck -reconcile -intent <id>       # add -apply to square an unbalanced pair
+
+# The same actions behind a loopback page (PLAN Q16). Run from the repo root:
+# .env and .paper/exec are resolved from the working directory. Every /api/
+# call needs the X-Execportal-Action header ("read" for a GET).
+go run ./cmd/execportal -port 8087               # http://127.0.0.1:8087
+curl -s -H 'X-Execportal-Action: read' 'http://127.0.0.1:8087/api/positions?symbol=BTCUSDT'
 
 # Re-record each venue's testdata/ from the live venues. Opens real sockets, so
 # it is skipped by default; run it when a venue changes its payloads.

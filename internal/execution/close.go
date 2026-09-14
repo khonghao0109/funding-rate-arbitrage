@@ -189,6 +189,20 @@ func closeClientOrderID(intentID string, leg LegName) string {
 	return CloseClientOrderID(intentID, leg)
 }
 
+// ReconcileClientOrderID derives the id of the SQUARING order an operator sends
+// to put an unbalanced pair back within one step — the fourth order an intent
+// can produce, after the open, the close and the unwind.
+//
+// Nothing in this package sends it: Open and Close resolve to both legs open or
+// both flat by themselves. It lives here anyway because two tools send it
+// (cmd/execcheck -reconcile and cmd/execportal) and they must agree on it. A
+// second reconcile that cannot find the first one's order by id reads the pair
+// as still unbalanced and squares it again, which turns the fix into a naked
+// position of the opposite sign.
+func ReconcileClientOrderID(intentID string, leg LegName) string {
+	return LegClientOrderID(intentID+"|reconcile", leg)
+}
+
 // Close closes both legs of one position and reports what it made.
 func (o *Trader) Close(ctx context.Context, req CloseRequest) (CloseResult, error) {
 	intent := req.Intent
