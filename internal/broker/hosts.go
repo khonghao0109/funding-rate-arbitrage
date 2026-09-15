@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -62,7 +63,22 @@ func TestnetHosts() []string {
 func checkTestnetBaseURL(raw string) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
-		return fmt.Errorf("broker: base URL %q does not parse: %w", raw, err)
+		// Not quoted, and neither is url.Parse's error, which repeats the URL:
+		// an unparseable URL may still carry userinfo.
+		return errors.New("broker: base URL does not parse — not quoted, since it may carry userinfo")
+	}
+	// Checked first, and never echoed: userinfo is a credential in a URL, and
+	// the messages below quote the URL. The client pins every request to this
+	// URL's host, so a query, a fragment or another port would either be
+	// dropped silently or make every request fail the pin.
+	if u.User != nil {
+		return fmt.Errorf("broker: base URL %s carries userinfo — refused, a base URL holds scheme and host only", redactURL(strings.TrimSpace(raw)))
+	}
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
+		return fmt.Errorf("broker: base URL %s carries a query or a fragment — refused, a base URL holds scheme and host only", redactURL(strings.TrimSpace(raw)))
+	}
+	if port := u.Port(); port != "" && port != "443" {
+		return fmt.Errorf("broker: base URL %s names port %s — the testnet hosts serve https on 443 only", redactURL(strings.TrimSpace(raw)), port)
 	}
 	if u.Scheme != "https" {
 		return fmt.Errorf("broker: base URL %q must be https (got scheme %q) — a signed request over plaintext publishes the credential", raw, u.Scheme)

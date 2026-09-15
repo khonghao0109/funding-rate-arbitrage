@@ -111,6 +111,12 @@ func classify(err error) error {
 	if err == nil {
 		return nil
 	}
+	if errors.Is(err, broker.ErrRedirectAttempted) {
+		// A 3xx is not the matching engine speaking, whatever its body says:
+		// reading a code out of it would let a redirect claim "order not found"
+		// and make a resend look safe.
+		return err
+	}
 	var httpErr *broker.HTTPError
 	if !errors.As(err, &httpErr) {
 		// A timeout, a DNS failure, a refused connection. The venue said

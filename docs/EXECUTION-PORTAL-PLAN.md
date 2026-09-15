@@ -114,7 +114,7 @@ Mọi endpoint đều trả về JSON chuẩn, có trường `error_vi` rõ ràn
 
 ### Việc còn nợ
 
-Ghi đủ ở PLAN mục 4.5b. Mục chặn 4.6: client HTTP của `internal/broker` đi theo redirect, nên một 307 từ host testnet có thể mang API key sang host khác.
+Ghi đủ ở PLAN mục 4.5b. Mục chặn 4.6: client HTTP của `internal/broker` đi theo redirect, nên một 307 từ host testnet có thể mang API key sang host khác — **đã trả 2026-09-15** (`broker.ErrRedirectAttempted`, `broker.ErrHostNotPinned`; chi tiết ở PLAN 4.5b).
 
 ---
 

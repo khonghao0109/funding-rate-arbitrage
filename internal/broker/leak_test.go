@@ -364,3 +364,111 @@ func TestClient_NeitherVenuesCredentialPairReachesALogOrAnError(t *testing.T) {
 		}
 	}
 }
+
+// Scrub and cut, on the error BODY: a key echoed across the point where the body
+// is cut short must not leave a prefix of itself in the message — neither
+// placed across the cut, nor pulled across it by a long `signature=` run that
+// scrubs short.
+func TestClient_AnErrorBodyIsScrubbedBeforeItIsCut(t *testing.T) {
+	bodies := []string{}
+	for pad := maxErrorBodyBytes - 24; pad <= maxErrorBodyBytes; pad += 4 {
+		bodies = append(bodies, strings.Repeat("a", pad)+"KEY-"+sentinel)
+	}
+	bodies = append(bodies,
+		"signature="+strings.Repeat("ab", 4000)+"KEY-"+sentinel,
+		strings.Repeat("signature=a", 1000)+"KEY-"+sentinel)
+	for i, body := range bodies {
+		pad := i
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, body)
+		}))
+		to, _ := url.Parse(srv.URL)
+		c := leakTestClient(t, &pinnedTransport{to: to})
+		err := c.GetPublic(context.Background(), Endpoint{Path: "/fapi/v1/exchangeInfo", WeightIP: 1}, nil, nil)
+		srv.Close()
+		if err == nil || strings.Contains(err.Error(), "KEY-SEN") || strings.Contains(err.Error(), sentinel[:12]) {
+			t.Errorf("body %d: a prefix of the key survived the cut: …%s", pad, tail(err))
+		}
+	}
+}
+
+// Venue-controlled text can be megabytes, and scrubbing it must not outlast the
+// request's own deadline: a quadratic scrub held a 512 KiB answer for 9.5 s
+// against a 2 s context. The deadline here is generous for loopback; the
+// failure it guards against is minutes.
+func TestClient_AHugeErrorBodyIsScrubbedWithinTheDeadline(t *testing.T) {
+	for name, body := range map[string]string{
+		"repeated signature=": strings.Repeat("signature=a", (4<<20)/11),
+		"one long hex run":    "signature=" + strings.Repeat("ab", 2<<20),
+		"repeated key":        strings.Repeat("KEY-"+sentinel, (4<<20)/(len(sentinel)+4)),
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, body)
+		}))
+		to, _ := url.Parse(srv.URL)
+		c := leakTestClient(t, &pinnedTransport{to: to})
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		started := time.Now()
+		err := c.GetPublic(ctx, Endpoint{Path: "/fapi/v1/exchangeInfo", WeightIP: 1}, nil, nil)
+		elapsed := time.Since(started)
+		cancel()
+		srv.Close()
+		if elapsed > 2*time.Second {
+			t.Errorf("%s: the error took %s to build", name, elapsed)
+		}
+		var httpErr *HTTPError
+		if !errors.As(err, &httpErr) {
+			t.Fatalf("%s: err = %v", name, err)
+		}
+		// Shown venue text stays within the cut; markers add to it, at most one
+		// per 11-byte `signature=a`, so the whole stays within twice the cut.
+		shown := strings.ReplaceAll(httpErr.Body, Redacted, "")
+		if len(shown) > maxErrorBodyBytes || len(httpErr.Body) > 2*maxErrorBodyBytes || strings.Contains(err.Error(), sentinel[:12]) {
+			t.Errorf("%s: body %d bytes (%d shown), leak %v", name, len(httpErr.Body), len(shown), strings.Contains(err.Error(), sentinel[:12]))
+		}
+	}
+}
+
+// scrubCut, every offset: a secret, a key or a signature value placed at each
+// position around the cut is either shown nowhere or hidden whole, and a
+// `signature=` value is replaced once, not once per rescan.
+func TestScrubCut_HidesASpanWholeWhereverTheCutFalls(t *testing.T) {
+	const cut = 64
+	secret, key := "S3CRETS3CRETS3CRETS3CRET", "APIKEYAPIKEYAPIKEYAPIKEY"
+	values := map[string]string{
+		"secret":    secret,
+		"key":       key,
+		"signature": "signature=" + strings.Repeat("c8db5682", 8),
+	}
+	for name, v := range values {
+		for pos := 0; pos <= cut+8; pos++ {
+			in := strings.Repeat("x", pos) + v + strings.Repeat("y", 40)
+			got := scrubCut(in, cut, secret, key)
+			for _, part := range []string{secret[:6], key[:6], "c8db56"} {
+				if strings.Contains(got, part) {
+					t.Fatalf("%s at %d: %q shows %q", name, pos, got, part)
+				}
+			}
+			if shown := strings.ReplaceAll(got, Redacted, ""); len(shown) > cut {
+				t.Fatalf("%s at %d: %d bytes shown past a cut of %d: %q", name, pos, len(shown), cut, got)
+			}
+		}
+	}
+	// A needle whose first byte recurs inside it, echoed overlapping itself.
+	if got := scrubCut("K123K123K!", 100, "K123K"); got != Redacted+"!" {
+		t.Errorf("overlapping echo = %q, want the whole run hidden", got)
+	}
+	if got := scrubHexSignature("a&signature=c8db56825ae7&b"); got != "a&signature="+Redacted+"&b" {
+		t.Errorf("scrubHexSignature = %q, want exactly one %s", got, Redacted)
+	}
+}
+
+func tail(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	msg := err.Error()
+	return msg[max(0, len(msg)-60):]
+}

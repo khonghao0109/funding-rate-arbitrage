@@ -396,6 +396,32 @@ func TestOpen_InvariantHoldsUnderRandomBehaviour(t *testing.T) {
 	t.Logf("%d randomised runs, %d invariant violations", runs, violations)
 }
 
+// A refused redirect is a 3xx from whatever answers for the venue's host, not
+// the matching engine saying no — so it is resolved like a 502, by asking for
+// the order, and never taken as a refusal that makes a resend safe. The error
+// carries both broker.ErrRedirectAttempted and the *HTTPError with the 3xx, as
+// broker.Client builds it.
+func TestOpen_ARefusedRedirectIsAmbiguousNotARefusal(t *testing.T) {
+	for _, status := range []int{301, 302, 303, 307, 308} {
+		t.Run(fmt.Sprintf("HTTP %d", status), func(t *testing.T) {
+			h := newHarness(t, nil)
+			h.perp.SetBehaviour(brokertest.Behaviour{
+				RejectWith: fmt.Errorf("%w: redirect to https://evil.example/fapi/v1/order not followed: %w",
+					broker.ErrRedirectAttempted,
+					&broker.HTTPError{StatusCode: status, URL: "https://demo-fapi.binance.com/fapi/v1/order"}),
+			})
+			res, err := h.opener.Open(context.Background(), h.intent)
+			if err == nil {
+				t.Fatal("a refused redirect must be an error")
+			}
+			h.assertInvariant(t, res)
+			if !h.rec.Has(EventLegAmbiguous) {
+				t.Errorf("on a refused HTTP %d redirect the machine did not ask the venue whether the order exists%s", status, h.rec.Dump())
+			}
+		})
+	}
+}
+
 // A 5xx is NOT a refusal, and the difference is the whole ambiguity contract.
 //
 // A 4xx comes from the matching engine: the order does not exist and never

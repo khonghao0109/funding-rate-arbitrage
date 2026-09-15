@@ -151,6 +151,11 @@ func TestNewClient_AcceptsOnlyTheDocumentedTestnetHosts(t *testing.T) {
 		"https://testnet.binancefuture.com":           "a host no reachable official page documents (rule 5)",
 		"":                                            "nothing at all",
 		"://broken":                                   "an unparseable URL",
+		"https://u:p@demo-fapi.binance.com":           "userinfo — a credential inside the URL",
+		"https://u:p@demo-fapi.binance.com/%zz":       "userinfo in a URL that does not parse",
+		"https://demo-fapi.binance.com:8443":          "a port the testnet does not serve",
+		"https://demo-fapi.binance.com/?x=1":          "a query, which the request pin would drop",
+		"https://demo-fapi.binance.com/#f":            "a fragment",
 	}
 	creds := Credentials{APIKey: NewSecret("k"), APISecret: NewSecret("s")}
 	build := func(base string) error {
@@ -167,8 +172,11 @@ func TestNewClient_AcceptsOnlyTheDocumentedTestnetHosts(t *testing.T) {
 		}
 	}
 	for base, why := range refuse {
-		if err := build(base); err == nil {
+		err := build(base)
+		if err == nil {
 			t.Errorf("NewClient ACCEPTED %q (%s) — at step 4.1 there is no host but testnet", base, why)
+		} else if strings.Contains(err.Error(), "u:p") {
+			t.Errorf("the refusal of %q echoes its userinfo: %v", base, err)
 		}
 	}
 }

@@ -105,3 +105,23 @@ func TestClassify_AnUnknownCodeKeepsItsNumberAndNoCategory(t *testing.T) {
 		}
 	}
 }
+
+// A refused redirect carries an *HTTPError, so classify looks at it — and must
+// hand it back untouched: its body is no venue envelope, and the sentinel is
+// what execution and the portal branch on.
+func TestClassify_KeepsARefusedRedirectAsItIs(t *testing.T) {
+	// The body is set on purpose: broker.Client keeps none on a 3xx, and
+	// classify must not depend on that to refuse reading a code out of one.
+	for _, body := range []string{"", `{"code":-2013,"msg":"Order does not exist."}`, `{"code":-4164,"msg":"notional"}`} {
+		in := fmt.Errorf("%w: redirect to https://evil.example/fapi/v1/order not followed: %w",
+			broker.ErrRedirectAttempted, &broker.HTTPError{StatusCode: 307, URL: "https://demo-fapi.binance.com/fapi/v1/order", Body: body})
+		out := classify(in)
+		if !errors.Is(out, broker.ErrRedirectAttempted) {
+			t.Errorf("body %q: classify lost ErrRedirectAttempted: %v", body, out)
+		}
+		var ve *VenueError
+		if errors.As(out, &ve) || errors.Is(out, broker.ErrOrderNotFound) || errors.Is(out, broker.ErrBelowMinNotional) {
+			t.Errorf("body %q: classify read a venue verdict out of a redirect: %v", body, out)
+		}
+	}
+}

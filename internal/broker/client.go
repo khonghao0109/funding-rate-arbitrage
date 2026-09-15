@@ -3,9 +3,12 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -46,7 +49,14 @@ type Config struct {
 	WeightLimitPerMin int
 
 	// HTTPClient is injectable so tests run against httptest and never open a
-	// socket to a venue. Nil gets a client with a bounded timeout.
+	// socket to a venue. Nil gets a client with a bounded timeout. Either way
+	// the Client works on a COPY (the caller's is not modified) whose
+	// CheckRedirect refuses every redirect and whose transport checks every
+	// request against BaseURL's host (redirect.go). What a copy cannot take away:
+	// the caller's own Transport runs BELOW that check and could route a request
+	// anywhere, so injecting one is trusting it with the credential. Today only
+	// tests and cmd/brokercheck's CaptureTransport (over http.DefaultTransport)
+	// do; narrowing this hook is recorded as a 4.6 prerequisite (PLAN 4.5b).
 	HTTPClient *http.Client
 
 	// Now is the local clock, injectable so the skew tests can move it. Nil
@@ -106,10 +116,12 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("broker: weight_limit_per_min must be the venue's documented REQUEST_WEIGHT budget (futures %d, spot %d) — a budget nobody looked up is not an unlimited one",
 			BinanceFuturesWeightPerMin, BinanceSpotWeightPerMin)
 	}
-	httpClient := cfg.HTTPClient
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 20 * time.Second}
+	base, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
+	if err != nil {
+		// checkTestnetBaseURL parsed the same string a moment ago.
+		return nil, errors.New("broker: base URL does not parse — not quoted, since it may carry userinfo")
 	}
+	httpClient := guardedHTTPClient(cfg.HTTPClient, base.Host)
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -287,6 +299,18 @@ func (c *Client) do(ctx context.Context, method string, ep Endpoint, query strin
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// The two walls of redirect.go keep their sentinels, and nothing else
+		// of the *url.Error: its URL is the whole request, or the venue's
+		// Location, and either may carry the signature.
+		if errors.Is(err, ErrRedirectAttempted) {
+			if resp != nil {
+				c.budget.Observe(resp.Header)
+			}
+			return c.redirectRefused(full, resp, false)
+		}
+		if errors.Is(err, ErrHostNotPinned) {
+			return fmt.Errorf("%w: %s is not %s — nothing was sent", ErrHostNotPinned, redactURL(full), c.baseURL)
+		}
 		// *url.Error prints the WHOLE URL, signature included. This is the
 		// error path the leak test exists for.
 		return fmt.Errorf("%s: %s", redactURL(full), c.scrub(errWithoutURL(err, full)))
@@ -303,16 +327,22 @@ func (c *Client) do(ctx context.Context, method string, ep Endpoint, query strin
 	if resp.StatusCode != http.StatusOK {
 		retryAfter := parseRetryAfterSeconds(resp.Header.Get("Retry-After"))
 		c.budget.NoteStatus(resp.StatusCode, retryAfter)
-		// The ERROR body stays short: it is venue-controlled text on its way
-		// into an error message, a log and a report.
-		shown := body
-		if len(shown) > maxErrorBodyBytes {
-			shown = shown[:maxErrorBodyBytes]
+		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+			// Every 3xx arrives here: hostPinTransport took its Location away,
+			// so http.Client had nothing to follow. It is not the API's answer,
+			// and its body is not the venue's verdict either — a Binance-shaped
+			// JSON body on a 302 must not read as "order not found".
+			return c.redirectRefused(full, resp, true)
 		}
+		// The ERROR body stays short: it is venue-controlled text on its way
+		// into an error message, a log and a report. scrubTo cuts it on the
+		// body's own positions, so a key straddling the cut is hidden whole
+		// and a long run that scrubs short cannot pull anything across.
+		shown := c.scrubTo(strings.TrimSpace(string(body)), maxErrorBodyBytes)
 		err := &HTTPError{
 			StatusCode: resp.StatusCode,
 			URL:        redactURL(full),
-			Body:       c.scrub(strings.TrimSpace(string(shown))),
+			Body:       shown,
 			RetryAfter: retryAfter,
 		}
 		if resp.StatusCode == http.StatusTeapot {
@@ -342,12 +372,13 @@ func (c *Client) do(ctx context.Context, method string, ep Endpoint, query strin
 // scrub covers the cases redactURL cannot see — a venue that echoed a parameter
 // back, a decoder quoting the input, a wrapped error built somewhere else.
 func (c *Client) scrub(s string) string {
-	for _, v := range []string{c.creds.APISecret.Expose(), c.creds.APIKey.Expose()} {
-		if v != "" {
-			s = strings.ReplaceAll(s, v, Redacted)
-		}
-	}
-	return scrubHexSignature(s)
+	return scrubCut(s, len(s), c.creds.APISecret.Expose(), c.creds.APIKey.Expose())
+}
+
+// scrubTo is scrub for venue-controlled text that is also cut short: at most
+// maxBytes of s are shown, measured on s itself.
+func (c *Client) scrubTo(s string, maxBytes int) string {
+	return scrubCut(s, maxBytes, c.creds.APISecret.Expose(), c.creds.APIKey.Expose())
 }
 
 // scrubHexSignature removes the value of any `signature=` parameter that
@@ -355,23 +386,101 @@ func (c *Client) scrub(s string) string {
 // timestamp; it is not reusable, but it identifies the account and belongs in
 // no log.
 func scrubHexSignature(s string) string {
-	const marker = "signature="
-	for {
-		i := strings.Index(s, marker)
-		if i < 0 {
-			return s
-		}
-		j := i + len(marker)
-		for j < len(s) && isHexDigit(s[j]) {
-			j++
-		}
-		if j == i+len(marker) {
-			// "signature=" with nothing after it; leave it and stop, or this
-			// loop never advances.
-			return s[:j] + Redacted + scrubHexSignature(s[j:])
-		}
-		s = s[:i+len(marker)] + Redacted + s[j:]
+	return scrubCut(s, len(s))
+}
+
+const signatureMarker = "signature="
+
+// scrubCut shows at most the first maxBytes of s, with every occurrence of each
+// needle and the hex value of every `signature=` parameter replaced by Redacted.
+//
+// Two properties, both found missing by review on 2026-09-15 and both cheap to
+// lose again:
+//
+//   - The cut is measured on the ORIGINAL string. Replacing first and cutting
+//     after lets a long replaced run shrink and pull whatever followed it —
+//     a key — across the cut; cutting first and replacing after leaves the
+//     prefix of a key that straddled the cut, which no longer matches. Here a
+//     span that starts before the cut is hidden whole, and nothing that starts
+//     after it is looked at.
+//   - It is LINEAR in maxBytes plus the longest needle, whatever s holds. The
+//     text is venue-controlled and can be megabytes; a scrub that rescans after
+//     each replacement held a request for seconds past its deadline on a body
+//     of repeated `signature=`.
+func scrubCut(s string, maxBytes int, needles ...string) string {
+	if maxBytes < 0 || maxBytes > len(s) {
+		maxBytes = len(s)
 	}
+	// Look past the cut by the longest thing that could straddle it, so a span
+	// starting before the cut is found whole.
+	margin := len(signatureMarker)
+	for _, n := range needles {
+		margin = max(margin, len(n))
+	}
+	window := s[:min(len(s), maxBytes+margin)]
+
+	type span struct{ start, end int }
+	var spans []span
+	for _, needle := range needles {
+		if needle == "" {
+			continue
+		}
+		for from := 0; from < len(window); {
+			i := strings.Index(window[from:], needle)
+			if i < 0 {
+				break
+			}
+			start := from + i
+			spans = append(spans, span{start, start + len(needle)})
+			// Resume one byte on, not past the match: a needle whose first
+			// byte recurs inside it can be echoed overlapping itself, and the
+			// second copy must be found too.
+			from = start + 1
+		}
+	}
+	for from := 0; from < len(window); {
+		i := strings.Index(window[from:], signatureMarker)
+		if i < 0 {
+			break
+		}
+		start := from + i + len(signatureMarker)
+		end := start
+		for end < len(window) && isHexDigit(window[end]) {
+			end++
+		}
+		if end > start {
+			spans = append(spans, span{start, end})
+		}
+		from = end
+	}
+	if len(spans) == 0 {
+		return s[:maxBytes]
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].start < spans[j].start })
+	merged := make([]span, 0, len(spans))
+	for _, sp := range spans {
+		if n := len(merged); n > 0 && sp.start <= merged[n-1].end {
+			merged[n-1].end = max(merged[n-1].end, sp.end)
+			continue
+		}
+		merged = append(merged, sp)
+	}
+
+	var b strings.Builder
+	b.Grow(maxBytes)
+	pos := 0
+	for _, sp := range merged {
+		if sp.start >= maxBytes {
+			break
+		}
+		b.WriteString(s[pos:sp.start])
+		b.WriteString(Redacted)
+		pos = sp.end
+	}
+	if pos < maxBytes {
+		b.WriteString(s[pos:maxBytes])
+	}
+	return b.String()
 }
 
 func isHexDigit(b byte) bool {

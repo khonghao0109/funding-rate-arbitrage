@@ -4182,11 +4182,78 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >
 > ### Nợ có tên (không sửa trong công cụ này)
 >
-> - 🔴 **Client HTTP của `internal/broker` đi theo redirect**: một 307 từ host
->   testnet trỏ sang mainnet mang theo `X-MBX-APIKEY` và thân lệnh đã ký (review
->   bảo mật đo bằng chương trình nháp). Key testnet bị mainnet từ chối nên hôm nay
->   không mất gì, nhưng đây là bức tường 4.6 dựa vào. **Phải sửa trước 4.6**:
->   `CheckRedirect` từ chối + RoundTripper kiểm host trên MỌI request.
+> - ✅ ~~🔴 **Client HTTP của `internal/broker` đi theo redirect**~~ — **ĐÃ TRẢ
+>   2026-09-15.** Một 307 từ host testnet trỏ sang host khác mang theo
+>   `X-MBX-APIKEY` và thân lệnh đã ký (review bảo mật đo bằng chương trình nháp).
+>   Lần chạy đỏ trước khi sửa tái hiện đúng như vậy: máy chủ "kẻ tấn công" trong
+>   test nhận key và `symbol=BTCUSDT&side=BUY&quantity=1&recvWindow=…&timestamp=…&signature=<64 hex>`
+>   từ một POST bị 307/308. Sửa đúng hai lớp đã ghi (`internal/broker/redirect.go`):
+>   (1) mọi client broker — kể cả client truyền vào qua `Config.HTTPClient`, được
+>   CHÉP chứ không sửa — có `CheckRedirect` từ chối ngay bước đầu,
+>   `broker.ErrRedirectAttempted`; 3xx không được theo (không Location, 300, 304)
+>   cũng trả lỗi đó; (2) transport từ chối mọi request không phải https tới ĐÚNG
+>   host gốc (userinfo, `Host` khác, host khác), `broker.ErrHostNotPinned`, trước
+>   khi gửi byte nào. Lỗi giữ `*HTTPError` mang mã 3xx nhưng KHÔNG giữ `*url.Error`
+>   (URL của nó là Location do sàn viết, có thể lặp lại chữ ký). Với lệnh, redirect
+>   bị từ chối là MƠ HỒ, không phải bị sàn từ chối: `definiteRejection` chỉ tính 4xx,
+>   nên máy trạng thái hỏi lại lệnh chứ không gửi lại. Test: 5 mã (301/302/303/307/308)
+>   × 4 kiểu Location (host khác, hạ xuống http, tương đối cùng host, host khác lặp
+>   lại query có ký) × 4 lời gọi (GET/POST/DELETE có ký, GET công khai) = 80 ca, cộng
+>   3xx không Location, client tiêm vào có `CheckRedirect` đi theo tất cả, và đường
+>   dẫn `@evil.example` đổi host; `execution` có test "redirect bị từ chối → hỏi lại
+>   lệnh", `binance.classify` giữ nguyên sentinel. Đột biến trên bản đầu: bỏ
+>   `CheckRedirect` → 60/60 ca đỏ; bỏ lớp ghim host → test ghim đỏ; dùng thẳng client
+>   của caller → 3 test đỏ; bỏ bọc 3xx trong `do` → test không-Location đỏ. (Sau review,
+>   transport gỡ Location nên `CheckRedirect` không còn được chạm tới trong luồng
+>   thật; bỏ nó giờ làm đỏ test ghim cấu hình client.) Nghiệm thu thật: `cmd/brokercheck` đọc chỉ-đọc hai
+>   testnet qua client mới, **4/4 ĐẠT**, không lệnh nào (chạy lại sau các sửa của
+>   review, vẫn 4/4).
+>
+>   **Review bảo mật trong ngữ cảnh sạch: ĐẠT, 0 chặn, 0 lớn, 6 nhỏ — sửa cả 6.**
+>   Người review thử proxy `HTTPS_PROXY` (proxy chỉ thấy `CONNECT` + ClientHello),
+>   HTTP/2 coalescing, retry trong transport, Alt-Svc, Jar, mọi `http.Client` khác
+>   trong repo — không đường nào mang key đi nơi khác. Sáu điểm nhỏ: (1) thân của một
+>   3xx không Location được `classify` đọc thành mã sàn — dựng thật: 302 thân `-2013`
+>   làm `placeResolving` GỬI LẠI lệnh, 300 thân `-4164` làm `definiteRejection` đúng →
+>   giờ 3xx không giữ thân và `classify` bỏ qua mọi lỗi redirect; (2) Location không
+>   parse được thì `http.Client` báo lỗi TRƯỚC `CheckRedirect`, không sentinel, 10 KB →
+>   transport nay gỡ Location khỏi MỌI 3xx (giữ bản đã che, có giới hạn), nên mọi 3xx
+>   về một nhánh trong `do`, `CheckRedirect` thành lớp dự phòng (test ghim nó); (3) cắt
+>   trước khi che để lọt tiền tố key — cả Location lẫn thân lỗi (lỗi thân có từ 4.1) →
+>   che rồi mới cắt; (4) đột biến sống sót (bỏ kiểm scheme / userinfo / `Host`) → test
+>   riêng cho transport, và ca Location lặp lại query có ký; (5) tài liệu nói quá: lớp
+>   ghim chạy TRÊN transport do caller tiêm vào, transport đó vẫn gửi đi đâu cũng được
+>   → sửa lời, ghi nợ bên dưới; (6) base URL nhận userinfo và cổng bất kỳ → từ chối
+>   userinfo, query, fragment, cổng khác 443 (không in userinfo). Chín đột biến ứng
+>   với các sửa này đều đỏ.
+>
+>   **Vòng 2: KHÔNG ĐẠT — 1 lớn MỚI do chính bản sửa (3).** Che trên CẢ thân lỗi (tới
+>   16 MiB) trước khi cắt, với hàm che quét lại từ đầu sau mỗi lần thay: bậc hai và
+>   không timeout nào chặn — thân 512 KiB `signature=` giữ request 9,48 s trước context
+>   2 s, tức một kẻ đứng tên host giữ được `GetOrder`/lệnh gỡ vị thế quá
+>   `UnwindTimeout`. Kèm 3 nhỏ: mánh "co chuỗi" (một dãy hex dài che ngắn lại, kéo
+>   key từ sau điểm cắt vào trong), key mã hoá phần trăm trong đường dẫn Location,
+>   lỗi parse base URL vẫn in userinfo, và nhánh dự phòng tin header do sàn gửi. Sửa:
+>   `scrubCut` viết lại — một lượt tuyến tính trên `s[:cut+margin]`, gom khoảng cần
+>   che trên chuỗi GỐC rồi mới cắt theo vị trí gốc, nên khoảng bắt đầu trước điểm cắt
+>   bị che trọn và không gì phía sau lọt vào; thông báo redirect chỉ nêu scheme + host;
+>   lỗi parse không trích URL; nhánh dự phòng bỏ qua header. Test: mọi vị trí quanh
+>   điểm cắt × secret/key/chữ ký; thân 4 MiB ba kiểu trong < 2 s; hai mánh co chuỗi;
+>   key mã hoá phần trăm; header giả ở nhánh dự phòng. Đột biến đều đỏ, kể cả trả lại
+>   hàm che bậc hai của HEAD (gói test đỏ sau 58 s).
+>
+>   **Vòng 3: ĐẠT, 0 phát hiện.** Chạy lại mọi PoC: 16 MiB `signature=a` còn 26 ms,
+>   các mánh co chuỗi và phần trăm ra `https://evil.example`, header giả bị bỏ qua;
+>   `scrubCut` đúng ở mọi biên (rỗng, cắt 0, needle lồng nhau, cắt giữa ký tự nhiều
+>   byte — không lộ). Một ghi chú đã làm luôn: key có ký tự đầu lặp lại bên trong có thể
+>   bị lặp chồng lên chính nó — tìm tiếp từ `start+1`. Ghi chú để lại: host trong
+>   Location vẫn là chữ do sàn viết (một key xen dấu chấm thành tên miền sẽ hiện ra —
+>   chỉ ai đã có key mới làm được).
+> - **Nợ mới, trước 4.6:** `broker.Config.HTTPClient` là hook export; `Transport` tiêm
+>   vào chạy DƯỚI lớp ghim host nên có thể đổi đích, hạ xuống http hay tắt kiểm chứng
+>   TLS. Hôm nay chỉ test và `CaptureTransport` của `cmd/brokercheck` (trên
+>   `http.DefaultTransport`) dùng. Thu hẹp thành hook chỉ cho test hoặc chỉ cho dial
+>   trước khi có key mainnet.
 > - **Phần còn lại của một lần đóng dở** (`ErrCloseIncomplete` /
 >   `sent_unconfirmed`) không đóng được từ portal, vì id của `execution.Close` cố
 >   định theo ý định. Cần hậu tố thế hệ trong `execution` trước cỡ lệnh mà khớp
@@ -4309,7 +4376,8 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >
 > - 🔴 **Thư viện biểu đồ và JS các tab feed chạy cùng origin với API lệnh** (Q17):
 >   tách trước 4.6.
-> - 🔴 (giữ từ 4.5b) client HTTP của `internal/broker` đi theo redirect.
+> - ✅ (từ 4.5b) client HTTP của `internal/broker` đi theo redirect — **đã trả
+>   2026-09-15**, xem mục 4.5b.
 > - `/ws` của `cmd/scanner` nhận mọi Origin — một trang lạ mở client thẳng tới 8085
 >   được; có từ trước, sửa ở binary sau lần chạy 3.
 > - Guard "không đường từ feed tới lệnh" ghim bề mặt và chặn đường hiển nhiên,
@@ -5077,7 +5145,7 @@ của cả tài khoản, portal giữ **một vị thế mỗi symbol**.
 
 **Cái giá phải nói ra.** Lệnh giờ cách người vận hành hai cú bấm thay vì một dòng
 lệnh gõ tay, và 4.6 sẽ bị cám dỗ trỏ trang này vào tài khoản thật. Trước khi đó:
-sửa lỗi client đi theo redirect (nợ 🔴 ở mục 4.5b), và mở lại quyết định này.
+sửa lỗi client đi theo redirect (nợ 🔴 ở mục 4.5b — **đã trả 2026-09-15**), và mở lại quyết định này.
 
 #### Q11 — Vì sao bỏ Basis Trade, và vì sao KHÔNG kết luận gì về nó
 

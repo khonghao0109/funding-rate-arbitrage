@@ -905,10 +905,25 @@ errors; `execcheck -status` read the portal's intent file and found cache and
 venue in agreement; nothing left open. Two reviews found 7 major defects before
 that run (two positions on one symbol, spent close ids, a sent close called
 "refused", a sub-step close leaving a perp step nobody could reach…), all fixed
-and tested against `brokertest`. **Named debt that blocks 4.6:** the
-`internal/broker` HTTP client follows redirects, so a 307 from a testnet host
-would carry the API key and a signed order to another host — see PLAN "Công cụ
-vận hành 4.5b".
+and tested against `brokertest`. The debt that review named as blocking 4.6 —
+the `internal/broker` HTTP client followed redirects, so a 307 from a testnet
+host would carry the API key and a signed order to another host — **was paid
+2026-09-15** (PLAN "Công cụ vận hành 4.5b"): a test attacker server received the
+key and `symbol=…&quantity=…&signature=…` from the unfixed client on a 307/308
+POST. Now every broker client, including one injected through
+`Config.HTTPClient` (copied, never modified), refuses every 3xx with
+`broker.ErrRedirectAttempted` — its transport takes the Location away, so
+nothing can be parsed or followed, and only the Location's scheme and host
+reach the error, never its path or the 3xx body — and refuses any request that is not https to its own
+base host with `broker.ErrHostNotPinned`, before a byte is sent; `NewClient`
+also refuses a base URL with userinfo, a query, a fragment or a port other than
+443. A refused redirect is AMBIGUOUS for an order (`definiteRejection` counts
+only a 4xx, and `binance.classify` reads no venue code out of a 3xx), so
+execution asks for the order rather than resending. **Still open for 4.6:** a
+Transport injected through `Config.HTTPClient` runs BELOW the host check and
+could route a request anywhere — today only tests and `cmd/brokercheck`'s
+capture (over `http.DefaultTransport`) inject one; narrow that hook before a
+mainnet key exists.
 
 **On 2026-09-14 the portal became the unified operator page (decision Q17):**
 one loopback page on 8087 with four tabs — Market Scanner, Execution Control,
@@ -1253,7 +1268,9 @@ internal/
   broker/            ⚠️ THE ONLY PACKAGE HOLDING CREDENTIALS — steps 4.1-4.5,
                      and TESTNET ONLY: NewClient refuses any host outside the
                      documented testnet list and there is no flag to widen it
-                     before 4.6. Signing, clock skew, weight budget, the Broker
+                     before 4.6. Every client refuses redirects and every host
+                     but its own, per request (redirect.go). Signing, clock
+                     skew, weight budget, the Broker
                      order interface and RoundOrder. Two tests keep it off the
                      ingestion path: an AST walk over exchanges/, and
                      `go list -deps` over every cmd/ binary

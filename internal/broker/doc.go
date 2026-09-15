@@ -34,6 +34,21 @@
 // puts real hosts through the guard in both directions, and one reads this
 // package's own source for a field or flag that would bypass it.
 //
+// # And no redirect, and no other host per request
+//
+// Choosing the host once is not enough: http.Client follows a 3xx by itself
+// and re-sends a 307/308 with its method, its body and the X-MBX-APIKEY header
+// to wherever Location points. Every client this package builds — including one
+// handed in through Config.HTTPClient, which is copied, never modified — refuses
+// every 3xx (ErrRedirectAttempted, reporting only its Location's scheme and host,
+// and not its body) and refuses any request that is not https to its own base host
+// (ErrHostNotPinned). A refused redirect says nothing about whether an order
+// arrived, so it is ambiguous, never a refusal. The host check runs ABOVE a
+// Transport injected through Config.HTTPClient, which can still send a request
+// anywhere — that hook is trusted with the credential, and narrowing it is a 4.6
+// prerequisite. See redirect.go; paid 2026-09-15, the debt PLAN 4.5b recorded
+// as blocking 4.6.
+//
 // # The boundary
 //
 // CLAUDE.md states it twice — package exchanges (public, read-only market data)
