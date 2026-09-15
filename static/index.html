@@ -1,1153 +1,582 @@
-<!DOCTYPE html>
-<html lang="en">
-
+<!doctype html>
+<html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Arbitrage Scanner</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            background: #0a0a0a;
-            color: #e0e0e0;
-            font-family: 'JetBrains Mono', 'Monaco', 'Consolas', monospace;
-            font-size: 13px;
-            overflow: hidden;
-        }
-
-        .container {
-            display: grid;
-            grid-template-areas:
-                "header header header"
-                "sidebar resizer main";
-            /* --sidebar-w is the drag handle's output; JS clamps and persists it. */
-            grid-template-columns: var(--sidebar-w, 380px) 6px 1fr;
-            grid-template-rows: 60px 1fr;
-            height: 100vh;
-            gap: 1px;
-            background: #111;
-        }
-
-        .panel-resizer {
-            grid-area: resizer;
-            cursor: col-resize;
-            background: #222;
-            transition: background 0.15s;
-        }
-
-        .panel-resizer:hover,
-        .panel-resizer.dragging {
-            background: #00ff88;
-        }
-
-        .header {
-            grid-area: header;
-            background: #1a1a1a;
-            border-bottom: 1px solid #333;
-            display: flex;
-            align-items: center;
-            padding: 0 20px;
-            justify-content: space-between;
-        }
-
-        .logo {
-            color: #00ff88;
-            font-weight: bold;
-            font-size: 16px;
-        }
-
-        .status {
-            display: flex;
-            gap: 20px;
-            align-items: center;
-        }
-
-        .status-item {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            position: relative;
-        }
-
-
-        .status-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-        }
-
-        .status-dot.connected {
-            background: #00ff88;
-        }
-
-        .status-dot.disconnected {
-            background: #ff4444;
-        }
-
-        .sidebar {
-            grid-area: sidebar;
-            background: #151515;
-            border-right: 1px solid #333;
-            overflow-y: auto;
-        }
-
-        .main {
-            grid-area: main;
-            background: #0f0f0f;
-            position: relative;
-            display: flex;
-            flex-direction: column;
-            /* A grid item's automatic minimum size is its content size, so a
-               funding table taller or wider than the viewport grew this cell
-               past the 100vh/1fr track instead of scrolling inside
-               .funding-scroll and .funding-*-wrap — and body{overflow:hidden}
-               then cut the rest off with no scrollbar anywhere. Zero minimums
-               keep the cell at the track size so the inner overflow rules do
-               their job. */
-            min-width: 0;
-            min-height: 0;
-        }
-
-
-        .panel {
-            margin: 10px;
-            background: rgba(26, 26, 26, 0.9);
-            border: 1px solid #333;
-            border-radius: 6px;
-        }
-
-        .panel-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid #333;
-            font-weight: bold;
-            color: #00ff88;
-            font-size: 12px;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .panel-content {
-            padding: 16px;
-        }
-
-        .symbol-selector {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
-        }
-
-        .symbol-input {
-            background: #222;
-            border: 1px solid #444;
-            color: #e0e0e0;
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-family: inherit;
-            font-size: 12px;
-        }
-
-        .symbol-input:focus {
-            outline: none;
-            border-color: #00ff88;
-        }
-
-        .source-list {
-            display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .source-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 12px;
-            background: rgba(34, 34, 34, 0.5);
-            border-radius: 4px;
-            transition: background 0.2s;
-        }
-
-        .source-item:hover {
-            background: rgba(34, 34, 34, 0.8);
-        }
-
-        .source-name {
-            color: #888;
-            font-size: 9px;
-            text-transform: uppercase;
-        }
-
-        .source-color-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-
-        .source-badge {
-            font-size: 8px;
-            font-weight: bold;
-            padding: 1px 4px;
-            border-radius: 2px;
-            margin-right: 4px;
-            vertical-align: middle;
-        }
-
-        .source-badge.stale {
-            color: #ff4444;
-            border: 1px solid #ff4444;
-        }
-
-        .source-badge.waiting {
-            color: #888;
-            border: 1px solid #444;
-        }
-
-        .source-badge.disconnected {
-            color: #fff;
-            background: #ff4444;
-        }
-
-        /* Its own class, not a .source-badge modifier: the status-badge refresh
-           in app.js finds .source-badge by selector and removes what it finds. */
-        .source-fee-badge {
-            font-size: 8px;
-            font-weight: bold;
-            padding: 1px 4px;
-            border-radius: 2px;
-            margin-left: 6px;
-            vertical-align: middle;
-            color: #c9a227;
-            border: 1px dashed #6b5510;
-        }
-
-        /* A cell still showing a gross number. It is a different quantity from
-           an after-fee cell and must not be mistaken for one at a glance. */
-        .spread-cell.gross-only {
-            opacity: 0.75;
-            font-style: italic;
-        }
-
-        .source-price {
-            font-weight: bold;
-            color: #e0e0e0;
-        }
-
-        .price-change {
-            font-size: 10px;
-            margin-left: 8px;
-        }
-
-        .price-change.up {
-            color: #00ff88;
-        }
-
-        .price-change.down {
-            color: #ff4444;
-        }
-
-        .chart-container {
-            flex: 1;
-            margin: 10px;
-            background: #1a1a1a;
-            border: 1px solid #333;
-            border-radius: 6px;
-            position: relative;
-            min-height: 400px;
-            display: flex;
-            flex-direction: column;
-        }
-
-        .chart-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid #333;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .chart-title {
-            color: #00ff88;
-            font-weight: bold;
-            font-size: 14px;
-        }
-
-
-        .opportunities-table-container {
-            flex: 1;
-            /* One scroll surface for BOTH axes. Header and body share a single
-               table, so a horizontal scroll moves them together - the split
-               tables this replaces could not keep their columns aligned. */
-            overflow: auto;
-        }
-
-        .opportunities-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 11px;
-            background: transparent;
-        }
-
-        .opportunities-table thead {
-            background: #1a1a1a;
-            border-bottom: 1px solid #333;
-            position: sticky;
-            top: 0;
-            z-index: 10;
-        }
-
-        .opportunities-table th {
-            padding: 8px 6px;
-            white-space: nowrap;
-            text-align: left;
-            font-weight: bold;
-            color: #888;
-            text-transform: uppercase;
-            font-size: 10px;
-            letter-spacing: 0.5px;
-            border-right: 1px solid #333;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .opportunities-table th:hover {
-            background: #222;
-        }
-
-        .opportunities-table th:last-child {
-            border-right: none;
-        }
-
-        .opportunities-table th.sortable::after {
-            content: '↕';
-            margin-left: 4px;
-            opacity: 0.5;
-        }
-
-        .opportunities-table th.sort-asc::after {
-            content: '↑';
-            opacity: 1;
-            color: #00ff88;
-        }
-
-        .opportunities-table th.sort-desc::after {
-            content: '↓';
-            opacity: 1;
-            color: #00ff88;
-        }
-
-        .opportunities-table tbody {
-            background: transparent;
-        }
-
-        .opportunities-table tr {
-            border-bottom: 1px solid #222;
-            transition: background 0.2s;
-        }
-
-        .opportunities-table tr:hover {
-            background: rgba(0, 255, 136, 0.05);
-        }
-
-        .opportunities-table tr.fresh {
-            background: rgba(0, 255, 136, 0.1);
-            animation: fadeToNormal 3s ease-out forwards;
-        }
-
-        @keyframes fadeToNormal {
-            0% {
-                background: rgba(0, 255, 136, 0.2);
-            }
-
-            100% {
-                background: transparent;
-            }
-        }
-
-        .opportunities-table td {
-            padding: 6px;
-            border-right: 1px solid #222;
-            font-family: 'JetBrains Mono', monospace;
-            white-space: nowrap; /* full rows scroll horizontally instead of clipping */
-        }
-
-        .opportunities-table td:last-child {
-            border-right: none;
-        }
-
-        .symbol-cell {
-            color: #00ff88;
-            font-weight: bold;
-        }
-
-        .spread-cell-value {
-            color: #ff6b6b;
-            font-weight: bold;
-            text-align: right;
-        }
-
-        /* Sign-colored: the after-fee column. Positive is the only number on
-           this panel a trade could actually keep, so it is the only green one;
-           the gross bands above it stay in the warm palette. */
-        .spread-cell-value.up {
-            color: #00ff88;
-        }
-
-        .spread-cell-value.down {
-            color: #ff4444;
-        }
-
-        .spread-cell-value.neutral {
-            color: #667788;
-            font-weight: normal;
-        }
-
-        .spread-cell-value.high {
-            color: #ff4444;
-        }
-
-        .spread-cell-value.medium {
-            color: #ff8844;
-        }
-
-        .spread-cell-value.low {
-            color: #ffaa44;
-        }
-
-        .source-cell {
-            color: #ccc;
-            font-size: 10px;
-        }
-
-        .price-cell {
-            color: #e0e0e0;
-            text-align: right;
-            font-weight: 500;
-        }
-
-        .time-cell {
-            color: #666;
-            font-size: 10px;
-            text-align: center;
-        }
-
-        .opportunities-empty {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 100px;
-            color: #666;
-            font-size: 11px;
-            font-style: italic;
-        }
-
-        .opportunities-controls {
-            padding: 8px 12px;
-            background: #1a1a1a;
-            border-bottom: 1px solid #333;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .opportunities-filter {
-            background: #222;
-            border: 1px solid #444;
-            color: #e0e0e0;
-            padding: 4px 8px;
-            border-radius: 3px;
-            font-family: inherit;
-            font-size: 10px;
-            width: 80px;
-        }
-
-        .opportunities-filter:focus {
-            outline: none;
-            border-color: #00ff88;
-        }
-
-        .opportunities-stats {
-            color: #888;
-            font-size: 10px;
-        }
-
-        .clear-opportunities {
-            background: #333;
-            border: 1px solid #555;
-            color: #ccc;
-            padding: 4px 8px;
-            border-radius: 3px;
-            font-size: 10px;
-            cursor: pointer;
-            transition: background 0.2s;
-        }
-
-        .clear-opportunities:hover {
-            background: #444;
-        }
-
-        .spread-groups {
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            width: 100%;
-        }
-
-        .spread-group-title {
-            font-size: 9px;
-            font-weight: bold;
-            color: #888;
-            text-transform: uppercase;
-            margin-bottom: 3px;
-        }
-
-        .spread-group-tag {
-            color: #ffa500;
-            border: 1px solid #ffa500;
-            border-radius: 2px;
-            padding: 0 3px;
-            font-size: 8px;
-        }
-
-        .spread-group-note {
-            font-size: 9px;
-            color: #777;
-            line-height: 1.4;
-            margin-bottom: 5px;
-        }
-
-        .spread-excluded {
-            font-size: 9px;
-            color: #777;
-            margin: 0;
-            padding-left: 14px;
-        }
-
-        /* ---- Funding (Bước 2.7) ------------------------------------------ */
-
-        .view-tabs {
-            display: flex;
-            gap: 2px;
-            padding: 6px 10px 0 10px;
-            border-bottom: 1px solid #333;
-            flex-shrink: 0;
-        }
-
-        .view-tab {
-            background: transparent;
-            border: 1px solid #333;
-            border-bottom: none;
-            color: #888;
-            font-family: inherit;
-            font-size: 11px;
-            padding: 6px 14px;
-            cursor: pointer;
-        }
-
-        .view-tab:hover {
-            color: #ccc;
-        }
-
-        .view-tab.active {
-            background: rgba(26, 26, 26, 0.9);
-            color: #00d4ff;
-            border-color: #00d4ff;
-        }
-
-        .view {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            min-height: 0;
-        }
-
-        .view.hidden {
-            display: none;
-        }
-
-        .funding-scroll {
-            flex: 1;
-            overflow-y: auto;
-            padding: 10px;
-        }
-
-        .funding-block {
-            margin-bottom: 16px;
-            background: rgba(26, 26, 26, 0.9);
-            border: 1px solid #333;
-        }
-
-        .funding-block-title {
-            font-size: 11px;
-            color: #00d4ff;
-            padding: 8px 10px;
-            border-bottom: 1px solid #333;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
-        }
-
-        .unit-tag {
-            color: #ffa500;
-            font-size: 10px;
-        }
-
-        .funding-hint {
-            color: #777;
-            font-size: 9px;
-            font-weight: normal;
-        }
-
-        .funding-note {
-            font-size: 9px;
-            color: #999;
-            line-height: 1.5;
-            margin-bottom: 12px;
-            padding: 6px;
-            border-left: 2px solid #ffa500;
-            background: rgba(255, 165, 0, 0.06);
-        }
-
-        .funding-note strong {
-            color: #ffa500;
-        }
-
-        .funding-matrix-wrap,
-        .funding-detail-wrap {
-            overflow-x: auto;
-        }
-
-        .funding-matrix,
-        .funding-detail {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 10px;
-        }
-
-        .funding-matrix th,
-        .funding-matrix td,
-        .funding-detail th,
-        .funding-detail td {
-            padding: 5px 8px;
-            border-bottom: 1px solid #262626;
-            text-align: right;
-            white-space: nowrap;
-        }
-
-        .funding-matrix th,
-        .funding-detail th {
-            color: #888;
-            font-weight: normal;
-            text-align: right;
-            border-bottom: 1px solid #333;
-        }
-
-        .funding-matrix th:first-child,
-        .funding-matrix td:first-child,
-        .funding-detail th:first-child,
-        .funding-detail td:first-child {
-            text-align: left;
-        }
-
-        .funding-matrix tr:hover td,
-        .funding-detail tr:hover td {
-            background: rgba(255, 255, 255, 0.03);
-        }
-
-        .funding-pos {
-            color: #00ff88;
-        }
-
-        .funding-neg {
-            color: #ff4757;
-        }
-
-        .funding-zero {
-            color: #888;
-        }
-
-        /* Một ô cũ vẫn hiển thị số, chỉ mờ đi và có dấu — xoá nó khỏi bảng sẽ
-           đọc thành "sàn này không có funding" thay vì "feed này đã chết". */
-        .funding-stale {
-            opacity: 0.45;
-        }
-
-        .funding-cell-apr {
-            display: block;
-            font-size: 9px;
-            color: #777;
-        }
-
-        .funding-empty {
-            color: #666;
-            text-align: center !important;
-            padding: 14px !important;
-        }
-
-        .funding-nohedge {
-            color: #ffa500;
-        }
-
-        .funding-cell-nohedge {
-            display: block;
-            font-size: 9px;
-            color: #ffa500;
-        }
-
-        .funding-chart {
-            height: 320px;
-            /* Spacing as MARGIN, not padding: app.js sizes the chart from
-               clientWidth/clientHeight, which include padding, so an 8px
-               padding made a 320px canvas overflow a 304px content box and
-               paint over the coverage line below it. */
-            margin: 8px;
-        }
-
-        .funding-coverage {
-            font-size: 9px;
-            color: #888;
-            padding: 0 10px 10px 10px;
-            line-height: 1.6;
-        }
-
-        .funding-days {
-            background: #1a1a1a;
-            border: 1px solid #333;
-            color: #ccc;
-            font-family: inherit;
-            font-size: 10px;
-            padding: 2px 6px;
-        }
-
-        .cost-basis-note {
-            font-size: 9px;
-            color: #999;
-            line-height: 1.5;
-            margin-top: 10px;
-            padding: 6px;
-            border-left: 2px solid #ffa500;
-            background: rgba(255, 165, 0, 0.06);
-        }
-
-        .cost-basis-note strong {
-            color: #ffa500;
-        }
-
-        /* A late tick is a hole in the record, not a venue problem, so it is
-           rendered beside the source list rather than inside it — the same
-           place the wire puts tick_status: next to source_status, not in it. */
-        .tick-status-note {
-            font-size: 9px;
-            color: #999;
-            line-height: 1.5;
-            margin-top: 8px;
-            padding: 6px;
-            border-left: 2px solid #ff4444;
-            background: rgba(255, 68, 68, 0.06);
-        }
-
-        .tick-status-note strong {
-            color: #ff4444;
-        }
-
-        .source-status-dot {
-            width: 6px;
-            height: 6px;
-            border-radius: 50%;
-            flex-shrink: 0;
-        }
-
-        .source-status-dot.live {
-            background: #00ff88;
-        }
-
-        .source-status-dot.stale {
-            background: #ff4444;
-        }
-
-        /* Connection state outranks data freshness: a disconnected venue is not
-           merely stale. Both are filled by steps 1.1 and 1.5. */
-        .source-status-dot.reconnecting {
-            background: #ffa500;
-        }
-
-        .source-status-dot.disconnected {
-            background: #ff4444;
-            box-shadow: 0 0 0 1px #ff4444;
-        }
-
-        /* No staleness measurement exists until step 1.1; grey says exactly that. */
-        .source-status-dot.unknown {
-            background: #555;
-        }
-
-        .spread-basis-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 10px;
-            padding: 3px 4px;
-            background: #222;
-            border-radius: 2px;
-            margin-bottom: 2px;
-        }
-
-        .spread-basis-row .up {
-            color: #00ff88;
-        }
-
-        .spread-basis-row .down {
-            color: #ff4444;
-        }
-
-        .spreads-matrix {
-            display: grid;
-            gap: 2px;
-            font-size: 9px;
-            font-family: 'JetBrains Mono', monospace;
-            width: 100%;
-            overflow: hidden;
-        }
-
-        .spread-header {
-            background: #1a1a1a;
-            padding: 6px 4px;
-            text-align: center;
-            font-weight: bold;
-            color: #888;
-            text-transform: uppercase;
-            font-size: 9px;
-            border-radius: 2px;
-        }
-
-        .spread-row-header {
-            background: #1a1a1a;
-            padding: 6px 4px;
-            text-align: center;
-            font-weight: bold;
-            color: #888;
-            text-transform: uppercase;
-            font-size: 9px;
-            border-radius: 2px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .spread-cell {
-            background: #222;
-            padding: 6px 4px;
-            text-align: center;
-            border-radius: 2px;
-            font-weight: bold;
-            transition: background 0.2s;
-        }
-
-        .spread-cell.positive {
-            background: rgba(0, 255, 136, 0.1);
-            color: #00ff88;
-        }
-
-        .spread-cell.negative {
-            background: rgba(255, 68, 68, 0.1);
-            color: #ff4444;
-        }
-
-        .spread-cell.neutral {
-            background: #333;
-            color: #666;
-        }
-
-        .spread-cell.opportunity {
-            background: rgba(255, 165, 0, 0.2);
-            color: #ffa500;
-            animation: pulse-opportunity 2s infinite;
-        }
-
-        @keyframes pulse-opportunity {
-
-            0%,
-            100% {
-                opacity: 1;
-            }
-
-            50% {
-                opacity: 0.7;
-            }
-        }
-
-
-        .loading {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: #888;
-            font-size: 12px;
-        }
-
-        .loading::after {
-            content: "...";
-            animation: dots 2s infinite;
-        }
-
-        @keyframes dots {
-
-            0%,
-            20% {
-                content: ".";
-            }
-
-            40% {
-                content: "..";
-            }
-
-            60%,
-            100% {
-                content: "...";
-            }
-        }
-
-
-
-        .scrollbar {
-            scrollbar-width: thin;
-            scrollbar-color: #444 #222;
-        }
-
-        .scrollbar::-webkit-scrollbar {
-            width: 6px;
-        }
-
-        .scrollbar::-webkit-scrollbar-track {
-            background: #222;
-        }
-
-        .scrollbar::-webkit-scrollbar-thumb {
-            background: #444;
-            border-radius: 3px;
-        }
-
-        .scrollbar::-webkit-scrollbar-thumb:hover {
-            background: #555;
-        }
-
-        .chart-controls {
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-
-        .realtime-btn {
-            font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
-            font-size: 12px;
-            font-weight: 500;
-            padding: 6px 16px;
-            color: #e0e0e0;
-            background-color: #333;
-            border: 1px solid #555;
-            border-radius: 6px;
-            cursor: pointer;
-            transition: background-color 0.2s, border-color 0.2s;
-        }
-
-        .realtime-btn:hover {
-            background-color: #444;
-            border-color: #00ff88;
-        }
-
-        .realtime-btn:active {
-            background-color: #00ff88;
-            color: #0a0a0a;
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <meta name="color-scheme" content="dark">
+  <title>Funding Arb · Operator Portal · TESTNET</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="fonts/fonts.css">
+  <link rel="stylesheet" href="css/portal.css">
+  <script src="vendor/lightweight-charts-4.2.1.standalone.production.js" defer></script>
+  <script type="module" src="js/main.js"></script>
 </head>
-
 <body>
-    <div class="container">
-        <div class="header">
-            <div class="logo">⚡ CRYPTO ARBITRAGE SCANNER</div>
-            <div class="status">
-                <div class="status-item">
-                    <div class="status-dot" id="wsStatus"></div>
-                    <span id="wsStatusText">Connecting...</span>
-                </div>
-            </div>
+  <a class="skip-link" href="#main">Bỏ qua tới nội dung</a>
+  <div class="backdrop" aria-hidden="true"></div>
+  <div class="demo-badge" role="note">[BINANCE TESTNET DEMO]</div>
+
+  <header class="shell-header" id="shell-header">
+    <div class="header-row">
+      <div class="brand">
+        <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+          <defs>
+            <linearGradient id="neon" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#00f2fe"/>
+              <stop offset="1" stop-color="#4facfe"/>
+            </linearGradient>
+          </defs>
+          <path d="M20 3 35 11.5v17L20 37 5 28.5v-17Z" fill="none" stroke="url(#neon)" stroke-width="2"/>
+          <path d="M13 17h14l-4-4M27 23H13l4 4" fill="none" stroke="url(#neon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <div>
+          <h1>FUNDING ARB <span>OPERATOR PORTAL</span></h1>
+          <p>Chiến lược 1 · spot LONG + perp SHORT · một trang cho scanner, lệnh, sổ giấy và crowding · chỉ testnet</p>
         </div>
-
-        <div class="sidebar scrollbar">
-            <div class="panel">
-                <div class="panel-header">Symbol</div>
-                <div class="panel-content">
-                    <div class="symbol-selector">
-                        <select id="symbolSelect" class="symbol-input">
-                            <!-- Filled from the meta message. See docs/WS-CONTRACT.md §3. -->
-                        </select>
-                    </div>
-                </div>
-            </div>
-
-            <div class="panel">
-                <div class="panel-header">Sources</div>
-                <div class="panel-content">
-                    <div class="source-list" id="sourceList">
-                        <div class="loading">Loading sources</div>
-                    </div>
-                    <div id="tickStatusNote" class="tick-status-note" hidden></div>
-                </div>
-            </div>
-
-            <div class="panel">
-                <div class="panel-header">Current Spreads</div>
-                <div class="panel-content">
-                    <div id="spreadsMatrix" class="spread-groups">
-                        <div class="loading">Waiting for price data...</div>
-                    </div>
-                    <div id="costBasisNote" class="cost-basis-note"></div>
-                </div>
-            </div>
-
-            <div class="panel">
-                <div class="panel-header">Arbitrage Alerts</div>
-                <div class="opportunities-controls">
-                    <div style="display: flex; gap: 8px; align-items: center;">
-                        <label style="font-size: 10px; color: #888;">Min %:</label>
-                        <input type="number" id="minSpreadFilter" class="opportunities-filter" placeholder="0.05"
-                            step="0.01" min="0" value="0.05">
-                    </div>
-                    <div class="opportunities-stats" id="opportunitiesStats">0 alerts</div>
-                    <button class="clear-opportunities" id="clearOpportunities">Clear</button>
-                </div>
-                <div class="opportunities-table-container scrollbar">
-                    <table class="opportunities-table">
-                        <thead>
-                            <tr>
-                                <th class="sortable" data-sort="symbol">Symbol</th>
-                                <th class="sortable" data-sort="spread_gross_pct">Spread thô %</th>
-                                <th class="sortable" data-sort="spread_after_fees_pct">Sau phí %</th>
-                                <th class="sortable" data-sort="buy_source">Buy</th>
-                                <th class="sortable" data-sort="buy_price">Buy $</th>
-                                <th class="sortable" data-sort="sell_source">Sell</th>
-                                <th class="sortable" data-sort="sell_price">Sell $</th>
-                                <th class="sortable" data-sort="detected_at_ms">Time</th>
-                            </tr>
-                        </thead>
-                        <tbody id="opportunitiesTableBody">
-                            <tr>
-                                <td colspan="8" class="opportunities-empty">No alerts yet...</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
+      </div>
+      <div class="chips" role="status" aria-live="polite" aria-label="Trạng thái kết nối">
+        <div class="chip" id="chip-scanner" data-state="idle" title="Relay WebSocket chỉ đọc tới cmd/scanner">
+          <span class="dot"></span><span class="chip-k">Scanner WS</span><span class="chip-v" id="chip-scanner-v">—</span>
         </div>
-
-        <div class="panel-resizer" id="panelResizer"
-            title="Kéo để đổi độ rộng bảng · nhấp đúp để về mặc định"></div>
-
-        <div class="main">
-            <div class="view-tabs">
-                <button class="view-tab active" data-view="price">Biểu đồ giá</button>
-                <button class="view-tab" data-view="funding">Funding</button>
-            </div>
-
-            <div class="view" id="viewPrice">
-                <div class="chart-container" style="flex: 1.5;">
-                    <div class="chart-header">
-                        <div class="chart-title" id="chartTitle">Price Chart - BTCUSDT (Live)</div>
-                        <div class="chart-controls">
-                            <button id="goToRealtimeBtn" class="realtime-btn">Go to realtime</button>
-                        </div>
-                    </div>
-                    <div id="chart"
-                        style="flex: 1; padding: 10px; overflow: hidden; position: relative; box-sizing: border-box;">
-                    </div>
-                </div>
-            </div>
-
-            <!-- Funding (Bước 2.7). Mọi số ở đây là THÔ; nhãn dưới đây dựng từ
-                 meta.funding_basis, không hardcode. -->
-            <div class="view hidden" id="viewFunding">
-                <div class="funding-scroll scrollbar">
-                    <div class="funding-note" id="fundingBasisNote"></div>
-
-                    <div class="funding-block">
-                        <div class="funding-block-title">
-                            Funding theo sàn × cặp — <span class="unit-tag">bps / 8 giờ</span>
-                            <span class="funding-hint">Quy về cùng đơn vị 8h để so được giữa các sàn:
-                                cùng một bps ở chu kỳ 1h và 8h là hai mức lợi suất khác hẳn nhau.</span>
-                        </div>
-                        <div class="funding-matrix-wrap">
-                            <table class="funding-matrix" id="fundingMatrix">
-                                <tbody>
-                                    <tr>
-                                        <td class="funding-empty">Đang chờ dữ liệu funding…</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div class="funding-block">
-                        <div class="funding-block-title">
-                            Chi tiết <span id="fundingDetailSymbol">—</span>
-                            <span class="funding-hint">Đổi cặp ở ô Symbol bên trái.</span>
-                        </div>
-                        <div class="funding-note" id="depthNote"></div>
-                        <div class="funding-detail-wrap">
-                            <table class="funding-detail">
-                                <thead>
-                                    <tr>
-                                        <th>Sàn</th>
-                                        <th>bps/8h</th>
-                                        <th>APR thô %</th>
-                                        <th>Chu kỳ</th>
-                                        <th>Settle kế tiếp</th>
-                                        <th>Độ tươi</th>
-                                        <th>Chân spot để hedge</th>
-                                        <th>Hoà phí (ngày)</th>
-                                        <th title="Thoát lệnh: mua lại perp qua phía bán của sổ perp — cùng thời điểm căng thẳng với lúc bán chân spot">Sổ perp ask ±0,5%</th>
-                                        <th title="Thoát lệnh: bán chân spot vào phía mua của sổ spot — đây mới là chỗ kẹt">Sổ spot bid ±0,5%</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="fundingDetailBody">
-                                    <tr>
-                                        <td colspan="10" class="funding-empty">Đang chờ dữ liệu funding…</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <div class="funding-block">
-                        <div class="funding-block-title">
-                            Lịch sử funding đã settle
-                            <select id="fundingHistoryDays" class="funding-days">
-                                <option value="7">7 ngày</option>
-                                <option value="30" selected>30 ngày</option>
-                                <option value="90">90 ngày</option>
-                                <option value="180">180 ngày</option>
-                                <option value="365">365 ngày</option>
-                            </select>
-                            <span class="funding-hint" id="fundingHistoryNote"></span>
-                        </div>
-                        <div id="fundingChart" class="funding-chart"></div>
-                        <div class="funding-coverage" id="fundingCoverage"></div>
-                    </div>
-                </div>
-            </div>
+        <div class="chip" id="chip-spot" data-state="idle" title="API Binance Spot testnet">
+          <span class="dot"></span><span class="chip-k">API Spot</span><span class="chip-v" id="chip-spot-v">—</span>
         </div>
+        <div class="chip" id="chip-futures" data-state="idle" title="API Binance Futures testnet">
+          <span class="dot"></span><span class="chip-k">API Futures</span><span class="chip-v" id="chip-futures-v">—</span>
+        </div>
+        <div class="chip" id="chip-skew" data-state="idle" title="Lệch đồng hồ đo tại điểm giữa vòng khứ hồi; dương = đồng hồ sàn đi trước">
+          <span class="dot"></span><span class="chip-k">Lệch đồng hồ</span><span class="chip-v" id="chip-skew-v">—</span>
+        </div>
+        <div class="chip chip-hedge" id="chip-hedge" data-state="idle" data-status="unknown" title="Trạng thái phòng hộ của symbol đang giao dịch, đọc từ sàn">
+          <span class="dot"></span><span class="chip-k" id="chip-hedge-k">Phòng hộ</span><span class="chip-v" id="chip-hedge-v">—</span>
+        </div>
+      </div>
     </div>
 
+    <div class="header-row balances" aria-label="Số dư ví testnet">
+      <div class="bal"><div class="bal-k"><span>Ví Spot · USDT</span><span id="bal-spot-age"></span></div><div class="bal-v" id="bal-spot-usdt">—</div></div>
+      <div class="bal"><div class="bal-k"><span>Ví Futures · USDT</span></div><div class="bal-v" id="bal-futures-usdt">—</div></div>
+      <div class="bal total"><div class="bal-k"><span>Tổng USDT · Spot + Futures</span><span>không quy đổi coin</span></div><div class="bal-v" id="bal-total-usdt">—</div></div>
+      <div class="bal"><div class="bal-k"><span>Ví Spot · <span id="bal-base-asset">BTC</span></span><span>gồm số dư cấp sẵn</span></div><div class="bal-v" id="bal-spot-base">—</div></div>
+    </div>
 
-    <script src="https://unpkg.com/lightweight-charts@4.2.1/dist/lightweight-charts.standalone.production.js"></script>
-    <script src="app.js"></script>
+    <nav class="tabs" role="tablist" aria-label="Phân hệ" id="tabs">
+      <button class="tab" role="tab" id="tab-scanner" data-tab="scanner" aria-controls="panel-scanner" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        Market Scanner
+      </button>
+      <button class="tab" role="tab" id="tab-execution" data-tab="execution" aria-controls="panel-execution" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20V4M7 4 4 7M7 4l3 3M17 4v16M17 20l-3-3M17 20l3-3"/></svg>
+        Execution Control
+        <span class="tab-count" id="tab-exec-alarm" hidden>!</span>
+      </button>
+      <button class="tab" role="tab" id="tab-paper" data-tab="paper" aria-controls="panel-paper" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
+        Paper Ledger
+      </button>
+      <button class="tab" role="tab" id="tab-crowding" data-tab="crowding" aria-controls="panel-crowding" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.7"/></svg>
+        Crowding Reversal
+      </button>
+      <span class="tab-ink" id="tab-ink" aria-hidden="true"></span>
+    </nav>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <div class="callout warn served-elsewhere" id="served-elsewhere" role="alert" hidden>
+      <strong>Trang này chỉ chạy sau <code>cmd/execportal</code>.</strong>
+      Máy chủ vừa trả tệp này không có API của portal (<code>/api/status</code> trả 404) — thường là
+      <code>cmd/scanner</code>, vốn phục vụ thư mục <code>static/</code> thẳng từ đĩa. Mở trang vận hành ở
+      <code>127.0.0.1:8087</code> (từ gốc repo: <code>go run ./cmd/execportal -port 8087</code>).
+    </div>
+    <!-- ============================================================ SCANNER -->
+    <section class="tab-panel" id="panel-scanner" role="tabpanel" aria-labelledby="tab-scanner" hidden>
+      <div class="scanner-grid">
+        <div class="stack">
+          <article class="card">
+            <div class="card-head">
+              <h2>Nguồn giá</h2>
+              <span class="spacer"></span>
+              <label class="sr-only" for="sc-symbol">Cặp đang xem</label>
+              <select id="sc-symbol" aria-label="Cặp đang xem"></select>
+            </div>
+            <div class="feed-line" id="sc-feed" data-state="idle">
+              <span class="status-dot" id="sc-feed-dot"></span><span id="sc-feed-text">chưa nối — mở tab này để nối relay chỉ đọc tới scanner</span>
+            </div>
+            <div class="source-list" id="sc-sources"><div class="empty-state">Đang chờ message <code>meta</code> từ scanner…</div></div>
+            <div class="callout warn tick-note" id="sc-tick-note" hidden></div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Chênh lệch hiện tại</h2>
+              <span class="unit">%</span>
+            </div>
+            <div id="sc-spreads"><div class="empty-state">Đang chờ dữ liệu giá…</div></div>
+            <p class="note mt12" id="sc-cost-note"></p>
+          </article>
+
+        </div>
+
+        <div class="stack">
+          <article class="card">
+            <div class="card-head">
+              <h2 id="sc-chart-title">Giá theo sàn</h2>
+              <span class="spacer"></span>
+              <div class="seg" role="group" aria-label="Kiểu biểu đồ">
+                <button type="button" data-mode="lines" aria-pressed="true">Đường giá</button>
+                <button type="button" data-mode="candles" aria-pressed="false">Nến 1 phút</button>
+              </div>
+              <label class="sr-only" for="sc-candle-source">Nguồn dựng nến</label>
+              <select id="sc-candle-source" aria-label="Nguồn dựng nến" hidden></select>
+              <button type="button" class="btn ghost small" id="sc-realtime">Về thời gian thực</button>
+            </div>
+            <div class="chart" id="sc-chart"><div class="chart-empty" id="sc-chart-empty">Biểu đồ vẽ từ các snapshot giá nhận được kể từ lúc nối.</div></div>
+            <p class="note mt8" id="sc-chart-note">Đường giá: giá mỗi sàn từ message <code>prices</code> (200 ms). Một nguồn CŨ bị ngắt đường, không nối thẳng qua khoảng trống.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Funding theo sàn × cặp</h2>
+              <span class="unit">bps / 8 giờ</span>
+              <span class="tag gross">THÔ</span>
+            </div>
+            <p class="note" id="sc-funding-basis"></p>
+            <div class="table-wrap mt8">
+              <table class="fmatrix" id="sc-funding-matrix"><tbody><tr><td class="empty">Đang chờ dữ liệu funding…</td></tr></tbody></table>
+            </div>
+            <p class="hint mt8">Quy về cùng 8 giờ để so được giữa các sàn: cùng một bps ở chu kỳ 1 giờ và 8 giờ là hai mức lợi suất khác hẳn nhau.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Chi tiết <span id="sc-detail-symbol">—</span> · funding & lối thoát</h2>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Sàn</th><th class="r">bps/8h</th><th class="r">APR thô</th><th>Chu kỳ</th><th>Settle kế tiếp</th><th>Độ tươi</th><th>Chân spot</th>
+                  <th class="r">Hoà phí (ngày)</th>
+                  <th class="r" title="Thoát lệnh: mua lại perp qua phía bán của sổ perp">Sổ perp ask ±0,5%</th>
+                  <th class="r" title="Thoát lệnh: bán chân spot vào phía mua của sổ spot — đây mới là chỗ kẹt">Sổ spot bid ±0,5%</th>
+                </tr></thead>
+                <tbody id="sc-funding-detail"><tr><td class="empty" colspan="10">Chưa có dữ liệu.</td></tr></tbody>
+              </table>
+            </div>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Độ sâu sổ lệnh · <span id="sc-depth-symbol">—</span></h2>
+              <span class="unit">quote của từng sàn</span>
+            </div>
+            <p class="note" id="sc-depth-note"></p>
+            <div class="table-wrap mt8">
+              <table>
+                <thead><tr>
+                  <th>Nguồn</th><th class="r">Bid ±0,1%</th><th class="r">Bid ±0,5%</th><th class="r">Ask ±0,1%</th><th class="r">Ask ±0,5%</th>
+                  <th class="r">Spread %</th><th class="r">Mức bid/ask</th><th>Đo cách đây</th><th>Ghi chú</th>
+                </tr></thead>
+                <tbody id="sc-depth"><tr><td class="empty" colspan="9">Chưa có số đo độ sâu.</td></tr></tbody>
+              </table>
+            </div>
+            <p class="hint mt8">"≥" = sàn không trả đủ mức tới cửa sổ, con số là CẬN DƯỚI chứ không phải sổ mỏng. Không cộng chéo quote giữa các sàn. Đây chưa phải slippage.</p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Lịch sử funding đã settle</h2>
+              <span class="spacer"></span>
+              <label class="sr-only" for="sc-history-days">Cửa sổ lịch sử</label>
+              <select id="sc-history-days" aria-label="Cửa sổ lịch sử">
+                <option value="7">7 ngày</option>
+                <option value="30" selected>30 ngày</option>
+                <option value="90">90 ngày</option>
+                <option value="180">180 ngày</option>
+                <option value="365">365 ngày</option>
+              </select>
+            </div>
+            <p class="note" id="sc-history-note"></p>
+            <div class="chart short mt8" id="sc-history-chart"></div>
+            <p class="note mt8" id="sc-history-coverage"></p>
+          </article>
+
+          <article class="card">
+            <div class="card-head">
+              <h2>Cảnh báo chênh lệch</h2>
+              <span class="spacer"></span>
+              <div class="alert-controls">
+                <label class="hint" for="sc-min-spread">Tối thiểu %</label>
+                <input type="number" id="sc-min-spread" min="0" step="0.01" value="0.05" inputmode="decimal">
+                <button type="button" class="btn ghost small" id="sc-alerts-clear">Xoá</button>
+              </div>
+            </div>
+            <p class="hint" id="sc-alerts-count">0 cảnh báo</p>
+            <div class="table-wrap scroll mt8">
+              <table>
+                <thead><tr><th>Cặp</th><th class="r">Thô %</th><th class="r">Sau phí %</th><th>Mua</th><th>Bán</th><th>Lúc</th></tr></thead>
+                <tbody id="sc-alerts"><tr><td class="empty" colspan="6">Chưa có cảnh báo nào kể từ lúc nối.</td></tr></tbody>
+              </table>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========================================================== EXECUTION -->
+    <section class="tab-panel" id="panel-execution" role="tabpanel" aria-labelledby="tab-execution" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h2>Kết nối testnet</h2>
+          <span class="spacer"></span>
+          <label class="hint" for="ex-symbol">Symbol giao dịch</label>
+          <select id="ex-symbol" aria-label="Symbol giao dịch"></select>
+        </div>
+        <div class="conn-grid">
+          <div class="conn" id="conn-spot">
+            <div class="label"><span>Binance Spot</span><span class="pill" data-role="pill">—</span></div>
+            <div class="meta" data-role="host">—</div>
+            <dl class="kv">
+              <dt>Ping</dt><dd data-role="ping">—</dd>
+              <dt>Lệch đồng hồ</dt><dd data-role="skew">—</dd>
+              <dt>Weight / phút</dt><dd data-role="weight">—</dd>
+            </dl>
+            <div class="meter" data-role="meter"><span></span></div>
+            <div class="err" data-role="err" hidden></div>
+          </div>
+          <div class="conn" id="conn-futures">
+            <div class="label"><span>Binance USDⓈ-M Futures</span><span class="pill" data-role="pill">—</span></div>
+            <div class="meta" data-role="host">—</div>
+            <dl class="kv">
+              <dt>Ping</dt><dd data-role="ping">—</dd>
+              <dt>Lệch đồng hồ</dt><dd data-role="skew">—</dd>
+              <dt>Weight / phút</dt><dd data-role="weight">—</dd>
+            </dl>
+            <div class="meter" data-role="meter"><span></span></div>
+            <div class="err" data-role="err" hidden></div>
+          </div>
+          <div class="conn">
+            <div class="label"><span>Portal</span><span class="pill" id="portal-pill">—</span></div>
+            <div class="meta" id="portal-line">đang kết nối portal…</div>
+            <dl class="kv">
+              <dt>Ví Spot</dt><dd id="ex-bal-spot">—</dd>
+              <dt>Ví Futures</dt><dd id="ex-bal-futures">—</dd>
+              <dt>Spot · base</dt><dd id="ex-bal-base">—</dd>
+            </dl>
+          </div>
+        </div>
+      </article>
+
+      <article class="card" aria-label="Theo dõi vị thế">
+        <div class="card-head">
+          <h2>Vị thế hai chân — đọc từ sàn</h2>
+          <span class="spacer"></span>
+          <span class="hint" id="pos-age">—</span>
+        </div>
+        <div class="status-banner" id="hedge-banner" data-status="unknown" role="status" aria-live="polite">
+          <span class="word" id="hedge-word">CHƯA XÁC ĐỊNH ĐƯỢC</span>
+          <span class="why" id="hedge-why">đang đọc…</span>
+        </div>
+        <div class="legs">
+          <div class="leg spot">
+            <h3>SPOT LONG</h3>
+            <div class="big" id="spot-qty">—</div>
+            <div class="unit-line" id="spot-unit">coin · theo lệnh của các ý định, đọc từ sàn</div>
+            <dl class="kv">
+              <dt>Ý định đang theo dõi</dt><dd id="spot-intents">—</dd>
+              <dt>Số dư ví (bối cảnh)</dt><dd id="spot-balance">—</dd>
+            </dl>
+          </div>
+          <div class="delta" id="delta" data-state="warn">
+            <div class="hint">DELTA RESIDUAL = spot − |perp|</div>
+            <div class="big" id="delta-value">—</div>
+            <div class="track" aria-hidden="true"><span id="delta-bar"></span></div>
+            <div class="hint" id="delta-tol">dung sai —</div>
+          </div>
+          <div class="leg perp">
+            <h3>FUTURES SHORT</h3>
+            <div class="big" id="perp-qty">—</div>
+            <div class="unit-line">coin · vị thế sàn báo (âm là short)</div>
+            <dl class="kv">
+              <dt>Lệnh ý định giải thích</dt><dd id="perp-intents">—</dd>
+              <dt>Lãi/lỗ chưa chốt (GỘP, sàn)</dt><dd id="perp-upnl">—</dd>
+              <dt>Sàn cập nhật</dt><dd id="perp-updated">—</dd>
+            </dl>
+          </div>
+        </div>
+        <details class="evidence" id="evidence">
+          <summary>Bằng chứng theo từng ý định (lệnh suy ra từ intent id, đọc từ sàn)</summary>
+          <ul class="warnings" id="pos-warnings" hidden></ul>
+          <div class="table-wrap mt8">
+            <table>
+              <thead><tr><th>Ý định</th><th class="r">Spot coin</th><th class="r">Perp coin</th><th class="r">Lệch</th><th>Trạng thái</th><th>Lệnh thấy trên sàn</th></tr></thead>
+              <tbody id="pos-intents"></tbody>
+            </table>
+          </div>
+        </details>
+      </article>
+
+      <article class="card" aria-label="Bảng điều khiển">
+        <div class="card-head">
+          <h2>Bảng điều khiển</h2>
+          <span class="spacer"></span>
+          <span class="busy-line" id="busy-line" aria-live="polite"></span>
+        </div>
+        <div class="control">
+          <form class="box" id="open-form" novalidate>
+            <div class="field">
+              <label for="notional">Notional mỗi chân (quote)</label>
+              <input type="number" id="notional" name="notional" min="1" max="50000" step="0.01" value="65" inputmode="decimal" required>
+              <div class="hint" id="notional-hint">cỡ nhỏ nhất gợi ý: —</div>
+            </div>
+            <div class="field">
+              <span class="lbl">Thứ tự chân</span>
+              <div class="radios" role="radiogroup" aria-label="Thứ tự chân">
+                <label><input type="radio" name="leg_order" value="sequential_spot_first" checked> Tuần tự (spot trước)</label>
+                <label><input type="radio" name="leg_order" value="parallel"> Song song</label>
+              </div>
+            </div>
+            <div class="hint" id="market-hint">—</div>
+            <button type="submit" class="btn primary" id="btn-open">[MỞ VỊ THẾ 2 CHÂN]</button>
+          </form>
+
+          <div class="box">
+            <div class="field">
+              <label for="close-intent">Ý định cần đóng</label>
+              <select id="close-intent"><option value="">— không có ý định đang giữ —</option></select>
+              <div class="hint" id="close-hint">Đóng perp trước, rồi spot đúng bằng phần perp đã đóng.</div>
+            </div>
+            <button type="button" class="btn secondary" id="btn-close" disabled>[ĐÓNG VỊ THẾ 2 CHÂN]</button>
+          </div>
+
+          <div class="box danger">
+            <div class="hint">Khẩn cấp: quét MỌI ý định của symbol, đọc lệnh từ sàn, làm phẳng phần LỆCH (chân trần). Xem kế hoạch trước khi gửi.</div>
+            <button type="button" class="btn danger" id="btn-reconcile">[LÀM PHẲNG TOÀN BỘ (RECONCILE)]</button>
+          </div>
+        </div>
+      </article>
+
+      <article class="card result" id="result" hidden aria-live="polite">
+        <div class="card-head">
+          <h2 id="result-title">Kết quả thao tác</h2>
+          <span class="spacer"></span>
+          <button type="button" class="btn ghost small" id="result-dismiss">Ẩn</button>
+        </div>
+        <div id="result-body"></div>
+      </article>
+
+      <div class="exec-tables">
+        <article class="card">
+          <div class="card-head">
+            <h2>Lịch sử ý định &amp; trượt giá</h2>
+            <span class="tag gross">CACHE</span>
+            <span class="spacer"></span>
+            <span class="hint">file .paper/exec — đúng tại thời điểm đã qua, không phải bằng chứng hiện tại</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr>
+                <th>Mở lúc</th><th>Ý định</th><th>Nguồn</th><th class="r">Notional</th><th class="r">Khớp coin</th>
+                <th class="r">Giá spot</th><th class="r">Giá perp</th><th class="r">Trượt spot bps</th><th class="r">Trượt perp bps</th>
+                <th class="r">Trần ms</th><th>Kết cục</th><th>Đóng lúc</th><th class="r">Funding</th><th class="r">Phí</th>
+                <th class="r">Trượt quote</th><th class="r">Realized*</th><th>Ghi chú</th>
+              </tr></thead>
+              <tbody id="intents-body"></tbody>
+            </table>
+          </div>
+          <p class="hint mt8">* Realized = funding − phí (quote) − trượt giá; KHÔNG phải lãi ròng — trôi giá cặp, phí bằng tài sản khác và chi phí vốn nằm ngoài. Trượt bps dương là tệ hơn giá tốt nhất lúc chụp sổ.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <h2>Lệnh đang mở trên sàn</h2>
+            <span class="spacer"></span>
+            <span class="hint" id="orders-age">—</span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Sàn</th><th>Side</th><th>Loại</th><th>Trạng thái</th><th class="r">Khối lượng</th><th class="r">Giá</th><th class="r">Đã khớp</th><th>Reduce-only</th><th>Ý định</th><th>Cập nhật</th></tr></thead>
+              <tbody id="orders-body"></tbody>
+            </table>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <h2>Funding sàn đã trả &amp; đối soát</h2>
+            <span class="spacer"></span>
+            <span class="hint" id="funding-age">—</span>
+          </div>
+          <p class="note" id="funding-head">—</p>
+          <div class="table-wrap mt8">
+            <table>
+              <thead><tr><th>Mốc settle</th><th class="r">Thu nhập</th><th>Tài sản</th><th>tranId</th><th>Ý định giữ qua mốc</th></tr></thead>
+              <tbody id="funding-body"></tbody>
+            </table>
+          </div>
+          <div class="table-wrap mt12">
+            <table>
+              <thead><tr><th>Ý định</th><th>Giữ từ → đến</th><th class="r">Perp coin</th><th class="r">Cache: funding lúc đóng</th><th class="r">Sàn: dòng trong cửa sổ</th><th class="r">Số dòng</th><th class="r">Dòng chung</th><th>Ghi chú</th></tr></thead>
+              <tbody id="funding-intents"></tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- ============================================================== PAPER -->
+    <section class="tab-panel" id="panel-paper" role="tabpanel" aria-labelledby="tab-paper" hidden>
+      <div class="paper-banner">
+        <span class="tag paper">PAPER</span>
+        MỌI CON SỐ Ở TAB NÀY LÀ PAPER — vốn ảo, không tài khoản, không lệnh. Sổ không quyết định gì: nó định giá quyết định mà tiến trình 3.5 đã ghi.
+      </div>
+      <article class="card">
+        <div class="card-head">
+          <h2>Sổ giấy · Bước 4.3</h2>
+          <span class="spacer"></span>
+          <span class="hint" id="pp-source">—</span>
+          <button type="button" class="btn ghost small" id="pp-refresh">Đọc lại</button>
+        </div>
+        <p class="note" id="pp-status">Mở tab để đọc /api/ledger của cmd/paperledger qua portal.</p>
+        <div class="stat-grid mt12" id="pp-tiles"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Đường equity</h2>
+          <span class="tag paper">PAPER</span>
+          <span class="unit">quote · đánh dấu theo mid</span>
+        </div>
+        <div class="chart short" id="pp-equity"><div class="chart-empty" id="pp-equity-empty">Chưa có dữ liệu.</div></div>
+        <p class="note mt8" id="pp-equity-note"></p>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Vị thế đang mở</h2>
+          <span class="tag paper">PAPER</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cặp / perp ← spot</th><th>Mở lúc</th><th class="r">Qty coin</th><th class="r">Spot mua</th><th class="r">Perp bán</th><th class="r">Ký quỹ</th><th class="r">Funding (mốc)</th><th class="r">Basis P&amp;L</th><th class="r">P&amp;L mở (gồm funding)</th><th class="r">APR ròng DỰ PHÓNG</th><th class="r">Vòng phí nhật ký / paper</th><th>Ghi chú</th></tr></thead>
+            <tbody id="pp-open"><tr><td class="empty" colspan="12">—</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Đã đóng — dự phóng lúc vào đối chiếu P&amp;L paper</h2>
+          <span class="tag paper">PAPER</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Cặp / perp ← spot</th><th>Mở</th><th>Đóng</th><th class="r">Giữ (ngày)</th><th class="r">Qty coin</th><th class="r">Funding (mốc)</th><th class="r">Phí 4 lượt</th><th class="r">P&amp;L THỰC HIỆN</th><th class="r">P&amp;L / vốn</th><th class="r">P&amp;L / notional 1 chân</th><th class="r">APR ròng DỰ PHÓNG lúc vào</th><th class="r">Vòng phí nhật ký / paper</th></tr></thead>
+            <tbody id="pp-closed"><tr><td class="empty" colspan="12">—</td></tr></tbody>
+          </table>
+        </div>
+        <p class="hint mt8">APR dự phóng là số <code>strategy.NetAPR</code> ghi lúc vào, trên notional MỘT chân, với phần đã trừ và chưa trừ của nó. P&amp;L thực hiện là của sổ giấy. Hai số đứng cạnh nhau, không quy đổi cái này thành cái kia — không nhân APR với thời gian giữ (quy tắc 6).</p>
+      </article>
+
+      <div class="labels-grid">
+        <article class="card"><h3>THẬT</h3><ul id="pp-real"></ul></article>
+        <article class="card"><h3>GIẢ (PAPER)</h3><ul id="pp-fake"></ul></article>
+        <article class="card"><h3>GIẢ ĐỊNH</h3><ul id="pp-assumptions"></ul></article>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Sự kiện</h2>
+          <span class="tag paper">PAPER</span>
+          <span class="spacer"></span>
+          <span class="hint" id="pp-events-count">—</span>
+        </div>
+        <ul class="event-list" id="pp-events"></ul>
+      </article>
+    </section>
+
+    <!-- =========================================================== CROWDING -->
+    <section class="tab-panel" id="panel-crowding" role="tabpanel" aria-labelledby="tab-crowding" hidden>
+      <div class="research-banner" id="cr-banner">
+        <div><span class="tag research">NGHIÊN CỨU</span> <strong>Giai đoạn 6 · Crowding Reversal — chưa có nguồn live.</strong></div>
+        <div class="note" id="cr-banner-note">Đang tải snapshot fixture…</div>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Tâm lý đám đông · <span id="cr-asset-label">BTC</span></h2>
+          <span class="tag research">NGHIÊN CỨU</span>
+          <span class="spacer"></span>
+          <div class="seg" role="group" aria-label="Tài sản" id="cr-assets">
+            <button type="button" data-asset="BTC" aria-pressed="true">BTC</button>
+            <button type="button" data-asset="ETH" aria-pressed="false">ETH</button>
+          </div>
+          <div class="seg" role="group" aria-label="Khoảng thời gian" id="cr-ranges">
+            <button type="button" data-days="90" aria-pressed="false">90 ngày</button>
+            <button type="button" data-days="180" aria-pressed="false">180 ngày</button>
+            <button type="button" data-days="365" aria-pressed="true">365 ngày</button>
+          </div>
+        </div>
+        <div class="stat-grid" id="cr-stats"></div>
+      </article>
+
+      <article class="card">
+        <div class="chart-stack">
+          <div>
+            <div class="chart-label">
+              <span>Tỉ lệ tài khoản long/short toàn cầu (Binance) · nến 4 giờ</span>
+              <span class="legend"><span><i class="l-cyan"></i>tỉ lệ</span><span><i class="l-dash"></i>1,0 = cân bằng</span></span>
+            </div>
+            <div class="chart tiny" id="cr-ratio"></div>
+          </div>
+          <div>
+            <div class="chart-label">
+              <span>Crowding score — z-score của ln(tỉ lệ), trung bình 12 thành viên · dương = đám đông nghiêng LONG</span>
+              <span class="legend"><span><i class="l-blue"></i>score</span><span><i class="l-neg"></i>ngưỡng vào ±<span id="cr-entry">1</span></span><span><i class="l-dash"></i>ngưỡng ra ±<span id="cr-exit">0,25</span></span></span>
+            </div>
+            <div class="chart short" id="cr-score"></div>
+          </div>
+          <div>
+            <div class="chart-label">
+              <span>Mục tiêu (phần vốn, TRƯỚC mọi chi phí) — đầu ra đã ghi của fixture, không phải lệnh</span>
+              <span class="legend"><span><i class="l-cyan"></i>long</span><span><i class="l-neg"></i>short</span></span>
+            </div>
+            <div class="chart tiny" id="cr-target"></div>
+          </div>
+        </div>
+        <p class="note mt12" id="cr-config"></p>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Để màn hình này chạy LIVE cần gì</h2>
+        </div>
+        <ul class="readiness">
+          <li><span class="mark done">✓</span><span>Bước 6.1 — lõi toán học Go, parity với fixture (target ≤ 1e-10, signal khớp tuyệt đối).</span></li>
+          <li><span class="mark todo">…</span><span>Bước 6.2 — ingestion <code>GET /futures/data/globalLongShortAccountRatio</code> (period 5m, chỉ 30 ngày gần nhất) + kho dump <code>data.binance.vision</code>; bảng <code>long_short_ratio_samples</code> ở schema mới. Đứng sau phán quyết 3.5 và 3.4.</span></li>
+          <li><span class="mark todo">…</span><span>Một tiến trình dữ liệu KHÔNG giữ credential phát tỉ lệ đó ra; portal chỉ relay như tab Scanner. Binary giữ credential không được biết host mainnet (guard_test).</span></li>
+          <li><span class="mark todo">…</span><span>Bước 6.3 — backtest crowding tái tạo <code>core_statistics</code> của manifest trước khi một con số nào ở đây được đọc như kỳ vọng.</span></li>
+        </ul>
+      </article>
+    </section>
+  </main>
+
+  <footer class="shell-footer">
+    <p>Mọi con số về vị thế, số dư, lệnh và funding testnet đọc lại TỪ SÀN (quy tắc 7); file ý định chỉ là cache. Mọi vị thế do người vận hành bấm — không có đường nào từ tín hiệu sống tới lệnh (PLAN Q15–Q17): tab Scanner và Paper là relay CHỈ ĐỌC, không một dòng Go nào của portal giải mã chúng.</p>
+    <p>Không con số nào ở đây là "lãi ròng" trừ nơi ghi rõ phần đã trừ. Portal chỉ nói chuyện với testnet: <span id="footer-hosts">—</span>. Biểu đồ: <a href="https://www.tradingview.com/" rel="noopener noreferrer" target="_blank">TradingView Lightweight Charts™</a> (Apache-2.0) · phông Inter, JetBrains Mono (SIL OFL 1.1), đóng gói sẵn trong binary.</p>
+  </footer>
+
+  <dialog id="confirm" aria-labelledby="confirm-title">
+    <form method="dialog" id="confirm-form">
+      <h2 id="confirm-title">Xác nhận</h2>
+      <div class="testnet-line">LỆNH THẬT trên BINANCE TESTNET — không tiền thật</div>
+      <div class="body" id="confirm-body"></div>
+      <div class="actions">
+        <button type="button" class="btn ghost" id="confirm-cancel">Huỷ</button>
+        <button type="button" class="btn primary" id="confirm-ok">Xác nhận</button>
+      </div>
+    </form>
+  </dialog>
 </body>
-
 </html>

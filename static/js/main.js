@@ -1,6 +1,6 @@
 // Entry point: wait for the portal, then start the four tabs and the header.
 
-import { api, schedule } from "./core.js";
+import { $, api, schedule } from "./core.js";
 import { shell } from "./shell.js";
 import { initExecution, onStatus, onPortalDown } from "./execution.js";
 import { initScanner } from "./scanner.js";
@@ -13,6 +13,14 @@ async function boot() {
   shell.init();
 
   let first = await api("/api/status");
+  // Every portal answer carries X-Execution-Mode, and /api/status is always
+  // routed. A bare 404 means a plain file server — cmd/scanner serves static/
+  // from disk — so say where the page runs instead of polling it forever.
+  if (first.status === 404 && !(first.headers && first.headers.get("X-Execution-Mode"))) {
+    $("served-elsewhere").hidden = false;
+    shell.renderPortalDown("máy chủ này không phải cmd/execportal");
+    return;
+  }
   while (!first.ok) {
     shell.renderPortalDown(first.body.error_vi || "không kết nối được portal");
     await new Promise((resolve) => setTimeout(resolve, 3000));

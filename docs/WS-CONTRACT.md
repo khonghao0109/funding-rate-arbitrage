@@ -250,7 +250,9 @@ trình nói ra.
 Không lưu qua restart: dòng log `tick trễ …` là bản ghi bền, trường này là số
 đếm của tiến trình đang chạy. FE cũ bỏ qua.
 
-**`static/` hiển thị từ 2026-09-12**, dưới danh sách Sources (`#tickStatusNote`),
+**`static/` hiển thị từ 2026-09-12**, dưới danh sách Sources (`#tickStatusNote`;
+từ 2026-09-15 là `#sc-tick-note` của `static/js/scanner.js`, tab Scanner của trang
+vận hành — dashboard cũ đã xoá, cùng quy tắc bên dưới),
 và chỉ khi `late_ticks > 0`. Trường vắng mặt và số 0 thật được vẽ **giống hệt
 nhau — không vẽ gì cả**: một máy chủ cũ không có cách nào biết nó có bỏ lỡ tick
 hay không, nên một huy hiệu "0 tick trễ" ở đó là lời trấn an sai. Nhãn tiếng

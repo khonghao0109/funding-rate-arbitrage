@@ -4213,7 +4213,9 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > không đụng tiến trình cổng 3.5 (PID 55475), **không sửa `static/`** (tiến trình
 > cổng phục vụ thư mục đó TỪ ĐĨA — `http.FileServer(http.Dir("./static/"))`, cwd
 > là gốc repo — nên sửa nó là sửa trang cổng đang phát), không migrate SQLite,
-> không thêm dependency `go.mod` (gorilla/websocket đã có).
+> không thêm dependency `go.mod` (gorilla/websocket đã có). **Ngày 2026-09-15 người
+> vận hành chuyển chính trang này VÀO `static/`** và xoá dashboard cũ — xem
+> "Chuyển giao diện vào `static/`" ở cuối mục; phần dưới là bản ghi ngày 14.
 >
 > ### Dữ liệu vào trang thế nào
 >
@@ -4221,7 +4223,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   relay nguyên văn từng frame qua `GET /api/scanner/ws`; lịch sử funding qua
 >   `GET /api/scanner/funding-history` (đường cố định, symbol theo mẫu, `days` ∈
 >   {7, 30, 90, 180, 365}, cache 60 s để không đọc DB của cổng theo từng tab).
->   `ui/js/scanner.js` là bản port của `static/app.js` trên cùng hợp đồng WS v1:
+>   `ui/js/scanner.js` (nay `static/js/scanner.js`) là bản port của `static/app.js` trên cùng hợp đồng WS v1:
 >   ma trận ba nhóm, basis, oracle, nguồn bị loại, funding bps/8h THÔ, chi tiết lối
 >   thoát, bảng độ sâu (tuổi tính tiếp tại trang, không đứng yên một giờ), lịch sử
 >   đã settle, cảnh báo, đường giá theo sàn và **nến 1 phút dựng tại trang** từ
@@ -4316,6 +4318,52 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   lưu `localStorage` theo từng trình duyệt.
 > - Chỉ tab Scanner được relay tối đa 3 phiên — bốn tab trình duyệt cùng mở Scanner
 >   thì tab thứ tư bị từ chối (có lý do trong trạng thái).
+> - (thêm 2026-09-15) `cmd/scanner` vẫn trả `static/` từ đĩa ở `/`, trên MỌI giao
+>   diện mạng (`*:8085`), nên cổng scanner giờ trả trang vận hành, `embed.go`, font,
+>   thư viện biểu đồ và snapshot nghiên cứu — không có bí mật nào, nhưng không còn là
+>   dashboard của nó. Gỡ file server khỏi `cmd/scanner` (giữ `/ws` và
+>   `/api/funding/history`) ở binary sau lần chạy 3.
+>
+> ### Chuyển giao diện vào `static/` (2026-09-15)
+>
+> Người vận hành chuyển cả cây giao diện từ `cmd/execportal/ui/` ra `static/` ở gốc
+> repo và xoá dashboard cũ (`static/app.js`, `static/index.html`): repo còn MỘT cây
+> frontend. Lệnh "không sửa `static/`" ở đầu mục là của ngày 14 và hết hiệu lực; lệnh
+> "không đụng `cmd/scanner`" vẫn giữ — binary của cổng không đổi một byte.
+>
+> - **Nhúng:** `//go:embed ../../static` không hợp lệ trong Go, nên `static/embed.go`
+>   là package `static` nhúng `index.html css js fonts vendor research` và chỉ export
+>   `FS()`; `cmd/execportal/server.go` phục vụ `http.FS(static.FS())`. Git giữ lịch sử
+>   21 file dưới dạng đổi tên.
+> - **Guard mới**, vì package này link vào binary giữ credential từ NGOÀI
+>   `cmd/execportal` — nơi mọi guard AST cũ không đọc tới: `static` không import gì
+>   ngoài `embed`/`io/fs`, không khai báo hàm nào ngoài `FS`, không export gì khác,
+>   không có package con; và cây nhúng phải bằng đúng cây trên đĩa (một thư mục mới
+>   thiếu trên dòng `go:embed`, hay một file bắt đầu bằng `_` mà pattern thư mục bỏ
+>   qua, là 404 trên portal). Đột biến: bỏ `research` khỏi dòng embed → đỏ ở cả hai
+>   test; thêm import `internal/strategy` + một hàm `Helper` vào `static` → đỏ.
+> - **Cổng 8085:** vì cổng phục vụ `static/` từ đĩa, trang ở đó tìm `/api/status`,
+>   nhận 404 KHÔNG mang header `X-Execution-Mode` (mọi câu trả lời của portal đều
+>   mang), hiện một dòng chỉ đường tới `127.0.0.1:8087` và dừng — không vòng hỏi lại,
+>   không WebSocket.
+> - **Review** trong ngữ cảnh sạch: ĐẠT, **1 lớn** — guard chỉ đọc file `.go`, trong khi
+>   `go build` còn biên dịch và link `.s`/`.syso` nằm cạnh package: một thân `FS()` viết
+>   bằng assembly qua được mọi test mà vẫn chạy code trong binary giữ credential
+>   (người review dựng thử trên bản sao, build và link được). Sửa: thư mục `static/` là
+>   DANH SÁCH CHO PHÉP (`embed.go`, `index.html` + thư mục), không phải danh sách cấm đuôi
+>   file; đột biến `static/fs_arm64.s` build được và giờ đỏ. 2 nhỏ ghi nhận, không sửa:
+>   cổng 8085 trả `embed.go` dạng mã nguồn (portal thì 404), và `cmd/scanner` không đăng
+>   ký MIME `.woff2` (chỉ ảnh hưởng trang chỉ đường ở 8085).
+> - Ba comment trong `internal/scanner` nhắc `static/app.js` được sửa (không đổi code);
+>   `server_test.go` ở HEAD trước đó không qua `gofmt` (thụt lề sau lần đổi
+>   `data`→`research`) — sửa luôn.
+>
+> | tiêu chí | kết quả 2026-09-15 |
+> |---|---|
+> | `go test ./...` / `-race` portal | xanh (36 package ok, exit 0); `-race` xanh ở `cmd/execportal` và `feeds`; `go vet`, `gofmt -l` sạch; `cmd/scanner` không link `static` |
+> | `http://127.0.0.1:8087`, bốn tab | binary build lại, headless Chrome 1440 px và 400 px: **0** lỗi console/CSP/request, **0** POST, 6 mặt font nạp (không 404 font), không tràn ngang; Scanner **LIVE 9/9 nguồn**, 13 cặp, ma trận ba nhóm + basis, funding 7 × 13, 9 dòng độ sâu, 0 lần đóng relay; Execution đọc sàn (`PHẲNG CẢ HAI CHÂN`, lệch 0); Paper trên **bản sao** DB: 21.840 hàng nhật ký; Crowding ba biểu đồ |
+> | trang ở 8085 | đúng MỘT request `GET /api/status` → 404, dòng chỉ đường hiện, 0 WebSocket, 0 POST |
+> | cổng 3.5 | PID 55475 sống, vẫn nghe `*:8085`; log cổng chỉ ghi đúng hai phiên relay của hai lần chạy Chrome; **0** "WebSocket write error" |
 
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
@@ -4694,7 +4742,7 @@ crypto-futures-arbitrage-scanner/
 │   ├── broker/                # [GĐ 4.1] ⚠️ CÓ CREDENTIAL — tách biệt tuyệt đối
 │   ├── execution/             # [GĐ 4.4] mở/đóng vị thế delta-neutral
 │   └── risk/                  # [GĐ 5] margin, kill switch, giới hạn
-└── static/                    # dashboard
+└── static/                    # trang vận hành 4 tab (Q17; package static nhúng vào cmd/execportal từ 2026-09-15)
 ```
 
 **Ranh giới quan trọng:** `exchanges/` không bao giờ được import bất kỳ package `internal/` nào. Dữ liệu công khai và credential phải nằm hai phía khác nhau của ranh giới này. Luật phụ thuộc đầy đủ ở [CONVENTIONS.md §12.1](CONVENTIONS.md#121-luật-phụ-thuộc-bắt-buộc-kiểm-tra-khi-review) — vi phạm là lỗi chặn merge.
@@ -5064,6 +5112,8 @@ thống — CLAUDE.md và README đã sửa cùng commit này.
 #### Q10 — Vì sao giữ vanilla JS
 
 FE hiện tại **đã tối ưu đúng cách** và không phải nút thắt: hàng đợi message gom lô 50ms ([app.js:357](../static/app.js#L357)), chỉ xử lý spread mới nhất và vứt phần còn lại ([app.js:400](../static/app.js#L400)), throttle 300ms cho việc dựng lại ma trận ([app.js:784](../static/app.js#L784)), chart dùng `series.update()` tăng dần.
+
+> `static/app.js` bị xoá ngày 2026-09-15 (liên kết trên là bản ghi lúc quyết định). Tab Scanner của trang vận hành, [`static/js/scanner.js`](../static/js/scanner.js), giữ cùng cách làm: gom message 50 ms, chỉ giữ ma trận mới nhất theo `server_time_ms` của symbol đang xem, vẽ lại phần đã đổi mỗi 250 ms và chỉ khi tab đang hiện.
 
 Lãng phí nằm ở **backend** — xem §7.3. React/Vue giúp quản lý độ phức tạp ứng dụng, không giúp render dữ liệu tần suất cao; muốn đạt hiệu năng như hiện tại còn phải bypass cơ chế reconcile của chúng.
 

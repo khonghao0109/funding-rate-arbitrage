@@ -126,7 +126,7 @@ Nhiệm vụ tiếp theo gộp ba giao diện (scanner 8085, sổ giấy 8086, c
 |---|---|---|
 | "Dùng Google Fonts" | Inter + JetBrains Mono của Google Fonts, **tải về và phục vụ từ binary** (subset latin, latin-ext, vietnamese; giấy phép OFL đi kèm) | CSP `'self'`: một trang đặt lệnh không nạp tài nguyên từ host khác |
 | Lightweight Charts | 4.2.1 **đóng gói** (tarball npm khớp sha1/sha512 registry, sha256 ghim trong test), không CDN | ai phục vụ script đó thì bấm được nút lệnh |
-| Tab Scanner "kế thừa `static/app.js`" | port sang `ui/js/scanner.js`; `static/` **không đổi** | tiến trình cổng 3.5 phục vụ `static/` từ đĩa |
+| Tab Scanner "kế thừa `static/app.js`" | port sang `ui/js/scanner.js`; `static/` **không đổi** (đến 2026-09-15 — xem 7.1) | tiến trình cổng 3.5 phục vụ `static/` từ đĩa |
 | Biểu đồ nến | nến 1 phút **dựng tại trang** từ snapshot giá 200 ms, ghi rõ; giữ cả đường giá theo sàn | scanner không phát nến; không bịa nến của sàn |
 | Tab Crowding "theo dõi tỉ lệ long/short" | **snapshot fixture nghiên cứu** (365 ngày cuối, nến 4h), nhãn NGHIÊN CỨU + danh sách việc còn thiếu | ingestion là Bước 6.2, vẫn sau 3.5 và 3.4; binary giữ credential không được biết host mainnet |
 | "Tổng số dư ví Spot + Futures" | Tổng **USDT** spot + futures, ghi "không quy đổi coin"; BTC riêng | cộng coin vào USDT cần một giá mà header không nên tự chọn |
@@ -134,3 +134,14 @@ Nhiệm vụ tiếp theo gộp ba giao diện (scanner 8085, sổ giấy 8086, c
 | Portal lấy dữ liệu scanner qua client | relay trong package `feeds`, không giải mã; chỉ nối khi tab Scanner mở; tối đa 3 phiên, 20 phiên/phút | `internal/scanner` ghi broadcast đồng bộ, hạn 2 s mỗi client — client chậm làm cổng chậm |
 
 Nợ mới chặn 4.6: thư viện biểu đồ và JS các tab feed chạy **cùng origin** với API đặt lệnh.
+
+### 7.1. Giao diện chuyển vào `static/` (2026-09-15)
+
+Người vận hành chuyển toàn bộ giao diện từ `cmd/execportal/ui/` ra `static/` ở gốc repo và xoá dashboard cũ (`static/app.js`, `static/index.html`), để repo chỉ còn một cây frontend. Chi tiết và nghiệm thu ở [PLAN.md — "Công cụ vận hành 4.5c"](PLAN.md).
+
+| Yêu cầu | Thực tế | Lý do |
+|---|---|---|
+| "`//go:embed ../../static`" | `static/embed.go` là package `static` nhúng `index.html css js fonts vendor research`, chỉ export `FS()`; `cmd/execportal` import nó | Go không cho `go:embed` đi lên thư mục cha |
+| Xoá dashboard cũ | đã xoá; hàng "`static/` không đổi" ở bảng trên hết hiệu lực | quyết định của người vận hành: một cây frontend |
+| "Cổng 3.5 tiếp tục chạy bình thường" | tiến trình không bị đụng; **nhưng cổng 8085 giờ trả trang vận hành từ đĩa** — trang tìm `/api/status`, nhận 404 không có header portal, hiện một dòng chỉ đường tới 8087 và dừng, không mở WebSocket, không hỏi lại | `cmd/scanner` phục vụ `static/` từ đĩa; binary của cổng không được sửa khi đang chạy |
+| — | thêm guard: package `static` không import gì ngoài `embed`/`io/fs`, không hàm nào ngoài `FS`, không package con, không file nào cạnh `embed.go`/`index.html` (go build link cả `.s`/`.syso`); cây nhúng phải bằng cây trên đĩa | package này được link vào binary giữ credential từ NGOÀI `cmd/execportal`, nơi các guard cũ không đọc tới |

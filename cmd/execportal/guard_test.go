@@ -634,6 +634,85 @@ func TestCheckPort_RefusesTheGateAndNonsense(t *testing.T) {
 	}
 }
 
+// Package static is linked into this binary but lives outside cmd/execportal,
+// so none of the per-file walks above read it. It is held to less than the
+// command: embedded files and one accessor. No import beyond embed and io/fs,
+// no other function (an init included), no sub-package — a helper that grew
+// there would be a path into the order binary no guard here looks at.
+func TestStatic_IsEmbeddedFilesAndNothingElse(t *testing.T) {
+	allowedImports := map[string]bool{"embed": true, "io/fs": true}
+	var goFiles []string
+	err := filepath.WalkDir(staticDir, func(path string, d fs.DirEntry, err error) error {
+		if err == nil && !d.IsDir() && strings.HasSuffix(path, ".go") {
+			goFiles = append(goFiles, path)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(goFiles) == 0 {
+		t.Fatal("no Go file under static/ — the test is not reading the package")
+	}
+	// The go tool also compiles and links assembly, C and prebuilt objects
+	// (.s, .c, .syso …) found beside a package's Go files, and a .s body for FS
+	// would pass every check below. So the package directory holds an allow-list
+	// of files, not a deny-list of extensions; names starting with "." or "_"
+	// are ignored by the go tool and by go:embed alike.
+	top, err := os.ReadDir(staticDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedTopFiles := map[string]bool{"embed.go": true, "index.html": true}
+	for _, entry := range top {
+		name := entry.Name()
+		if entry.IsDir() || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+			continue
+		}
+		if !allowedTopFiles[name] {
+			t.Errorf("static/%s: the package directory holds embed.go and index.html only — anything else beside them may be compiled into the order binary", name)
+		}
+	}
+	for _, path := range goFiles {
+		if filepath.Dir(path) != filepath.Clean(staticDir) {
+			t.Errorf("%s: static/ holds no sub-package", path)
+			continue
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, spec := range file.Imports {
+			if imported, _ := strconv.Unquote(spec.Path.Value); !allowedImports[imported] {
+				t.Errorf("%s imports %q — package static embeds files and imports nothing else", path, imported)
+			}
+		}
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Name.Name != "FS" || d.Recv != nil {
+					t.Errorf("%s declares func %s — package static has one accessor, FS", path, d.Name.Name)
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					var names []*ast.Ident
+					switch s := spec.(type) {
+					case *ast.ValueSpec:
+						names = s.Names
+					case *ast.TypeSpec:
+						names = []*ast.Ident{s.Name}
+					}
+					for _, name := range names {
+						if name.IsExported() {
+							t.Errorf("%s exports %s — package static exports FS only", path, name.Name)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
 // ownGoFiles is every Go file of the command AND its sub-packages, so a new
 // package under cmd/execportal/ is read by the same tests as the command.
 func ownGoFiles(t *testing.T, withTests bool) []string {
@@ -644,7 +723,7 @@ func ownGoFiles(t *testing.T, withTests bool) []string {
 			return err
 		}
 		if d.IsDir() {
-			if name := d.Name(); path != "." && (name == "ui" || name == "testdata" || strings.HasPrefix(name, ".")) {
+			if name := d.Name(); path != "." && (name == "testdata" || strings.HasPrefix(name, ".")) {
 				return filepath.SkipDir
 			}
 			return nil

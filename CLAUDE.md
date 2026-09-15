@@ -913,12 +913,23 @@ vận hành 4.5b".
 **On 2026-09-14 the portal became the unified operator page (decision Q17):**
 one loopback page on 8087 with four tabs — Market Scanner, Execution Control,
 Paper Ledger, Crowding Reversal — replacing three pages on three ports. The
-Scanner tab is a port of `static/app.js` fed by a READ-ONLY relay of the gate's
+Scanner tab is a port of the old `static/app.js` fed by a READ-ONLY relay of the gate's
 own `/ws` (and a fixed-path proxy of `/api/funding/history`); the Paper tab
 relays `cmd/paperledger`'s `/api/ledger`; the Crowding tab draws the research
-fixture copied verbatim by a test, labelled not live (6.2 still waits). **`static/`
-was not touched, and must not be while the gate runs: `cmd/scanner` serves it
-FROM DISK.** The relay lives in package `cmd/execportal/feeds`, which exports
+fixture copied verbatim by a test, labelled not live (6.2 still waits).
+**On 2026-09-15 the operator moved that page into the repository-root
+`static/`** (index.html, `css/`, `js/`, `fonts/`, `vendor/`, `research/`) and
+deleted the old dashboard (`static/app.js`, `static/index.html`); there is one
+frontend tree now and `cmd/execportal/ui/` is gone. Go cannot embed `../../static`,
+so `static/embed.go` is a package that embeds the page and exports `FS()` only —
+a guard test allows it no import beyond `embed`/`io/fs`, no other function, no
+sub-package and no file beside `embed.go` and `index.html` (the go tool links a
+`.s` or `.syso` found there — review caught that), because it is linked into the
+credential binary from outside `cmd/execportal`. **`cmd/scanner` still serves `static/` FROM DISK** (the gate's
+binary was not touched, and `cmd/scanner` must not be while the gate runs), so
+the gate's port now answers the operator page, which runs only behind
+`cmd/execportal`: it finds no `/api/status` there and says where the page lives
+instead of polling. The relay lives in package `cmd/execportal/feeds`, which exports
 only handlers, a health view and a shutdown hook, never decodes a byte, and is
 held away from the order path by `guard_test.go` (exported surface pinned, no
 HTTP client or `httptest` in the main package, sub-packages scanned for
@@ -1199,9 +1210,6 @@ cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17
   feeds/             the read-only relay and proxies (Q17): exports handlers,
                      a health view and CloseAll only; decodes nothing; its
                      upstream reader never blocks the gate's broadcast
-  ui/                vanilla ES modules + CSS tokens; fonts and Lightweight
-                     Charts VENDORED (sha256 pinned) — the order page loads no
-                     script from another host
 exchanges/           the venue-integration tree — PUBLIC DATA ONLY, no credentials
                      the root package is the shared KERNEL: types, Feeds, the
                      RunStream lifecycle, FetchJSON, and the normalization
@@ -1286,7 +1294,13 @@ internal/
                      folded in
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
                      holds the perp liquidation model strategy calls
-static/              vanilla JS dashboard
+static/              the operator page (Q17, moved here 2026-09-15): vanilla ES
+                     modules in js/ (scanner, execution, paper, crowding, shell,
+                     core, main) + CSS tokens; fonts and Lightweight Charts
+                     VENDORED (sha256 pinned) — the order page loads no script
+                     from another host. embed.go makes it package static, which
+                     cmd/execportal embeds; cmd/scanner serves the same files
+                     from disk, where the page says it needs the portal
 docs/                PLAN.md, DATA-REQUIREMENTS.md, CONVENTIONS.md
   reports/           built HTML reports, one per measurement run — a new file
                      each time, never an overwrite: an older one is the record
@@ -1341,8 +1355,10 @@ Public market data and credentials live on opposite sides of that line.
 ## Working in this repo
 
 ```bash
-go run ./cmd/scanner  # reads ./config.yaml, serves http://localhost:8082
-                      # (run from repo root; -config picks another file)
+go run ./cmd/scanner  # reads ./config.yaml, serves /ws on http://localhost:8082
+                      # (run from repo root; -config picks another file). Its /
+                      # answers static/ from disk — the operator page, which
+                      # runs behind cmd/execportal, not here (see below)
 go build ./...
 gofmt -l .            # must print nothing
 go vet ./...

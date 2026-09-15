@@ -390,7 +390,7 @@ crypto-futures-arbitrage-scanner/
 │   ├── broker/                # ⚠️ CREDENTIAL — REST có ký
 │   ├── execution/             # vị thế delta-neutral
 │   └── risk/                  # margin, kill switch, giới hạn
-└── static/                    # dashboard
+└── static/                    # trang vận hành (package static nhúng vào cmd/execportal)
 ```
 
 ### 12.1. Luật phụ thuộc (bắt buộc, kiểm tra khi review)

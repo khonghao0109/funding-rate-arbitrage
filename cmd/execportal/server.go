@@ -2,9 +2,7 @@ package main
 
 import (
 	"bufio"
-	"embed"
 	"errors"
-	"io/fs"
 	"log"
 	"mime"
 	"net"
@@ -12,6 +10,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"futures-arbitrage-scanner/static"
 )
 
 // The HTTP layer, and the reason it is more guarded than cmd/paperledger's.
@@ -49,9 +49,6 @@ import (
 // here because the page is the one PLAN 4.6 would be tempted to point at a
 // real account, and a guard added later is a guard added after the incident.
 
-//go:embed ui
-var uiFiles embed.FS
-
 func init() {
 	// Go's built-in table has no entry for the embedded fonts, and on a machine
 	// without a system mime.types they would be served as octet-stream.
@@ -70,13 +67,9 @@ const maxRequestBodyBytes = 8 << 10
 func (p *portal) handler() http.Handler {
 	mux := http.NewServeMux()
 
-	ui, err := fs.Sub(uiFiles, "ui")
-	if err != nil {
-		// The embed directive guarantees the directory; failing here is a
-		// build defect, found at start-up.
-		log.Fatalf("execportal: embedded ui: %v", err)
-	}
-	mux.Handle("/", onlyMethod(http.MethodGet, http.FileServer(http.FS(ui))))
+	// The page lives in the repository's static/ and is embedded at build time
+	// (package static): what this binary serves is what it was built with.
+	mux.Handle("/", onlyMethod(http.MethodGet, http.FileServer(http.FS(static.FS()))))
 
 	// API routes are registered without a method and check it themselves, so
 	// a wrong method answers 405 rather than falling through to the static

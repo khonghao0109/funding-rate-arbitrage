@@ -22,15 +22,15 @@ import (
 // columns it RECORDED, copied, never recomputed — so the charts are real and
 // the label can say exactly what they are.
 //
-// The snapshot is committed at ui/research/crowding-research.json and embedded in
-// the binary. This test rebuilds it from the fixture and fails if the two
+// The snapshot is committed at static/research/crowding-research.json and
+// embedded in the binary (package static). This test rebuilds it from the fixture and fails if the two
 // differ; WRITE_CROWDING_SNAPSHOT=1 rewrites it. The portal never imports
 // internal/crowding (guard_test.go): this file reads a CSV.
 
 const (
 	crowdingFixturePath  = "../../internal/crowding/testdata/rust_parity_fixture.csv.gz"
 	crowdingManifestPath = "../../internal/crowding/testdata/rust_reference_manifest.json"
-	crowdingSnapshotPath = "ui/research/crowding-research.json"
+	crowdingSnapshotPath = "../../static/research/crowding-research.json"
 	crowdingWindowDays   = 365
 	crowdingBarSec       = 4 * 3600
 )

@@ -179,10 +179,15 @@ Lập luận đầy đủ: [docs/PLAN.md §7](docs/PLAN.md#7-quyết-định).
 ```bash
 git clone <repo>
 cd crypto-futures-arbitrage-scanner
-go run ./cmd/scanner
+go run ./cmd/scanner                                        # scanner, /ws ở cổng 8082
+go run ./cmd/execportal -port 8087 -scanner-addr 127.0.0.1:8082   # trang vận hành
 ```
 
-Mở trình duyệt tại **http://localhost:8082**
+Mở trình duyệt tại **http://127.0.0.1:8087**. Giao diện nằm ở `static/` và được
+nhúng vào `cmd/execportal`; `cmd/scanner` vẫn trả thư mục đó từ đĩa ở `/`, nhưng
+trang chỉ chạy sau portal, nên mở nó trên cổng scanner chỉ nhận một dòng chỉ
+đường. Portal chạy được khi chưa có credential testnet: tab Execution báo
+"CHƯA CẤU HÌNH", ba tab còn lại vẫn chạy.
 
 ### Cấu hình
 
@@ -290,7 +295,8 @@ không còn hardcode ở Go hay JavaScript.
 │   │   └── brokertest/        # broker giả trong bộ nhớ + bộ test hợp đồng
 │   ├── execution/             # mở/đóng vị thế delta-neutral (4.4, 4.5) — một bất biến, không bao giờ một chân
 │   └── risk/                  # margin, kill switch, giới hạn vốn
-├── static/                    # dashboard
+├── static/                    # trang vận hành 4 tab (HTML, css/, js/, phông, thư viện biểu đồ đóng gói sẵn);
+│                              # embed.go nhúng vào cmd/execportal — cmd/scanner cũng trả nó từ đĩa
 └── docs/                      # PLAN, WORKFLOW, DATA-REQUIREMENTS, CONVENTIONS, WS-CONTRACT
 ```
 

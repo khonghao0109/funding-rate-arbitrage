@@ -310,7 +310,7 @@ func TestNewWireFunding_KeepsStaleReadingsSoTheTableCanShowThem(t *testing.T) {
 	}
 }
 
-// The contract is what static/app.js reads. Every key it renders has to be
+// The contract is what static/js/scanner.js reads. Every key it renders has to be
 // present with its documented name, including the ones carrying a default.
 func TestNewWireFunding_SerializesEveryContractKey(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)

@@ -99,7 +99,7 @@ func TestNewWireDepth_ReportsWhetherTheBookReachesEachWindow(t *testing.T) {
 	}
 }
 
-// Every key static/app.js reads has to be present with its documented name.
+// Every key static/js/scanner.js reads has to be present with its documented name.
 func TestNewWireDepth_SerializesEveryContractKey(t *testing.T) {
 	now := time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 	raw, err := json.Marshal(newWireDepth([]depth.Summary{depthFixture(now)}, now))

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,6 +19,7 @@ import (
 
 	"futures-arbitrage-scanner/internal/broker"
 	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
+	"futures-arbitrage-scanner/static"
 )
 
 // The HTTP walls, exercised through the real handler with no socket at all.
@@ -25,6 +27,9 @@ import (
 // ever used, so a refusal that reached a venue cannot pass.
 
 const testHost = "127.0.0.1:8087"
+
+// staticDir is the page on disk — the tree package static embeds.
+const staticDir = "../../static"
 
 type noNetwork struct{ t *testing.T }
 
@@ -130,13 +135,13 @@ func TestHandler_ServesThePageWithItsSecurityHeaders(t *testing.T) {
 		t.Errorf("framing/sniffing headers missing: %v", h)
 	}
 	for asset, contentType := range map[string]string{
-		"/js/main.js":                   "javascript",
-		"/js/scanner.js":                "javascript",
-		"/css/portal.css":               "text/css",
-		"/fonts/fonts.css":              "text/css",
-		"/fonts/inter-vietnamese.woff2": "font/woff2",
-		"/vendor/" + vendoredChartFile:  "javascript",
-		"/research/crowding-research.json":  "application/json",
+		"/js/main.js":                      "javascript",
+		"/js/scanner.js":                   "javascript",
+		"/css/portal.css":                  "text/css",
+		"/fonts/fonts.css":                 "text/css",
+		"/fonts/inter-vietnamese.woff2":    "font/woff2",
+		"/vendor/" + vendoredChartFile:     "javascript",
+		"/research/crowding-research.json": "application/json",
 	} {
 		rec := do(t, p, http.MethodGet, asset, "")
 		if rec.Code != http.StatusOK {
@@ -159,16 +164,80 @@ const (
 )
 
 func TestUI_VendoredFilesAreTheOnesThatWereVerified(t *testing.T) {
-	blob, err := os.ReadFile("ui/vendor/" + vendoredChartFile)
+	blob, err := os.ReadFile(filepath.Join(staticDir, "vendor", vendoredChartFile))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if sum := sha256.Sum256(blob); hex.EncodeToString(sum[:]) != vendoredChartSHA256 {
 		t.Errorf("%s changed (sha256 %x) — re-verify it against the npm registry before trusting it with the order page", vendoredChartFile, sum)
 	}
-	for _, license := range []string{"ui/vendor/LICENSE-lightweight-charts.txt", "ui/fonts/OFL-inter.txt", "ui/fonts/OFL-jetbrainsmono.txt"} {
-		if info, err := os.Stat(license); err != nil || info.Size() < 1000 {
+	for _, license := range []string{"vendor/LICENSE-lightweight-charts.txt", "fonts/OFL-inter.txt", "fonts/OFL-jetbrainsmono.txt"} {
+		if info, err := os.Stat(filepath.Join(staticDir, license)); err != nil || info.Size() < 1000 {
 			t.Errorf("%s missing: redistributing the file requires its licence", license)
+		}
+	}
+}
+
+// The binary serves what it was built with, and the build takes only the
+// directories static/embed.go names. A file added to static/ outside those
+// patterns — or named with a leading underscore, which a directory pattern
+// skips — would be in git and in cmd/scanner's answer but a 404 on this page.
+func TestUI_EmbeddedTreeIsTheStaticDirectory(t *testing.T) {
+	onDisk := map[string][]byte{}
+	err := filepath.WalkDir(staticDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(staticDir, path)
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(d.Name(), ".") && rel != "." {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil // .DS_Store and the like are nobody's page
+		}
+		// The package's own source is not part of the page.
+		if d.IsDir() || strings.HasSuffix(path, ".go") {
+			return nil
+		}
+		blob, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		onDisk[filepath.ToSlash(rel)] = blob
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	embedded := map[string][]byte{}
+	err = fs.WalkDir(static.FS(), ".", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		blob, err := fs.ReadFile(static.FS(), path)
+		embedded[path] = blob
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(onDisk) < 20 || embedded["index.html"] == nil {
+		t.Fatalf("%d files on disk, index.html embedded: %v — the test is not seeing the page", len(onDisk), embedded["index.html"] != nil)
+	}
+	for path, blob := range onDisk {
+		got, ok := embedded[path]
+		if !ok {
+			t.Errorf("static/%s is on disk but not in the binary — name its directory on the go:embed line", path)
+		} else if !bytes.Equal(got, blob) {
+			t.Errorf("static/%s differs from the embedded copy", path)
+		}
+	}
+	for path := range embedded {
+		if _, ok := onDisk[path]; !ok {
+			t.Errorf("static/%s is embedded but not on disk", path)
 		}
 	}
 }
@@ -177,7 +246,7 @@ func TestUI_VendoredFilesAreTheOnesThatWereVerified(t *testing.T) {
 func uiSources(t *testing.T, ext string) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	err := filepath.WalkDir("ui", func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(staticDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -204,7 +273,7 @@ func uiSources(t *testing.T, ext string) map[string]string {
 // script, an inline handler or a style attribute would be refused by the
 // browser and logged as a console error on every load.
 func TestUI_HasNothingTheCSPWouldRefuse(t *testing.T) {
-	blob, err := os.ReadFile("ui/index.html")
+	blob, err := os.ReadFile(filepath.Join(staticDir, "index.html"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -223,7 +292,7 @@ func TestUI_HasNothingTheCSPWouldRefuse(t *testing.T) {
 
 	scripts := uiSources(t, ".js")
 	if len(scripts) < 6 {
-		t.Fatalf("found %d scripts under ui/ — the test is not seeing the page", len(scripts))
+		t.Fatalf("found %d scripts under static/ — the test is not seeing the page", len(scripts))
 	}
 	htmlWrite := regexp.MustCompile(`\.(?:innerHTML|outerHTML)\s*[+]?=|insertAdjacentHTML\s*\(|document\.write\s*\(|\beval\s*\(|new\s+Function\s*\(`)
 	// A WebSocket URL has to be absolute; the one allowed is this page's own

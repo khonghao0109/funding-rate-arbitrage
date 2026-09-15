@@ -1,9 +1,9 @@
 // Market Scanner — the step-3.5 scanner's own WebSocket contract
 // (docs/WS-CONTRACT.md, v1), received through the portal's READ-ONLY relay.
 //
-// A port of static/app.js, which cmd/scanner serves from disk and which is not
-// touched: the running gate serves that file. Everything here obeys the same
-// contract rules: sources, labels, colours and thresholds come from `meta`;
+// It replaced the scanner's own dashboard (static/app.js, removed 2026-09-15)
+// and keeps that dashboard's contract rules: sources, labels, colours and
+// thresholds come from `meta`;
 // freshness is the server's verdict and ages are measured on the server clock;
 // a stale price breaks its line instead of drawing a flat one; every gross
 // figure says it is gross.

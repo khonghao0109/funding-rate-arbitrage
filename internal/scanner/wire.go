@@ -14,8 +14,8 @@ import (
 // The types in this file are the frozen WebSocket contract between the scanner
 // and the dashboard. The full specification, including which field carries real
 // data at which step, is docs/WS-CONTRACT.md. Everything named wire* is on the
-// wire: renaming a field or changing its type breaks static/app.js, which has no
-// tests to catch it.
+// wire: renaming a field or changing its type breaks static/js/scanner.js (the
+// operator page's Scanner tab), which has no tests to catch it.
 //
 // Steps 1.1 to 1.3 fill these fields with real values. They must not reshape
 // them.

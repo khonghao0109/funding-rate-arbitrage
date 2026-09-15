@@ -521,6 +521,10 @@ main {
   padding: var(--space-5);
 }
 
+.served-elsewhere {
+  margin-bottom: var(--space-4);
+}
+
 .tab-panel {
   display: grid;
   gap: var(--space-4);
