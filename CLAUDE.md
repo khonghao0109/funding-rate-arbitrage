@@ -910,8 +910,7 @@ the `internal/broker` HTTP client followed redirects, so a 307 from a testnet
 host would carry the API key and a signed order to another host — **was paid
 2026-09-15** (PLAN "Công cụ vận hành 4.5b"): a test attacker server received the
 key and `symbol=…&quantity=…&signature=…` from the unfixed client on a 307/308
-POST. Now every broker client, including one injected through
-`Config.HTTPClient` (copied, never modified), refuses every 3xx with
+POST. Now every broker client refuses every 3xx with
 `broker.ErrRedirectAttempted` — its transport takes the Location away, so
 nothing can be parsed or followed, and only the Location's scheme and host
 reach the error, never its path or the 3xx body — and refuses any request that is not https to its own
@@ -919,11 +918,26 @@ base host with `broker.ErrHostNotPinned`, before a byte is sent; `NewClient`
 also refuses a base URL with userinfo, a query, a fragment or a port other than
 443. A refused redirect is AMBIGUOUS for an order (`definiteRejection` counts
 only a 4xx, and `binance.classify` reads no venue code out of a 3xx), so
-execution asks for the order rather than resending. **Still open for 4.6:** a
-Transport injected through `Config.HTTPClient` runs BELOW the host check and
-could route a request anywhere — today only tests and `cmd/brokercheck`'s
-capture (over `http.DefaultTransport`) inject one; narrow that hook before a
-mainnet key exists.
+execution asks for the order rather than resending. **The last hole in that
+wall was closed the same day:** `Config.HTTPClient` let a caller's Transport run
+BELOW the host pin, where it could send the signed request anywhere. It is gone —
+`Config` reaches no client, transport, dialer, TLS configuration or redirect
+policy at any depth (a recursive reflection test), every client gets a transport
+of its OWN under the pin — not the process-wide `http.DefaultTransport`, which
+review showed any linked package can rewire after `NewClient` to send the signed
+request in plaintext — and the one transport hook left, `Config.TestTransport`, is refused by
+`NewClient` outside a `go test` binary (`broker.ErrTestTransportOutsideTest`,
+proved by a committed probe the test runs with `go run`) and may be named by no
+non-test file in the module (an AST test over the whole tree, which also refuses
+the name in a string, a `//go:linkname` into the module, and `http.DefaultTransport`
+inside `internal/broker`). Two review rounds: the first found the pin still
+sitting on `http.DefaultTransport` (blocking, fixed), the second passed. **Still
+open before 4.6:** the module's `go 1.23.5` line gives the credential binaries
+`cryptocustomrand=1`, so in-process code that replaces `crypto/rand.Reader` makes
+TLS key shares predictable — fixing it means declaring a toolchain ≥ 1.26 for the
+whole module (PLAN 4.5b). `cmd/brokercheck`'s testdata capture,
+the one production user, became `binance.Capture` on `Config.ObserveResponse`,
+which sees method, path, status and body after the read and cannot send.
 
 **On 2026-09-14 the portal became the unified operator page (decision Q17):**
 one loopback page on 8087 with four tabs — Market Scanner, Execution Control,

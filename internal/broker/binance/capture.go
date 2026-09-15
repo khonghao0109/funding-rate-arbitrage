@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
+
+	"futures-arbitrage-scanner/internal/broker"
 )
 
 // Recording real testnet answers into testdata/, the way exchanges/exchangestest
@@ -37,12 +38,17 @@ const captureEnv = "CAPTURE_TESTDATA"
 // CaptureEnabled reports whether recordings should be written.
 func CaptureEnabled() bool { return os.Getenv(captureEnv) == "1" }
 
-// CaptureTransport wraps an http.RoundTripper and writes each ORDER answer to
-// dir as a sanitized .json file. It is used by cmd/brokercheck's acceptance run.
-type CaptureTransport struct {
-	Base http.RoundTripper
-	Dir  string
+// Capture writes each ORDER answer to Dir as a sanitized .json file. It is used
+// by cmd/brokercheck's acceptance run, as broker.Config.ObserveResponse.
+//
+// It was a RoundTripper until 2026-09-15, which made it a transport BELOW the
+// broker's host pin — handed every signed request, with nothing checking what
+// it did with one. It only ever needed the answer, so it now receives the
+// answer after the broker has read it, and cannot send anything.
+type Capture struct {
+	Dir string
 
+	mu sync.Mutex
 	// Written lists the files produced, for the run's report.
 	Written []string
 }
@@ -56,31 +62,19 @@ var recordable = map[string]string{
 	"/api/v3/openOrders":  "spot_open_orders",
 }
 
-func (t *CaptureTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	base := t.Base
-	if base == nil {
-		base = http.DefaultTransport
-	}
-	resp, err := base.RoundTrip(r)
-	if err != nil || resp == nil {
-		return resp, err
-	}
-	name, ok := recordable[r.URL.Path]
+// Observe is the broker.Config.ObserveResponse hook.
+func (c *Capture) Observe(rec broker.ResponseRecord) {
+	name, ok := recordable[rec.Path]
 	if !ok {
-		return resp, nil
-	}
-	raw, readErr := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewReader(raw))
-	if readErr != nil {
-		return resp, nil
+		return
 	}
 	// The verb distinguishes place from cancel from query on the same path.
-	file := fmt.Sprintf("%s_%s_%d.json", name, strings.ToLower(r.Method), resp.StatusCode)
-	if writeErr := writeRecording(filepath.Join(t.Dir, file), raw); writeErr == nil {
-		t.Written = append(t.Written, file)
+	file := fmt.Sprintf("%s_%s_%d.json", name, strings.ToLower(rec.Method), rec.StatusCode)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if err := writeRecording(filepath.Join(c.Dir, file), rec.Body); err == nil {
+		c.Written = append(c.Written, file)
 	}
-	return resp, nil
 }
 
 // orderIDPattern and clientIDPattern replace the two identifiers wherever they

@@ -83,7 +83,7 @@ func leakClient(t *testing.T, market broker.Market, tr *echoTransport) *Client {
 		t.Fatal(err)
 	}
 	tr.timePath = cfg.TimePath
-	cfg.HTTPClient = &http.Client{Transport: tr, Timeout: 5 * time.Second}
+	cfg.TestTransport = tr
 	c, err := New(market, cfg)
 	if err != nil {
 		t.Fatalf("New: %v", err)

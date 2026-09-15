@@ -1,10 +1,13 @@
 package broker
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -35,14 +38,23 @@ import (
 //     there is nothing legitimate to follow, and a same-host redirect is refused
 //     too: a Location is venue-controlled text, and "same host" is one parsing
 //     mistake from "another host".
-//  2. CheckRedirect refuses every redirect on every client this package builds,
-//     including one handed in through Config.HTTPClient. Behind the transport it
-//     is not reached today; it is what still holds if that transport is ever
-//     unwrapped. https://pkg.go.dev/net/http#Client (CheckRedirect)
+//  2. CheckRedirect refuses every redirect on every client this package builds.
+//     Behind the transport it is not reached today; it is what still holds if
+//     that transport is ever unwrapped.
+//     https://pkg.go.dev/net/http#Client (CheckRedirect)
 //
-// What neither wall covers: a Transport injected through Config.HTTPClient runs
-// BELOW the host check, and can send a request wherever it likes. Injecting one
-// is trusting it with the credential (see Config.HTTPClient).
+// There is no way to hand this package a client, a transport or a redirect
+// policy: Config takes none (a reflection test walks its types), every
+// *http.Client is built here, and the transport under the pin is this package's
+// own (newVenueTransport) — never the process-wide http.DefaultTransport, which
+// anything linked into the binary can rewire. The one transport hook,
+// Config.TestTransport, sits BELOW the host check — it receives the signed
+// request and could send it anywhere — so NewClient refuses it unless the
+// process is a `go test` binary (testing.Testing), and boundary_test.go fails
+// if a non-test file anywhere in the module names it. Until 2026-09-15 the hook
+// was Config.HTTPClient, open to production code; cmd/brokercheck, its one
+// production user, now records answers through Config.ObserveResponse, which
+// sees the response after the read and cannot send.
 //
 // A refused redirect is NOT a statement about the request. The answer came from
 // something in front of the matching engine, so for an order it is as ambiguous
@@ -57,29 +69,92 @@ var ErrRedirectAttempted = errors.New("broker: http redirect is refused for secu
 // other than https to the client's own testnet host. Nothing is sent.
 var ErrHostNotPinned = errors.New("broker: request host is not the client's pinned testnet host")
 
+// ErrTestTransportOutsideTest is NewClient's answer to a Config.TestTransport
+// in a binary that `go test` did not build.
+var ErrTestTransportOutsideTest = errors.New("broker: Config.TestTransport is refused outside a test binary — a transport below the host pin is trusted with the credential")
+
+// refuseTestTransport is NewClient's check. It takes testing.Testing's answer
+// as an ARGUMENT, read by NewClient at the call: a package variable holding it
+// would be writable through //go:linkname from any package linked into the
+// binary, and a function cannot be overwritten that way. The linker also
+// refuses a linkname to testing's own flag. A test gives it the answer a
+// production binary gets; testdata/refusalprobe is a real `go run` binary.
+//
+// The refusal is WRAPPED, never the sentinel variable itself: an exported error
+// variable is assignable, and `broker.ErrTestTransportOutsideTest = nil` would
+// otherwise turn this refusal into a nil error (review, 2026-09-15). A wrapped
+// nil is still a non-nil error.
+func refuseTestTransport(testTransport http.RoundTripper, isTestBinary bool) error {
+	if testTransport != nil && !isTestBinary {
+		return fmt.Errorf("%w (the process was not built by go test)", ErrTestTransportOutsideTest)
+	}
+	return nil
+}
+
+// refuseHTTP2DebugLogging refuses to build a client in a process started with
+// GODEBUG=http2debug set: net/http's HTTP/2 transport then logs every request
+// header — X-MBX-APIKEY among them — and the :path with the signature. It is
+// read once at start, so this is checked against the environment NewClient
+// sees; a variable set later has no effect on the transport either way.
+func refuseHTTP2DebugLogging(godebug string) error {
+	for _, setting := range strings.Split(godebug, ",") {
+		if name, value, _ := strings.Cut(strings.TrimSpace(setting), "="); name == "http2debug" && value != "" && value != "0" {
+			return errors.New("broker: GODEBUG=http2debug is set — the HTTP/2 transport would log the API key header and the signed path; unset it to build a client")
+		}
+	}
+	return nil
+}
+
 // refuseRedirect is the CheckRedirect of every broker client. It refuses the
 // first hop, so the request is never re-issued.
 func refuseRedirect(*http.Request, []*http.Request) error {
-	return ErrRedirectAttempted
+	// Wrapped, so an assignment to the exported variable cannot make it nil.
+	return fmt.Errorf("%w", ErrRedirectAttempted)
 }
 
-// guardedHTTPClient returns the client a broker.Client uses: a COPY of the
-// caller's, so the caller's own client is left as it was and cannot re-enable
-// redirects on ours, with both walls installed.
-func guardedHTTPClient(base *http.Client, pinnedHost string) *http.Client {
-	var hc http.Client
-	if base != nil {
-		hc = *base
-	} else {
-		hc = http.Client{Timeout: 20 * time.Second}
-	}
-	hc.CheckRedirect = refuseRedirect
-	next := hc.Transport
+// guardedHTTPClient builds the only kind of client a broker.Client uses: this
+// package's own, with a bounded timeout, the redirect refusal, and the host pin
+// over a transport this package built for this client alone — or over a test's
+// transport, which NewClient has already confined to test binaries.
+func guardedHTTPClient(testTransport http.RoundTripper, pinnedHost string) *http.Client {
+	next := testTransport
 	if next == nil {
-		next = http.DefaultTransport
+		next = newVenueTransport()
 	}
-	hc.Transport = &hostPinTransport{host: pinnedHost, next: next}
-	return &hc
+	return &http.Client{
+		Timeout:       20 * time.Second,
+		CheckRedirect: refuseRedirect,
+		Transport:     &hostPinTransport{host: pinnedHost, next: next},
+	}
+}
+
+// newVenueTransport is the transport under the host pin in every non-test
+// client, and nothing outside this function holds a pointer to it.
+//
+// Not http.DefaultTransport. That is a process-wide variable holding a shared
+// *http.Transport, and any package linked into the binary can replace it or set
+// DialTLSContext, TLSClientConfig or Proxy on it — even after NewClient. Review
+// proved it on 2026-09-15: a DialTLSContext set on the default transport after
+// the client was built sent the time request and the signed balance request, key
+// and signature, in plaintext to the attacker's connection. The pin checks the
+// URL; only the transport below it decides where the bytes go and how.
+//
+// The dialer carries its own Resolver for the same reason (net.DefaultResolver
+// is a variable too). No proxy: HTTPS_PROXY is process environment, the testnet
+// hosts are reached directly (measured 2026-09-15: no proxy variable set), and
+// a proxy this client needs is one to add explicitly, not to inherit.
+func newVenueTransport() *http.Transport {
+	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second, Resolver: &net.Resolver{}}
+	return &http.Transport{
+		Proxy:                 nil,
+		DialContext:           dialer.DialContext,
+		ForceAttemptHTTP2:     true, // a custom TLSClientConfig turns HTTP/2 off unless asked
+		TLSClientConfig:       &tls.Config{MinVersion: tls.VersionTLS12},
+		TLSHandshakeTimeout:   10 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		MaxIdleConns:          10,
+		ExpectContinueTimeout: time.Second,
+	}
 }
 
 // hostPinTransport is the second wall: https, to exactly one host, with no

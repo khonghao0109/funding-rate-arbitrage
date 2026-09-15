@@ -80,7 +80,7 @@ func newFakeVenue(t *testing.T, market broker.Market, rules exchanges.Instrument
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.HTTPClient = &http.Client{Transport: clockOnly{t}}
+	cfg.TestTransport = clockOnly{t}
 	hc, err := broker.NewClient(cfg)
 	if err != nil {
 		t.Fatal(err)

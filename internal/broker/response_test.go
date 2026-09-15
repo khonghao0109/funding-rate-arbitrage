@@ -3,10 +3,12 @@ package broker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -120,5 +122,99 @@ func TestClient_AnErrorBodyIsStillTruncatedShort(t *testing.T) {
 	}
 	if len(err.Error()) > maxErrorBodyBytes+1024 {
 		t.Errorf("the error message is %d bytes — a venue can paste an arbitrary amount into a log", len(err.Error()))
+	}
+}
+
+// ObserveResponse is the only way production code sees a response the broker
+// did not decode for it (cmd/brokercheck's testdata capture). It gets the
+// answer — method, path, status, body — and nothing of the request: no query,
+// so no signature, and no header, so no key. It can send nothing.
+func TestClient_ObserveResponseSeesTheAnswerAndNothingOfTheRequest(t *testing.T) {
+	want := reflect.TypeOf(ResponseRecord{})
+	fields := []string{}
+	for i := 0; i < want.NumField(); i++ {
+		fields = append(fields, want.Field(i).Name+" "+want.Field(i).Type.String())
+	}
+	if got := strings.Join(fields, ", "); got != "Method string, Path string, StatusCode int, Body []uint8" {
+		t.Errorf("ResponseRecord = {%s}; a field added here reaches production code — keep it to the answer", got)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == BinanceFuturesTimePath {
+			fmt.Fprintf(w, `{"serverTime":%d}`, time.Now().UnixMilli())
+			return
+		}
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprint(w, `{"code":-2013,"msg":"Order does not exist."}`)
+	}))
+	defer srv.Close()
+	to, _ := url.Parse(srv.URL)
+	var seen []ResponseRecord
+	c, err := NewClient(Config{
+		BaseURL:           BinanceFuturesTestnetBaseURL,
+		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
+		TimePath:          BinanceFuturesTimePath,
+		WeightLimitPerMin: BinanceFuturesWeightPerMin,
+		TestTransport:     &pinnedTransport{to: to},
+		ObserveResponse:   func(rec ResponseRecord) { seen = append(seen, rec) },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.GetSigned(context.Background(), FuturesNewOrder, []Param{{"symbol", "BTCUSDT"}}, nil)
+	if len(seen) != 2 {
+		t.Fatalf("observed %d responses, want 2 (the clock, then the order query): %+v", len(seen), seen)
+	}
+	order := seen[1]
+	if order.Method != http.MethodGet || order.Path != FuturesNewOrder.Path || order.StatusCode != http.StatusBadRequest || !strings.Contains(string(order.Body), "-2013") {
+		t.Errorf("observed %+v", order)
+	}
+	if strings.ContainsAny(order.Path, "?&") || strings.Contains(fmt.Sprintf("%+v", seen), sentinel[:12]) {
+		t.Errorf("the observer saw part of the request: %+v", seen)
+	}
+}
+
+// The observer runs after the request was sent — for an order, after it is
+// live — so it cannot be allowed to take the return away (a panic is
+// recovered), it is not shown a 3xx (not a venue answer), and the body it is
+// shown is scrubbed like any error text, since Capture commits it to git.
+func TestClient_ObserveResponseIsScrubbedSkipsRedirectsAndCannotPanicTheCaller(t *testing.T) {
+	status := http.StatusBadRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		fmt.Fprintf(w, `{"code":-1022,"msg":"echo KEY-%s signature=deadbeefdeadbeefdeadbeef"}`, sentinel)
+	}))
+	defer srv.Close()
+	to, _ := url.Parse(srv.URL)
+	var seen []ResponseRecord
+	c, err := NewClient(Config{
+		BaseURL:           BinanceFuturesTestnetBaseURL,
+		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
+		WeightLimitPerMin: BinanceFuturesWeightPerMin,
+		TestTransport:     &pinnedTransport{to: to},
+		ObserveResponse: func(rec ResponseRecord) {
+			seen = append(seen, rec)
+			panic("an observer that panics")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ep := Endpoint{Path: "/fapi/v1/exchangeInfo", WeightIP: 1}
+	err = c.GetPublic(context.Background(), ep, nil, nil)
+	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusBadRequest {
+		t.Fatalf("the caller did not get its return after the observer panicked: %v", err)
+	}
+	if len(seen) != 1 || strings.Contains(string(seen[0].Body), sentinel[:12]) || strings.Contains(string(seen[0].Body), "deadbeef") {
+		t.Errorf("observed %q — want one record with the key and the signature scrubbed", seen)
+	}
+	status = http.StatusTemporaryRedirect
+	seen = nil
+	if err := c.GetPublic(context.Background(), ep, nil, nil); !errors.Is(err, ErrRedirectAttempted) {
+		t.Fatalf("err = %v", err)
+	}
+	if len(seen) != 0 {
+		t.Errorf("a 3xx was shown to the observer: %+v", seen)
 	}
 }

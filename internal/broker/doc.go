@@ -38,16 +38,24 @@
 //
 // Choosing the host once is not enough: http.Client follows a 3xx by itself
 // and re-sends a 307/308 with its method, its body and the X-MBX-APIKEY header
-// to wherever Location points. Every client this package builds — including one
-// handed in through Config.HTTPClient, which is copied, never modified — refuses
-// every 3xx (ErrRedirectAttempted, reporting only its Location's scheme and host,
-// and not its body) and refuses any request that is not https to its own base host
+// to wherever Location points. Every client this package builds refuses every
+// 3xx (ErrRedirectAttempted, reporting only its Location's scheme and host, and
+// not its body) and refuses any request that is not https to its own base host
 // (ErrHostNotPinned). A refused redirect says nothing about whether an order
-// arrived, so it is ambiguous, never a refusal. The host check runs ABOVE a
-// Transport injected through Config.HTTPClient, which can still send a request
-// anywhere — that hook is trusted with the credential, and narrowing it is a 4.6
-// prerequisite. See redirect.go; paid 2026-09-15, the debt PLAN 4.5b recorded
-// as blocking 4.6.
+// arrived, so it is ambiguous, never a refusal. See redirect.go; paid
+// 2026-09-15, the debt PLAN 4.5b recorded as blocking 4.6.
+//
+// Nobody hands this package an *http.Client, a transport or a redirect policy:
+// Config takes none, every client is built here, and the transport under the
+// pin is each client's own (newVenueTransport) — never the process-wide
+// http.DefaultTransport, which anything linked into a binary can rewire. The
+// one transport hook,
+// Config.TestTransport, runs BELOW the host pin — it receives the signed
+// request — so NewClient refuses it outside a `go test` binary
+// (ErrTestTransportOutsideTest) and boundary_test.go fails if a non-test file
+// in the module names it. Production code that wants to see answers uses
+// Config.ObserveResponse, which is handed method, path, status and body after
+// the read, and nothing it could send with.
 //
 // # The boundary
 //

@@ -97,7 +97,7 @@ func leakTestClient(t *testing.T, tr *pinnedTransport) *Client {
 		RecvWindowMs:      5000,
 		TimePath:          BinanceFuturesTimePath,
 		WeightLimitPerMin: BinanceFuturesWeightPerMin,
-		HTTPClient:        &http.Client{Transport: tr, Timeout: 5 * time.Second},
+		TestTransport:     tr,
 	})
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
@@ -325,7 +325,7 @@ func TestClient_NeitherVenuesCredentialPairReachesALogOrAnError(t *testing.T) {
 				client, err := NewClient(Config{
 					BaseURL: v.baseURL, Credentials: creds, RecvWindowMs: 5000,
 					TimePath: v.timePath, WeightLimitPerMin: v.weight,
-					HTTPClient: &http.Client{Transport: tr, Timeout: 5 * time.Second},
+					TestTransport: tr,
 				})
 				if err != nil {
 					t.Fatalf("NewClient: %v", err)

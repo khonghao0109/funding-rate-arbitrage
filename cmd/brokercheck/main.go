@@ -377,9 +377,9 @@ func runPlaceCancelAcceptance(ctx context.Context, venues []venue, marketFilter,
 		}
 		attempted++
 
-		var capture *binancebroker.CaptureTransport
+		var capture *binancebroker.Capture
 		if binancebroker.CaptureEnabled() {
-			capture = &binancebroker.CaptureTransport{Dir: recordingDir}
+			capture = &binancebroker.Capture{Dir: recordingDir}
 		}
 		res := runPlaceCancel(ctx, market, symbol, creds, recvWindowMs, farFrac, capture)
 		all = append(all, res.Checks...)

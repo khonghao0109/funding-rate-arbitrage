@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net/http"
 	"time"
 
 	"futures-arbitrage-scanner/internal/broker"
@@ -39,7 +38,7 @@ type placeCancelResult struct {
 }
 
 func runPlaceCancel(ctx context.Context, market broker.Market, symbol string, creds broker.Credentials,
-	recvWindowMs int64, farFrac float64, capture *binancebroker.CaptureTransport) placeCancelResult {
+	recvWindowMs int64, farFrac float64, capture *binancebroker.Capture) placeCancelResult {
 
 	nameVI := fmt.Sprintf("%s %s", market, symbol)
 	fmt.Printf("── ĐẶT & HUỶ · %s\n", nameVI)
@@ -51,7 +50,7 @@ func runPlaceCancel(ctx context.Context, market broker.Market, symbol string, cr
 	cfg.RecvWindowMs = recvWindowMs
 	cfg.UserAgentVI = "funding-rate-arbitrage/brokercheck"
 	if capture != nil {
-		cfg.HTTPClient = &http.Client{Transport: capture, Timeout: 30 * time.Second}
+		cfg.ObserveResponse = capture.Observe
 	}
 	client, err := binancebroker.New(market, cfg)
 	if err != nil {

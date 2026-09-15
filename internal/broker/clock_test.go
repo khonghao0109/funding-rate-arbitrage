@@ -74,7 +74,7 @@ func clockTestClient(t *testing.T, tr *pinnedTransport, localNowMs int64, recvWi
 		RecvWindowMs:      recvWindowMs,
 		TimePath:          BinanceFuturesTimePath,
 		WeightLimitPerMin: BinanceFuturesWeightPerMin,
-		HTTPClient:        &http.Client{Transport: tr, Timeout: 5 * time.Second},
+		TestTransport:     tr,
 		Now:               func() time.Time { return time.UnixMilli(local.Load()) },
 	})
 	if err != nil {

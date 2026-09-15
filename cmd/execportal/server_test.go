@@ -44,7 +44,7 @@ func offlineClient(t *testing.T, market broker.Market) *binancebroker.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.HTTPClient = &http.Client{Transport: noNetwork{t}}
+	cfg.TestTransport = noNetwork{t}
 	c, err := binancebroker.New(market, cfg)
 	if err != nil {
 		t.Fatal(err)

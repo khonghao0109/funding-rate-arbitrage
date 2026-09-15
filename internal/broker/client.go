@@ -6,11 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 )
 
@@ -48,16 +51,33 @@ type Config struct {
 	// repeat offenders.
 	WeightLimitPerMin int
 
-	// HTTPClient is injectable so tests run against httptest and never open a
-	// socket to a venue. Nil gets a client with a bounded timeout. Either way
-	// the Client works on a COPY (the caller's is not modified) whose
-	// CheckRedirect refuses every redirect and whose transport checks every
-	// request against BaseURL's host (redirect.go). What a copy cannot take away:
-	// the caller's own Transport runs BELOW that check and could route a request
-	// anywhere, so injecting one is trusting it with the credential. Today only
-	// tests and cmd/brokercheck's CaptureTransport (over http.DefaultTransport)
-	// do; narrowing this hook is recorded as a 4.6 prerequisite (PLAN 4.5b).
-	HTTPClient *http.Client
+	// TestTransport replaces the broker's own transport UNDER its walls, so
+	// tests can answer locally and never open a socket to a venue. It is the
+	// only transport hook there is: Config takes no *http.Client and no
+	// redirect policy, and the client is always the broker's own (redirect.go),
+	// with the host pin and the redirect refusal on top.
+	//
+	// What sits below the pin is not checked by it — a RoundTripper here
+	// receives the signed request and could send it anywhere. So NewClient
+	// REFUSES it outside a test binary (ErrTestTransportOutsideTest), and a
+	// test in this package fails if any non-test file in the module names it.
+	TestTransport http.RoundTripper
+
+	// ObserveResponse, when set, is handed every non-3xx response the client
+	// read — method, path, status and the body with the secret, the key and any
+	// signature scrubbed — after the read and before anything is decoded. It
+	// sees nothing of the request (no query, no header) and can send nothing.
+	// cmd/brokercheck records testnet answers into testdata/ with it.
+	//
+	// It runs on the calling goroutine, after the request has been SENT — for
+	// an order, after the order is live — so it must be quick; a panic in it
+	// is recovered and dropped, because a panic is not a return and would
+	// break the both-legs-or-neither promise of internal/execution.
+	ObserveResponse func(ResponseRecord)
+
+	// Unkeyed Config literals are refused outside this package, so a field can
+	// only ever be set by its NAME — which is what the source guard reads.
+	_ struct{}
 
 	// Now is the local clock, injectable so the skew tests can move it. Nil
 	// takes time.Now.
@@ -87,6 +107,7 @@ type Client struct {
 	timePath     string
 	now          func() time.Time
 	budget       *WeightBudget
+	observe      func(ResponseRecord)
 
 	// The clock measurement, guarded because one client is shared by every
 	// caller and the skew is read on every signed request.
@@ -116,12 +137,18 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("broker: weight_limit_per_min must be the venue's documented REQUEST_WEIGHT budget (futures %d, spot %d) — a budget nobody looked up is not an unlimited one",
 			BinanceFuturesWeightPerMin, BinanceSpotWeightPerMin)
 	}
+	if err := refuseTestTransport(cfg.TestTransport, testing.Testing()); err != nil {
+		return nil, err
+	}
+	if err := refuseHTTP2DebugLogging(os.Getenv("GODEBUG")); err != nil {
+		return nil, err
+	}
 	base, err := url.Parse(strings.TrimSpace(cfg.BaseURL))
 	if err != nil {
 		// checkTestnetBaseURL parsed the same string a moment ago.
 		return nil, errors.New("broker: base URL does not parse — not quoted, since it may carry userinfo")
 	}
-	httpClient := guardedHTTPClient(cfg.HTTPClient, base.Host)
+	httpClient := guardedHTTPClient(cfg.TestTransport, base.Host)
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -139,6 +166,7 @@ func NewClient(cfg Config) (*Client, error) {
 		timePath:       cfg.TimePath,
 		now:            now,
 		budget:         NewWeightBudget(cfg.WeightLimitPerMin, now),
+		observe:        cfg.ObserveResponse,
 		clockSyncEvery: syncEvery,
 	}, nil
 }
@@ -149,6 +177,28 @@ func (c *Client) BaseURL() string { return c.baseURL }
 
 // RecvWindowMs is what every signed request declares.
 func (c *Client) RecvWindowMs() int64 { return c.recvWindowMs }
+
+// observeSafely calls the observer and swallows a panic from it: the request is
+// already sent, and a caller must still get a return.
+func (c *Client) observeSafely(rec ResponseRecord) {
+	defer func() {
+		if recover() != nil {
+			// Named, never quoted: the panic value is the observer's text.
+			log.Printf("broker: ObserveResponse panicked on %s %s; recovered, the call returns as usual", rec.Method, rec.Path)
+		}
+	}()
+	c.observe(rec)
+}
+
+// ResponseRecord is what Config.ObserveResponse is shown: the answer, and
+// nothing of the request that drew it. Path is the endpoint's path — never the
+// query, which carries the signature.
+type ResponseRecord struct {
+	Method     string
+	Path       string
+	StatusCode int
+	Body       []byte
+}
 
 // HTTPError is a non-2xx answer from the venue.
 //
@@ -324,6 +374,11 @@ func (c *Client) do(ctx context.Context, method string, ep Endpoint, query strin
 	// Read one byte past the ceiling so an oversized answer can be NAMED
 	// rather than handed to the decoder as truncated JSON.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
+	if c.observe != nil && (resp.StatusCode < 300 || resp.StatusCode >= 400) {
+		// A 3xx is not a venue answer (redirect.go), and a body headed for a
+		// file that goes into git is scrubbed like any error text.
+		c.observeSafely(ResponseRecord{Method: method, Path: ep.Path, StatusCode: resp.StatusCode, Body: []byte(c.scrub(string(body)))})
+	}
 	if resp.StatusCode != http.StatusOK {
 		retryAfter := parseRetryAfterSeconds(resp.Header.Get("Retry-After"))
 		c.budget.NoteStatus(resp.StatusCode, retryAfter)

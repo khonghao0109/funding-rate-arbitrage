@@ -4249,11 +4249,62 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   bị lặp chồng lên chính nó — tìm tiếp từ `start+1`. Ghi chú để lại: host trong
 >   Location vẫn là chữ do sàn viết (một key xen dấu chấm thành tên miền sẽ hiện ra —
 >   chỉ ai đã có key mới làm được).
-> - **Nợ mới, trước 4.6:** `broker.Config.HTTPClient` là hook export; `Transport` tiêm
->   vào chạy DƯỚI lớp ghim host nên có thể đổi đích, hạ xuống http hay tắt kiểm chứng
->   TLS. Hôm nay chỉ test và `CaptureTransport` của `cmd/brokercheck` (trên
->   `http.DefaultTransport`) dùng. Thu hẹp thành hook chỉ cho test hoặc chỉ cho dial
->   trước khi có key mainnet.
+> - ✅ ~~**Nợ mới, trước 4.6:** `broker.Config.HTTPClient` là hook export~~ — **ĐÃ TRẢ
+>   2026-09-15.** `Transport` tiêm vào chạy DƯỚI lớp ghim host nên có thể đổi đích,
+>   hạ xuống http hay tắt kiểm chứng TLS; bọc thêm một lớp không đóng được lỗ này,
+>   vì lớp dưới cùng mới là thứ gửi byte đi. Sửa bằng cách bỏ hẳn cửa: (1)
+>   `Config.HTTPClient` bị xoá — `Config` không với tới client, transport, dialer,
+>   cấu hình TLS hay chính sách redirect nào ở bất kỳ độ sâu nào (test phản chiếu đi đệ
+>   quy qua struct, con trỏ, tham số và kết quả hàm); client luôn do `broker` dựng
+>   (timeout 20 s, `CheckRedirect` từ chối, lớp ghim host) trên một `*http.Transport`
+>   RIÊNG của từng client (không proxy, dialer và resolver riêng, TLS ≥ 1.2) — KHÔNG
+>   phải `http.DefaultTransport`; (2) hook duy nhất còn lại, `Config.TestTransport`, bị
+>   `NewClient` TỪ CHỐI ngoài binary do `go test` dựng (`testing.Testing()` đọc ngay
+>   trong lời gọi, `broker.ErrTestTransportOutsideTest`) — một probe commit ở
+>   `internal/broker/testdata/refusalprobe` được test chạy bằng `go run`: bị từ chối,
+>   transport không bị chạm; (3) test AST đọc MỌI file không phải test trong module
+>   (chỉ bỏ `.git`): nhắc `TestTransport` (ngoài `client.go`, `redirect.go`, probe), viết
+>   nó trong chuỗi, `//go:linkname` vào module, hay `http.DefaultTransport` trong
+>   `internal/broker` là đỏ; `Config` có trường trống `_ struct{}` nên không dựng được
+>   bằng literal không tên từ package khác; (4) người dùng production duy nhất,
+>   `CaptureTransport` của `cmd/brokercheck`, thành `binance.Capture` gắn vào
+>   `Config.ObserveResponse` — nhận method, path (không query), status và thân ĐÃ CHE
+>   (không nhận 3xx) SAU khi đọc, không gửi được gì; panic trong observer bị nuốt để
+>   lời gọi lệnh vẫn có kết quả trả về; `NewClient` còn từ chối một tiến trình khởi động
+>   với `GODEBUG=http2debug` (transport HTTP/2 khi đó ghi header key và path có ký ra
+>   log).
+>
+>   **Review bảo mật, hai vòng.** Vòng 1 KHÔNG ĐẠT, **1 lỗi chặn**: lớp ghim host đưa
+>   request xuống `http.DefaultTransport` — biến dùng chung toàn tiến trình; người
+>   review chứng minh từ một binary `go run` rằng thay biến đó, hoặc gắn `DialTLSContext`
+>   vào đối tượng dùng chung SAU khi dựng client, làm key và chữ ký đi dạng plaintext
+>   tới kết nối của kẻ tấn công — đúng quyền mà hook cũ có. Kèm 5 nhỏ: `linkname` ghi đè
+>   được biến kiểm tra "đang trong test", guard AST bỏ qua `testdata/` và chuỗi, test
+>   phản chiếu chỉ nhìn một tầng, observer panic thoát khỏi lời gọi lệnh, observer nhận
+>   thân thô và cả 3xx. Sửa cả sáu (transport riêng; bỏ biến; guard không bỏ thư mục
+>   nào, bắt chuỗi và `linkname`, cấm `http.DefaultTransport` trong `broker`; phản chiếu
+>   đệ quy; `recover`; thân đã che, bỏ 3xx), mỗi sửa có đột biến đỏ. **Vòng 2 ĐẠT**: PoC
+>   A–F đều chết; 2 nhỏ đã sửa luôn — gán `ErrTestTransportOutsideTest = nil` biến lời
+>   từ chối thành nil (giờ trả lỗi BỌC, cũng cho `refuseRedirect`), guard đỏ nhầm với
+>   bản checkout lồng (bỏ qua thư mục có `go.mod` riêng) — cùng các ghi chú: danh sách
+>   trường `Config` ghim nguyên văn, test identity cho client dựng trước khi đổi, probe
+>   chạy `GOTOOLCHAIN=local`, `GODEBUG=http2debug` bị từ chối.
+> - **Nợ mới, trước 4.6 — giá trị mặc định GODEBUG theo dòng `go 1.23.5`:** module khai
+>   `go 1.23.5` trong khi toolchain là 1.27, nên ba binary giữ credential mang
+>   `cryptocustomrand=1,tlsmlkem=0`. Người review chứng minh: code trong tiến trình thay
+>   `crypto/rand.Reader` thì hai lần bắt tay TLS ra ClientHello giống hệt từng byte, kể cả
+>   key share X25519 — một người nghe thụ động trên mạng cùng code đó suy ra được khoá
+>   phiên. Sửa cần `//go:debug cryptocustomrand=0` và `tlsmlkem=1` ở ba package `main`,
+>   tức phải khai toolchain ≥ 1.26 (dòng `toolchain` hoặc nâng dòng `go`) — thay đổi cả
+>   module, kể cả binary `cmd/backtest` mà phán quyết 3.5 dùng, nên không làm lẫn vào đây.
+>   Cùng loại, ghi để biết: gốc tin cậy x509 dự phòng (`x509.SetFallbackRoots` +
+>   `GODEBUG`, `SSL_CERT_FILE` trên Linux) là thiết lập toàn tiến trình; muốn chặn thì
+>   ghim `RootCAs` hay khoá máy chủ qua `VerifyConnection`. Trong test, `TestTransport`
+>   vẫn nằm dưới cả hai lớp: request cho host khác không tới được nó, redirect nó trả
+>   về bị từ chối. Đột biến: bỏ lệnh từ chối ngoài test, thêm lại trường `HTTPClient`,
+>   bỏ lớp ghim trên transport test, một file production nhắc `TestTransport`, observer
+>   thấy URL đầy đủ — cả năm đều đỏ. `go test ./...` xanh, `-race` xanh ở `broker`,
+>   `brokercheck` đọc chỉ-đọc hai testnet 4/4.
 > - **Phần còn lại của một lần đóng dở** (`ErrCloseIncomplete` /
 >   `sent_unconfirmed`) không đóng được từ portal, vì id của `execution.Close` cố
 >   định theo ý định. Cần hậu tố thế hệ trong `execution` trước cỡ lệnh mà khớp

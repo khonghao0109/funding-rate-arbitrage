@@ -2,12 +2,18 @@ package broker
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -98,17 +104,14 @@ func (rig *redirectRig) RoundTrip(r *http.Request) (*http.Response, error) {
 	return http.DefaultTransport.RoundTrip(clone)
 }
 
-func (rig *redirectRig) client(httpClient *http.Client) *Client {
+func (rig *redirectRig) client() *Client {
 	rig.t.Helper()
-	if httpClient == nil {
-		httpClient = &http.Client{Transport: rig, Timeout: 5 * time.Second}
-	}
 	c, err := NewClient(Config{
 		BaseURL:           BinanceFuturesTestnetBaseURL,
 		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
 		TimePath:          BinanceFuturesTimePath,
 		WeightLimitPerMin: BinanceFuturesWeightPerMin,
-		HTTPClient:        httpClient,
+		TestTransport:     rig,
 	})
 	if err != nil {
 		rig.t.Fatalf("NewClient: %v", err)
@@ -180,7 +183,7 @@ func TestClient_RefusesEveryRedirectAndNeverResendsToAnotherHost(t *testing.T) {
 			for _, call := range calls {
 				t.Run(fmt.Sprintf("%d %s %s", status, locName, call.name), func(t *testing.T) {
 					r := newRedirectRig(t, redirectAnswer{status: status, location: loc})
-					c := r.client(nil)
+					c := r.client()
 					err := call.call(c, call.ep)
 					r.assertNothingLeft()
 					if !errors.Is(err, ErrRedirectAttempted) {
@@ -217,7 +220,7 @@ func TestClient_RefusesEveryRedirectAndNeverResendsToAnotherHost(t *testing.T) {
 func TestClient_ARedirectStatusWithoutLocationIsRefusedToo(t *testing.T) {
 	for _, status := range append([]int{http.StatusMultipleChoices}, redirectStatuses...) {
 		r := newRedirectRig(t, redirectAnswer{status: status})
-		err := r.client(nil).GetSigned(context.Background(), FuturesAccountBalance, nil, &[]map[string]any{})
+		err := r.client().GetSigned(context.Background(), FuturesAccountBalance, nil, &[]map[string]any{})
 		if !errors.Is(err, ErrRedirectAttempted) {
 			t.Errorf("HTTP %d without Location: err = %v, want ErrRedirectAttempted", status, err)
 		}
@@ -225,20 +228,242 @@ func TestClient_ARedirectStatusWithoutLocationIsRefusedToo(t *testing.T) {
 	}
 }
 
-// The HTTPClient hook exists for tests, and a caller's client may carry its own
-// CheckRedirect — including one that follows everything. The broker must not
-// inherit it, and must not change the caller's client either.
-func TestClient_AnInjectedClientCannotReenableRedirects(t *testing.T) {
-	r := newRedirectRig(t, redirectAnswer{status: http.StatusTemporaryRedirect, location: attackerURL})
-	followAll := func(*http.Request, []*http.Request) error { return nil }
-	injected := &http.Client{Transport: r, Timeout: 5 * time.Second, CheckRedirect: followAll}
-	err := r.client(injected).PostSigned(context.Background(), FuturesNewOrder, []Param{{"symbol", "BTCUSDT"}}, nil)
-	r.assertNothingLeft()
-	if !errors.Is(err, ErrRedirectAttempted) {
-		t.Fatalf("err = %v, want ErrRedirectAttempted", err)
+// Config offers nothing that reaches a client, a transport, a dialer, a TLS
+// configuration or a redirect policy — at any depth: a nested options struct,
+// a pointer, a function parameter or result. The one transport hook is
+// TestTransport, refused outside a test binary. Pinned by walking the types, so
+// a field added later — `HTTPClient *http.Client`, `TLS *tls.Config`,
+// `DialContext func(...) (net.Conn, error)` for one afternoon of debugging —
+// fails here instead of silently reopening what 9cb39c4 recorded.
+func TestConfig_ReachesNoClientTransportDialerTLSOrRedirectPolicy(t *testing.T) {
+	forbidden := map[reflect.Type]string{
+		reflect.TypeOf(http.Client{}):           "an http.Client",
+		reflect.TypeOf(http.Transport{}):        "an http.Transport",
+		reflect.TypeOf(http.Request{}):          "an http.Request (a redirect policy or a proxy function takes one)",
+		reflect.TypeOf(tls.Config{}):            "a TLS configuration",
+		reflect.TypeOf(net.Dialer{}):            "a dialer",
+		reflect.TypeOf(net.Resolver{}):          "a resolver",
+		reflect.TypeOf((*net.Conn)(nil)).Elem(): "a connection",
+		reflect.TypeOf(url.URL{}):               "a URL (a proxy function returns one)",
 	}
-	if injected.CheckRedirect == nil || injected.Transport != r {
-		t.Error("NewClient modified the caller's http.Client")
+	roundTripper := reflect.TypeOf((*http.RoundTripper)(nil)).Elem()
+	var transports []string
+	seen := map[reflect.Type]bool{}
+	var walk func(path string, typ reflect.Type)
+	walk = func(path string, typ reflect.Type) {
+		if typ.Implements(roundTripper) {
+			transports = append(transports, path)
+			return
+		}
+		if what, bad := forbidden[typ]; bad {
+			t.Errorf("Config.%s reaches %s", path, what)
+			return
+		}
+		if seen[typ] {
+			return
+		}
+		seen[typ] = true
+		switch typ.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array, reflect.Chan:
+			walk(path+"[]", typ.Elem())
+		case reflect.Map:
+			walk(path+"[key]", typ.Key())
+			walk(path+"[value]", typ.Elem())
+		case reflect.Struct:
+			for i := 0; i < typ.NumField(); i++ {
+				walk(path+"."+typ.Field(i).Name, typ.Field(i).Type)
+			}
+		case reflect.Func:
+			for i := 0; i < typ.NumIn(); i++ {
+				walk(fmt.Sprintf("%s(in %d)", path, i), typ.In(i))
+			}
+			for i := 0; i < typ.NumOut(); i++ {
+				walk(fmt.Sprintf("%s(out %d)", path, i), typ.Out(i))
+			}
+		}
+	}
+	cfg := reflect.TypeOf(Config{})
+	for i := 0; i < cfg.NumField(); i++ {
+		walk(cfg.Field(i).Name, cfg.Field(i).Type)
+	}
+	if len(transports) != 1 || transports[0] != "TestTransport" {
+		t.Errorf("transport hooks reachable from Config = %v, want exactly [TestTransport]", transports)
+	}
+	if len(seen) < 5 {
+		t.Fatalf("walked %d types — the test is not reading Config", len(seen))
+	}
+
+	// And the whole field list, because a walk by type cannot see an `any`, an
+	// io.Writer key log or a dial func returning io.ReadWriteCloser. A new
+	// field fails here until someone has read it against this test.
+	var fields []string
+	for i := 0; i < cfg.NumField(); i++ {
+		fields = append(fields, cfg.Field(i).Name+" "+cfg.Field(i).Type.String())
+	}
+	const want = "BaseURL string; Credentials broker.Credentials; RecvWindowMs int64; TimePath string; ClockSyncEvery time.Duration; " +
+		"WeightLimitPerMin int; TestTransport http.RoundTripper; ObserveResponse func(broker.ResponseRecord); _ struct {}; Now func() time.Time; UserAgentVI string"
+	if got := strings.Join(fields, "; "); got != want {
+		t.Errorf("Config fields changed:\n got %s\nwant %s\n— check the new field reaches no transport, dialer, TLS setting or redirect policy, then update this list", got, want)
+	}
+}
+
+// Outside a test binary a TestTransport is refused before any client exists:
+// whatever it does with a request happens BELOW the host pin, so the only safe
+// place for it is a test. The check is given testing.Testing's answer as an
+// argument; here it is given a production binary's.
+func TestNewClient_RefusesATestTransportOutsideATestBinary(t *testing.T) {
+	anywhere := roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("unused") })
+	if err := refuseTestTransport(anywhere, false); !errors.Is(err, ErrTestTransportOutsideTest) {
+		t.Errorf("a test transport in a production binary: err = %v, want ErrTestTransportOutsideTest", err)
+	}
+	if err := refuseTestTransport(nil, false); err != nil {
+		t.Errorf("no test transport in a production binary: err = %v", err)
+	}
+	if err := refuseTestTransport(anywhere, true); err != nil {
+		t.Errorf("a test transport in a test binary: err = %v", err)
+	}
+	// The exported sentinels are assignable. Nil-ing them must not turn either
+	// refusal into a nil error.
+	defer func(a, b error) { ErrTestTransportOutsideTest, ErrRedirectAttempted = a, b }(ErrTestTransportOutsideTest, ErrRedirectAttempted)
+	ErrTestTransportOutsideTest, ErrRedirectAttempted = nil, nil
+	if refuseTestTransport(anywhere, false) == nil {
+		t.Error("with the sentinel variable set to nil the test transport is accepted")
+	}
+	if refuseRedirect(nil, nil) == nil {
+		t.Error("with the sentinel variable set to nil a redirect is followed")
+	}
+}
+
+// A process started with GODEBUG=http2debug logs every HTTP/2 request header,
+// the API key among them. NewClient refuses to build a client there.
+func TestNewClient_RefusesAProcessThatLogsHTTP2Headers(t *testing.T) {
+	for godebug, refuse := range map[string]bool{
+		"":                         false,
+		"http2debug=0":             false,
+		"http2client=0":            false,
+		"http2debug=1":             true,
+		"tlsmlkem=1, http2debug=2": true,
+	} {
+		t.Setenv("GODEBUG", godebug)
+		_, err := NewClient(Config{
+			BaseURL:           BinanceFuturesTestnetBaseURL,
+			Credentials:       Credentials{APIKey: NewSecret("k"), APISecret: NewSecret("s")},
+			WeightLimitPerMin: BinanceFuturesWeightPerMin,
+		})
+		if (err != nil) != refuse {
+			t.Errorf("GODEBUG=%q: err = %v, want refused %v", godebug, err, refuse)
+		}
+	}
+}
+
+// The same refusal, end to end, in a real binary `go test` did not build: the
+// probe under testdata/ is compiled and run with `go run`, hands NewClient a
+// TestTransport, and reports. No socket is opened.
+func TestNewClient_RefusesATestTransportInABinaryGoTestDidNotBuild(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "run", "./internal/broker/testdata/refusalprobe")
+	cmd.Dir = root
+	// The toolchain on PATH, not one it would download; no inherited flags.
+	cmd.Env = append(os.Environ(), "GOTOOLCHAIN=local", "GOFLAGS=")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go run refusalprobe: %v\n%s", err, out)
+	}
+	if got := strings.TrimSpace(string(out)); got != "refused=true client=false reached=0" {
+		t.Errorf("refusalprobe said %q, want the test transport refused and never reached", got)
+	}
+}
+
+// The transport under the pin is the client's own, never the process-wide
+// http.DefaultTransport: replacing that variable, or rewiring the object it
+// held, reaches no broker client — including one built before the change.
+func TestClient_NeverUsesTheProcessWideDefaultTransport(t *testing.T) {
+	c, err := NewClient(Config{
+		BaseURL:           BinanceFuturesTestnetBaseURL,
+		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
+		WeightLimitPerMin: BinanceFuturesWeightPerMin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var replaced, rewired int
+	original := http.DefaultTransport
+	shared := original.(*http.Transport)
+	http.DefaultTransport = roundTripFunc(func(*http.Request) (*http.Response, error) {
+		replaced++
+		return nil, errors.New("the process-wide transport was used")
+	})
+	shared.DialTLSContext = func(context.Context, string, string) (net.Conn, error) {
+		rewired++
+		return nil, errors.New("the shared transport's dialer was used")
+	}
+	t.Cleanup(func() {
+		http.DefaultTransport = original
+		shared.DialTLSContext = nil
+	})
+
+	// A context cancelled before the call: the broker's own transport returns
+	// without dialing, while a replaced or rewired default would already have
+	// been handed the request.
+	after, err := NewClient(Config{
+		BaseURL:           BinanceFuturesTestnetBaseURL,
+		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
+		WeightLimitPerMin: BinanceFuturesWeightPerMin,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for _, client := range []*Client{c, after} {
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, BinanceFuturesTestnetBaseURL+BinanceFuturesTimePath, nil)
+		if _, err := client.http.Do(req); !errors.Is(err, context.Canceled) {
+			t.Errorf("err = %v, want context.Canceled from the client's own transport", err)
+		}
+	}
+	if replaced != 0 || rewired != 0 {
+		t.Errorf("the process-wide transport was reached: replaced %d, rewired %d", replaced, rewired)
+	}
+	// The cancelled context returns before any dial, so identity is what
+	// proves the client built BEFORE the change does not share the object.
+	for name, client := range map[string]*Client{"before": c, "after": after} {
+		if inner := client.http.Transport.(*hostPinTransport).next; inner == original || inner == http.DefaultTransport {
+			t.Errorf("the client built %s the change holds the process-wide transport", name)
+		}
+	}
+}
+
+// Inside a test, a TestTransport still sits BELOW both walls: a request built
+// for another host never reaches it, and a redirect it answers with is refused
+// rather than followed — whatever the transport would have done next.
+func TestClient_ATestTransportStaysUnderBothWalls(t *testing.T) {
+	var reachedHosts []string
+	followWherever := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		reachedHosts = append(reachedHosts, r.URL.Scheme+"://"+r.URL.Host)
+		h := http.Header{}
+		h.Set("Location", "https://evil.example/fapi/v1/order")
+		return &http.Response{StatusCode: http.StatusTemporaryRedirect, Header: h, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	})
+	c, err := NewClient(Config{
+		BaseURL:           BinanceFuturesTestnetBaseURL,
+		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
+		WeightLimitPerMin: BinanceFuturesWeightPerMin,
+		TestTransport:     followWherever,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.GetPublic(context.Background(), Endpoint{Path: "@evil.example/fapi/v1/order", WeightIP: 1}, nil, nil); !errors.Is(err, ErrHostNotPinned) {
+		t.Errorf("a request for another host: err = %v, want ErrHostNotPinned", err)
+	}
+	if err := c.GetPublic(context.Background(), Endpoint{Path: "/fapi/v1/exchangeInfo", WeightIP: 1}, nil, nil); !errors.Is(err, ErrRedirectAttempted) {
+		t.Errorf("a redirect from the transport: err = %v, want ErrRedirectAttempted", err)
+	}
+	if len(reachedHosts) != 1 || reachedHosts[0] != "https://"+BinanceFuturesTestnetHost {
+		t.Errorf("the transport was handed %q; want exactly one request, for the pinned host", reachedHosts)
 	}
 }
 
@@ -249,7 +474,7 @@ func TestClient_AnInjectedClientCannotReenableRedirects(t *testing.T) {
 // real one.
 func TestClient_EveryRequestIsPinnedToTheTestnetHost(t *testing.T) {
 	r := newRedirectRig(t, redirectAnswer{status: http.StatusOK})
-	c := r.client(nil)
+	c := r.client()
 	ep := Endpoint{Path: "@evil.example/fapi/v1/order", WeightIP: 1}
 	err := c.GetPublic(context.Background(), ep, nil, nil)
 	r.assertNothingLeft()
@@ -272,7 +497,7 @@ func TestClient_EveryRequestIsPinnedToTheTestnetHost(t *testing.T) {
 func TestClient_ARedirectBodyIsNotKept(t *testing.T) {
 	for _, status := range []int{http.StatusMultipleChoices, http.StatusFound, http.StatusTemporaryRedirect} {
 		r := newRedirectRig(t, redirectAnswer{status: status, body: `{"code":-2013,"msg":"Order does not exist."}`})
-		err := r.client(nil).GetSigned(context.Background(), FuturesAccountBalance, nil, nil)
+		err := r.client().GetSigned(context.Background(), FuturesAccountBalance, nil, nil)
 		var httpErr *HTTPError
 		if !errors.Is(err, ErrRedirectAttempted) || !errors.As(err, &httpErr) {
 			t.Fatalf("HTTP %d: err = %v, want ErrRedirectAttempted with an *HTTPError", status, err)
@@ -293,7 +518,7 @@ func TestClient_AnUnparseableOrHugeLocationIsRefusedTheSame(t *testing.T) {
 		"an empty scheme": "://nothing",
 	} {
 		r := newRedirectRig(t, redirectAnswer{status: http.StatusTemporaryRedirect, location: func(*http.Request) string { return loc }})
-		err := r.client(nil).PostSigned(context.Background(), FuturesNewOrder, []Param{{"symbol", "BTCUSDT"}}, nil)
+		err := r.client().PostSigned(context.Background(), FuturesNewOrder, []Param{{"symbol", "BTCUSDT"}}, nil)
 		r.assertNothingLeft()
 		if !errors.Is(err, ErrRedirectAttempted) {
 			t.Errorf("%s: err = %v, want ErrRedirectAttempted", name, err)
@@ -317,7 +542,7 @@ func TestClient_ARedirectMessageNamesTheHostAndNothingOfThePath(t *testing.T) {
 		"key percent-encoded":        "https://evil.example/%4BEY-" + sentinel,
 	} {
 		r := newRedirectRig(t, redirectAnswer{status: http.StatusFound, location: func(*http.Request) string { return loc }})
-		err := r.client(nil).GetPublic(context.Background(), Endpoint{Path: "/fapi/v1/exchangeInfo", WeightIP: 1}, nil, nil)
+		err := r.client().GetPublic(context.Background(), Endpoint{Path: "/fapi/v1/exchangeInfo", WeightIP: 1}, nil, nil)
 		if !errors.Is(err, ErrRedirectAttempted) {
 			t.Fatalf("%s: err = %v", name, err)
 		}
@@ -348,7 +573,7 @@ func (rig *redirectRig) clientWithoutServers() *Client {
 		Credentials:       Credentials{APIKey: NewSecret("KEY-" + sentinel), APISecret: NewSecret(sentinel)},
 		TimePath:          BinanceFuturesTimePath,
 		WeightLimitPerMin: BinanceFuturesWeightPerMin,
-		HTTPClient:        &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("no network") })},
+		TestTransport:     roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("no network") }),
 	})
 	if err != nil {
 		rig.t.Fatal(err)
@@ -418,22 +643,40 @@ func TestHostPinTransport_TakesTheLocationOffEvery3xx(t *testing.T) {
 }
 
 // Behind the transport, CheckRedirect is not reached today. It is still what
-// holds if the transport is ever unwrapped, so its presence is pinned here.
-func TestGuardedHTTPClient_InstallsBothWallsOnACopy(t *testing.T) {
-	followAll := func(*http.Request, []*http.Request) error { return nil }
-	caller := &http.Client{CheckRedirect: followAll, Timeout: 7 * time.Second}
-	hc := guardedHTTPClient(caller, BinanceFuturesTestnetHost)
-	if hc == caller || caller.Transport != nil {
-		t.Fatal("the caller's client was used or modified")
-	}
-	if hc.CheckRedirect == nil || !errors.Is(hc.CheckRedirect(nil, nil), ErrRedirectAttempted) {
-		t.Error("CheckRedirect does not refuse")
-	}
-	if pin, ok := hc.Transport.(*hostPinTransport); !ok || pin.host != BinanceFuturesTestnetHost || pin.next != http.DefaultTransport {
-		t.Errorf("transport = %#v, want the host pin over http.DefaultTransport", hc.Transport)
-	}
-	if hc.Timeout != caller.Timeout {
-		t.Errorf("timeout %s not carried over from the caller's %s", hc.Timeout, caller.Timeout)
+// holds if the transport is ever unwrapped, so its presence is pinned here —
+// with the settings of the production transport under the pin.
+func TestGuardedHTTPClient_InstallsBothWalls(t *testing.T) {
+	test := roundTripFunc(func(*http.Request) (*http.Response, error) { return nil, errors.New("unused") })
+	for name, given := range map[string]http.RoundTripper{"production": nil, "test": test} {
+		hc := guardedHTTPClient(given, BinanceFuturesTestnetHost)
+		if hc.CheckRedirect == nil || !errors.Is(hc.CheckRedirect(nil, nil), ErrRedirectAttempted) {
+			t.Errorf("%s: CheckRedirect does not refuse", name)
+		}
+		if hc.Timeout <= 0 {
+			t.Errorf("%s: no timeout", name)
+		}
+		pin, ok := hc.Transport.(*hostPinTransport)
+		if !ok || pin.host != BinanceFuturesTestnetHost {
+			t.Fatalf("%s: transport = %#v, want the host pin", name, hc.Transport)
+		}
+		if given != nil {
+			if fmt.Sprint(pin.next) != fmt.Sprint(given) {
+				t.Errorf("test: under the pin is %T, want the test's transport", pin.next)
+			}
+			continue
+		}
+		own, ok := pin.next.(*http.Transport)
+		switch {
+		case !ok || pin.next == http.DefaultTransport:
+			t.Errorf("production: under the pin is %T — want a transport of the client's own, not http.DefaultTransport", pin.next)
+		case own.Proxy != nil || own.DialTLSContext != nil || own.DialTLS != nil || own.DialContext == nil:
+			t.Errorf("production: proxy %v, DialTLSContext %v, DialTLS %v, DialContext %v", own.Proxy != nil, own.DialTLSContext != nil, own.DialTLS != nil, own.DialContext != nil)
+		case own.TLSClientConfig == nil || own.TLSClientConfig.InsecureSkipVerify || own.TLSClientConfig.MinVersion < tls.VersionTLS12:
+			t.Errorf("production: TLS config %+v", own.TLSClientConfig)
+		}
+		if other := guardedHTTPClient(nil, BinanceFuturesTestnetHost).Transport.(*hostPinTransport).next; other == pin.next {
+			t.Error("production: two clients share one transport")
+		}
 	}
 }
 

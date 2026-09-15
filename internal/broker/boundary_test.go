@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"io/fs"
@@ -213,5 +214,94 @@ func TestPackage_HasNoEscapeHatchForMainnet(t *testing.T) {
 				t.Errorf("%s mentions %q — step 4.6 introduces a mainnet host with the operator's decision and real capital behind it; 4.1 does not get a switch", name, bad)
 			}
 		}
+	}
+}
+
+// Config.TestTransport runs BELOW the host pin, so whatever it does with a
+// signed request — send it elsewhere, over plaintext, with TLS checks off — no
+// wall in this package sees. NewClient refuses it outside a test binary; this
+// makes the same rule visible in source, over EVERY non-test Go file in the
+// module (no directory skipped: a main package under testdata/ still builds
+// when named). It fails on:
+//
+//   - an identifier named TestTransport, except in the two files of this
+//     package that define and install it and the refusal probe;
+//   - a string literal containing it (reflect's FieldByName takes a string);
+//   - a //go:linkname into this module (it can write an unexported variable);
+//   - http.DefaultTransport or http.DefaultClient named by this package's own
+//     code — process-wide variables anything linked in can rewire.
+//
+// Unkeyed Config literals cannot reach the field either: Config carries a
+// blank field, so a literal from another package must use names.
+func TestTestTransport_IsNamedByNoProductionFile(t *testing.T) {
+	root, err := filepath.Abs("../..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := map[string]bool{
+		filepath.Join(root, "internal", "broker", "client.go"):                           true,
+		filepath.Join(root, "internal", "broker", "redirect.go"):                         true,
+		filepath.Join(root, "internal", "broker", "testdata", "refusalprobe", "main.go"): true,
+	}
+	brokerDir := filepath.Join(root, "internal", "broker") + string(filepath.Separator)
+	var scanned int
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			// A nested checkout (a worktree, an agent's copy) is another module
+			// with its own internal/broker; it is not this module's source.
+			if path != root {
+				if _, err := os.Stat(filepath.Join(path, "go.mod")); err == nil {
+					return filepath.SkipDir
+				}
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, parser.ParseComments|parser.SkipObjectResolution)
+		if err != nil {
+			return err
+		}
+		scanned++
+		rel, _ := filepath.Rel(root, path)
+		for _, group := range file.Comments {
+			for _, c := range group.List {
+				if strings.HasPrefix(c.Text, "//go:linkname") && strings.Contains(c.Text, "futures-arbitrage-scanner/") {
+					t.Errorf("%s: %s — a linkname into this module can rewrite what NewClient checks", rel, c.Text)
+				}
+			}
+		}
+		inBroker := strings.HasPrefix(path, brokerDir)
+		ast.Inspect(file, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Ident:
+				if x.Name == "TestTransport" && !allowed[path] {
+					t.Errorf("%s names TestTransport — a transport below the host pin belongs in a _test.go file only", rel)
+				}
+			case *ast.BasicLit:
+				if x.Kind == token.STRING && strings.Contains(x.Value, "TestTransport") && !allowed[path] {
+					t.Errorf("%s spells TestTransport in a string — reflect can set a field by name", rel)
+				}
+			case *ast.SelectorExpr:
+				if pkg, ok := x.X.(*ast.Ident); ok && inBroker && pkg.Name == "http" && (x.Sel.Name == "DefaultTransport" || x.Sel.Name == "DefaultClient") {
+					t.Errorf("%s uses http.%s — the broker's transport is its own, never the process-wide one", rel, x.Sel.Name)
+				}
+			}
+			return true
+		})
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned < 150 {
+		t.Fatalf("scanned %d production files — the walk is not seeing the module", scanned)
 	}
 }
