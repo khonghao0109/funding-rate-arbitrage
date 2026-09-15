@@ -19,10 +19,12 @@ import (
 // The three endpoints that send orders: open, close, reconcile.
 //
 // Each is cmd/execcheck's action of the same name, driven by a button instead
-// of a flag, and each keeps execcheck's two properties. There is no path from a
-// live signal to any of them — a person pressed the button (PLAN Q15 limit 5).
-// And the venue is the truth: what is closed or squared is decided from the
-// venue's record of the intent's own orders, never from the cache.
+// of a flag, and each keeps execcheck's two properties. Open and close are also
+// what the testnet auto-trader drives (autotrade.go, PLAN Q18) — the same
+// functions under the same write lock, never a second order path; reconcile
+// stays a person's alone. And the venue is the truth: what is closed or squared
+// is decided from the venue's record of the intent's own orders, never from the
+// cache.
 //
 // Every write holds writeMu for its whole duration and runs on a context
 // DETACHED from the request. A browser tab closed in the middle of an open must
@@ -80,6 +82,11 @@ type openRequest struct {
 	Symbol        string  `json:"symbol"`
 	NotionalQuote float64 `json:"notional_quote"`
 	LegOrder      string  `json:"leg_order"`
+
+	// SignalEntryCostPct is the auto-trader's priced entry (PLAN Q18), never
+	// read from a request body. nil is a button press, whose "signal" is the
+	// book the open reads itself.
+	SignalEntryCostPct *float64 `json:"-"`
 }
 
 type openView struct {
@@ -114,6 +121,12 @@ type openView struct {
 	UnwindDurationMs int64 `json:"unwind_duration_ms"`
 	BookAgeMs        int64 `json:"book_age_ms"`
 	ElapsedMs        int64 `json:"elapsed_ms"`
+	OpenedAtMs       int64 `json:"opened_at_ms"`
+
+	// The two books' mids the open was sized on — the reference its slippage
+	// and, for the auto-trader, its entry basis are measured against.
+	SpotRefMidQuote float64 `json:"spot_ref_mid_quote"`
+	PerpRefMidQuote float64 `json:"perp_ref_mid_quote"`
 
 	MaxSlippageBps    float64 `json:"max_slippage_bps"`
 	LegTimeoutMs      int64   `json:"leg_timeout_ms"`
@@ -186,6 +199,12 @@ func (p *portal) handleOpen(w http.ResponseWriter, r *http.Request) {
 // maintenance bracket read with the key, the intent handed to execution, the
 // cache written whatever happened.
 func (p *portal) open(ctx context.Context, req openRequest) (openView, int) {
+	return p.openAs(ctx, req, intentPrefixPortal)
+}
+
+// openAs is open under the id prefix of the tool that asked: a button press or
+// the auto-trader. It is the ONE place either reaches execution.Open.
+func (p *portal) openAs(ctx context.Context, req openRequest, intentPrefix string) (openView, int) {
 	v := openView{
 		Symbol: req.Symbol, NotionalQuote: req.NotionalQuote, LegOrder: req.LegOrder,
 		MaxSlippageBps: p.exec.MaxSlippageBps, LegTimeoutMs: p.exec.LegTimeout.Milliseconds(), PerpMarginFrac: p.exec.MarginFrac,
@@ -217,7 +236,7 @@ func (p *portal) open(ctx context.Context, req openRequest) (openView, int) {
 	}
 	v.BracketVI = bracket.NoteVI
 
-	intentID, err := p.mintIntentID(req.Symbol)
+	intentID, err := p.mintIntentIDWith(intentPrefix, req.Symbol)
 	if err != nil {
 		v.ErrorVI = err.Error() + " — chưa gửi lệnh nào"
 		return v, http.StatusInternalServerError
@@ -229,15 +248,21 @@ func (p *portal) open(ctx context.Context, req openRequest) (openView, int) {
 		SpotBook: spotMkt.Book, PerpBook: perpMkt.Book,
 		SpotPriceQuote: spotMkt.PriceQuote, PerpPriceQuote: perpMkt.PriceQuote,
 		NotionalQuote: req.NotionalQuote,
-		// The "signal" is a person pressing a button, so the cost the decision
+		// For a button press the "signal" is a person, so the cost the decision
 		// was made at IS the cost the book prices now — execcheck's reasoning,
-		// and honest only because no signal exists here.
+		// and no widening check applies. The auto-trader's signal priced an
+		// entry on the scan's books a moment ago, and execution refuses when
+		// this book has widened past that by more than its default tolerance.
 		SignalEntryCostPct: 0,
 		PerpMarginFrac:     p.exec.MarginFrac,
 		PerpBracket:        bracket,
 	}
 	cfg := execution.DefaultConfig()
 	cfg.MaxEntryCostWidenBps = math.Inf(1)
+	if req.SignalEntryCostPct != nil {
+		intent.SignalEntryCostPct = *req.SignalEntryCostPct
+		cfg.MaxEntryCostWidenBps = execution.DefaultConfig().MaxEntryCostWidenBps
+	}
 	cfg.MaxSlippageBps = p.exec.MaxSlippageBps
 	cfg.LegTimeout = p.exec.LegTimeout
 	cfg.LegOrder = execution.LegOrder(req.LegOrder)
@@ -259,6 +284,7 @@ func (p *portal) open(ctx context.Context, req openRequest) (openView, int) {
 	v.TargetQtyCoin, v.ResidualQtyCoin = res.TargetQtyCoin, res.ResidualQtyCoin
 	v.Spot, v.Perp = toLegView(res.Spot), toLegView(res.Perp)
 	v.SpotBestAskQuote, v.PerpBestBidQuote = spotMkt.Book.BestAskQuote, perpMkt.Book.BestBidQuote
+	v.OpenedAtMs, v.SpotRefMidQuote, v.PerpRefMidQuote = startedAt.UnixMilli(), spotMkt.Book.MidPriceQuote, perpMkt.Book.MidPriceQuote
 	v.SpotEntrySlippageBps = bpsPtr(slippageBps(res.Spot.AvgFillPriceQuote, spotMkt.Book.BestAskQuote, true))
 	v.PerpEntrySlippageBps = bpsPtr(slippageBps(res.Perp.AvgFillPriceQuote, perpMkt.Book.BestBidQuote, false))
 	v.UnhedgedWindowMs, v.UnwindDurationMs, v.BookAgeMs = res.UnhedgedWindow.Milliseconds(), res.UnwindDuration.Milliseconds(), res.BookAgeMs
@@ -361,8 +387,12 @@ func spotBaseBalanceQtyCoin(ctx context.Context, spot venue, asset string) (floa
 // ClientOrderIDs make a duplicate intent id a duplicate ORDER id, which the
 // venue refuses only while the first order is still open.
 func (p *portal) mintIntentID(symbol string) (string, error) {
+	return p.mintIntentIDWith(intentPrefixPortal, symbol)
+}
+
+func (p *portal) mintIntentIDWith(prefix, symbol string) (string, error) {
 	for attempt := 0; attempt < 5; attempt++ {
-		id := newIntentID(symbol, p.now().Add(time.Duration(attempt)*time.Millisecond))
+		id := newIntentIDWith(prefix, symbol, p.now().Add(time.Duration(attempt)*time.Millisecond))
 		if _, err := loadState(p.stateDir, id); err != nil {
 			return id, nil
 		}

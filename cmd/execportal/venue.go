@@ -43,6 +43,9 @@ type venue interface {
 	HTTP() *broker.Client
 	FetchInstrument(ctx context.Context, symbol string) (binancebroker.MarketRules, error)
 	FetchDepthBook(ctx context.Context, symbol string) (exchanges.DepthBook, error)
+	// CommissionRates is this account's taker fee, which the auto-trader prices
+	// its round trip with (PLAN Q18).
+	CommissionRates(ctx context.Context, symbol string) (binancebroker.CommissionRates, error)
 }
 
 // perpVenue is the futures market: everything a venue does, plus what only a
@@ -54,6 +57,7 @@ type perpVenue interface {
 	broker.MarkPriceReader
 	broker.FundingReader
 	FetchMaintenanceBracket(ctx context.Context, symbol string, notionalQuote float64) (binancebroker.MaintenanceBracket, error)
+	FundingRateHistory(ctx context.Context, symbol string, startMs, endMs int64) ([]binancebroker.FundingRate, error)
 }
 
 var (
@@ -143,19 +147,27 @@ func readMarket(ctx context.Context, c venue, symbol string) (market, error) {
 		return out, fmt.Errorf("rules: %w", err)
 	}
 	out.Rules = rules
+	if out.Book, err = readBook(ctx, c, symbol); err != nil {
+		return out, err
+	}
+	out.PriceQuote = out.Book.MidPriceQuote
+	return out, nil
+}
+
+// readBook reads one market's book and summarizes it.
+func readBook(ctx context.Context, c venue, symbol string) (depth.Summary, error) {
 	book, err := c.FetchDepthBook(ctx, symbol)
 	if err != nil {
-		return out, fmt.Errorf("book: %w", err)
+		return depth.Summary{}, fmt.Errorf("book: %w", err)
 	}
 	// Stamped by US at the read, never from the venue's clock (CLAUDE.md rule
 	// 13). Binance denominates both books in COIN, so the multiplier is 1 and
 	// no other is offered.
-	out.Book = depth.Summarize(book, time.Now().UnixMilli(), func(string, string) (float64, bool) { return 1, true })
-	if !out.Book.OK() {
-		return out, fmt.Errorf("book: %s", out.Book.ErrVI)
+	summary := depth.Summarize(book, time.Now().UnixMilli(), func(string, string) (float64, bool) { return 1, true })
+	if !summary.OK() {
+		return summary, fmt.Errorf("book: %s", summary.ErrVI)
 	}
-	out.PriceQuote = out.Book.MidPriceQuote
-	return out, nil
+	return summary, nil
 }
 
 // sameAsset refuses a pair whose two legs are not the same coin in the same

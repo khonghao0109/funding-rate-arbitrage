@@ -47,6 +47,14 @@ type fakeVenue struct {
 	http   *broker.Client
 	rules  binancebroker.MarketRules
 	book   exchanges.DepthBook
+
+	feesErr      error
+	fundingRates []binancebroker.FundingRate
+	// fundingPageRows, when set, answers at most this many of the OLDEST rows
+	// in the window, the way the venue answers a window wider than its page.
+	fundingPageRows int
+	// fundingIgnoresStart answers as if startTime had not been sent.
+	fundingIgnoresStart bool
 }
 
 func (f *fakeVenue) Market() broker.Market { return f.market }
@@ -59,6 +67,33 @@ func (f *fakeVenue) FetchDepthBook(context.Context, string) (exchanges.DepthBook
 }
 func (f *fakeVenue) FetchMaintenanceBracket(_ context.Context, symbol string, _ float64) (binancebroker.MaintenanceBracket, error) {
 	return binancebroker.MaintenanceBracket{Symbol: symbol, Tier: 1, NotionalCapQuote: 50_000, MaintMarginFrac: 0.004, MaxLeverage: 125}, nil
+}
+
+// CommissionRates answers the testnet's measured fees: spot 0, futures 4 bps.
+func (f *fakeVenue) CommissionRates(_ context.Context, symbol string) (binancebroker.CommissionRates, error) {
+	if f.feesErr != nil {
+		return binancebroker.CommissionRates{}, f.feesErr
+	}
+	rate := 0.0
+	if f.market == broker.MarketFuturesUSDM {
+		rate = 0.0004
+	}
+	return binancebroker.CommissionRates{Market: f.market, Symbol: symbol, TakerBuyFrac: rate, TakerSellFrac: rate, SourceVI: "fake"}, nil
+}
+
+// FundingRateHistory answers whatever the test set, filtered to the window.
+func (f *fakeVenue) FundingRateHistory(_ context.Context, symbol string, startMs, endMs int64) ([]binancebroker.FundingRate, error) {
+	var out []binancebroker.FundingRate
+	for _, r := range f.fundingRates {
+		if (startMs == 0 || f.fundingIgnoresStart || r.SettledAtMs >= startMs) && (endMs == 0 || r.SettledAtMs <= endMs) {
+			r.Symbol = symbol
+			out = append(out, r)
+		}
+		if f.fundingPageRows > 0 && len(out) == f.fundingPageRows {
+			break
+		}
+	}
+	return out, nil
 }
 
 var _ perpVenue = (*fakeVenue)(nil)

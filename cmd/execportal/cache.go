@@ -213,11 +213,24 @@ func listStates(dir, symbol string) ([]intentState, []string, error) {
 	return out, unreadable, nil
 }
 
-// newIntentID mints a readable id. The "p" prefix marks an intent the PORTAL
-// opened, where execcheck's start with "x"; the milliseconds are there because a
-// browser can submit twice inside one second where a person at a terminal
-// cannot, and two intents with one id would derive the same ClientOrderIDs.
+// The first letter of an intent id says which tool opened it: execcheck's start
+// with "x", a button press on this page with "p", the auto-trader with "a"
+// (PLAN Q18). It is how the bot recognises — and after a restart adopts — the
+// one position that is its own, and never one a person opened.
+const (
+	intentPrefixPortal    = "p"
+	intentPrefixAutotrade = "a"
+)
+
+// newIntentID mints a readable id for a button press. The milliseconds are there
+// because a browser can submit twice inside one second where a person at a
+// terminal cannot, and two intents with one id would derive the same
+// ClientOrderIDs.
 func newIntentID(symbol string, now time.Time) string {
+	return newIntentIDWith(intentPrefixPortal, symbol, now)
+}
+
+func newIntentIDWith(prefix, symbol string, now time.Time) string {
 	u := now.UTC()
-	return fmt.Sprintf("p%s-%s-%03d", strings.ToLower(symbol), u.Format("20060102-150405"), u.Nanosecond()/int(time.Millisecond))
+	return fmt.Sprintf("%s%s-%s-%03d", prefix, strings.ToLower(symbol), u.Format("20060102-150405"), u.Nanosecond()/int(time.Millisecond))
 }

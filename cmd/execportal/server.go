@@ -80,6 +80,11 @@ func (p *portal) handler() http.Handler {
 	post := func(path, action string, h http.HandlerFunc) {
 		mux.Handle(path, onlyMethod(http.MethodPost, p.apiGuard(action, p.writeGuard(h))))
 	}
+	// postEither is post for a route two action names may reach; the handler
+	// then checks the body agrees with the name that was sent.
+	postEither := func(path, action, other string, h http.HandlerFunc) {
+		mux.Handle(path, onlyMethod(http.MethodPost, p.apiGuardAny([]string{action, other}, p.writeGuard(h))))
+	}
 	get("/api/status", p.handleStatus)
 	get("/api/account", p.handleAccount)
 	get("/api/positions", p.handlePositions)
@@ -90,6 +95,13 @@ func (p *portal) handler() http.Handler {
 	post("/api/open", "open", p.handleOpen)
 	post("/api/close", "close", p.handleClose)
 	post("/api/reconcile", "reconcile", p.handleReconcile)
+	// The testnet auto-trader (PLAN Q18): its state, and the three operator
+	// writes. Its own orders go through handleOpen's and handleClose's
+	// functions, not through these routes.
+	get("/api/autotrade/status", p.handleAutotradeStatus)
+	post("/api/autotrade/start", autotradeStartAction, p.handleAutotradeStart)
+	postEither("/api/autotrade/stop", autotradeStopAction, autotradeStopCloseAction, p.handleAutotradeStop)
+	post("/api/autotrade/kill", autotradeKillAction, p.handleAutotradeKill)
 	// Read-only feeds from cmd/scanner and cmd/paperledger (PLAN Q17): bytes
 	// relayed, never decoded, and not reachable from any order path.
 	get("/api/scanner/funding-history", p.feeds.ScannerHistory)
@@ -148,6 +160,12 @@ const readAction = "read"
 // and make an unwind wait for the next minute. A no-cors request cannot carry
 // the custom header, and a cors one needs a preflight this server never grants.
 func (p *portal) apiGuard(action string, next http.Handler) http.Handler {
+	return p.apiGuardAny([]string{action}, next)
+}
+
+// apiGuardAny is apiGuard accepting any one of several action names.
+func (p *portal) apiGuardAny(actions []string, next http.Handler) http.Handler {
+	action := actions[0]
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if site := r.Header.Get("Sec-Fetch-Site"); site != "" && site != "same-origin" && site != "none" {
 			writeError(w, http.StatusForbidden, "cross_site_refused",
@@ -159,7 +177,7 @@ func (p *portal) apiGuard(action string, next http.Handler) http.Handler {
 				"yêu cầu mang Origin "+quoteForMessage(origin)+" không phải portal này — từ chối")
 			return
 		}
-		if got := r.Header.Get(actionHeader); got != action {
+		if got := r.Header.Get(actionHeader); !slices.Contains(actions, got) {
 			why := "— lệnh chỉ được gửi sau khi người vận hành xác nhận"
 			if action == readAction {
 				why = "— chỉ trang của portal được đọc API"

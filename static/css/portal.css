@@ -45,6 +45,9 @@
   --warn-line: rgba(255, 176, 32, 0.4);
   --badge: #ffd60a;
   --paper: #ffb020;
+  /* The auto-trader's HEDGED state: a neon green that no other state uses. */
+  --live: #2cf59a;
+  --live-line: rgba(44, 245, 154, 0.45);
 
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -1590,6 +1593,322 @@ pre.events {
   gap: var(--space-4);
 }
 
+/* Auto-Trader card (PLAN Q18). The badge colour follows the machine's state;
+ * every state also carries its word, so colour is never the only signal. */
+.tag.auto {
+  background: rgba(44, 245, 154, 0.12);
+  color: var(--live);
+  border: 1px solid var(--live-line);
+}
+
+.autotrader {
+  border-color: var(--glass-border-strong);
+}
+
+.autotrader[data-state="in_position"] {
+  border-color: var(--live-line);
+  box-shadow: 0 0 0 1px rgba(44, 245, 154, 0.12), 0 0 32px rgba(44, 245, 154, 0.08);
+}
+
+.autotrader[data-state="emergency_halted"] {
+  border-color: var(--neg-line);
+}
+
+.at-badge {
+  padding: 3px 12px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-pill);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.at-badge[data-state="idle_scanning"],
+.at-badge[data-state="evaluating"] {
+  border-color: rgba(79, 172, 254, 0.5);
+  background: rgba(79, 172, 254, 0.14);
+  color: var(--blue);
+  animation: at-pulse 1.6s ease-in-out infinite;
+}
+
+.at-badge[data-state="cooldown"] {
+  border-color: rgba(79, 172, 254, 0.35);
+  color: var(--blue);
+}
+
+.at-badge[data-state="opening"],
+.at-badge[data-state="closing"] {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.at-badge[data-state="in_position"] {
+  border-color: var(--live-line);
+  background: rgba(44, 245, 154, 0.14);
+  color: var(--live);
+  box-shadow: 0 0 18px rgba(44, 245, 154, 0.25);
+}
+
+.at-badge[data-state="emergency_halted"] {
+  border-color: var(--neg);
+  background: var(--neg-soft);
+  color: var(--neg);
+  animation: blink-border 1s steps(2, start) infinite;
+}
+
+.at-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: 44px;
+  padding: 0 var(--space-3) 0 var(--space-2);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-pill);
+  background: rgba(0, 0, 0, 0.25);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  cursor: pointer;
+  transition: border-color var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out);
+}
+
+.at-switch:hover:not(:disabled) {
+  border-color: var(--cyan-line);
+}
+
+.at-switch:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.at-switch-track {
+  position: relative;
+  width: 40px;
+  height: 22px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.12);
+  transition: background-color var(--dur) var(--ease-out);
+}
+
+.at-switch-thumb {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-2);
+  transition: transform var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out);
+}
+
+.at-switch[aria-checked="true"] .at-switch-track {
+  background: rgba(44, 245, 154, 0.35);
+}
+
+.at-switch[aria-checked="true"] .at-switch-thumb {
+  transform: translateX(18px);
+  background: var(--live);
+}
+
+.at-switch[data-halted="true"] .at-switch-track {
+  background: var(--neg-soft);
+}
+
+.at-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  gap: var(--space-3);
+}
+
+.at-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-3);
+}
+
+.at-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.at-actions .btn.danger {
+  grid-column: 1 / -1;
+}
+
+.at-gauge {
+  align-content: start;
+}
+
+.at-gauge-head,
+.at-console-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+}
+
+.at-gauge-head .spacer,
+.at-console-head .spacer {
+  flex: 1;
+}
+
+.at-gauge-head h3,
+.at-console-head h3 {
+  font-size: var(--fs-xs);
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+  text-transform: uppercase;
+}
+
+.at-verdict {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--glass-border-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+.at-verdict[data-state="go"] {
+  border-color: var(--live-line);
+  border-left-color: var(--live);
+  color: var(--live);
+  background: rgba(44, 245, 154, 0.08);
+}
+
+.at-verdict[data-state="wait"] {
+  border-left-color: var(--warn);
+  color: var(--warn);
+}
+
+.at-verdict[data-state="hold"] {
+  border-left-color: var(--cyan);
+  color: var(--cyan);
+}
+
+.at-verdict[data-state="exit"] {
+  border-color: var(--neg-line);
+  border-left-color: var(--neg);
+  color: var(--neg);
+}
+
+.at-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-2);
+}
+
+.at-checks {
+  display: grid;
+  gap: 6px;
+  margin-top: var(--space-2);
+}
+
+.at-checks li {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  gap: var(--space-2);
+  align-items: baseline;
+  font-size: var(--fs-xs);
+}
+
+.at-checks .at-mark {
+  padding: 0 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  text-align: center;
+}
+
+.at-checks .at-mark.ok {
+  background: rgba(44, 245, 154, 0.12);
+  color: var(--live);
+}
+
+.at-checks .at-mark.bad {
+  background: var(--neg-soft);
+  color: var(--neg);
+}
+
+.at-checks .at-mark.na {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.at-checks .at-group {
+  grid-template-columns: minmax(0, 1fr);
+  margin-top: var(--space-1);
+  color: var(--text-2);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.at-checks .at-detail {
+  color: var(--text-2);
+  word-break: break-word;
+}
+
+.at-console {
+  display: grid;
+  gap: 2px;
+  max-height: 260px;
+  overflow: auto;
+  margin: var(--space-2) 0 0;
+  padding: var(--space-3);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.4);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  list-style: none;
+}
+
+.at-console li {
+  display: grid;
+  grid-template-columns: max-content 76px minmax(0, 1fr);
+  gap: var(--space-2);
+  color: var(--text-2);
+}
+
+.at-console .at-kind {
+  font-weight: 700;
+}
+
+.at-console .at-kind[data-kind="OPEN"],
+.at-console .at-kind[data-kind="ADOPT"] {
+  color: var(--live);
+}
+
+.at-console .at-kind[data-kind="CLOSE"],
+.at-console .at-kind[data-kind="EXIT"],
+.at-console .at-kind[data-kind="STOP"] {
+  color: var(--cyan);
+}
+
+.at-console .at-kind[data-kind="KILL"],
+.at-console .at-kind[data-kind="HALT"],
+.at-console .at-kind[data-kind="ERROR"] {
+  color: var(--neg);
+}
+
+.at-console .at-msg {
+  color: var(--text);
+  word-break: break-word;
+}
+
+.at-console .at-empty {
+  display: block;
+  color: var(--text-3);
+}
+
 /* 10 ------------------------------------------------------------- paper */
 .paper-banner {
   display: flex;
@@ -1845,6 +2164,13 @@ dialog .actions {
   }
 }
 
+@keyframes at-pulse {
+  50% {
+    border-color: rgba(79, 172, 254, 0.15);
+    background-color: rgba(79, 172, 254, 0.05);
+  }
+}
+
 @keyframes blink {
   to {
     opacity: 0.45;
@@ -1897,7 +2223,8 @@ dialog .actions {
    * cannot blink: a hatched fill instead of the pulse. */
   .status-banner[data-status="unhedged"],
   .delta[data-state="bad"],
-  .chip-hedge[data-status="unhedged"] {
+  .chip-hedge[data-status="unhedged"],
+  .at-badge[data-state="emergency_halted"] {
     background-image: repeating-linear-gradient(135deg, rgba(255, 75, 75, 0.16) 0 8px, transparent 8px 16px);
   }
 }
@@ -1908,7 +2235,8 @@ dialog .actions {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .control {
+  .control,
+  .at-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -1940,5 +2268,18 @@ dialog .actions {
 
   .chart {
     height: 300px;
+  }
+
+  .at-fields,
+  .at-actions {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .at-console li {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+
+  .at-console .at-msg {
+    grid-column: 1 / -1;
   }
 }

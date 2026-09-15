@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"futures-arbitrage-scanner/cmd/execportal/autotrade"
 	"futures-arbitrage-scanner/cmd/execportal/feeds"
 	"futures-arbitrage-scanner/internal/broker"
 	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
@@ -106,13 +107,22 @@ type portal struct {
 	// PLAN Q17). All the portal can do with them is register their handlers,
 	// report their health and close them; nothing here can read what they carry.
 	feeds *feeds.Feeds
+
+	// autotrade is the testnet auto-trader (PLAN Q18, autotrade.go). It decides
+	// on the testnet's own funding, books and fees — never on a feed — and
+	// trades only through openAs and close under writeMu.
+	autotrade    *autotrade.Engine
+	fundingRates *ttlCache[[]binancebroker.FundingRate]
+	commissions  *ttlCache[commissionPair]
+	fundingKeyMu sync.Mutex
+	fundingKey   string
 }
 
 func newPortal(m markets, symbols []string, bindIP, port string, settings execSettings, now func() time.Time) *portal {
 	if now == nil {
 		now = time.Now
 	}
-	return &portal{
+	p := &portal{
 		markets:    m,
 		stateDir:   stateDir,
 		symbols:    symbols,
@@ -130,7 +140,12 @@ func newPortal(m markets, symbols []string, bindIP, port string, settings execSe
 		memo:       newDoneOrders(),
 		pingsMs:    map[broker.Market]int64{},
 		feeds:      feeds.New("", "", now),
+
+		fundingRates: newTTLCache[[]binancebroker.FundingRate](now),
+		commissions:  newTTLCache[commissionPair](now),
 	}
+	p.autotrade = newAutotrade(p)
+	return p
 }
 
 // acquire takes the write lock or reports what holds it.
@@ -335,8 +350,8 @@ func (p *portal) handleStatus(w http.ResponseWriter, r *http.Request) {
 		LegTimeoutMs:     p.exec.LegTimeout.Milliseconds(),
 		LegOrders:        []string{string(execution.LegOrderSequentialSpotFirst), string(execution.LegOrderParallel)},
 		Feeds:            p.feeds.View(),
-		NoticeVI: "CHỈ TESTNET — không tiền thật. Mọi vị thế do người vận hành bấm; " +
-			"không có đường nào từ tín hiệu sống tới lệnh (PLAN Q15/Q16).",
+		NoticeVI: "CHỈ TESTNET — không tiền thật. Vị thế do người vận hành bấm, hoặc do Auto-Trader khi người vận hành BẬT nó (PLAN Q18); " +
+			"không tín hiệu nào từ scanner hay nhật ký cổng 3.5 tới được lệnh.",
 	})
 }
 
@@ -987,7 +1002,9 @@ func (p *portal) handleIntents(w http.ResponseWriter, r *http.Request) {
 
 func originOf(intentID string) string {
 	switch {
-	case strings.HasPrefix(intentID, "p"):
+	case strings.HasPrefix(intentID, intentPrefixAutotrade):
+		return "autotrade"
+	case strings.HasPrefix(intentID, intentPrefixPortal):
 		return "execportal"
 	case strings.HasPrefix(intentID, "x"):
 		return "execcheck"

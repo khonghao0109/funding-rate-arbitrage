@@ -845,7 +845,8 @@ disk so a new binary cannot escape it, and forbids `internal/execution` as well
 as `internal/broker`), no real money, 4.6 still behind the 3.5 verdict, and —
 the limit most likely to drift, because by then it is a few lines — wiring a
 live signal to an order stays behind BOTH 3.5 and 3.4. Every position is one a
-person typed into `cmd/execcheck`.
+person typed into `cmd/execcheck`. (Decision Q18 narrowed limit 5 on 2026-09-15
+for the testnet auto-trader only — see the paragraph after the unified page.)
 
 **Measured: 10 opens, 10/10 hedged, residual 0 on every one.** The unhedged
 window is **464-628 ms placing sequentially and 313-387 ms in parallel** - the
@@ -896,8 +897,9 @@ figure it started from.
 **The execution portal shipped 2026-09-14 on TESTNET (decision Q16), and it is
 a tool, not a roadmap step — phase 4 stays at 5/6.** `cmd/execportal` puts
 `cmd/execcheck` behind a loopback page so the operator can open, watch, close
-and square Strategy 1's pair with a confirmed click; there is still no path from
-a live signal to an order. Accepted THROUGH THE PAGE in headless Chrome: $65
+and square Strategy 1's pair with a confirmed click; on that day there was still
+no path from a live signal to an order (Q18 added the testnet auto-trader the
+next day). Accepted THROUGH THE PAGE in headless Chrome: $65
 BTCUSDT opened `both_open` at 0.0008 BTC a leg, residual 0, banner
 `DELTA-NEUTRAL (HEDGED)`, unhedged window 375 ms; closed `both_flat` with
 RealizedQuote −0.05430594 and pair drift −0.00216800 beside it; 0 console
@@ -979,6 +981,57 @@ sub-package reach the strategy; a kept alarm re-wrapped its text on every
 poll…) — all fixed, each with a mutation that goes red. **New named debt that blocks 4.6:** the vendored chart
 library and the feed tabs' JavaScript run in the SAME origin as the order API —
 see PLAN "Công cụ vận hành 4.5c".
+
+**The testnet AUTO-TRADER shipped 2026-09-15 inside `cmd/execportal` (decision
+Q18) — a tool, not a roadmap step; phase 4 stays 5/6.** The operator asked for
+a bot that places orders on the Binance demo by itself. That reverses Q15 limit
+5, which the design doc did not mention, so it was asked first: the operator
+chose to record Q18 and let the bot trade, and to hold while funding stays
+positive. Q18 lifts limit 5 ONLY on the testnet and ONLY inside package
+`cmd/execportal/autotrade`; the step-3.5 gate's signal still reaches no order.
+**The package DECIDES and never executes**: it imports neither
+`internal/broker` nor `internal/execution`, and its orders go through the
+portal's own `openAs`/`close` under the same write lock — a test pins the
+callers of every order-sending function, write handler and bot wrapper in the
+main package and forbids the signed transport and hand-built requests there.
+Its signal is the TESTNET's own: both books, premiumIndex (the forming rate must
+be > 0, nothing is projected on it), the SETTLED funding history
+(`binance.Client.FundingRateHistory`, `GET /fapi/v1/fundingRate`) at a cadence
+MEASURED from the stamps and cross-checked against the next stamp, and THIS
+ACCOUNT's fees (`binance.Client.CommissionRates` — measured: spot testnet 0,
+futures taker 4 bps; the binary may not link `internal/config`). From
+`internal/strategy` it borrows only `RoundTripCost` and `NetAPR`. Entry needs
+every check (symbol flat, forming > 0, last settled > 0, Net APR over the
+planned hold ≥ floor, depth ±0.5% ≥ 2× notional on four sides, clock skew
+≤ 1000 ms, > 5 min to settlement); exits are a settlement AFTER the open at
+≤ 0, N settlements listed after the open, or basis widened > 30 bps — a check
+that cannot be evaluated never closes. It never squares anything: unhedged,
+conflicting evidence, two held intents, a close sent but unconfirmed, 3 failed
+reads or 3 failed trades → EMERGENCY_HALTED, and only a stop pressed after the
+halt was shown acknowledges it. STOP drops a decision not yet sent; KILL never
+cancels an order already sent (it waits for it to return), then closes the
+BOT's pair only — `a`-prefixed intent ids, which a restart adopts. **The design
+doc's Net APR formula was dimensionally wrong and was replaced by
+strategy.NetAPR; its default of holding one settlement would never enter**
+(1 bps − 9.4 bps of testnet round trip ≈ −92%/yr). **Accepted through the page
+on testnet**: a scripted confirm sent nothing; a real click → first scan
+`ĐỦ ĐIỀU KIỆN VÀO` (settled 7-day mean 0.657 bps/8h, projected **+6.05%/yr on
+one leg's notional, +4.03% on capital**, round trip 0.0941%) → the bot opened
+`abtcusdt-20260915-054920-740` by itself 5.0 s later, 0.0008 BTC a leg,
+residual 0, unhedged window 391 ms; KILL → `both_flat` in 6.0 s, RealizedQuote
+−0.05398572; `execcheck -status` read 4 FILLED orders, perp 0, 0 open orders,
+BTC spot back to 1.00000000. Repeated on the final binary after three review rounds:
+opened `abtcusdt-20260915-060447-299` in 6.0 s (+6.22%/yr projected), residual
+0, unhedged window 349 ms, KILL flat in 6.3 s, 0 console errors at 1440 and
+400 px. Three clean-context review rounds (security, correctness): round 1
+found 4 majors (a stop let a decided open through; KILL cancelled an order
+already on the wire; the guard read one file; KILL greyed out behind a pending
+stop) and 12 of 31 mutations surviving; round 2 found one major introduced by
+the fixes — a waiting stop acknowledged a halt raised while it waited — and a
+guard bypass through a hand-built request to a write handler; round 3 passed. Named debts, among others: the
+single-print "settled ≤ 0" exit is the step-3.2 rule the backtest measured as
+churn (the `ExitNegative*` gates are the ready alternative), and the Q17
+same-origin debt now covers start and kill too. PLAN "Công cụ vận hành 4.5d".
 
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
@@ -1235,7 +1288,15 @@ cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17
                      orders and the perp position — and a disagreement is
                      evidence_conflict, never reconciled. ONE position per
                      symbol, because execution.Close proves "closed" from the
-                     account's whole perp position. No database, no schema
+                     account's whole perp position. No database, no schema.
+                     The Execution tab also switches the TESTNET auto-trader
+                     (Q18) on and off: GET /api/autotrade/status, POST
+                     start / stop / kill; its orders go through openAs and
+                     close (autotrade.go), never a second path
+  autotrade/         the auto-trader's state machine (Q18): DECIDES from the
+                     testnet's own books, settled funding and account fees,
+                     through strategy.RoundTripCost/NetAPR; imports no broker
+                     or execution; halts rather than squares
   feeds/             the read-only relay and proxies (Q17): exports handlers,
                      a health view and CloseAll only; decodes nothing; its
                      upstream reader never blocks the gate's broadcast
@@ -1294,7 +1355,9 @@ internal/
                      interface has no room for: the fills of one order (the only
                      place either venue states a commission), the FUNDING_FEE
                      rows that actually settled, and premiumIndex's
-                     nextFundingTime. One Client
+                     nextFundingTime. Since Q18 also the settled funding-rate
+                     history and this account's commission rates, which the
+                     auto-trader prices on. One Client
                      per market holding one credential, because the two
                      testnets are separate registrations. testdata/ holds the
                      venue's REAL answers, sanitized, replayed by golden tests
@@ -1461,6 +1524,8 @@ go run ./cmd/execcheck -reconcile -intent <id>       # add -apply to square an u
 # while it shows; the Paper tab needs cmd/paperledger on 8086 — point it at a
 # COPY of the database while the gate writes the live file.
 go run ./cmd/execportal -port 8087               # http://127.0.0.1:8087
+go run ./cmd/execportal -port 8087 -autotrade    # + switch the TESTNET auto-trader on at launch (Q18)
+curl -s -H 'X-Execportal-Action: read' http://127.0.0.1:8087/api/autotrade/status
 sqlite3 -readonly "file:data/scanner.db?mode=ro" ".backup '/tmp/paper.db'" && go run ./cmd/paperledger -db /tmp/paper.db
 curl -s -H 'X-Execportal-Action: read' 'http://127.0.0.1:8087/api/positions?symbol=BTCUSDT'
 

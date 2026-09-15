@@ -268,6 +268,77 @@
         </div>
       </article>
 
+      <article class="card autotrader" id="at-card" aria-labelledby="at-title">
+        <div class="card-head">
+          <h2 id="at-title">Auto-Trader (Binance Demo)</h2>
+          <span class="tag auto">TỰ ĐỘNG HÓA</span>
+          <span class="spacer"></span>
+          <span class="at-badge" id="at-badge" data-state="disabled" role="status" aria-atomic="true">[TẮT]</span>
+          <button type="button" class="at-switch" id="at-toggle" role="switch" aria-checked="false" aria-describedby="at-toggle-hint">
+            <span class="at-switch-track" aria-hidden="true"><span class="at-switch-thumb"></span></span>
+            <span id="at-toggle-label">BẬT AUTO-TRADER</span>
+          </button>
+        </div>
+        <p class="note" id="at-notice">CHỈ TESTNET — bot tự mở và đóng lệnh thật trên Binance testnet qua đúng đường MỞ/ĐÓNG của portal (PLAN Q18). Mọi con số là của tài khoản testnet.</p>
+        <div class="callout bad mt8" id="at-halt" role="alert" hidden></div>
+        <div class="at-grid mt12">
+          <form class="box" id="at-form" novalidate>
+            <div class="at-fields">
+              <div class="field">
+                <label for="at-symbol">Symbol</label>
+                <select id="at-symbol"></select>
+              </div>
+              <div class="field">
+                <label for="at-notional">Notional mỗi chân (quote)</label>
+                <input type="number" id="at-notional" min="1" max="50000" step="0.01" value="65" inputmode="decimal" required>
+              </div>
+              <div class="field">
+                <label for="at-min-apr">Net APR tối thiểu (%/năm)</label>
+                <input type="number" id="at-min-apr" min="-1000" max="1000" step="0.1" value="5.0" inputmode="decimal" required>
+              </div>
+              <div class="field">
+                <label for="at-max-epochs">Số mốc settle tối đa</label>
+                <input type="number" id="at-max-epochs" min="0" max="1000" step="1" value="0" inputmode="numeric" required>
+                <div class="hint">0 = giữ khi funding còn dương (dự phóng trên 30 ngày)</div>
+              </div>
+            </div>
+            <div class="at-actions">
+              <button type="submit" class="btn primary" id="at-start">[BẬT AUTO-TRADING]</button>
+              <button type="button" class="btn secondary" id="at-stop">[DỪNG &amp; GIỮ VỊ THẾ]</button>
+              <button type="button" class="btn danger" id="at-kill">[KILL SWITCH: DỪNG &amp; ĐÓNG NGAY]</button>
+            </div>
+            <div class="hint" id="at-toggle-hint">Bật: bot quét định kỳ và tự mở khi mọi điều kiện đạt. Dừng: không mở/đóng gì thêm, vị thế giữ nguyên. Kill: dừng ngay và đóng cả hai chân của bot.</div>
+          </form>
+
+          <div class="box at-gauge" aria-labelledby="at-gauge-title">
+            <div class="at-gauge-head">
+              <h3 id="at-gauge-title">Tín hiệu trực tiếp</h3>
+              <span class="spacer"></span>
+              <span class="hint" id="at-age">chưa đọc</span>
+            </div>
+            <div class="at-verdict" id="at-verdict" data-state="none">Chưa quét — bật bot để bắt đầu đánh giá</div>
+            <div class="at-stats">
+              <div class="stat"><div class="stat-k">Funding hiện tại</div><div class="stat-v sm" id="at-funding">—</div><div class="stat-s" id="at-funding-sub">—</div></div>
+              <div class="stat"><div class="stat-k">Tới mốc settle</div><div class="stat-v sm" id="at-countdown">—</div><div class="stat-s" id="at-settle-at">—</div></div>
+              <div class="stat"><div class="stat-k">Basis perp − spot</div><div class="stat-v sm" id="at-basis">—</div><div class="stat-s" id="at-basis-sub">—</div></div>
+              <div class="stat"><div class="stat-k">Net APR dự phóng</div><div class="stat-v sm" id="at-apr">—</div><div class="stat-s" id="at-apr-sub">—</div></div>
+            </div>
+            <details class="evidence" id="at-checks-box">
+              <summary id="at-checks-summary">Điều kiện vào / thoát</summary>
+              <ul class="at-checks" id="at-checks"></ul>
+              <p class="note mt8" id="at-cost-basis"></p>
+            </details>
+          </div>
+        </div>
+        <div class="at-console-head mt12">
+          <h3>Nhật ký bot</h3>
+          <span class="hint">10 dòng mới nhất</span>
+          <span class="spacer"></span>
+          <span class="hint" id="at-position-line">—</span>
+        </div>
+        <ol class="at-console" id="at-log"><li class="at-empty">chưa có sự kiện</li></ol>
+      </article>
+
       <article class="card" aria-label="Theo dõi vị thế">
         <div class="card-head">
           <h2>Vị thế hai chân — đọc từ sàn</h2>

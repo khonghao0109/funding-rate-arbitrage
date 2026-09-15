@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · 4.6 vốn thật, và việc nối tín hiệu sống → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -3983,7 +3983,11 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > - **Ghi chuyển trạng thái xuống store**: interface `Recorder` và bản in-memory
 >   đã có; thêm bảng nghĩa là migration dưới chân tiến trình đang mở
 >   `data/scanner.db` suốt hai tuần. Sau phán quyết 3.5.
-> - **Nối tín hiệu sống → lệnh**: sau **cả** 3.5 lẫn 3.4 (Q15, giới hạn 5).
+> - **Nối tín hiệu sống → lệnh**: sau **cả** 3.5 lẫn 3.4 (Q15, giới hạn 5). *Q18
+>   (2026-09-15) mở riêng một nhánh:* Auto-Trader trong `cmd/execportal/autotrade`
+>   tự mở/đóng TRÊN TESTNET bằng funding, sổ lệnh và phí của chính testnet — xem
+>   "Công cụ vận hành 4.5d". Tín hiệu của cổng 3.5 (`EvaluateEntry`, nhật ký) vẫn
+>   không tới được lệnh nào.
 > - **Mặc định `LegOrder`** vẫn tuần tự-spot-trước; đổi hay không là quyết định
 >   cần số đo ở cỡ thật, không phải ở 65 quote.
 
@@ -4484,6 +4488,158 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > | trang ở 8085 | đúng MỘT request `GET /api/status` → 404, dòng chỉ đường hiện, 0 WebSocket, 0 POST |
 > | cổng 3.5 | PID 55475 sống, vẫn nghe `*:8085`; log cổng chỉ ghi đúng hai phiên relay của hai lần chạy Chrome; **0** "WebSocket write error" |
 
+#### Công cụ vận hành 4.5d — Auto-Trader testnet trong `cmd/execportal` — ✅ TRÊN TESTNET (2026-09-15, Q18)
+
+> **Không phải một bước mới của lộ trình** — GĐ 4 vẫn 5/6, 4.6 vẫn sau phán quyết
+> 3.5. Người vận hành yêu cầu "bot đặt lệnh được chỉ trên binance, trên binance hiện
+> tại đã kết nối demo" và giao thiết kế ở
+> [BINANCE-AUTO-BOT-PLAN.md](BINANCE-AUTO-BOT-PLAN.md). Việc đó đảo giới hạn 5 của Q15,
+> nên đã hỏi trước; người vận hành chọn **ghi Q18, bot tự đặt lệnh** và **giữ vị thế
+> khi funding còn dương**. Không sửa `cmd/scanner`, không đụng tiến trình cổng 3.5
+> (PID 55475), không migrate SQLite, không thêm dependency `go.mod`.
+>
+> ### Cái gì làm gì
+>
+> - **`cmd/execportal/autotrade` QUYẾT, không THỰC THI.** Máy trạng thái TẮT → ĐANG
+>   QUÉT → ĐANG ĐÁNH GIÁ → ĐANG MỞ → ĐANG GIỮ → ĐANG ĐÓNG → HỒI PHỤC, cộng DỪNG BẢO VỆ.
+>   Package này không import `internal/broker` hay `internal/execution`; lệnh chỉ đi
+>   qua `Trader` nó được trao, mà trong binary là `openAs` và `close` của portal —
+>   cùng máy `execution`, cùng khoá ghi, cùng `ClientOrderID` suy ra từ intent như
+>   một cú bấm. Intent của bot mang tiền tố **`a`** (`abtcusdt-…`), nên sau khi bật
+>   lại bot **tiếp nhận** đúng vị thế của mình và không bao giờ nhận vị thế người
+>   vận hành mở (`p…`, `x…`).
+> - **Tín hiệu là của TESTNET**, đọc qua `portalMarket`: hai sổ lệnh, `premiumIndex`
+>   (rate đang hình thành + `nextFundingTime`), lịch sử funding ĐÃ SETTLE
+>   (`GET /fapi/v1/fundingRate`, mới trong `binance.Client.FundingRateHistory`), phí
+>   của CHÍNH TÀI KHOẢN (`GET /fapi/v1/commissionRate`, `GET /api/v3/account/commission`,
+>   mới trong `binance.Client.CommissionRates`), lệch đồng hồ broker đã đo. Không
+>   scanner, không nhật ký 3.5, không `strategy.EvaluateEntry`. Từ `internal/strategy`
+>   chỉ mượn **số học**: `RoundTripCost` và `NetAPR` — nơi duy nhất được nói "ròng".
+> - **Vào lệnh** khi MỌI điều kiện đạt (mọi điều kiện đều chạy, console nêu hết lý
+>   do): symbol phẳng trên sàn; rate đang hình thành > 0; mốc settle gần nhất > 0;
+>   **Net APR dự phóng ≥ ngưỡng** — `strategy.NetAPR` trên **trung bình 7 ngày các mốc
+>   ĐÃ SETTLE**, ở chu kỳ **đo từ khoảng cách các mốc** (≥ 90% khoảng cách phải trùng,
+>   và mốc kế tiếp sàn công bố phải cách mốc cuối đúng một chu kỳ — không thì không
+>   định giá), trên kỳ giữ bot thực sự định giữ (`max_hold_epochs` mốc, hoặc 30 ngày
+>   dự phóng khi = 0), chi phí vòng = phí taker 4 lượt đọc từ tài khoản + trượt giá
+>   ước từ hai sổ vừa đọc; độ sâu ±0,5% ≥ 2× notional ở cả 4 phía; lệch đồng hồ
+>   ≤ 1000 ms; còn > 5 phút tới mốc settle. Chi phí vào của tín hiệu được truyền vào
+>   `execution` (`SignalEntryCostPct`), nên sổ giãn quá 5 bps giữa lúc quyết và lúc
+>   đặt thì bị từ chối trước khi gửi.
+> - **Thoát** khi: mốc settle **sau lúc vào** có rate ≤ 0 (đếm mốc sàn liệt kê, quy
+>   tắc 6); đủ `max_hold_epochs` mốc (nếu > 0); basis perp−spot giãn > 30 bps so với
+>   lúc vào. Điều kiện không đo được **không bao giờ** đóng vị thế.
+> - **Không bao giờ tự làm phẳng.** Sàn báo `unhedged`, `evidence_conflict`, hai ý
+>   định cùng giữ, hay đóng bị gửi mà không xác nhận → **DỪNG BẢO VỆ**, không gửi gì.
+>   3 lần đọc sàn hỏng liên tiếp, hoặc 3 lần mở/đóng hỏng liên tiếp (hai bộ đếm riêng)
+>   → DỪNG BẢO VỆ; riêng lịch sử funding không đọc được khi đang giữ thì chịu tới 30
+>   phút (mốc settle cách nhau hàng giờ) rồi mới ngắt, vị thế giữ nguyên. Bật lại chỉ
+>   sau khi người vận hành bấm XÁC NHẬN & TẮT — và chỉ một lệnh dừng bấm SAU khi
+>   DỪNG BẢO VỆ hiện ra mới xác nhận được nó (một lệnh dừng đang chờ mà bot ngắt giữa
+>   chừng bị từ chối, lý do giữ nguyên).
+> - **Người vận hành:** `GET /api/autotrade/status`; `POST /api/autotrade/start`
+>   `{symbol, notional_quote, min_net_apr_pct, max_hold_epochs}` (hộp xác nhận);
+>   `POST /api/autotrade/stop` `{close_now}` — giữ vị thế thì không hộp xác nhận
+>   (header `autotrade-stop`), đóng thì cần header riêng `autotrade-stop-close`;
+>   `POST /api/autotrade/kill` (hộp xác nhận). Mọi route sau cùng tường Host/Origin/
+>   Sec-Fetch-Site/header/JSON như lệnh ghi khác. **DỪNG không bao giờ để lọt một
+>   quyết định đã có** (một lệnh mở chưa gửi bị bỏ); **KILL không huỷ lệnh đã gửi** —
+>   chờ nó trả về (lệnh bị huỷ giữa chừng có thể đã lên sàn mà một lần tra chưa thấy),
+>   rồi đóng cặp **của bot**; vị thế người vận hành mở thì không đụng. Cờ `-autotrade`
+>   bật bot từ lúc khởi động với tham số mặc định; portal tắt thì bỏ quyết định chưa
+>   gửi, chờ lệnh đã gửi xong, giữ vị thế.
+> - **Tab Execution:** card **Auto-Trader (Binance Demo)** phía trên card vị thế — badge
+>   trạng thái (`role=status`), công tắc (`role=switch`), bốn ô cấu hình, thước đo
+>   (funding đang hình thành + bps/8h + TB 7 ngày, đếm ngược settle, basis và độ giãn,
+>   Net APR trên notional **và trên vốn** 1,5× notional kèm chi phí vòng), danh sách
+>   điều kiện vào/thoát, nhật ký 10 dòng. Nút [BẬT]/[KILL] chỉ nhận cú bấm thật
+>   (`isTrusted`); KILL không bị khoá khi đang chờ DỪNG.
+>
+> ### Chỗ khác tài liệu thiết kế, và vì sao
+>
+> 1. **Công thức Net APR** trong BINANCE-AUTO-BOT-PLAN §2.2 không cân đơn vị
+>    (`rate × kỳ/năm × ngày`); thay bằng `strategy.NetAPR` (lợi nhuận kỳ giữ = rate ×
+>    số mốc − chi phí vòng, quy năm bằng 365/ngày giữ).
+> 2. **Mặc định `max_hold_epochs` = 0** (giữ khi funding dương, dự phóng 30 ngày),
+>    không phải 1: ở 1 bps/8h, giữ 1 mốc là +1 − 9,4 bps ≈ **−92%/năm** ở chi phí vòng đo trên testnet
+>    (≈ −318%/năm ở phí mainnet 30 bps) — bot sẽ không bao giờ vào. Người vận hành chọn.
+> 3. **Dự phóng trên mốc ĐÃ SETTLE**, không trên `lastFundingRate` (rate đó còn sửa
+>    tới mốc; bài học 3.2). Rate đang hình thành vẫn phải > 0 để vào.
+> 4. **Phí đọc từ tài khoản**, không từ `config.yaml` (binary giữ credential không
+>    được link `internal/config`). Testnet: spot **0**, futures taker **4 bps** — con số
+>    trên trang là của testnet, không phải mainnet.
+> 5. **KILL chỉ đóng cặp của bot** (tài liệu viết "đóng toàn bộ vị thế đang mở"): vị
+>    thế người vận hành mở có nút ĐÓNG VỊ THẾ riêng; bot không quản lý thứ không phải
+>    của nó.
+> 6. Ngắt đồng hồ > 1000 ms là **điều kiện vào**, không ngắt khi đang giữ (broker vẫn
+>    hiệu chỉnh mọi lệnh có ký theo độ lệch đo được).
+>
+> ### Nghiệm thu 2026-09-15
+>
+> | tiêu chí (nhiệm vụ) | kết quả |
+> |---|---|
+> | 1. `go test -race ./...` | xanh, **37 package ok, exit 0**; `gofmt -l`, `go vet` sạch |
+> | 2. test FSM, bơm lỗi, kill switch | `cmd/execportal/autotrade`: **39 hàm test**, phủ 90,3%, chạy trên máy `execution` THẬT với `brokertest` — chu trình TẮT → quét → mở `both_open` (đọc hai sàn giả, lệch 0) → mốc âm → đóng `both_flat` → hồi phục; chân 2 bị sàn từ chối thật (HTTP 400) → chân 1 gỡ về phẳng, hồi phục, 3 lần → DỪNG BẢO VỆ; KILL khi đang giữ, KILL giữa lúc mở (chờ lệnh trả về rồi đóng), DỪNG/KILL/tắt portal chen giữa lúc đọc và lúc quyết → 0 lệnh, lệnh dừng không xác nhận DỪNG BẢO VỆ phát sinh trong lúc chờ; `-race` ×3 sạch. Portal: 9 hàm test qua handler thật (tường ghi, không credential, bot mở qua `openAs` + banner + lịch sử ý định, mở tay bị luật một-vị-thế chặn, vị thế tay không bao giờ là của bot, ý định thứ hai làm bot ngắt, bot chờ khoá ghi, phân trang tới mốc mới nhất, sàn lặp trang bị từ chối); broker: 5 hàm test golden trên câu trả lời thật của testnet; guard: 2 test mới |
+> | 3. chạy thật `-port 8087`, `#execution`, BẬT trên BTCUSDT | headless Chrome 1440 px, cú bấm chuột THẬT: xác nhận bằng script → **0** request ghi; bấm xác nhận → bot quét lượt đầu `ĐỦ ĐIỀU KIỆN VÀO` (funding +1,00 bps, TB 21 mốc 0,657 bps, chu kỳ đo 8h, **Net APR dự phóng +6,05%/năm trên notional, +4,03% trên vốn**, chi phí vòng 0,0941% = phí 0,0800% + trượt 0,0141%, độ sâu tối thiểu 695.276 quote, lệch đồng hồ +75/+75 ms, còn 2 giờ 10 phút tới mốc) và **tự mở `abtcusdt-20260915-054920-740` sau 5,0 s: 0,0008 BTC mỗi chân, lệch 0, cửa sổ trần 391 ms**; banner `DELTA-NEUTRAL (HEDGED)`; giữ 28 s ở ĐANG GIỮ VỊ THẾ - HEDGED |
+> | 3. KILL SWITCH | bấm KILL + xác nhận → **6,0 s** → `both_flat`, RealizedQuote −0,05398572 (không phải lãi ròng), bot DỪNG BẢO VỆ; `execcheck -status` đọc từ sàn: 4 lệnh FILLED (spot 2198589/2198725, perp 28586177091/28586177443), perp 0, **0 lệnh mở** trên cả hai sàn, BTC spot **1,00000000**, "cache và sàn khớp nhau"; **0** lỗi console/CSP; sau đó XÁC NHẬN & TẮT → TẮT |
+> | 3. lặp lại trên binary CUỐI (sau 3 vòng review) | cùng kịch bản: xác nhận bằng script → 0 request; bot tự mở `abtcusdt-20260915-060447-299` sau **6,0 s** (Net APR dự phóng +6,22% trên notional, +4,14% trên vốn, chi phí vòng 0,0802%), **0,0008 BTC mỗi chân, lệch 0, cửa sổ trần 349 ms**; KILL → `both_flat` sau **6,3 s**, RealizedQuote −0,05332099; `execcheck -status`: 4 lệnh FILLED (spot 2203938/2203995, perp 28586186911/28586187150), perp 0, 0 lệnh mở, BTC spot 1,00000000; **0** lỗi console ở 1440 px và 400 px, không tràn ngang |
+> | 4. cổng 3.5 | PID 55475 sống suốt phiên, vẫn nghe `*:8085`, log tăng |
+>
+> ### Review
+>
+> Ba vòng, hai người review trong ngữ cảnh sạch (bảo mật; tính đúng), chạy đột biến
+> trên bản sao. **Vòng 1** — bảo mật: 0 chặn, **3 lớn** — DỪNG (và cả tắt portal) để lọt
+> một lệnh mở mà bot đã quyết trước khi bấm; KILL huỷ context của lệnh mở ĐANG GỬI —
+> lệnh bị huỷ không phải lời từ chối của sàn, có thể đã lên sàn mà một lần tra chưa
+> thấy, để lại một chân; guard ban đầu chỉ đọc `autotrade.go`, lách được bằng một file
+> helper gọi `p.reconcile` hay một `PostSigned` qua `HTTP()` — và 7 nhỏ (KILL đóng cả vị
+> thế người vận hành mở; header dừng không hộp thoại mang được `close_now`; lịch sử mù
+> khi đang giữ không tính là lỗi; phân trang dừng ở trang ngắn; tiếp nhận thiếu thời
+> điểm mở; đổi chu kỳ gần đây lọt kiểm tra; Stop xoá dấu bận của Kill; bot bật trước
+> `Listen`). Tính đúng: 1 chặn (Q18 chưa ghi — ghi ở đây, sau nghiệm thu), 3 lớn (hai
+> cái trùng bảo mật; nút KILL bị khoá khi đang chờ DỪNG), **12/31 đột biến sống**.
+> **Vòng 2: cả hai tìm ra cùng 1 lớn MỚI do chính bản sửa** — một lệnh dừng đang chờ
+> "xác nhận" một DỪNG BẢO VỆ phát sinh TRONG lúc chờ (lệnh mở trả báo động, trang ghi
+> "đã tắt, không giữ vị thế nào") → `haltSeq`: lệnh dừng chỉ xác nhận được DỪNG BẢO VỆ
+> đã hiện ra lúc bấm. Bảo mật thêm 1 lớn: guard vẫn lách được bằng cách gọi thẳng
+> handler với `http.Request` tự dựng, hay dựng `portalTrader` thứ hai → ghim người gọi
+> của handler ghi, của trường `.autotrade` và của hai kiểu wrapper, cấm request tự dựng.
+> Nhỏ: phân trang nhân đôi dòng khi sàn lặp trang, `stopping` không theo từng lệnh dừng,
+> số mốc hiện 0 khi mù, ngưỡng mù 3 lượt (15 s) quá gắt → ngân sách 30 phút, dừng-và-
+> đóng cạnh cặp người vận hành bị ngắt. **Vòng 3: ĐẠT cả hai**; nhỏ đã sửa: alias/nhúng
+> kiểu lách guard theo tên, bộ đếm mù mang sang vị thế sau, sàn lặp trang giờ bị từ chối
+> thay vì dùng chuỗi thiếu, và các lỗ test (kill giữa lúc mở rồi đóng hỏng, fake trả
+> dòng khi báo lỗi, mù → hồi → mù lần hai). Mọi đột biến tương ứng đều đỏ; còn sống
+> đúng bốn đột biến thừa có lý do (bỏ chặn chuyển trạng thái trong lúc kill — kill luôn
+> ép DỪNG BẢO VỆ; bỏ chặn chi phí vào nil — NaN đã nil hoá NetAPR trước; adapter nêu
+> một trong nhiều ý định — engine vẫn ngắt vì `HeldIntents ≠ 1`; bỏ lọc cửa sổ trong
+> vòng phân trang — khử trùng lặp và lọc sau đã giữ).
+>
+> ### Nợ có tên
+>
+> - 🔴 (từ 4.5c) thư viện biểu đồ và JS các tab feed cùng origin với API lệnh — nay
+>   gồm cả `autotrade-start`/`autotrade-kill`; tách trước 4.6.
+> - **Lối thoát "một mốc ≤ 0"** là luật 3.2 mà backtest đo là gây churn (BTC đảo dấu
+>   ~200 lần/năm ở mainnet); người vận hành chọn "giữ khi funding dương". Thay thế đã
+>   có sẵn: các cổng `ExitNegative*` của `strategy` — cần quyết định trước khi bot
+>   chạy lâu.
+> - DỪNG/KILL có thể chờ tới ~20 s sau một lần đọc đang dùng cache chung (`rulesFor`,
+>   `accountFor` không xem huỷ).
+> - Lịch sử funding lấy qua cache 2 phút có khoá theo `nextFundingTime`; ngay sau mỗi
+>   mốc settle, trong lúc sàn chưa liệt kê mốc mới, kiểm chéo chu kỳ từ chối định giá
+>   tới ~2 phút — bot không vào lệnh trong quãng đó.
+> - Trần trang của `GET /fapi/v1/fundingRate` trên testnet chưa đo; code phân trang
+>   tới trang rỗng nên không phụ thuộc vào con số đó. Trang tài liệu
+>   `User-Commission-Rate` không đọc được từ môi trường này — tên trường đo trên
+>   testnet, trọng số 20 là giả định bảo thủ.
+> - Bot quản lý MỘT symbol; nhật ký bot sống trong bộ nhớ (20 dòng), mất khi portal
+>   tắt — dấu vết bền là file ý định và log tiến trình.
+> - Guard "mọi đường lệnh có người gọi cố định" so theo TÊN trên AST (đã chặn alias,
+>   nhúng kiểu, request tự dựng); một kiểm tra bằng `go/types` theo đối tượng thay vì
+>   tên sẽ bền hơn — review vòng 3 đề xuất, chưa làm.
+> - `stopSeq` không có test bắt được nếu bỏ (chỉ với tới được sau một kill, lúc bot đã
+>   DỪNG BẢO VỆ và Start/Step đều bị chặn).
+
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
 - Chạy tối thiểu 4 tuần, đối chiếu từng chu kỳ funding với sổ sách bot.
@@ -4908,6 +5064,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q15** | **Bước 4.4b (hai chân thật) và 4.5 (đóng vị thế) được làm TRÊN TESTNET trong lúc chờ phán quyết 3.5**, mở rộng Q14 với năm giới hạn: (1) **chỉ host testnet** — guard của 4.1 giữ nguyên, không thêm cờ mainnet; (2) **không nối vào `cmd/scanner`** — binary giữ cổng vẫn không link `internal/broker` lẫn `internal/execution`, kiểm bằng test `go list -deps`; (3) **không tiền thật**; (4) **4.6 (vốn thật) vẫn sau phán quyết 3.5**; (5) **nối tín hiệu sống → lệnh vẫn sau 3.5 VÀ 3.4** — không có đường nào từ `EvaluateEntry` tới `PlaceOrder` trong phiên này. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-13 |
 | **Q16** | **Cổng web vận hành `cmd/execportal` được đặt lệnh TRÊN TESTNET**, mở rộng Q15 từ "lệnh do người vận hành gõ qua `cmd/execcheck`" sang "lệnh do người vận hành bấm và XÁC NHẬN trên trang loopback". Năm giới hạn của Q15 giữ nguyên, thêm ba: (1) **chỉ bind loopback** (`-bind` nhận IP loopback, không nhận `0.0.0.0` hay tên máy); (2) **mọi lệnh ghi qua hộp xác nhận + header `X-Execportal-Action`**, Host/Origin/Sec-Fetch-Site phải là chính portal; (3) **MỘT vị thế mỗi symbol**. `execportal` được thêm vào danh sách `allowed` của `boundary_test.go` — nhị phân giữ cổng 3.5 vẫn không link `internal/broker` lẫn `internal/execution`. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
 | **Q17** | **Cổng vận hành hợp nhất: `cmd/execportal` (binary giữ credential testnet) RELAY CHỈ ĐỌC dữ liệu của `cmd/scanner` và `cmd/paperledger`** vào cùng trang bốn tab. Giới hạn của Q15/Q16 giữ nguyên, thêm bốn: (1) **relay nguyên văn, không giải mã** — code nằm trong package `cmd/execportal/feeds` chỉ export handler, sức khoẻ và tắt; test ghim bề mặt export, cấm import `internal/` và giải mã JSON, cấm package main đọc feed; (2) **relay không bao giờ làm scanner chờ** — đọc upstream không chặn, trình duyệt chậm thì ngắt relay; chỉ nối khi tab Scanner đang mở, tối đa 3 phiên và 20 phiên/phút; (3) **upstream chỉ là IP loopback, đường cố định**, không theo redirect; (4) **chỉ tab Execution gửi lệnh ghi**, kiểm bằng test đọc JS. Tab Crowding **không có nguồn live** (6.2 vẫn sau 3.5 và 3.4) — vẽ snapshot fixture nghiên cứu. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
+| **Q18** | **Auto-Trader TESTNET trong `cmd/execportal`: bot tự mở và đóng cặp Chiến lược 1 không cần cú bấm cho từng lệnh**, đảo giới hạn 5 của Q15 CHỈ trên testnet và CHỈ trong package `cmd/execportal/autotrade`. Giữ nguyên mọi giới hạn khác của Q15/Q16/Q17, thêm năm: (1) **quyết mà không thực thi** — package không import `internal/broker`/`internal/execution`, lệnh chỉ qua `openAs`/`close` của portal dưới cùng khoá ghi; test ghim người gọi của mọi hàm gửi lệnh trong package main và cấm transport có ký; (2) **tín hiệu là của testnet** (sổ lệnh, funding đã settle, phí của tài khoản) — không scanner, không nhật ký, không `EvaluateEntry`; từ `strategy` chỉ `RoundTripCost`/`NetAPR`; (3) **không bao giờ tự làm phẳng** — lệch, bằng chứng không khớp, lỗi liên tiếp → DỪNG BẢO VỆ, bật lại cần người vận hành xác nhận; (4) **KILL chỉ đóng cặp của bot và không huỷ lệnh đã gửi**; (5) **bật cần hộp xác nhận hoặc cờ `-autotrade`**. Tín hiệu của cổng 3.5 → lệnh, và vốn thật, vẫn sau 3.5 VÀ 3.4 VÀ 4.6. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-15 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -5123,6 +5280,35 @@ phẳng — không có trạng thái thứ ba), `ClientOrderID` suy ra từ inte
 tiến trình chết vẫn hỏi được sàn về chính lệnh của mình, và `-status` đọc lại
 lệnh/vị thế/số dư **TỪ SÀN** chứ không từ file cache (quy tắc 7). Báo cáo cuối
 phiên phải nêu số vị thế và lệnh mở còn lại trên cả hai testnet.
+
+#### Q18 — Vì sao bot được tự đặt lệnh trên testnet, và vì sao nó chỉ quyết
+
+**Quyết định của người vận hành, 2026-09-15** (nhiệm vụ "Phát triển module Auto-Trader
+bot đặt lệnh tự động trên Binance demo/testnet", [BINANCE-AUTO-BOT-PLAN.md](BINANCE-AUTO-BOT-PLAN.md)).
+Nhiệm vụ đảo giới hạn 5 của Q15 mà tài liệu thiết kế không nhắc tới, nên được hỏi lại
+trước khi viết code; người vận hành chọn "ghi Q18, bot tự đặt lệnh" (thay vì bán tự
+động có xác nhận từng lệnh, hay chờ phán quyết 3.5) và "giữ khi funding còn dương".
+**Quyết định LỘ TRÌNH, đảo ngược được.**
+
+Giới hạn 5 tồn tại vì hai lý do, và Q18 chỉ gỡ một. Lý do thứ nhất — **một lệnh không
+nên đi ra từ một quyết định chưa được chứng minh** — không áp dụng cho tiền ảo trên
+testnet, nơi chính cái cần đo là hành vi của một vòng lặp tự động (mở, giữ qua mốc,
+thoát, gỡ khi lỗi) mà nút bấm không đo được. Lý do thứ hai — **quyết định của cổng 3.5
+không được chạm tới lệnh trước phán quyết** — vẫn nguyên: bot không đọc scanner, nhật
+ký hay `EvaluateEntry`; nó đọc funding, sổ lệnh và phí của chính testnet, và các test
+guard giữ điều đó bằng máy.
+
+Bot chỉ QUYẾT, vì cách an toàn duy nhất để có một đường tự động là không có đường thứ
+hai: mọi lệnh của bot đi qua `openAs`/`close` — cùng hàm, cùng khoá ghi, cùng bất biến
+"hai chân mở hoặc hai chân phẳng", cùng đọc lại từ sàn — nên mọi thứ 4.4b/4.5/Q16 đã
+nghiệm thu áp dụng nguyên cho bot. Review vòng 1 chứng minh guard ban đầu (chỉ đọc
+`autotrade.go`) lách được bằng một file helper gọi `p.reconcile`; guard hiện hành ghim
+người gọi của MỌI hàm gửi lệnh trong package main.
+
+**Cái giá.** Lần đầu tiên một lệnh ra sàn mà không ai nhìn nó lúc gửi. Trên testnet cái
+giá là dữ liệu sai lệch chứ không phải tiền; trước khi Q18 được nới sang vốn thật cần ít
+nhất: tách origin (nợ 🔴 của Q17, nay gồm cả start/kill), luật thoát đo được thay cho
+"một mốc ≤ 0", và ghi trạng thái bot xuống nơi bền.
 
 #### Q17 — Vì sao binary giữ credential được mang dữ liệu scanner, và vì sao chỉ dưới dạng byte
 
@@ -5391,7 +5577,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu sống → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

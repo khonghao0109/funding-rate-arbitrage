@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -128,11 +129,14 @@ func TestExecportal_HasNoFlagOrHostThatCouldReachMainnet(t *testing.T) {
 	}
 }
 
-// Q15 limit 2 and limit 5, by machine: no import of the scanner, the store, the
-// journal or the strategy's decisions, and no call to EvaluateEntry or
-// EvaluateExit. execution links internal/strategy for EstimateFill, so the
-// binary contains the package; what is forbidden is THIS command reaching for
-// a decision.
+// Q15 limit 2, and limit 5 as Q18 narrowed it, by machine: no import of the
+// scanner, the store, the journal or the strategy's DECISIONS, and no call to
+// EvaluateEntry or EvaluateExit anywhere in the command. execution links
+// internal/strategy for EstimateFill, so the binary contains the package; what
+// is forbidden is THIS command reaching for the gate's decision. Q18's one
+// exception is package autotrade importing strategy for its ARITHMETIC —
+// TestAutotrade_DecidesOnTheTestnetAndTradesOnlyThroughThePortal names exactly
+// which of its identifiers.
 func TestExecportal_ImportsNoScannerStoreOrSignal(t *testing.T) {
 	forbiddenImports := []string{
 		"futures-arbitrage-scanner/cmd/",
@@ -160,10 +164,14 @@ func TestExecportal_ImportsNoScannerStoreOrSignal(t *testing.T) {
 			t.Fatal(err)
 		}
 		files++
+		inAutotrade := strings.HasPrefix(path, "autotrade"+string(filepath.Separator))
 		for _, spec := range file.Imports {
 			imported, _ := strconv.Unquote(spec.Path.Value)
-			if imported == feedsImportPath {
-				continue // the one sub-package the command may import; it has its own test below
+			if imported == feedsImportPath || imported == autotradeImportPath {
+				continue // the two sub-packages the command may import; each has its own test below
+			}
+			if inAutotrade && imported == strategyImportPath {
+				continue // Q18: the arithmetic only, held by the autotrade test
 			}
 			for _, bad := range forbiddenImports {
 				if strings.HasPrefix(imported, bad) {
@@ -190,7 +198,115 @@ func TestExecportal_ImportsNoScannerStoreOrSignal(t *testing.T) {
 	}
 }
 
-const feedsImportPath = "futures-arbitrage-scanner/cmd/execportal/feeds"
+const (
+	feedsImportPath     = "futures-arbitrage-scanner/cmd/execportal/feeds"
+	autotradeImportPath = "futures-arbitrage-scanner/cmd/execportal/autotrade"
+	strategyImportPath  = "futures-arbitrage-scanner/internal/strategy"
+)
+
+// PLAN Q18: package autotrade may switch orders on and off by itself, on the
+// testnet. What keeps that from becoming a second order path, or a path from
+// the step-3.5 gate to an order:
+//
+//   - autotrade DECIDES and never executes: its imports are an allow-list —
+//     the standard library it needs, exchanges' types, depth, fees, and
+//     strategy — so no broker, no execution machine, no network, no file, and
+//     (through the link check) nothing of the scanner, the store or the feeds;
+//   - of strategy it names only the cost and APR arithmetic, never a decision;
+//   - in the main package only the wiring names it (api.go builds it, main.go
+//     runs it, server.go routes to handlers in autotrade.go); that its orders
+//     reach the venue only through openAs and close is held for the WHOLE
+//     package by TestExecportal_EveryOrderPathHasFixedCallers.
+func TestAutotrade_DecidesOnTheTestnetAndTradesOnlyThroughThePortal(t *testing.T) {
+	allowedImports := map[string]bool{
+		"context": true, "errors": true, "fmt": true, "math": true, "sort": true, "strings": true, "sync": true, "time": true,
+		"futures-arbitrage-scanner/exchanges":      true,
+		"futures-arbitrage-scanner/internal/depth": true,
+		"futures-arbitrage-scanner/internal/fees":  true,
+		strategyImportPath:                         true,
+	}
+	allowedStrategy := map[string]bool{"NetAPR": true, "NetAPRInput": true, "RoundTripCost": true, "RoundTripInput": true, "RoundTrip": true}
+	fset := token.NewFileSet()
+	files := 0
+	for _, path := range ownGoFiles(t, false) {
+		if !strings.HasPrefix(path, "autotrade"+string(filepath.Separator)) {
+			continue
+		}
+		files++
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		strategyName := ""
+		for _, spec := range file.Imports {
+			imported, _ := strconv.Unquote(spec.Path.Value)
+			if !allowedImports[imported] {
+				t.Errorf("%s imports %s — package autotrade decides and reads nothing but what it is handed (PLAN Q18)", path, imported)
+			}
+			if imported == strategyImportPath {
+				strategyName = "strategy"
+				if spec.Name != nil {
+					t.Errorf("%s imports strategy as %q — renaming it hides it from this test", path, spec.Name.Name)
+				}
+			}
+		}
+		if strategyName == "" {
+			continue
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == strategyName && !allowedStrategy[sel.Sel.Name] {
+					t.Errorf("%s uses strategy.%s — autotrade borrows the cost and APR arithmetic, never a decision (PLAN Q18)", fset.Position(sel.Pos()), sel.Sel.Name)
+				}
+			}
+			return true
+		})
+	}
+	if files < 3 {
+		t.Fatalf("read %d files of package autotrade — the test is not seeing it", files)
+	}
+
+	// In the main package: who may name the package, and what the adapter may
+	// call to reach a venue.
+	mayImport := map[string]bool{"api.go": true, "autotrade.go": true, "main.go": true}
+	for _, path := range topLevelGoFiles(t, false) {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, spec := range file.Imports {
+			if imported, _ := strconv.Unquote(spec.Path.Value); imported == autotradeImportPath {
+				if !mayImport[path] {
+					t.Errorf("%s imports package autotrade — only its wiring may (PLAN Q18)", path)
+				}
+				if spec.Name != nil {
+					t.Errorf("%s imports package autotrade as %q", path, spec.Name.Name)
+				}
+			}
+		}
+	}
+
+	if _, err := exec.LookPath("go"); err == nil {
+		cmd := exec.Command("go", "list", "-deps", "./cmd/execportal/autotrade")
+		cmd.Dir = filepath.Join("..", "..")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("go list -deps ./cmd/execportal/autotrade: %v", err)
+		}
+		if !strings.Contains(string(out), strategyImportPath) {
+			t.Fatal("the dependency list lacks internal/strategy — the test is not reading the real build")
+		}
+		for _, bad := range []string{"futures-arbitrage-scanner/internal/broker", "futures-arbitrage-scanner/internal/execution",
+			"futures-arbitrage-scanner/cmd/", "futures-arbitrage-scanner/internal/scanner", "futures-arbitrage-scanner/internal/store",
+			"futures-arbitrage-scanner/internal/config", "futures-arbitrage-scanner/internal/paper", "database/sql"} {
+			for _, line := range strings.Split(string(out), "\n") {
+				if dep := strings.TrimSpace(line); strings.HasPrefix(dep, bad) && dep != autotradeImportPath {
+					t.Errorf("package autotrade links %s", dep)
+				}
+			}
+		}
+	}
+}
 
 // PLAN Q17: the scanner and paper feeds live in this binary, so "no path from
 // a signal to an order" has to hold INSIDE it. The boundary is a package, so
@@ -481,6 +597,136 @@ func TestExecportal_NoPathFromAFeedToAnOrder(t *testing.T) {
 			}
 		}
 	}
+}
+
+// Every function in the main package that sends, or builds something that
+// sends, an order has a FIXED set of callers, and the signed transport is named
+// nowhere. This is what makes "the bot trades only through openAs and close"
+// true of the package rather than of one file: a helper in a new file that
+// reconciles, a method value stored for later, or a signed POST through
+// p.markets.perp.HTTP() all go red here (review of Q18, 2026-09-15).
+//
+// Callers are FuncDecls ("portal.reconcile", "portalTrader.Close"); a use
+// outside any function — a package-level variable holding a closure — has no
+// caller and is refused. A selector counts whether or not it is called, so
+// taking a method value is a use.
+func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
+	allowedCallers := map[string]map[string]bool{
+		"PlaceOrder":  {"portal.sendSquare": true},
+		"CancelOrder": {},
+		"NewOpener":   {"portal.openAs": true, "portal.close": true},
+		"sendSquare":  {"portal.reconcile": true},
+		"reconcile":   {"portal.handleReconcile": true},
+		"open":        {"portal.handleOpen": true},
+		"openAs":      {"portal.open": true, "portalTrader.Open": true},
+		"close":       {"portal.handleClose": true, "portalTrader.Close": true},
+		// The signed and raw transport: an order can be sent through it without
+		// any of the functions above.
+		"PostSigned": {}, "DeleteSigned": {}, "GetSigned": {}, "GetPublic": {},
+		// The write handlers wrap the functions above and skip every header wall
+		// when called directly: they may only be registered as routes.
+		"handleOpen": {"portal.handler": true}, "handleClose": {"portal.handler": true}, "handleReconcile": {"portal.handler": true},
+		"handleAutotradeStart": {"portal.handler": true}, "handleAutotradeStop": {"portal.handler": true}, "handleAutotradeKill": {"portal.handler": true},
+		// The bot's Trader and Market wrap openAs and close; the one engine gets
+		// the one pair, built in newAutotrade (review of Q18, round 2).
+		"autotrade": {"portal.handleAutotradeStatus": true, "portal.handleAutotradeStart": true, "portal.handleAutotradeStop": true, "portal.handleAutotradeKill": true,
+			"newPortal": true, "main": true},
+	}
+	// Types a value of which is an order path, and the only functions that may
+	// name them outside their own methods.
+	wrapperTypes := map[string]map[string]bool{
+		"portalTrader": {"newAutotrade": true},
+		"portalMarket": {"newAutotrade": true},
+	}
+	seen := map[string]int{}
+	fset := token.NewFileSet()
+	for _, path := range topLevelGoFiles(t, false) {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			caller := "<outside any function>"
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				caller = fn.Name.Name
+				if fn.Recv != nil && len(fn.Recv.List) == 1 {
+					recv := fn.Recv.List[0].Type
+					if star, ok := recv.(*ast.StarExpr); ok {
+						recv = star.X
+					}
+					if id, ok := recv.(*ast.Ident); ok {
+						caller = id.Name + "." + caller
+					}
+				}
+			}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if id, ok := n.(*ast.Ident); ok {
+					if allowed, watched := wrapperTypes[id.Name]; watched {
+						own := strings.HasPrefix(caller, id.Name+".")
+						if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+							// Only the type's OWN name in its own declaration. An
+							// alias (type x = portalTrader), a defined type over it or
+							// a struct embedding it is a second way to hold the order
+							// path under a name this test would not watch.
+							for _, spec := range gd.Specs {
+								if ts, ok := spec.(*ast.TypeSpec); ok && ts.Name == id {
+									own = true
+								}
+							}
+						}
+						if !own && !allowed[caller] {
+							t.Errorf("%s: %s names %s — the bot's order path is built once, in newAutotrade (PLAN Q18)", fset.Position(id.Pos()), caller, id.Name)
+						}
+					}
+					return true
+				}
+				// A request built by hand is how a handler gets called past the
+				// walls; the main package serves requests, it never makes one.
+				if lit, ok := n.(*ast.CompositeLit); ok {
+					if sel, ok := lit.Type.(*ast.SelectorExpr); ok && sel.Sel.Name == "Request" {
+						if x, ok := sel.X.(*ast.Ident); ok && x.Name == "http" {
+							t.Errorf("%s: %s builds an http.Request literal", fset.Position(lit.Pos()), caller)
+						}
+					}
+				}
+				if call, ok := n.(*ast.CallExpr); ok {
+					if fn, ok := call.Fun.(*ast.Ident); ok && fn.Name == "new" && len(call.Args) == 1 {
+						if sel, ok := call.Args[0].(*ast.SelectorExpr); ok && sel.Sel.Name == "Request" {
+							t.Errorf("%s: %s allocates an http.Request", fset.Position(call.Pos()), caller)
+						}
+					}
+				}
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				allowed, watched := allowedCallers[sel.Sel.Name]
+				if !watched {
+					return true
+				}
+				seen[sel.Sel.Name]++
+				if !allowed[caller] {
+					t.Errorf("%s: %s uses .%s — only %v may; an order reaches the venue through a fixed set of functions (PLAN Q16, Q18)",
+						fset.Position(sel.Pos()), caller, sel.Sel.Name, keys(allowed))
+				}
+				return true
+			})
+		}
+	}
+	for _, name := range []string{"PlaceOrder", "NewOpener", "sendSquare", "reconcile", "open", "openAs", "close"} {
+		if seen[name] == 0 {
+			t.Errorf("no use of .%s found — the test is not reading the package it guards", name)
+		}
+	}
+}
+
+func keys(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // The whole-binary check the AST test cannot make: what the LINKER puts in.

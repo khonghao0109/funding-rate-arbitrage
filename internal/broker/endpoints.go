@@ -256,3 +256,47 @@ var (
 		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api",
 	}
 )
+
+// The reads the testnet auto-trader needs before it may decide anything (PLAN
+// Q18): what the settlements actually paid, and what this account is charged.
+var (
+	// GET /fapi/v1/fundingRate — PUBLIC. Weight: "share 500/5min/IP rate limit
+	// with GET /fapi/v1/fundingInfo", quoted 2026-09-15 — a SEPARATE bucket from
+	// the per-minute IP weight, which this package does not meter; 1 is
+	// charged against the minute so the call is at least counted, and the one
+	// caller asks at most once every two minutes. Parameters: symbol,
+	// startTime and endTime (INCLUSIVE, ms), limit (default 100, max 1000).
+	// "Results are in ascending order." Answers an array of {symbol,
+	// fundingRate, fundingTime, markPrice} — the page's example also carries
+	// rateType, which the TESTNET answer of 2026-09-15 did not.
+	FuturesFundingRate = Endpoint{
+		Path: "/fapi/v1/fundingRate", WeightIP: 1,
+		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/market-data/rest-api/Get-Funding-Rate-History",
+	}
+
+	// GET /fapi/v1/commissionRate — USER_DATA. **PAGE UNREAD**: the
+	// User-Commission-Rate page rendered only its navigation from this
+	// environment on 2026-09-15, so neither the weight nor the field names are
+	// quoted. 20 is charged, the widely reported figure and above any other.
+	// The field names are MEASURED instead — the testnet answered
+	// {"symbol","makerCommissionRate":"0.000200","takerCommissionRate":"0.000400",
+	// "rpiCommissionRate":"0"} the same day — and a missing taker field is
+	// refused rather than read as free (binance.CommissionRates).
+	FuturesCommissionRate = Endpoint{
+		Path: "/fapi/v1/commissionRate", WeightIP: 20,
+		DocURL: "https://developers.binance.com/docs/derivatives/usds-margined-futures/account/rest-api/User-Commission-Rate",
+	}
+
+	// GET /api/v3/account/commission — USER_DATA, "IP Weight20", symbol
+	// required, quoted 2026-09-15. Answers {symbol, standardCommission,
+	// specialCommission, taxCommission, discount}, each commission object
+	// {maker, taker, buyer, seller}. How they combine is on the commission FAQ:
+	// "Notional value * (taker + buyer)" for a BUY, "(taker + seller)" for a
+	// SELL, per component, and the BNB discount applies to the standard
+	// component only.
+	// https://developers.binance.com/docs/binance-spot-api-docs/faqs/commission_faq
+	SpotAccountCommission = Endpoint{
+		Path: "/api/v3/account/commission", WeightIP: 20,
+		DocURL: "https://developers.binance.com/docs/binance-spot-api-docs/rest-api/account-endpoints",
+	}
+)

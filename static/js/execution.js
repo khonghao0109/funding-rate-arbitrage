@@ -4,6 +4,11 @@
 // /api/reconcile before the operator confirms the dialog; the action header is
 // set only on that path and the server refuses a write without it. The tab
 // reads nothing from the Scanner or Paper tabs — no signal reaches a button.
+//
+// The Auto-Trader card (PLAN Q18) switches the server's testnet bot on and off.
+// The bot's own orders are placed by the server, through the same open and
+// close these buttons use; this page only starts it (confirmed), stops it, or
+// kills it (confirmed), and shows what it decided.
 
 import { $, el, clear, setText, isNum, tidy, fmt, signCls, api, post, schedule, emptyRow } from "./core.js";
 import { shell } from "./shell.js";
@@ -487,6 +492,7 @@ function syncButtons() {
   $("btn-open").disabled = !ready || busy;
   $("btn-reconcile").disabled = !ready || busy;
   $("btn-close").disabled = !ready || busy || !$("close-intent").value;
+  syncAtButtons();
 }
 
 function setActing(on, label) {
@@ -776,6 +782,331 @@ async function doReconcile() {
   refreshAll();
 }
 
+// ------------------------------------------------------------- auto-trader
+
+const AT_BADGE = {
+  disabled: "[TẮT]",
+  idle_scanning: "[ĐANG QUÉT]",
+  evaluating: "[ĐANG QUÉT]",
+  opening: "[ĐANG MỞ LỆNH]",
+  in_position: "[ĐANG GIỮ VỊ THẾ - HEDGED]",
+  closing: "[ĐANG ĐÓNG LỆNH]",
+  cooldown: "[HỒI PHỤC]",
+  emergency_halted: "[DỪNG BẢO VỆ]",
+};
+const AT_LOG_LINES = 10;
+
+// acting is a start or stop this tab sent; killing is a kill it sent. A kill is
+// never blocked behind a stop: a stop can wait minutes for an open in flight,
+// and that is exactly when KILL must stay pressable.
+const at = { status: null, acting: false, killing: false, stale: false };
+
+const atHalted = (s) => Boolean(s && s.state === "emergency_halted");
+
+async function refreshAutotrade() {
+  const r = await api("/api/autotrade/status");
+  if (!r.ok) {
+    // The last status stays on screen, marked stale, and the buttons stop
+    // trusting it until a read succeeds.
+    at.stale = true;
+    setText("at-age", "CŨ — không đọc được trạng thái bot: " + (r.body.error_vi || `HTTP ${r.status}`), "hint warn");
+    syncAtButtons();
+    return;
+  }
+  at.stale = false;
+  at.status = r.body;
+  renderAutotrade(r.body);
+}
+
+function renderAutotrade(s) {
+  $("at-card").dataset.state = s.state;
+  const badge = $("at-badge");
+  badge.dataset.state = s.state;
+  setText(badge, AT_BADGE[s.state] || `[${s.state_vi || s.state}]`);
+  badge.title = `${s.state_vi || s.state} từ ${fmt.time(s.state_since_ms)}`;
+
+  const toggle = $("at-toggle");
+  toggle.setAttribute("aria-checked", s.enabled ? "true" : "false");
+  toggle.dataset.halted = atHalted(s) ? "true" : "false";
+  setText("at-toggle-label", atHalted(s) ? "XÁC NHẬN & TẮT" : s.enabled ? "TẮT AUTO-TRADER" : "BẬT AUTO-TRADER");
+  setText("at-stop", atHalted(s) ? "[XÁC NHẬN DỪNG BẢO VỆ → TẮT]" : "[DỪNG & GIỮ VỊ THẾ]");
+  if (s.notice_vi) setText("at-notice", s.notice_vi);
+
+  const halt = $("at-halt");
+  halt.hidden = !s.halt_reason_vi;
+  setText(halt, s.halt_reason_vi ? `DỪNG BẢO VỆ — ${s.halt_reason_vi}. Xử lý nguyên nhân (đọc vị thế bên dưới, LÀM PHẲNG nếu cần), rồi XÁC NHẬN & TẮT trước khi bật lại.` : "");
+
+  // While a run is on, the form shows the parameters it runs with; while it is
+  // off, it keeps whatever the operator typed.
+  if (s.enabled || atHalted(s)) {
+    const c = s.config || {};
+    if (c.symbol) $("at-symbol").value = c.symbol;
+    if (isNum(c.notional_quote)) $("at-notional").value = String(c.notional_quote);
+    if (isNum(c.min_net_apr_pct)) $("at-min-apr").value = String(c.min_net_apr_pct);
+    if (isNum(c.max_hold_epochs)) $("at-max-epochs").value = String(c.max_hold_epochs);
+  }
+
+  const pos = s.position;
+  setText("at-position-line", pos
+    ? `bot giữ ${pos.intent_id} · ${fmt.coin(pos.qty_coin)} coin mỗi chân · qua ${pos.settlements_since_open} mốc settle${pos.adopted ? " · tiếp nhận sau khi bật lại" : ""}`
+    : "bot không giữ vị thế nào");
+
+  renderAtSignal(s);
+  renderAtLog(s);
+  syncAtButtons();
+}
+
+function atMark(text, cls) {
+  return el("span", { cls: "at-mark " + cls, text });
+}
+
+function renderAtSignal(s) {
+  const sig = s.signal;
+  const scanned = s.last_scan_at_ms ? `quét lúc ${fmt.time(s.last_scan_at_ms)}` : "chưa quét";
+  setText("at-age", s.next_scan_at_ms ? `${scanned} · lần sau ${fmt.time(s.next_scan_at_ms)}` : scanned, "hint");
+  const verdict = $("at-verdict");
+  const checks = $("at-checks");
+  if (!sig) {
+    verdict.dataset.state = "none";
+    setText(verdict, s.enabled ? "Đang chờ lượt quét đầu tiên…" : "Chưa quét — bật bot để bắt đầu đánh giá");
+    for (const id of ["at-funding", "at-funding-sub", "at-basis", "at-basis-sub", "at-apr", "at-apr-sub"]) setText(id, "—");
+    clear(checks);
+    setText("at-checks-summary", "Điều kiện vào / thoát");
+    setText("at-cost-basis", "");
+    renderAtCountdown();
+    return;
+  }
+  const holding = (sig.exit_checks || []).length > 0;
+  verdict.dataset.state = holding ? (sig.exit_due ? "exit" : "hold") : sig.entry_eligible ? "go" : "wait";
+  setText(verdict, sig.verdict_vi || "—");
+
+  const hours = sig.interval_sec > 0 ? sig.interval_sec / 3600 : null;
+  setText("at-funding", isNum(sig.forecast_rate_per_interval_bps) ? `${fmt.bps(sig.forecast_rate_per_interval_bps)} bps` : "—",
+    "stat-v sm " + signCls(sig.forecast_rate_per_interval_bps));
+  setText("at-funding-sub", [
+    isNum(sig.forecast_rate_per_8h_bps) ? `${fmt.bps(sig.forecast_rate_per_8h_bps)} bps/8h` : "",
+    hours ? `chu kỳ đo được ${hours}h` : "chu kỳ chưa đo được",
+    isNum(sig.last_settled_rate_per_interval_bps) ? `mốc gần nhất ${fmt.bps(sig.last_settled_rate_per_interval_bps)}` : "",
+    isNum(sig.trailing_mean_rate_per_interval_bps) ? `TB ${sig.trailing_window_days} ngày ${fmt.bps(sig.trailing_mean_rate_per_interval_bps)} (${sig.trailing_settlements} mốc)` : "",
+  ].filter(Boolean).join(" · "));
+
+  setText("at-basis", isNum(sig.basis_bps) ? `${fmt.bps(sig.basis_bps)} bps` : "—");
+  const limit = s.config ? s.config.max_basis_widen_bps : null;
+  setText("at-basis-sub", isNum(sig.basis_widen_bps)
+    ? `lúc vào ${fmt.bps(sig.entry_basis_bps)} · giãn ${fmt.bps(sig.basis_widen_bps)} / ngưỡng ${limit} bps`
+    : `spot ${fmt.price(sig.spot_mid_quote)} · perp ${fmt.price(sig.perp_mid_quote)}`);
+
+  if (isNum(sig.net_apr_pct)) {
+    setText("at-apr", fmt.pct(sig.net_apr_pct, 2, true), "stat-v sm " + signCls(sig.net_apr_pct));
+    setText("at-apr-sub",
+      `trên notional một chân · trên vốn ${fmt.pct(sig.net_apr_on_capital_pct, 2, true)} (${sig.capital_per_notional}× notional) · ` +
+      `giữ ${sig.holding_days < 2 ? sig.holding_days.toFixed(2) : Math.round(sig.holding_days)} ngày, ${sig.settlements_in_hold} mốc · ` +
+      `chi phí vòng ${fmt.pct(sig.round_trip_cost_pct, 4)} (phí ${fmt.pct(sig.fees_pct, 4)} + trượt ${fmt.pct(sig.slippage_pct, 4)})`);
+  } else {
+    setText("at-apr", "không tính", "stat-v sm warn");
+    setText("at-apr-sub", sig.net_apr_reason_vi || "—");
+  }
+
+  clear(checks);
+  const group = (title, list, exit) => {
+    if (!list || list.length === 0) return 0;
+    checks.append(el("li", { cls: "at-group", text: title }));
+    let good = 0;
+    for (const c of list) {
+      const mark = !c.evaluated ? atMark("KHÔNG ĐO", "na") : exit ? (c.passed ? atMark("GIỮ", "ok") : atMark("THOÁT", "bad")) : c.passed ? atMark("ĐẠT", "ok") : atMark("CHƯA", "bad");
+      if (c.passed && c.evaluated) good++;
+      checks.append(el("li", null, [mark, el("span", { cls: "at-detail" }, [el("strong", { text: c.name_vi }), " — " + (c.detail_vi || "")])]));
+    }
+    return good;
+  };
+  const entryGood = group("VÀO LỆNH", sig.entry_checks, false);
+  const exitGood = group("THOÁT LỆNH", sig.exit_checks, true);
+  setText("at-checks-summary", holding
+    ? `Điều kiện thoát: ${exitGood}/${sig.exit_checks.length} nói GIỮ`
+    : `Điều kiện vào: ${entryGood}/${(sig.entry_checks || []).length} đạt`);
+  const applied = (sig.applied_vi || []).join(" ");
+  const excluded = (sig.excluded_vi || []).join(" ");
+  setText("at-cost-basis", [applied ? "Đã tính: " + applied : "", excluded ? "Chưa trừ: " + excluded : "", sig.fee_source_vi ? "Nguồn phí: " + sig.fee_source_vi : ""].filter(Boolean).join(" · "));
+  renderAtCountdown();
+}
+
+// renderAtCountdown runs every second, so the countdown moves between polls.
+function renderAtCountdown() {
+  const sig = at.status && at.status.signal;
+  if (!sig || !sig.next_funding_time_ms) {
+    setText("at-countdown", "—");
+    setText("at-settle-at", "—");
+    return;
+  }
+  const left = (sig.next_funding_time_ms - Date.now()) / 1000;
+  setText("at-countdown", left > 0 ? fmt.duration(left) : "đang settle");
+  const minSec = at.status.config ? at.status.config.min_time_to_settle_sec : 0;
+  setText("at-settle-at", `settle ${fmt.time(sig.next_funding_time_ms)}${left > 0 && left <= minSec ? " · quá gần để vào" : ""}`);
+}
+
+function renderAtLog(s) {
+  const list = $("at-log");
+  clear(list);
+  const lines = (s.log || []).slice(0, AT_LOG_LINES);
+  if (lines.length === 0) {
+    list.append(el("li", { cls: "at-empty", text: "chưa có sự kiện" }));
+    return;
+  }
+  for (const line of lines) {
+    list.append(el("li", null, [
+      el("span", { text: fmt.time(line.at_ms) }),
+      el("span", { cls: "at-kind", text: `[${line.kind}]`, data: { kind: line.kind } }),
+      el("span", { cls: "at-msg", text: line.message_vi }),
+    ]));
+  }
+}
+
+function syncAtButtons() {
+  const s = at.status;
+  const st = state.status;
+  const ready = state.portalOK && st && st.spot.configured && st.futures.configured;
+  const busy = at.acting || at.killing || Boolean(s && s.busy);
+  const killBusy = at.killing || Boolean(s && s.busy === "kill");
+  const halted = atHalted(s);
+  const enabled = Boolean(s && s.enabled);
+  $("at-start").disabled = !ready || busy || !s || at.stale || enabled || halted;
+  $("at-stop").disabled = busy || !s || !(enabled || halted);
+  $("at-kill").disabled = !ready || killBusy || !s;
+  $("at-toggle").disabled = busy || !s || at.stale || (!ready && !enabled && !halted);
+  for (const id of ["at-symbol", "at-notional", "at-min-apr", "at-max-epochs"]) $(id).disabled = enabled || halted || busy;
+}
+
+function atActionFailed(title, action, r) {
+  if (r.status === 0 || r.unreadable) {
+    showResult(`${title} — KẾT CỤC CHƯA RÕ`, unknownOutcome(action, r));
+  } else {
+    showResult(`${title} — KHÔNG thực hiện`, [callout((r.body && r.body.error_vi) || `HTTP ${r.status}`, "bad")]);
+  }
+}
+
+async function atStart() {
+  const symbol = $("at-symbol").value;
+  const notional = Number($("at-notional").value);
+  const minApr = Number($("at-min-apr").value);
+  const epochs = Number($("at-max-epochs").value);
+  const max = state.status ? state.status.max_notional_quote : 50000;
+  const problems = [];
+  if (!symbol) problems.push("chưa chọn symbol");
+  if (!isNum(notional) || notional <= 0 || notional > max) problems.push(`notional phải trong (0, ${max}]`);
+  if (!isNum(minApr) || Math.abs(minApr) > 1000) problems.push("Net APR tối thiểu phải là số trong ±1000");
+  if (!Number.isInteger(epochs) || epochs < 0 || epochs > 1000) problems.push("số mốc settle tối đa phải là số nguyên trong [0, 1000]");
+  if (problems.length) {
+    showResult("Không bật — dữ liệu nhập sai", [callout(problems.join(" · "), "bad")]);
+    return;
+  }
+  const st = state.status;
+  // The run's other parameters are the server's shipped ones, read from the
+  // status rather than repeated here.
+  const c = (at.status && at.status.config) || {};
+  const rows = [
+    ["Symbol", symbol],
+    ["Notional mỗi chân", `${fmt.quote(notional, 2)} quote`],
+    ["Ngưỡng vào", `Net APR dự phóng ≥ ${minApr}%/năm trên notional một chân (strategy.NetAPR, phí đọc từ tài khoản testnet), độ sâu ±0,5% ≥ ${c.depth_multiple}× notional, còn > ${fmt.duration(c.min_time_to_settle_sec)} tới mốc settle`],
+    ["Giữ", epochs > 0 ? `tối đa ${epochs} mốc settle` : `khi funding đã settle còn dương (dự phóng ${c.projection_hold_days} ngày)`],
+    ["Thoát khi", `mốc settle sau lúc vào ≤ 0 · đủ số mốc · basis giãn > ${c.max_basis_widen_bps} bps · DỪNG/KILL`],
+    ["Nhịp", `quét mỗi ${c.scan_interval_sec} giây · hồi phục ${c.cooldown_sec} giây sau mỗi lần đóng/mở hỏng · ${c.max_consecutive_failures} lỗi liên tiếp thì DỪNG BẢO VỆ`],
+    ["Sàn", st ? `${st.spot.host} + ${st.futures.host}` : "—"],
+  ];
+  const warning = el("div");
+  warning.append(callout("Bot sẽ TỰ ĐỘNG mở và đóng lệnh thật trên TESTNET, không hỏi lại từng lệnh, cho tới khi bạn DỪNG hoặc KILL.", "warn"));
+  warning.append(callout("Một vị thế duy nhất. Hai chân lệch hay bằng chứng không khớp → bot DỪNG BẢO VỆ, không tự làm phẳng.", ""));
+  if (!(await confirmDialog("BẬT AUTO-TRADER?", rows, "XÁC NHẬN BẬT", "primary", warning))) return;
+
+  at.acting = true;
+  syncAtButtons();
+  const r = await post("autotrade-start", "/api/autotrade/start", { symbol, notional_quote: notional, min_net_apr_pct: minApr, max_hold_epochs: epochs });
+  at.acting = false;
+  if (!r.ok) {
+    atActionFailed("BẬT AUTO-TRADER", "bật bot", r);
+  } else {
+    showResult("AUTO-TRADER ĐÃ BẬT", [callout(`Đang quét ${symbol} mỗi ${r.body.status.config.scan_interval_sec} giây. Nhật ký bot ở card phía trên.`, "ok")]);
+  }
+  refreshAll();
+}
+
+async function atStop() {
+  const s = at.status;
+  if (atHalted(s)) {
+    const rows = [["Lý do dừng", s.halt_reason_vi || "—"], ["Sau khi xác nhận", "bot về TẮT; vị thế (nếu có) giữ nguyên, không lệnh nào được gửi"]];
+    if (!(await confirmDialog("XÁC NHẬN ĐÃ XỬ LÝ DỪNG BẢO VỆ?", rows, "XÁC NHẬN & TẮT", "secondary"))) return;
+  }
+  // A stop that keeps the position sends no order, so it asks no confirmation.
+  at.acting = true;
+  syncAtButtons();
+  const r = await post("autotrade-stop", "/api/autotrade/stop", { close_now: false });
+  at.acting = false;
+  if (!r.ok) {
+    atActionFailed("DỪNG AUTO-TRADER", "dừng bot", r);
+  } else {
+    // Named by the server after the scan in flight returned — an open already
+    // on its way when DỪNG was pressed is included. The title is the state the
+    // server reports, never assumed.
+    const after = r.body.status || {};
+    const kept = r.body.kept_intent_id;
+    showResult(after.state === "disabled" ? "AUTO-TRADER ĐÃ TẮT" : `AUTO-TRADER: ${after.state_vi || after.state}`, [
+      callout(kept ? `Vị thế ${kept} GIỮ NGUYÊN trên sàn — đóng bằng ĐÓNG VỊ THẾ, hoặc BẬT lại để bot tiếp nhận.` : "Bot không giữ vị thế nào.", ""),
+      after.halt_reason_vi ? callout("DỪNG BẢO VỆ: " + after.halt_reason_vi, "bad") : null,
+    ]);
+  }
+  refreshAll();
+}
+
+async function atKill() {
+  const s = at.status;
+  const symbol = (s && s.config && s.config.symbol) || state.symbol;
+  const pos = s && s.position;
+  const held = state.symbol === symbol && state.positions ? `${state.positions.status_vi || state.positions.status} · spot ${fmt.coin(state.positions.spot_qty_coin)} / perp ${fmt.coin(state.positions.perp_qty_coin, true)} coin` : "đọc lại từ sàn khi bấm";
+  const rows = [
+    ["Symbol", symbol],
+    ["Bot đang giữ", pos ? `${pos.intent_id} · ${fmt.coin(pos.qty_coin)} coin mỗi chân` : "không có vị thế của bot"],
+    ["Sàn đang giữ", held],
+    ["Sẽ làm", "dừng quét ngay; lệnh mở/đóng ĐÃ GỬI thì chờ nó xong (không huỷ giữa chừng); rồi ĐÓNG cả hai chân của bot bằng MARKET qua portal; bot về DỪNG BẢO VỆ"],
+  ];
+  const warning = callout("Kill chỉ đóng cặp CỦA BOT đang phòng hộ trên symbol này. Vị thế người vận hành tự mở, cặp lệch hoặc bằng chứng không khớp sẽ KHÔNG bị đụng — dùng ĐÓNG VỊ THẾ hoặc LÀM PHẲNG.", "bad");
+  if (!(await confirmDialog("KILL SWITCH: DỪNG & ĐÓNG NGAY?", rows, "KILL — ĐÓNG NGAY", "danger", warning))) return;
+
+  at.killing = true;
+  syncAtButtons();
+  setText("busy-line", "KILL SWITCH — đang dừng bot và đóng hai chân trên testnet…");
+  const r = await post("autotrade-kill", "/api/autotrade/kill", {});
+  at.killing = false;
+  setText("busy-line", "");
+  if (!r.ok) {
+    atActionFailed("KILL SWITCH", "kill", r);
+  } else {
+    const oc = r.body.close || {};
+    const res = oc.result || {};
+    showResult("KILL SWITCH", [
+      callout(oc.flat ? "ĐÃ DỪNG KHẨN CẤP · PHẲNG CẢ HAI CHÂN" : "ĐÃ DỪNG KHẨN CẤP — CHƯA PHẲNG, KIỂM TRA VỊ THẾ NGAY", oc.flat ? "ok" : "bad"),
+      kvList([
+        ["Kết cục", oc.detail_vi || "—", oc.flat ? "pos" : "neg"],
+        ["Đã gửi lệnh đóng", oc.attempted ? "có" : "không"],
+        ["Đã đóng / còn lại", oc.attempted ? `${fmt.coin(res.closed_qty_coin)} / ${fmt.coin(res.remaining_qty_coin)} coin` : "—"],
+        ["Funding sàn đã trả", oc.attempted ? `${fmt.quote(res.funding_received_quote, 8, true)} · ${res.settlements_counted} mốc` : "—"],
+        ["RealizedQuote (không phải lãi ròng)", oc.attempted ? fmt.quote(res.realized_quote, 8, true) : "—", signCls(res.realized_quote)],
+        ["Trạng thái bot", r.body.status.state_vi],
+      ]),
+      res.error_vi ? callout("Lý do: " + res.error_vi, "bad") : null,
+    ]);
+  }
+  refreshAll();
+}
+
+function atToggle() {
+  const s = at.status;
+  if (!s) return;
+  if (s.enabled || atHalted(s)) {
+    atStop();
+  } else {
+    atStart();
+  }
+}
+
 // -------------------------------------------------------------------- boot
 
 function refreshAll() {
@@ -792,6 +1123,15 @@ export function initExecution(status) {
     $("result").hidden = true;
   });
   fillSymbols(status.symbols || []);
+  const atSymbol = $("at-symbol");
+  for (const sym of status.symbols || []) atSymbol.append(el("option", { text: sym }));
+  $("at-form").addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    atStart();
+  });
+  $("at-stop").addEventListener("click", atStop);
+  $("at-kill").addEventListener("click", atKill);
+  $("at-toggle").addEventListener("click", atToggle);
   onStatus(status);
 
   // Account and positions feed the shared header, so they run on every tab —
@@ -807,10 +1147,12 @@ export function initExecution(status) {
     schedule(onlyHere(refreshOrders), () => (execActive() ? SLOW_MS : 5000)),
     schedule(onlyHere(refreshIntents), () => (execActive() ? SLOW_MS : 5000)),
     schedule(onlyHere(refreshFunding), () => (execActive() ? FUNDING_MS : 5000)),
+    schedule(refreshAutotrade, () => (execActive() ? FAST_MS : BACKGROUND_MS)),
   ];
   shell.onTab("execution", { enter: refreshAll });
   setInterval(() => {
     renderPositionsAge();
+    renderAtCountdown();
     shell.renderHedges(state.hedges);
   }, 1000);
 }

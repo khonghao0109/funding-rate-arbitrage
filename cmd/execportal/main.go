@@ -10,16 +10,19 @@
 // other way round. Nothing it shows about a position comes from those files;
 // balances, positions, orders and funding are read back from the venue.
 //
-// # What it may and may not do (PLAN §7.1 Q15, extended by Q16 on 2026-09-14)
+// # What it may and may not do (PLAN §7.1 Q15, extended by Q16, Q17 and Q18)
 //
 // It may place orders on TESTNET, because a person pressed a button and then
-// confirmed a dialog. It may not reach a mainnet host — broker.NewClient
-// refuses anything outside the documented testnet list and this command takes
-// no flag that could move the host. It may not listen anywhere but loopback.
-// And there is NO path from a live signal to an order: it imports neither
-// internal/strategy's decisions nor the journal, and guard_test.go reads its
-// source to keep it that way. Wiring a signal to an order waits for both the
-// step-3.5 verdict and step 3.4.
+// confirmed a dialog — or because a person switched the auto-trader on (Q18,
+// package autotrade), which then opens and closes Strategy 1's pair on its own,
+// through the same open and close a button runs. It may not reach a mainnet
+// host — broker.NewClient refuses anything outside the documented testnet list
+// and this command takes no flag that could move the host. It may not listen
+// anywhere but loopback. And no signal of the step-3.5 gate reaches an order:
+// the bot reads the testnet's own funding, books and fees, the command imports
+// neither cmd/scanner nor the journal nor strategy's decisions, and
+// guard_test.go reads its source to keep it that way. Wiring the gate's signal
+// to real capital still waits for the step-3.5 verdict, step 3.4 and 4.6.
 //
 // No database, no schema, no migration: the step-3.5 gate has data/scanner.db
 // open for writing on port 8085 and nothing here goes near either.
@@ -41,6 +44,7 @@ import (
 	"syscall"
 	"time"
 
+	"futures-arbitrage-scanner/cmd/execportal/autotrade"
 	"futures-arbitrage-scanner/cmd/execportal/feeds"
 	"futures-arbitrage-scanner/internal/broker"
 	"futures-arbitrage-scanner/internal/execution"
@@ -67,6 +71,7 @@ func main() {
 		actTmo   = flag.Duration("action-timeout", 3*time.Minute, "overall deadline for one open, close or reconcile")
 		scanAddr = flag.String("scanner-addr", "127.0.0.1:8085", "loopback host:port of the running cmd/scanner whose /ws and funding history the Scanner tab relays READ-ONLY; empty turns the tab off")
 		papAddr  = flag.String("paper-addr", "127.0.0.1:8086", "loopback host:port of cmd/paperledger whose /api/ledger the Paper tab relays READ-ONLY; empty turns the tab off")
+		autoOn   = flag.Bool("autotrade", false, "switch the TESTNET auto-trader on at launch, with its shipped parameters on the first -symbols entry (PLAN Q18); off by default — the page's BẬT button does the same")
 	)
 	flag.Parse()
 	_ = godotenv.Load()
@@ -151,6 +156,28 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// The auto-trader's loop runs for the life of the process and trades
+	// nothing until it is switched on. It starts only now — after the listener
+	// exists (a failed listen exits the process) and after Ctrl-C is caught —
+	// so nothing it opens can be cut short by a start-up failure. Its context
+	// ends at shutdown, which drops any decision not yet sent; an open or close
+	// already sent runs to its own deadline, and main waits for it below.
+	botCtx, stopBot := context.WithCancel(context.Background())
+	botDone := make(chan struct{})
+	go func() {
+		p.autotrade.Run(botCtx)
+		close(botDone)
+	}()
+	if *autoOn {
+		if err := m.both(); err != nil {
+			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — thiếu credential: %v", err)
+		} else if _, err := p.autotrade.Start(autotrade.DefaultConfig(symbolList[0])); err != nil {
+			log.Printf("execportal: -autotrade BỊ TỪ CHỐI: %v", err)
+		} else {
+			log.Printf("execportal: AUTO-TRADER BẬT từ lúc khởi động (-autotrade) trên %s — TESTNET, tự đặt lệnh (PLAN Q18)", symbolList[0])
+		}
+	}
 	go func() {
 		log.Printf("execportal: http://%s", listener.Addr())
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -161,6 +188,7 @@ func main() {
 	<-ctx.Done()
 	// From here a second Ctrl-C is Go's default: the process dies at once.
 	stop()
+	stopBot()
 
 	// Shutdown stops accepting and then WAITS for handlers in flight, with no
 	// deadline of its own. An open half-way through its second leg must finish
@@ -175,6 +203,12 @@ func main() {
 	}
 	if err := srv.Shutdown(context.Background()); err != nil {
 		log.Printf("execportal: shutdown: %v", err)
+	}
+	select {
+	case <-botDone:
+	default:
+		log.Printf("execportal: đang tắt — chờ auto-trader xong lượt đang chạy (một lệnh mở/đóng đã gửi thì chạy tới hết hạn của nó); Ctrl-C lần nữa để thoát NGAY (có thể để lại một chân trần — kiểm bằng execcheck -status)")
+		<-botDone
 	}
 	p.writeMu.Lock()
 	log.Printf("execportal: đã tắt")
