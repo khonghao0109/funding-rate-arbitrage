@@ -60,18 +60,30 @@ var reservedPorts = map[string]string{
 	"8086": "cmd/paperledger",
 }
 
+// defaultSymbolsFlag is the shipped -symbols allow-list, named so the test that
+// pins it reads the same string the binary ships.
+const defaultSymbolsFlag = "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,LTCUSDT,SUIUSDT,LINKUSDT,UNIUSDT,NEARUSDT,AAVEUSDT"
+
 func main() {
 	var (
 		port = flag.String("port", "8087", "HTTP port (never 8082, 8085 or 8086 — those belong to the scanner runs and the paper ledger)")
 		bind = flag.String("bind", "127.0.0.1", "loopback IP to listen on — 127.0.0.1 or ::1; anything else is refused, because this page places orders")
-		// The list was screened down on 2026-09-16 (PLAN "Công cụ vận hành
-		// 4.5g"). Out: SOLUSDT (funding negative most of the year), XRPUSDT
-		// (funding ≈ 0 — it cannot pay a round trip), NEARUSDT (188 sign flips a
-		// year, so any exit rule pays for most of them), and BNBUSDT and
-		// DOGEUSDT, which the 3-year pair screen puts at the bottom of the
-		// funding ranking (CLAUDE.md, regularity 3). A slot spent on a pair that
-		// cannot pay its own round trip is a slot the other six do not get.
-		symbols  = flag.String("symbols", "BTCUSDT,ETHUSDT,LINKUSDT,UNIUSDT,LTCUSDT,SUIUSDT,AAVEUSDT", "comma-separated symbols the page and the auto-trader may trade, each the same string on both markets")
+		// This flag is the portal's ALLOW-LIST — what the page and the bot MAY
+		// trade — and not what a run trades. A run enters the subset the
+		// operator ticks on the page, and the buffered-slot sizing then divides
+		// the account across exactly those N pairs (4.5g), so a wider
+		// allow-list costs nothing until a box is ticked.
+		//
+		// Restored to twelve on 2026-09-16 by the operator's decision, after
+		// being screened to seven the same day. The screen's finding stands and
+		// is now advice rather than a default: on the 3-year corpus SOLUSDT
+		// funds negative most of the year, XRPUSDT funds at ≈ 0 and cannot pay a
+		// round trip, NEARUSDT flips sign 188 times a year, and BNBUSDT and
+		// DOGEUSDT sit at the bottom of the funding ranking (CLAUDE.md,
+		// regularity 3). Ticking one of those spends a slot the others do not
+		// get — which the operator can now see on the radar and decide pair by
+		// pair.
+		symbols  = flag.String("symbols", defaultSymbolsFlag, "comma-separated symbols the page and the auto-trader may trade, each the same string on both markets")
 		marginFr = flag.Float64("margin-frac", 0.50, "collateral posted on the perp leg as a fraction of notional — a DECISION, not a venue fact")
 		slipBps  = flag.Float64("max-slippage-bps", execution.DefaultMaxSlippageBps, "how far past the touch a leg's marketable limit may sit, in basis points")
 		legTmo   = flag.Duration("leg-timeout", execution.DefaultLegTimeout, "how long one leg may work before its remainder is cancelled")

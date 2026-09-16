@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -968,5 +969,46 @@ func TestAutotradeAPI_TheRebalanceSizesSlotsFromBothWallets(t *testing.T) {
 	p.autotrade.Step(context.Background())
 	if got := botStatus(t, p).Portfolio.DefaultPairConfig.NotionalQuote; math.Abs(got-want) > 1e-9 {
 		t.Errorf("size after an unreadable wallet = %v, want the %v it had", got, want)
+	}
+}
+
+// The portal's -symbols default is an ALLOW-LIST: the page draws one checkbox
+// per entry, and a run enters the subset the operator ticks. The sizing then
+// divides the account across exactly those N pairs, so a wider allow-list costs
+// nothing until a box is ticked (PLAN 4.5g, restored to twelve 2026-09-16).
+func TestSymbols_TheAllowListIsTwelveAndARunSizesForWhatIsTicked(t *testing.T) {
+	list, err := parseSymbols(defaultSymbolsFlag)
+	if err != nil {
+		t.Fatalf("the shipped -symbols default does not parse: %v", err)
+	}
+	if len(list) != 12 {
+		t.Errorf("%d symbols in the default allow-list, want 12: %v", len(list), list)
+	}
+	for _, want := range []string{"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT",
+		"LTCUSDT", "SUIUSDT", "LINKUSDT", "UNIUSDT", "NEARUSDT", "AAVEUSDT"} {
+		if !slices.Contains(list, want) {
+			t.Errorf("%s is not in the allow-list %v", want, list)
+		}
+	}
+	// Twelve pairs must be a startable run: the concurrency cap, the shipped
+	// capital cap and every pair's own Config have to admit them all at once.
+	pc := autotrade.DefaultPortfolioConfig(list)
+	if pc.MaxConcurrentPositions != 12 {
+		t.Errorf("a twelve-symbol run allows %d concurrent positions", pc.MaxConcurrentPositions)
+	}
+	if err := pc.Validate(list, maxNotionalQuote, 1.5); err != nil {
+		t.Errorf("a twelve-symbol run does not validate: %v", err)
+	}
+	// Ticking a subset is what the page sends, and the slot count follows it:
+	// the capital is divided across the ticked pairs, not across the twelve.
+	for _, n := range []int{1, 3, 7, 12} {
+		chosen := list[:n]
+		sub := autotrade.DefaultPortfolioConfig(chosen)
+		if sub.MaxConcurrentPositions != n {
+			t.Errorf("%d ticked pairs → %d slots", n, sub.MaxConcurrentPositions)
+		}
+		if err := sub.Validate(list, maxNotionalQuote, 1.5); err != nil {
+			t.Errorf("%d ticked pairs do not validate: %v", n, err)
+		}
 	}
 }
