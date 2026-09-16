@@ -383,6 +383,42 @@ function two(a, b, label) {
   return cell(el("td", { cls: "r num" }, [el("span", { text: a }), el("span", { cls: "cell-sub", text: b })]), label);
 }
 
+// basisCell is the pair's thesis in one cell. A cash-and-carry position earns
+// the basis it took on minus the basis it gives back, so the entry figure is
+// what the venue paid it to hedge and the current one is what leaving would
+// cost. Which way the number has moved since is what the take-profit and the
+// widening stop each watch, so the sub-line names the direction in words as
+// well as in sign — the two exits read the SAME figure in opposite directions.
+function basisCell(pair, pos, sig) {
+  const entry = isNum(pos.entry_basis_bps) ? pos.entry_basis_bps : sig.entry_basis_bps;
+  const now = sig.basis_bps;
+  const td = el("td", { cls: "r num" });
+  if (!isNum(entry) || !isNum(now)) {
+    td.append(el("span", { cls: "warn", text: "chưa đọc" }));
+    td.title = "Chưa có giá giữa của cả hai chân trong lượt quét gần nhất — basis hiện tại không đo được.";
+    return cell(td, "Basis: vào → hiện tại");
+  }
+  // widen is the server's own figure where it has one, so the cell and the
+  // engine's stop can never disagree by a rounding.
+  const widen = isNum(sig.basis_widen_bps) ? sig.basis_widen_bps : now - entry;
+  const cap = (pair.config || {}).max_basis_widen_bps || 0;
+  const blown = cap > 0 && widen > cap;
+  td.append(el("span", { text: `${fmt.bps(entry, 1)} → ${fmt.bps(now, 1)}` }));
+  td.append(el("span", {
+    cls: "cell-sub " + (blown ? "neg" : widen <= 0 ? "pos" : ""),
+    text: widen <= 0
+      ? `${fmt.bps(widen, 1)} bps — đang CO, về phía chốt lời`
+      : `${fmt.bps(widen, 1)} bps — đang GIÃN${cap > 0 ? `, cắt ở ${fmt.bps(cap, 0)}` : ""}`,
+  }));
+  td.title = [
+    "Basis = (giá giữa perp − giá giữa spot) ÷ giá giữa spot, tính bằng bps.",
+    `Lúc vào ${fmt.bps(entry, 1)} bps, hiện tại ${fmt.bps(now, 1)} bps, dịch ${fmt.bps(widen, 1)} bps.`,
+    "Basis CO lại là phần lãi mà chốt lời hội tụ chờ; basis GIÃN ra là cái mà lệnh cắt lỗ canh.",
+    blown ? `ĐÃ VƯỢT TRẦN ${fmt.bps(cap, 0)} bps — bot cắt ở lượt quét này.` : "",
+  ].filter(Boolean).join("\n");
+  return cell(td, "Basis: vào → hiện tại");
+}
+
 // takeProfitCell is how far a held pair is from leaving on its own: the running
 // result against the take-profit target, and the settlements left of the
 // amortization floor under it. Both are the ENGINE's own figures — the same
@@ -448,6 +484,7 @@ function renderPositions(s) {
         el("span", { text: `${fmt.price(pos.spot_entry_avg_quote)} → ${fmt.price(sig.spot_mid_quote)}` }),
         el("span", { cls: "cell-sub", text: `${fmt.price(pos.perp_entry_avg_quote)} → ${fmt.price(sig.perp_mid_quote)}` }),
       ]), "Spot / perp: vào → giữa"),
+      basisCell(pair, pos, sig),
       cell(el("td", { cls: "r num" }, [
         el("span", { cls: pair.hedge_status === "both_open" ? "" : "neg", text: residual }),
         el("span", { cls: "cell-sub " + (pair.hedge_status === "both_open" ? "pos" : "neg"), text: `${hedge}${isNum(pair.tolerance_qty_coin) && pair.tolerance_qty_coin > 0 ? " · ±" + fmt.coin(pair.tolerance_qty_coin) : ""}` }),

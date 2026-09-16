@@ -1137,9 +1137,14 @@ one quantity or refusing the intent whole; what the grid really costs is the par
 of the slot that never reaches the market (65 quote of BTC at a 0.0001 step
 deploys 61.6). That is why BTC needs ~154 quote a slot here, and why the shipped
 65 is now a SEED that the first scan of a run replaces rather than a size
-anything trades. `-symbols` was screened to seven — BTC, ETH, LINK, UNI, LTC,
-SUI, AAVE — dropping SOL (funding negative most of the year), XRP (funding ≈ 0),
-NEAR (188 sign flips a year) and BNB/DOGE (bottom of the 3-year funding ranking).
+anything trades. `-symbols` was screened to seven and **restored to twelve the same day by the
+operator's decision**: the flag is an ALLOW-LIST — what the page and the bot MAY
+trade — and a run enters the subset ticked on the page, which the sizing then
+divides the account across, so a wider list costs nothing until a box is ticked.
+The screen's finding stands beside the flag as advice: on the 3-year corpus SOL
+funds negative most of the year, XRP at ≈ 0, NEAR flips sign 188 times a year,
+and BNB/DOGE sit at the bottom of the funding ranking. Offer the evidence; do not
+take the choice away.
 **Not accepted**: 37 packages pass `-race`, every rule has its own test including
 one that reads the fake VENUE to prove a rebalance moved no leg, but this machine
 has no Chrome for the click-through and another `execportal` held 8087 all

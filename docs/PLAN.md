@@ -4999,11 +4999,14 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   ÷ 5%. Luật đọc từ `exchangeInfo` của CHÍNH hai testnet qua `rulesFor` (chia sẻ 10
 >   phút), không phải ảnh chụp mainnet và không phải hằng số. **Luật CHƯA ĐỌC ĐƯỢC không
 >   phải "không có giới hạn"**: check báo không đánh giá được và cặp không vào.
-> - **Danh sách cặp mặc định còn 7**: BTC, ETH, LINK, UNI, LTC, SUI, AAVE. Bỏ SOL
->   (funding âm gần như quanh năm), XRP (funding ≈ 0, không trả nổi một vòng phí), NEAR
->   (188 lần đảo dấu/năm), và BNB + DOGE, hai cái mà bảng xếp hạng funding 3 năm để ở đáy
->   (CLAUDE.md, quy luật 3). Một slot tiêu vào cặp không tự trả nổi vòng phí là một slot
->   sáu cặp kia không có.
+> - **Danh sách cặp mặc định: rút còn 7 rồi KHÔI PHỤC về 12 cùng ngày** theo quyết định
+>   của người vận hành. `-symbols` là DANH SÁCH CHO PHÉP — cái trang và bot ĐƯỢC PHÉP giao
+>   dịch — còn một lượt chạy chỉ vào các cặp được tick trên trang, và cơ chế slot chia vốn
+>   cho đúng N cặp đó, nên danh sách rộng hơn không tốn gì cho tới khi một ô được tick.
+>   Kết quả sàng lọc ở lại làm CHÚ THÍCH cạnh flag: trên kho 3 năm SOL funding âm gần như
+>   quanh năm, XRP ≈ 0 (không trả nổi một vòng phí), NEAR đảo dấu 188 lần/năm, BNB và DOGE
+>   ở đáy bảng xếp hạng funding (CLAUDE.md, quy luật 3). Đưa bằng chứng ra chỗ người vận
+>   hành thấy; đừng quyết hộ bằng cách xoá lựa chọn.
 > - **Trang**: thẻ "Phân bổ vốn theo slot" (notional mỗi chân và vốn mỗi slot, số slot,
 >   đệm, chu kỳ + lần gần nhất, vốn đang dùng), huy hiệu **Q** trên radar, ba ô nhập
 >   (đệm %, chu kỳ giờ, công tắc tự động cân bằng) và một dòng trong hộp xác nhận nói rõ
@@ -5063,10 +5066,24 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > | 12. qua API | `TestAutotradeAPI_TheRebalanceSizesSlotsFromBothWallets`: start với `auto_rebalance` → một lượt quét → 1.166,67 mỗi chân, mở đúng quy mô đó, **perp đọc lại từ sàn giả khớp**, và một ví không đọc được để nguyên quy mô. Cộng 4 thân bị từ chối mới trong `…EveryWriteIsBehindTheWalls` |
 > | 13. giao diện, tĩnh | `TestUI_HasNothingTheCSPWouldRefuse` và `TestUI_EveryIdTheScriptsLookUpIsInTheMarkup` ĐẠT cho ba ô nhập mới, thẻ phân bổ vốn và huy hiệu **Q** |
 > | 14. **giao diện, chạy thật** | ❌ **CHƯA LÀM** — máy phiên này không có Chrome/Chromium |
-> | 15. **chạy thật trên testnet** | ❌ **CHƯA LÀM** — một `cmd/execportal` khác nghe 127.0.0.1:8087 suốt phiên, không bị đụng tới. Chưa có: bot đọc số dư thật, cấp quy mô thật, giữ một vị thế qua một lần cân bằng thật |
+> | 15. **chạy thật trên testnet** | 🟡 **MỘT PHẦN, QUAN SÁT ĐƯỢC chứ không phải một lượt nghiệm thu có kiểm soát.** Người vận hành tự dựng và chạy mã này; lúc 15:05 2026-09-16 tôi đọc `/api/autotrade/status` của tiến trình đó (CHỈ ĐỌC): nó mang đúng bộ luật mới (`min_entry_basis_bps` 5, `min_hold_epochs` 6, `target_take_profit_net_pct` 0,5) và **quy mô slot đã cân bằng lên 952,38 quote/chân** — đúng `10.000 ÷ 7 slot ÷ 1,5`, tức hạn mức vốn là cái chặn. Trên sàn lúc đó có **7 vị thế: sáu cái ở 65 quote và UNIUSDT ở 952,38**, nghĩa là vị thế mở TRƯỚC lần cân bằng giữ nguyên quy mô cũ còn lệnh mở SAU nó dùng quy mô mới — đúng bất biến mục 4. CHƯA có: một lượt cân bằng đo từ đầu đến cuối với số dư ghi lại trước/sau, và cú bấm chuột headless |
 >
 > **Chưa được coi là ✅** — tiêu chí 14 và 15 là hai tiêu chí 4.5d/4.5e phải đạt mới được
-> đánh dấu. Walkthrough cho người vận hành:
+> đánh dấu.
+>
+> **Khởi động lại 2026-09-16 15:08 (danh sách 12 cặp).** Portal cũ (PID 70558, chạy từ
+> 14:50) đang giữ 7 vị thế testnet thật, nên thứ tự là: `POST /api/autotrade/stop`
+> `{close_now:false}` → **0 lệnh đóng, 7 ý định được GIỮ** → kill tiến trình → chạy lại
+> `go run ./cmd/execportal -port 8087 -autotrade=false`. Sau đó `/api/status` cho **12
+> symbol**, tab Auto-Trader **12 checkbox**, bot **TẮT** (người vận hành tự bật), và cả
+> **7 vị thế đọc lại TỪ SÀN** qua `/api/positions?symbol=…` đều `both_open`, delta 0,
+> đúng ý định cũ — không chân nào bị đụng. Tiến trình 8085 và 8086 **không bị đụng tới**
+> theo quyết định của người vận hành: cái trên 8085 KHÔNG phải cổng 3.5 (run 3, PID 55475,
+> chết cùng lần reboot 02:02 cùng ngày sau 3 ngày 9 giờ 50; `.paper/scanner.pid`,
+> `.paper/launch-state.txt` và `.paper/scanner.log` vẫn mô tả run 3) mà là một scanner
+> `go run` khởi động 14:54 — **chưa có run 4 chính thức nào được khởi động**.
+>
+> Walkthrough cho người vận hành:
 > [`docs/reports/autotrade-capital-walkthrough-2026-09-16.md`](reports/autotrade-capital-walkthrough-2026-09-16.md).
 >
 > ### Nợ có tên

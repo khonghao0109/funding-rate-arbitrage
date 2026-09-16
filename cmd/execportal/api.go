@@ -46,6 +46,7 @@ const (
 	readTimeout = 20 * time.Second
 
 	accountTTL   = 2 * time.Second
+	balancesTTL  = 4 * time.Second
 	clockEvery   = 30 * time.Second
 	positionsTTL = 2 * time.Second
 	ordersTTL    = 5 * time.Second
@@ -91,13 +92,14 @@ type portal struct {
 	busyAction  string
 	busySinceMs int64
 
-	accounts   *ttlCache[accountView]
-	positions  *ttlCache[positionsView]
-	orders     *ttlCache[ordersView]
-	funding    *ttlCache[fundingView]
-	marketInfo *ttlCache[marketView]
-	rules      *ttlCache[rulesPair]
-	memo       *doneOrders
+	accounts    *ttlCache[accountView]
+	rawBalances *ttlCache[[]broker.Balance]
+	positions   *ttlCache[positionsView]
+	orders      *ttlCache[ordersView]
+	funding     *ttlCache[fundingView]
+	marketInfo  *ttlCache[marketView]
+	rules       *ttlCache[rulesPair]
+	memo        *doneOrders
 
 	// pingsMs is each market's last clock round trip, in milliseconds.
 	pingsMu sync.Mutex
@@ -131,24 +133,25 @@ func newPortal(m markets, symbols []string, bindIP, port string, settings execSe
 		now = time.Now
 	}
 	p := &portal{
-		markets:    m,
-		stateDir:   stateDir,
-		symbols:    symbols,
-		hosts:      allowedHosts(bindIP, port),
-		listen:     bindIP + ":" + port,
-		now:        now,
-		exec:       settings,
-		startedAt:  now(),
-		accounts:   newTTLCache[accountView](now),
-		positions:  newTTLCache[positionsView](now),
-		orders:     newTTLCache[ordersView](now),
-		funding:    newTTLCache[fundingView](now),
-		marketInfo: newTTLCache[marketView](now),
-		rules:      newTTLCache[rulesPair](now),
-		memo:       newDoneOrders(),
-		pingsMs:    map[broker.Market]int64{},
-		clockSyncs: newTTLCache[struct{}](now),
-		feeds:      feeds.New("", "", now),
+		markets:     m,
+		stateDir:    stateDir,
+		symbols:     symbols,
+		hosts:       allowedHosts(bindIP, port),
+		listen:      bindIP + ":" + port,
+		now:         now,
+		exec:        settings,
+		startedAt:   now(),
+		accounts:    newTTLCache[accountView](now),
+		rawBalances: newTTLCache[[]broker.Balance](now),
+		positions:   newTTLCache[positionsView](now),
+		orders:      newTTLCache[ordersView](now),
+		funding:     newTTLCache[fundingView](now),
+		marketInfo:  newTTLCache[marketView](now),
+		rules:       newTTLCache[rulesPair](now),
+		memo:        newDoneOrders(),
+		pingsMs:     map[broker.Market]int64{},
+		clockSyncs:  newTTLCache[struct{}](now),
+		feeds:       feeds.New("", "", now),
 
 		fundingRates: newTTLCache[[]binancebroker.FundingRate](now),
 		commissions:  newTTLCache[commissionPair](now),
@@ -181,6 +184,7 @@ func (p *portal) acquire(action string) (release func(), heldBy string, heldSinc
 func (p *portal) invalidateVenueReads() {
 	p.memo.forget()
 	p.accounts.invalidate()
+	p.rawBalances.invalidate()
 	p.positions.invalidate()
 	p.orders.invalidate()
 	p.funding.invalidate()
@@ -420,6 +424,19 @@ func (p *portal) handleAccount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p.accountFor(ctx, symbol))
 }
 
+// getBalances reads one market's balances, shared across all symbols for balancesTTL.
+// This ensures that when multiple symbols (or autotrade rebalance) request account
+// balances, only ONE signed call (weight 20 for spot, 5 for futures) is made per TTL window.
+func (p *portal) getBalances(ctx context.Context, c venue, market broker.Market) ([]broker.Balance, error) {
+	if c == nil {
+		return nil, fmt.Errorf("chưa cấu hình credential cho %s", market)
+	}
+	b, _, err := p.rawBalances.get(string(market), balancesTTL, func() ([]broker.Balance, error) {
+		return c.GetBalance(ctx, market)
+	})
+	return b, err
+}
+
 // accountFor is shared by /api/account and /api/positions, which both need the
 // spot account and would otherwise each pay weight 20 for it.
 func (p *portal) accountFor(ctx context.Context, symbol string) accountView {
@@ -477,7 +494,7 @@ func (p *portal) readMarketAccount(ctx context.Context, c venue, dialErr error, 
 			}
 			p.pingsMu.Unlock()
 		}
-		if balances, err := c.GetBalance(ctx, market); err != nil {
+		if balances, err := p.getBalances(ctx, c, market); err != nil {
 			problems = append(problems, "số dư: "+err.Error())
 		} else {
 			v.Balances = pickBalances(balances, assets)
@@ -659,10 +676,12 @@ func (p *portal) handlePositions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	walletContext := r.URL.Query().Get("wallet") != "0" && r.URL.Query().Get("wallet") != "false"
+	cacheKey := fmt.Sprintf("%s|wallet=%t", symbol, walletContext)
 	ctx, cancel := readContext(r)
 	defer cancel()
-	v, _, _ := p.positions.get(symbol, positionsTTL, func() (positionsView, error) {
-		return p.readPositions(ctx, symbol), nil
+	v, _, _ := p.positions.get(cacheKey, positionsTTL, func() (positionsView, error) {
+		return p.readHedge(ctx, symbol, walletContext), nil
 	})
 	writeJSON(w, http.StatusOK, v)
 }
@@ -688,9 +707,16 @@ func (p *portal) readHedge(ctx context.Context, symbol string, walletContext boo
 		v.ReasonVI = "thiếu credential — không đọc được hai chân: " + err.Error()
 		return v
 	}
-	if err := p.markets.readBudgetError(); err != nil {
-		v.ReasonVI = err.Error()
-		return v
+	if walletContext {
+		if err := p.markets.readBudgetError(); err != nil {
+			v.ReasonVI = err.Error()
+			return v
+		}
+	} else {
+		if err := p.markets.readBudgetErrorFor(p.markets.perp); err != nil {
+			v.ReasonVI = err.Error()
+			return v
+		}
 	}
 
 	ev := hedgeEvidence{}
@@ -714,10 +740,12 @@ func (p *portal) readHedge(ctx context.Context, symbol string, walletContext boo
 	}
 
 	if walletContext && v.BaseAsset != "" {
-		for _, b := range p.accountFor(ctx, symbol).Spot.Balances {
-			if b.Asset == v.BaseAsset {
-				total := b.TotalQtyInAsset
-				v.SpotBaseBalanceQtyCoin = &total
+		if err := p.markets.readBudgetErrorFor(p.markets.spot); err == nil {
+			for _, b := range p.accountFor(ctx, symbol).Spot.Balances {
+				if b.Asset == v.BaseAsset {
+					total := b.TotalQtyInAsset
+					v.SpotBaseBalanceQtyCoin = &total
+				}
 			}
 		}
 	}

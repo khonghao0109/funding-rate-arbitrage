@@ -231,17 +231,24 @@ func smallestWorkableNotionalQuote(spot, perp binancebroker.MarketRules, priceQu
 // never check this.
 const readBudgetFrac = 0.5
 
+func (m markets) readBudgetErrorFor(c venue) error {
+	if c == nil {
+		return nil
+	}
+	budget := c.HTTP().Budget()
+	if banned, _ := budget.Banned(); banned {
+		return fmt.Errorf("%s: sàn đang cấm IP (HTTP 418) — không đọc gì thêm", c.Market())
+	}
+	if used, limit := budget.UsedThisWindow(), budget.LimitPerMin(); float64(used) >= readBudgetFrac*float64(limit) {
+		return fmt.Errorf("%s đã dùng %d/%d weight trong phút này — trang tạm ngừng ĐỌC để phần còn lại dành cho lệnh", c.Market(), used, limit)
+	}
+	return nil
+}
+
 func (m markets) readBudgetError() error {
 	for _, c := range []venue{m.spot, m.perp} {
-		if c == nil {
-			continue
-		}
-		budget := c.HTTP().Budget()
-		if banned, _ := budget.Banned(); banned {
-			return fmt.Errorf("%s: sàn đang cấm IP (HTTP 418) — không đọc gì thêm", c.Market())
-		}
-		if used, limit := budget.UsedThisWindow(), budget.LimitPerMin(); float64(used) >= readBudgetFrac*float64(limit) {
-			return fmt.Errorf("%s đã dùng %d/%d weight trong phút này — trang tạm ngừng ĐỌC để phần còn lại dành cho lệnh", c.Market(), used, limit)
+		if err := m.readBudgetErrorFor(c); err != nil {
+			return err
 		}
 	}
 	return nil

@@ -212,7 +212,7 @@ async function refreshPositions() {
 async function refreshOtherHedges() {
   const others = ((state.status && state.status.symbols) || []).filter((s) => s !== state.symbol);
   for (const symbol of others) {
-    const r = await api(`/api/positions?symbol=${encodeURIComponent(symbol)}`);
+    const r = await api(`/api/positions?symbol=${encodeURIComponent(symbol)}&wallet=0`);
     keepAlarm(symbol, r.ok ? r.body : unreadPositions(r));
   }
   if (others.length) shell.renderHedges(state.hedges);

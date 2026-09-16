@@ -100,15 +100,11 @@ Quy mô phải ≥ cái **chặt nhất** trong ba thứ, đọc từ `exchangeI
 **Luật CHƯA ĐỌC ĐƯỢC không phải "không có giới hạn"**: check báo không đánh giá được,
 và một điều kiện vào không đánh giá được thì không đạt.
 
-### 2.6. Danh sách cặp mặc định: 12 → **7**
+### 2.6. ~~Danh sách cặp mặc định: 12 → **7**~~ — ĐÃ ĐẢO NGƯỢC
 
-**Giữ:** BTC, ETH, LINK, UNI, LTC, SUI, AAVE
-**Bỏ:** SOL (funding âm gần như quanh năm), XRP (funding ≈ 0), NEAR (188 lần đảo dấu/năm),
-BNB và DOGE (đáy bảng xếp hạng funding 3 năm — CLAUDE.md, quy luật 3).
-
-> ⚠️ Đặc tả nêu đích danh 3 cặp phải bỏ và 7 cặp giữ lại; BNB và DOGE không nằm trong danh
-> sách nào. Tôi đọc "Giữ lại …" theo nghĩa đen — danh sách mới **đúng bằng 7 cặp đó**.
-> Nếu ý bạn là giữ BNB/DOGE, đổi một dòng trong `cmd/execportal/main.go`.
+> **Mục này không còn đúng.** Tôi rút danh sách xuống 7 cặp; người vận hành khôi phục lại
+> đủ **12** cùng ngày, và đó mới là bản đang chạy. Kết quả sàng lọc ở lại làm chú thích
+> cạnh flag chứ không còn là mặc định. Đọc **Phụ lục §A** ở cuối tài liệu này.
 
 ### 2.7. Trang
 
@@ -244,3 +240,116 @@ trạng thái 🟡.**
   rõ trên radar, nhưng không có dòng nào nói "hãy giảm số slot".
 - Cân bằng đọc số dư mỗi 168 giờ, nên **một lần rút tiền giữa chu kỳ không được thấy** cho
   tới lần đọc sau; hạn mức vốn và số slot vẫn chặn, nhưng quy mô thì cũ.
+
+---
+
+# Phụ lục — 12 cặp, sổ cái giấy, và lần khởi động lại 15:08
+
+*(Thêm 2026-09-16 sau khi người vận hành yêu cầu khôi phục 12 cặp và đồng bộ Paper Ledger.)*
+
+## A. Danh sách 12 cặp đã khôi phục
+
+`-symbols` trở lại đủ **12 cặp**. Điều đáng ghi không phải con số mà là **ai quyết**:
+
+> `-symbols` là **DANH SÁCH CHO PHÉP** — cái trang và bot *được phép* giao dịch — chứ
+> không phải cái một lượt chạy *sẽ* giao dịch.
+
+Đường đi từ ô tick tới quy mô vốn, kiểm bằng `TestSymbols_TheAllowListIsTwelveAndARunSizesForWhatIsTicked`:
+
+```
+fillAtSymbols(status.symbols)  → 12 checkbox
+  ↓ tick N ô
+syncMaxPairsWithChecked()      → at-max-pairs = N
+  ↓ BẬT
+max_concurrent_positions: N    → planNotional(Slots: N)
+  ↓
+quy mô mỗi chân = (vốn hai ví × (1 − đệm) ÷ N) ÷ 1,5, chặn bởi từng ví / hạn mức / trần
+```
+
+Nên một danh sách rộng hơn **không tốn gì** cho tới khi một ô được tick. Kết quả sàng lọc
+hôm qua ở lại làm **chú thích cạnh flag**, không còn là mặc định: SOL funding âm gần như
+quanh năm, XRP ≈ 0, NEAR đảo dấu 188 lần/năm, BNB và DOGE ở đáy bảng 3 năm.
+
+> ⚠️ **Trình duyệt nhớ lựa chọn cũ.** `fillAtSymbols` đọc `localStorage`: nếu bạn đang lưu
+> danh sách 7 cặp, 12 ô sẽ hiện nhưng **5 ô mới lên ở trạng thái chưa tick**. Đó là lựa
+> chọn cũ của bạn được tôn trọng, không phải lỗi — tick thêm là xong.
+
+## B. Sổ cái giấy: không có gì để sửa, và đây là lý do
+
+**Kết luận: `cmd/paperledger` và `internal/paper` không cần thay đổi dòng nào.**
+
+`internal/paper` **định giá các quyết định đã được ra**, không bao giờ tự ra quyết định.
+Nó đọc `signal_journal` — do đường 3.5 của `cmd/scanner` ghi bằng
+`internal/strategy.EvaluateEntry/EvaluateExit` và khối `strategy:` của `config.yaml`.
+Bộ luật mới của Auto-Trader sống trong `cmd/execportal/autotrade`, là **một engine quyết
+định khác, tách biệt có chủ ý** (Q18: *"Not cmd/scanner, not the step-3.5 journal, not
+strategy.EvaluateEntry: the gate's decisions stay the gate's"*).
+
+Nhưng kiểm lại thì **hai trong ba cơ chế bạn nêu đã có sẵn trong nhật ký mà sổ cái đang
+định giá**, dưới tên tham số của gói `strategy`. Đọc thẳng từ `params_json` của hàng nhật
+ký mới nhất (không phải từ file config):
+
+| Cơ chế (Auto-Trader 4.5f) | Tương ứng trong `internal/strategy` | Giá trị trong nhật ký |
+|---|---|---|
+| Khấu hao phí (`MinHoldEpochs` 6) | `min_hold_recovered_cost_frac` | **1** ✅ |
+| Cổng thoát âm trễ (`−2,0 bps` × `2 mốc`) | `exit_negative_min_bps` / `_periods` / `_cum_cost_frac` | **2 / 2 / 1** ✅ |
+| Chốt lời hội tụ Basis (`+0,50%` trên vốn) | — | **không có tương ứng** ❌ |
+| Lọc basis lúc vào (`≥ +5 bps`) | — | **không có tương ứng** ❌ (`max_basis_*` là lối THOÁT) |
+
+> Lưu ý dấu: `exit_negative_min_bps: 2` ở đây nghĩa là "mốc mới nhất phải **≤ −2** bps/8h" —
+> cùng ngưỡng với `ExitNegativeFundingRateBps: -2.0` của Auto-Trader, chỉ khác quy ước dấu.
+
+Hai cái còn thiếu **chỉ có thể** vào sổ cái bằng cách port chúng vào `internal/strategy` —
+mà làm thế là đổi luật cổng 3.5 đang ghi nhật ký và đổi cái `cmd/backtest -compare-journal`
+so sánh. Đó là việc ngoài phạm vi, và tôi không làm.
+
+## C. Snapshot đã xuất
+
+`docs/reports/paper-ledger-latest.json` (1,4 MB), dựng lúc 15:05:21 từ `data/scanner.db`
+**READ-ONLY** (`mode=ro` — engine từ chối mọi lệnh ghi), cửa sổ từ `.paper/started_at`
+(2026-09-12 09:09:41 UTC) tới lúc dựng:
+
+| | |
+|---|---|
+| `journal_rows` | **31.122** (86 enter · 60 exit · 6.727 hold · 24.249 skip) |
+| `realized_quote` | **−4.122,40** |
+| `open_pnl_quote` | **−2.783,83** |
+| `funding_quote` | **+710,72** |
+| `fees_paid_quote` | **−4.686,80** |
+| `equity_quote` | 9.993.093,77 trên vốn ảo 10.000.000 |
+| `max_drawdown_quote` | 7.282,68 |
+| vị thế | 32 đang mở · 16 đã đóng · 96 điểm equity · 1.761 sự kiện · 44 từ chối · 38 bất thường |
+
+Đọc cho đúng: **phí đã trả (4.686,80) gấp 6,6 lần funding đã nhận (710,72)** — đúng cái
+bài toán ma sát mà bộ luật 4.5f sinh ra để giải, đo trên chính nhật ký này.
+
+> ⚠️ Tên file là `-latest.json`, tức **ghi đè**. Quy ước của `docs/reports/` là *một file
+> mới mỗi lần, không bao giờ ghi đè — file cũ là bản ghi của điều đã biết ngày hôm đó*.
+> Tôi theo tên bạn đặt; nếu muốn giữ lịch sử thì đổi sang `paper-ledger-2026-09-16.json`.
+> 1,4 MB cũng là to cho một file sinh ra tự động nếu định commit.
+
+## D. Khởi động lại 15:08
+
+Chỉ **8087**. 8085 và 8086 không bị đụng tới theo quyết định của bạn.
+
+| bước | kết quả |
+|---|---|
+| `POST /api/autotrade/stop {close_now:false, halt_seq:0}` | `disabled` · **0 lệnh đóng** · **7 ý định được GIỮ** |
+| kill PID 70558 (+ `go run` cha 70551) | cổng 8087 trống |
+| `go run ./cmd/execportal -port 8087 -autotrade=false` | lên lúc 15:08:24 |
+| `/api/status` | **12 symbol** |
+| `/api/autotrade/status` | `disabled`, **12 cặp trên trang**, bot chờ bạn bật |
+| `/api/positions?symbol=…` × 7, **đọc từ SÀN** | cả 7 `both_open`, delta **0**, đúng ý định cũ |
+| `/api/paper/ledger` (relay 8086) | `mode: paper`, 31.122 hàng — tab Paper Ledger sống |
+| 8085 `/`, `/api/funding/history` | HTTP 200 — tab Scanner có nguồn |
+
+**Bot đang TẮT.** Tick các cặp bạn muốn rồi bấm BẬT; nó sẽ tiếp nhận cả 7 vị thế đang giữ
+và cấp quy mô slot theo đúng số cặp bạn tick.
+
+> ⚠️ **Chưa có run 4 của cổng 3.5.** Tiến trình trên 8085 là một scanner `go run` khởi động
+> 14:54 hôm nay, **không phải** một lượt cổng chính thức: run 3 (PID 55475) chết cùng lần
+> reboot 02:02 sau 3 ngày 9 giờ 50 trên 14 ngày cần, và `.paper/scanner.pid`,
+> `.paper/launch-state.txt`, `.paper/scanner.log` vẫn mô tả run 3. Bắt đầu run 4 là một
+> quyết định vận hành riêng — và ba lần trước đều chết vì lý do vận hành, nên trước khi có
+> run 4 thì cửa sổ 14 ngày cần một thứ sống sót qua reboot, hoặc giao thức phải chấp nhận
+> một cửa sổ chắp nối.

@@ -408,7 +408,7 @@ func (t portalTrader) Account(ctx context.Context) (autotrade.Account, error) {
 		c   venue
 		dst *float64
 	}{{p.markets.spot, &out.SpotQuoteTotal}, {p.markets.perp, &out.FuturesQuoteTotal}} {
-		balances, err := m.c.GetBalance(ctx, m.c.Market())
+		balances, err := p.getBalances(ctx, m.c, m.c.Market())
 		if err != nil {
 			return autotrade.Account{}, fmt.Errorf("số dư %s: %w", m.c.Market(), err)
 		}
