@@ -125,6 +125,10 @@ type Trader interface {
 	Holding(ctx context.Context, symbol string) (Holding, error)
 	Open(ctx context.Context, order OpenOrder) OpenResult
 	Close(ctx context.Context, symbol, intentID, reasonVI string) CloseResult
+	// Account is the two wallets' quote equity, for the periodic rebalance
+	// (capital.go). It is read at most once per RebalanceIntervalHours, never
+	// on the scan's own cadence, and an error only leaves the size where it is.
+	Account(ctx context.Context) (Account, error)
 }
 
 // Options builds an Engine.
@@ -257,8 +261,10 @@ type Engine struct {
 	// kill that ran while it waited supersedes it.
 	killSeq    int
 	cancelScan context.CancelFunc
-	// lastOverKey de-duplicates the over-limit warning.
-	lastOverKey string
+	// lastOverKey de-duplicates the over-limit warning, and lastRebalanceKey
+	// the rebalance's own, which is retried on every scan until it succeeds.
+	lastOverKey      string
+	lastRebalanceKey string
 }
 
 // New builds a disabled engine.
@@ -440,6 +446,12 @@ func (e *Engine) Step(ctx context.Context) {
 	e.opMu.Lock()
 	defer e.opMu.Unlock()
 
+	// The size is re-read from the account BEFORE the jobs are built, so a scan
+	// that rebalances judges and opens at the new size rather than one scan
+	// behind it. The venue read itself happens with no lock held (CONVENTIONS
+	// §9), which is why this is two lock sections and not one.
+	e.rebalance(ctx)
+
 	e.mu.Lock()
 	if e.killing || e.stopping || ctx.Err() != nil || e.state != StateRunning {
 		e.mu.Unlock()
@@ -527,6 +539,115 @@ func (e *Engine) Step(ctx context.Context) {
 		}
 	}
 	e.openRanked(ctx, entries)
+}
+
+// rebalance re-sizes the run's default notional from the account's own equity
+// when one is due. It is the whole of the periodic rebalance, in three parts:
+// decide under the lock, READ with no lock held, apply under the lock again.
+//
+// Nothing it does can reach a position already open. It writes exactly one
+// field — PortfolioConfig.DefaultPairConfig.NotionalQuote — and each pair picks
+// that up when its next job is built. A pair that is HOLDING keeps the size it
+// opened at until it exits on its own terms.
+func (e *Engine) rebalance(ctx context.Context) {
+	e.mu.Lock()
+	now := e.now()
+	if e.killing || e.stopping || ctx.Err() != nil || e.state != StateRunning || !e.pcfg.rebalanceDue(now.UnixMilli()) {
+		e.mu.Unlock()
+		return
+	}
+	pcfg := e.pcfg
+	// The bot's OWN spot legs, marked to each pair's newest mid. Spot equity
+	// that is in coin rather than in quote; a position whose mid is unknown
+	// contributes nothing, which sizes DOWN and never up.
+	openSpot := 0.0
+	for _, p := range e.pairs {
+		if p.pos == nil || !(p.pos.QtyCoin > 0) || p.signal == nil || !(p.signal.SpotMidQuote > 0) {
+			continue
+		}
+		openSpot += p.pos.QtyCoin * p.signal.SpotMidQuote
+	}
+	e.mu.Unlock()
+
+	readCtx, cancel := context.WithTimeout(ctx, readTimeout)
+	acct, err := e.trader.Account(readCtx)
+	cancel()
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// The run may have been stopped, killed or restarted with another
+	// portfolio while the balances were read; a size from the old run's
+	// parameters must not land on the new one.
+	if e.interruptedLocked(ctx) || e.state != StateRunning || !e.pcfg.rebalanceDue(e.now().UnixMilli()) ||
+		e.pcfg.MaxConcurrentPositions != pcfg.MaxConcurrentPositions || e.pcfg.TotalCapitalCapQuote != pcfg.TotalCapitalCapQuote {
+		return
+	}
+	if err != nil {
+		// The clock is NOT moved: a failed read leaves the rebalance owed, so
+		// the next scan tries again rather than waiting another week. That also
+		// means a venue that stays unreadable would log on every scan, so the
+		// line is keyed by its reason and repeats only when the reason changes.
+		e.logRebalanceOnceLocked("read|"+err.Error(), "không đọc được số dư hai ví — giữ nguyên quy mô "+
+			fmt.Sprintf("%.2f quote mỗi chân: ", e.pcfg.DefaultPairConfig.NotionalQuote)+err.Error())
+		return
+	}
+	plan := planNotional(notionalPlanInput{
+		Account: acct, OpenSpotValueQuote: openSpot,
+		Slots: e.pcfg.MaxConcurrentPositions, MarginFrac: e.marginFrac, BufferPct: e.pcfg.MarginBufferPct,
+		CapQuote: e.pcfg.TotalCapitalCapQuote, MaxNotionalQuote: e.maxNotional,
+	})
+	if !plan.OK {
+		e.logRebalanceOnceLocked("plan|"+plan.ReasonVI, plan.logLineVI(e.pcfg.MaxConcurrentPositions)+
+			fmt.Sprintf(" Giữ nguyên %.2f quote mỗi chân.", e.pcfg.DefaultPairConfig.NotionalQuote))
+		return
+	}
+	// A size the whole run would be refused for is not applied: Config.Validate
+	// is what every start is held to, and a rebalance may not put the run in a
+	// state a person could not have started it in.
+	sized := e.pcfg.DefaultPairConfig
+	sized.NotionalQuote = plan.NotionalQuote
+	if sized.Symbol == "" && len(e.pcfg.Symbols) > 0 {
+		sized.Symbol = e.pcfg.Symbols[0]
+	}
+	if err := sized.Validate(e.maxNotional); err != nil {
+		e.logRebalanceOnceLocked("invalid|"+err.Error(), fmt.Sprintf("quy mô tính ra %.2f quote bị từ chối, giữ nguyên %.2f: %v",
+			plan.NotionalQuote, e.pcfg.DefaultPairConfig.NotionalQuote, err))
+		return
+	}
+	was := e.pcfg.DefaultPairConfig.NotionalQuote
+	e.pcfg.DefaultPairConfig.NotionalQuote = plan.NotionalQuote
+	e.pcfg.LastRebalancedAtMs = e.now().UnixMilli()
+	// Every pair NOT carrying its own Config follows the new default from its
+	// next job; one that does is left alone, and said so.
+	var kept []string
+	for _, sym := range e.pcfg.Symbols {
+		p := e.pairs[sym]
+		if p == nil {
+			continue
+		}
+		if _, own := e.pcfg.PairOverrides[sym]; own {
+			kept = append(kept, sym)
+			continue
+		}
+		p.cfg.NotionalQuote = plan.NotionalQuote
+	}
+	e.lastRebalanceKey = ""
+	line := fmt.Sprintf("%.2f → %.2f quote mỗi chân · ", was, plan.NotionalQuote) + plan.logLineVI(e.pcfg.MaxConcurrentPositions)
+	if len(kept) > 0 {
+		line += " Giữ cấu hình riêng (không đổi quy mô): " + strings.Join(kept, ", ") + "."
+	}
+	e.logLocked("REBALANCE", "", line)
+}
+
+// logRebalanceOnceLocked writes a REBALANCE line only when its reason differs
+// from the last one. A rebalance that cannot be done stays OWED, so it is tried
+// on every scan; without this, an unreadable wallet would fill the console.
+func (e *Engine) logRebalanceOnceLocked(key, messageVI string) {
+	if key == e.lastRebalanceKey {
+		return
+	}
+	e.lastRebalanceKey = key
+	e.logLocked("REBALANCE", "", messageVI)
 }
 
 // readAll reads every job, at most maxParallelReads at a time.
@@ -829,11 +950,18 @@ func (e *Engine) judgeHolding(ctx, scanCtx context.Context, job scanJob, r readi
 		}
 		return exitPlan{}, false
 	}
-	sig := gauge(job.cfg, r.snap, now, e.marginFrac)
-	ex := assessExit(job.cfg, r.snap, pos, now)
+	// The gauge and the exits price THE POSITION, not the run's current slot
+	// size: after a rebalance the two differ, and a held pair's round trip and
+	// APR must describe the legs that are really on the venue.
+	holdCfg := job.cfg
+	if pos.NotionalQuote > 0 {
+		holdCfg.NotionalQuote = pos.NotionalQuote
+	}
+	sig := gauge(holdCfg, r.snap, now, e.marginFrac)
+	ex := assessExit(holdCfg, r.snap, pos, now)
 	sig.ExitChecks, sig.ExitDue = ex.Checks, ex.Due
 	sig.EntryBasisBps, sig.BasisWidenBps = ptr(pos.EntryBasisBps), ex.BasisWidenBps
-	sig.fillHolding(job.cfg, ex.Result)
+	sig.fillHolding(holdCfg, ex.Result)
 	if ex.Due {
 		sig.VerdictVI = "ĐIỀU KIỆN THOÁT: " + strings.Join(ex.ReasonsVI, " · ")
 	} else {

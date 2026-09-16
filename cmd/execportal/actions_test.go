@@ -63,6 +63,18 @@ type fakeVenue struct {
 	// fundingCalls counts FundingRateHistory reads; the engine reads several
 	// symbols at once, so it is atomic.
 	fundingCalls atomic.Int64
+	// balanceErr makes this wallet unreadable.
+	balanceErr error
+}
+
+// GetBalance is brokertest's, with a knob for the wallet a venue will not give
+// up: the auto-trader's rebalance must leave its size alone rather than read
+// the failure as an empty account (autotrade/capital.go).
+func (f *fakeVenue) GetBalance(ctx context.Context, market broker.Market) ([]broker.Balance, error) {
+	if f.balanceErr != nil {
+		return nil, f.balanceErr
+	}
+	return f.Fake.GetBalance(ctx, market)
 }
 
 func (f *fakeVenue) Market() broker.Market { return f.market }
@@ -157,6 +169,10 @@ func fakePortal(t *testing.T) (*portal, *fakeVenue, *fakeVenue) {
 	spot.SetBalance(broker.MarketSpot, broker.Balance{Market: broker.MarketSpot, Asset: "BTC", FreeQtyCoin: 1},
 		broker.Balance{Market: broker.MarketSpot, Asset: "USDT", FreeQtyCoin: 10_000})
 	perp := newFakeVenue(t, broker.MarketFuturesUSDM, perpRulesBTC)
+	// The futures WALLET, which the auto-trader's rebalance sizes its slots
+	// from beside the spot one (autotrade/capital.go). Two separate
+	// registrations on this testnet, so two separate balances.
+	perp.SetBalance(broker.MarketFuturesUSDM, broker.Balance{Market: broker.MarketFuturesUSDM, Asset: "USDT", FreeQtyCoin: 5_000})
 	perp.book = fakeBookAt(fakePerpMidQuote)
 	perp.SetMarkPrice(broker.MarkPrice{MarkPriceQuote: fakePerpMidQuote, NextFundingTimeMs: time.Now().Add(time.Hour).UnixMilli()})
 

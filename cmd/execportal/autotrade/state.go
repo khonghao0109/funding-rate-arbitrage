@@ -344,10 +344,30 @@ type PortfolioConfig struct {
 
 	ScanInterval time.Duration
 
+	// AutoRebalance re-sizes DefaultPairConfig.NotionalQuote from the account's
+	// own equity every RebalanceIntervalHours (capital.go). It moves the size of
+	// FUTURE opens only: a rebalance never closes, shrinks or re-prices a
+	// position already on the venue, which would pay a round trip to change a
+	// number. Off leaves the notional exactly as the operator typed it.
+	AutoRebalance bool
+	// MarginBufferPct is the share of equity held back from the slots, as a
+	// fraction in [MinMarginBufferPct, MaxMarginBufferPct].
+	MarginBufferPct float64
+	// RebalanceIntervalHours is how long a size stands before it is re-read.
+	RebalanceIntervalHours float64
+	// LastRebalancedAtMs is when the size was last set from the account, on the
+	// engine's own clock; 0 means never, and the first scan of a run with
+	// AutoRebalance on then sizes immediately.
+	LastRebalancedAtMs int64
+
 	// DefaultPairConfig is every pair's Config unless PairOverrides names it.
 	// Its Symbol is ignored.
 	DefaultPairConfig Config
 	// PairOverrides replaces the default for the symbols it names, whole.
+	//
+	// A pair with its own Config is NOT re-sized by a rebalance: naming a size
+	// for one pair is an instruction, and an automatic rule may not overwrite
+	// one. The console says so at every rebalance that skips one.
 	PairOverrides map[string]Config
 }
 
@@ -365,6 +385,9 @@ func DefaultPortfolioConfig(symbols []string) PortfolioConfig {
 		MaxConcurrentPositions: maxConcurrent,
 		TotalCapitalCapQuote:   DefaultTotalCapitalCapQuote,
 		ScanInterval:           DefaultScanInterval,
+		AutoRebalance:          DefaultAutoRebalance,
+		MarginBufferPct:        DefaultMarginBufferPct,
+		RebalanceIntervalHours: DefaultRebalanceIntervalHours,
 		DefaultPairConfig:      DefaultConfig(""),
 	}
 }
@@ -405,6 +428,18 @@ func (pc PortfolioConfig) Validate(allowed []string, maxNotionalQuote, capitalPe
 	}
 	if pc.ScanInterval < minScanInterval {
 		problems = append(problems, fmt.Sprintf("chu kỳ quét %s ngắn hơn %s", pc.ScanInterval, minScanInterval))
+	}
+	// The two rebalance values are validated whether or not it is switched on:
+	// a run started with the switch off and a nonsense buffer would size
+	// wrongly the moment somebody turns it on.
+	if !finite(pc.MarginBufferPct) || pc.MarginBufferPct < MinMarginBufferPct || pc.MarginBufferPct > MaxMarginBufferPct {
+		problems = append(problems, fmt.Sprintf("margin_buffer_pct %v phải trong [%.2f, %.2f] (phần vốn giữ lại làm đệm ký quỹ)", pc.MarginBufferPct, MinMarginBufferPct, MaxMarginBufferPct))
+	}
+	if !finite(pc.RebalanceIntervalHours) || pc.RebalanceIntervalHours < MinRebalanceIntervalHours || pc.RebalanceIntervalHours > MaxRebalanceIntervalHours {
+		problems = append(problems, fmt.Sprintf("rebalance_interval_hours %v phải trong [%.0f, %.0f]", pc.RebalanceIntervalHours, MinRebalanceIntervalHours, MaxRebalanceIntervalHours))
+	}
+	if pc.LastRebalancedAtMs < 0 {
+		problems = append(problems, fmt.Sprintf("last_rebalanced_at_ms %d âm", pc.LastRebalancedAtMs))
 	}
 	capOK := finite(pc.TotalCapitalCapQuote) && pc.TotalCapitalCapQuote > 0
 	if !capOK {
@@ -487,6 +522,11 @@ type PortfolioView struct {
 	MaxConcurrentPositions int                   `json:"max_concurrent_positions"`
 	TotalCapitalCapQuote   float64               `json:"total_capital_cap_quote"`
 	ScanIntervalSec        float64               `json:"scan_interval_sec"`
+	AutoRebalance          bool                  `json:"auto_rebalance"`
+	MarginBufferPct        float64               `json:"margin_buffer_pct"`
+	RebalanceIntervalHours float64               `json:"rebalance_interval_hours"`
+	LastRebalancedAtMs     int64                 `json:"last_rebalanced_at_ms"`
+	NextRebalanceAtMs      int64                 `json:"next_rebalance_at_ms"`
 	DefaultPairConfig      ConfigView            `json:"default_pair_config"`
 	PairOverrides          map[string]ConfigView `json:"pair_overrides"`
 }
@@ -495,6 +535,9 @@ func (pc PortfolioConfig) view() PortfolioView {
 	v := PortfolioView{
 		Symbols: append([]string{}, pc.Symbols...), MaxConcurrentPositions: pc.MaxConcurrentPositions,
 		TotalCapitalCapQuote: pc.TotalCapitalCapQuote, ScanIntervalSec: pc.ScanInterval.Seconds(),
+		AutoRebalance: pc.AutoRebalance, MarginBufferPct: pc.MarginBufferPct,
+		RebalanceIntervalHours: pc.RebalanceIntervalHours, LastRebalancedAtMs: pc.LastRebalancedAtMs,
+		NextRebalanceAtMs: pc.nextRebalanceAtMs(),
 		DefaultPairConfig: pc.DefaultPairConfig.view(), PairOverrides: map[string]ConfigView{},
 	}
 	for s, c := range pc.PairOverrides {
@@ -502,6 +545,30 @@ func (pc PortfolioConfig) view() PortfolioView {
 		v.PairOverrides[s] = c.view()
 	}
 	return v
+}
+
+// nextRebalanceAtMs is when the size is next read from the account; 0 when
+// auto-rebalance is off or nothing has been sized yet (the next scan does it).
+func (pc PortfolioConfig) nextRebalanceAtMs() int64 {
+	if !pc.AutoRebalance || pc.LastRebalancedAtMs <= 0 || !finite(pc.RebalanceIntervalHours) {
+		return 0
+	}
+	return pc.LastRebalancedAtMs + int64(pc.RebalanceIntervalHours*float64(time.Hour/time.Millisecond))
+}
+
+// rebalanceDue reports whether a size read is owed at now. A run that has never
+// sized is due at once, so a bot switched on with an empty form does not trade
+// a week at the shipped 65 before its first look at the account.
+func (pc PortfolioConfig) rebalanceDue(nowMs int64) bool {
+	switch {
+	case !pc.AutoRebalance:
+		return false
+	case pc.LastRebalancedAtMs <= 0:
+		return true
+	default:
+		next := pc.nextRebalanceAtMs()
+		return next > 0 && nowMs >= next
+	}
 }
 
 // LogEntry is one line of the bot's own console. Symbol is empty for a line

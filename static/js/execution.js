@@ -886,6 +886,9 @@ function syncAtForm(s) {
   $("at-min-basis").value = String(d.min_entry_basis_bps);
   $("at-min-epochs").value = String(d.min_hold_epochs);
   $("at-take-profit").value = String(d.target_take_profit_net_pct);
+  $("at-buffer").value = String((pf.margin_buffer_pct || 0) * 100);
+  $("at-rebalance-hours").value = String(pf.rebalance_interval_hours);
+  $("at-auto-rebalance").checked = Boolean(pf.auto_rebalance);
   $("at-max-pairs").value = String(pf.max_concurrent_positions);
   $("at-capital-cap").value = String(pf.total_capital_cap_quote);
   for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) input.checked = (pf.symbols || []).includes(input.value);
@@ -909,7 +912,8 @@ function syncAtButtons() {
   toggle.dataset.halted = halted ? "true" : "false";
   setText("at-toggle-label", halted ? "XÁC NHẬN & TẮT" : enabled ? "TẮT AUTO-TRADER" : "BẬT AUTO-TRADER");
   setText("at-stop", halted ? "[XÁC NHẬN DỪNG BẢO VỆ → TẮT]" : "[DỪNG & GIỮ VỊ THẾ]");
-  for (const id of ["at-notional", "at-min-apr", "at-max-epochs", "at-min-basis", "at-min-epochs", "at-take-profit", "at-max-pairs", "at-capital-cap"]) {
+  for (const id of ["at-notional", "at-min-apr", "at-max-epochs", "at-min-basis", "at-min-epochs", "at-take-profit",
+    "at-buffer", "at-rebalance-hours", "at-auto-rebalance", "at-max-pairs", "at-capital-cap"]) {
     $(id).disabled = enabled || halted || busy;
   }
   for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) input.disabled = enabled || halted || busy;
@@ -953,6 +957,9 @@ async function atStart() {
   const minBasis = Number($("at-min-basis").value);
   const minEpochs = Number($("at-min-epochs").value);
   const takeProfit = Number($("at-take-profit").value);
+  const bufferPct = Number($("at-buffer").value);
+  const rebalanceHours = Number($("at-rebalance-hours").value);
+  const autoRebalance = $("at-auto-rebalance").checked;
   const maxPairs = Number($("at-max-pairs").value);
   const cap = Number($("at-capital-cap").value);
   const max = state.status ? state.status.max_notional_quote : 50000;
@@ -966,6 +973,11 @@ async function atStart() {
   if (!Number.isInteger(minEpochs) || minEpochs < 0 || minEpochs > 1000) problems.push("sàn giữ khấu hao phí phải là số nguyên trong [0, 1000]");
   else if (epochs > 0 && minEpochs >= epochs) problems.push(`sàn giữ ${minEpochs} mốc ≥ trần giữ ${epochs} mốc — lối thoát funding không bao giờ chạy được`);
   if (!isNum(takeProfit) || takeProfit < 0 || takeProfit > 100) problems.push("ngưỡng chốt lời sớm phải là số trong [0, 100] phần trăm trên vốn");
+  // Validated whether or not the switch is on, exactly as the server does: a
+  // run started off with a nonsense buffer would size wrongly the moment
+  // somebody turns it on.
+  if (!isNum(bufferPct) || bufferPct < 10 || bufferPct > 50) problems.push("đệm ký quỹ phải trong [10, 50] phần trăm");
+  if (!isNum(rebalanceHours) || rebalanceHours < 1 || rebalanceHours > 8760) problems.push("chu kỳ cân bằng vốn phải trong [1, 8760] giờ");
   if (!Number.isInteger(maxPairs) || maxPairs < 1 || maxPairs > 50) problems.push("số cặp mở tối đa phải là số nguyên trong [1, 50]");
   if (!isNum(cap) || cap <= 0) problems.push("hạn mức vốn phải là số dương");
   else if (isNum(notional) && notional * perNotional > cap) problems.push(`một cặp ${fmt.quote(notional, 2)} USDT buộc ${fmt.quote(notional * perNotional, 2)} USDT vốn, vượt hạn mức ${fmt.quote(cap, 2)}`);
@@ -984,6 +996,9 @@ async function atStart() {
     ["Ngưỡng vào", `basis lúc vào ≥ ${minBasis} bps (perp phải đắt hơn spot), Net APR dự phóng ≥ ${minApr}%/năm trên notional một chân (strategy.NetAPR, phí đọc từ tài khoản testnet), độ sâu ±0,5% ≥ ${d.depth_multiple}× notional, còn > ${fmt.duration(d.min_time_to_settle_sec)} tới mốc settle`],
     ["Chọn cặp", "các cặp đủ điều kiện xếp theo Net APR, mở lần lượt từng lệnh từ cao xuống thấp tới khi hết chỗ hoặc hết hạn mức"],
     ["Giữ", epochs > 0 ? `tối đa ${epochs} mốc settle` : `khi funding đã settle còn dương (dự phóng ${d.projection_hold_days} ngày)`],
+    ["Quy mô mỗi slot", autoRebalance
+      ? `TỰ ĐỘNG theo vốn tài khoản: (vốn hai ví × ${100 - bufferPct}% ÷ ${maxPairs} slot) ÷ ${perNotional}, đọc lại mỗi ${rebalanceHours} giờ. ${fmt.quote(notional, 2)} USDT ở trên chỉ là mức khởi tạo. Cân bằng KHÔNG đóng hay thu nhỏ vị thế đang mở.`
+      : `CỐ ĐỊNH ${fmt.quote(notional, 2)} USDT mỗi chân — lãi không được tái đầu tư`],
     ["Sàn giữ khấu hao phí", minEpochs > 0
       ? `${minEpochs} mốc settle đầu KHÔNG thoát vì funding âm — một vòng phí lớn hơn nhiều so với vài mốc âm nhỏ (chốt lời và cắt lỗ basis vẫn chạy)`
       : "TẮT — thoát ngay ở mốc settle ≤ 0 đầu tiên (luật cũ, mỗi lần thoát trả trọn một vòng phí)"],
@@ -1015,6 +1030,7 @@ async function atStart() {
   const r = await post("autotrade-start", "/api/autotrade/start", {
     symbols, notional_quote: notional, min_net_apr_pct: minApr, max_hold_epochs: epochs,
     min_entry_basis_bps: minBasis, min_hold_epochs: minEpochs, target_take_profit_net_pct: takeProfit,
+    auto_rebalance: autoRebalance, margin_buffer_pct: bufferPct / 100, rebalance_interval_hours: rebalanceHours,
     max_concurrent_positions: maxPairs, total_capital_cap_quote: cap,
   });
   at.acting = false;

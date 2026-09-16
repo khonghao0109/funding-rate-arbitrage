@@ -4957,6 +4957,135 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   25–35 bps chứ không phải ~8.
 
 
+#### Công cụ vận hành 4.5g — Vốn theo slot có đệm & cân bằng định kỳ — 🟡 CHƯA NGHIỆM THU TRÊN TESTNET (2026-09-16, Q18)
+
+> **Không phải một bước mới của lộ trình** — GĐ 4 vẫn 5/6, 4.6 vẫn sau phán quyết 3.5.
+> Bot chạy trên một notional người vận hành gõ một lần (65 quote). Yêu cầu: cấp quy mô
+> mỗi slot TỪ VỐN THẬT của tài khoản và đọc lại theo lịch, để lãi được tái đầu tư mà
+> không ai phải sửa form — và không bao giờ vì thế mà đụng vào một vị thế đang mở. Không
+> giới hạn nào của Q18 đổi: vẫn chỉ testnet, vẫn quyết-không-thực-thi, mọi lệnh vẫn qua
+> `openAs`/`close` dưới `writeMu`, mỗi lúc MỘT lệnh. Không đụng `cmd/scanner`, không
+> SQLite, không dependency mới.
+>
+> ### Cái gì làm gì
+>
+> - **`Trader.Account(ctx)`** (`autotrade/capital.go`) là mặt duy nhất gói này thấy tiền:
+>   `Account{QuoteAsset, SpotQuoteTotal, FuturesQuoteTotal, ReadAtMs}`, đọc từ SÀN (quy
+>   tắc 7). Hai ví để RIÊNG và không bao giờ được người đọc cộng thẳng: trên testnet này
+>   chúng là hai đăng ký tách biệt — khoá futures gửi tới host spot bị từ chối -2015
+>   (4.1) — nên không gì ở đây chuyển được một quote từ ví này sang ví kia. Tài sản định
+>   giá là cái PERP KHAI cho symbol đầu của run, không phải chuỗi `"USDT"`, và hai sàn
+>   phải khai giống nhau (bẫy assets của CLAUDE.md). Đọc nhiều nhất một lần mỗi chu kỳ
+>   cân bằng, không theo nhịp quét: weight 20 spot + 5 futures.
+> - **`planNotional`** là toàn bộ số học, thuần hàm, trả về một `notionalPlan` mà dòng
+>   console, wire và test cùng đọc. Công thức của đặc tả là ba dòng đầu:
+>   `tradable = equity × (1 − buffer)`, `slot = tradable / N`,
+>   `notional = slot / (1 + marginFrac)`. **Nó chỉ đúng khi hai ví tình cờ chia theo đúng
+>   tỷ lệ vị thế cần** (spot 1, futures `marginFrac`), mà chúng không, và chúng trôi xa
+>   nhau sau mỗi mốc settle — nên quy mô là số NHỎ NHẤT giữa con số đó và cái mỗi ví tự
+>   gánh nổi: `spotPool / N` và `futuresPool × (1 − buffer) / (N × marginFrac)`, cộng hạn
+>   mức vốn của run và trần notional mỗi chân của portal. `BoundByVI` nêu tên cái nào đã
+>   chặn — thứ đầu tiên phải đọc khi một quy mô không như ai đó nghĩ.
+> - **`Engine.rebalance`** chạy ĐẦU mỗi `Step`, ba phần: quyết dưới khoá, ĐỌC sàn không
+>   giữ khoá (CONVENTIONS §9), áp lại dưới khoá. Nó ghi đúng MỘT trường —
+>   `PortfolioConfig.DefaultPairConfig.NotionalQuote`, và `p.cfg` của các cặp không có
+>   cấu hình riêng — nên quy mô mới áp cho CHÍNH lượt quét đó, không trễ một lượt.
+> - **`PortfolioConfig`**: `AutoRebalance` (ship BẬT), `MarginBufferPct` (0,30, chặn
+>   trong [0,10, 0,50]), `RebalanceIntervalHours` (168), `LastRebalancedAtMs`. Cả hai giá
+>   trị được `Validate` kiểm dù công tắc đang TẮT: một run bật lên sau đó với đệm vô
+>   nghĩa sẽ cấp quy mô sai ngay lúc bật.
+> - **Điều kiện vào mới `size_fits`** (`sizeFloorQuote`): quy mô phải ≥ cái CHẶT NHẤT
+>   trong ba thứ — notional tối thiểu của sàn, lượng tối thiểu × giá, và bước nhảy × giá
+>   ÷ 5%. Luật đọc từ `exchangeInfo` của CHÍNH hai testnet qua `rulesFor` (chia sẻ 10
+>   phút), không phải ảnh chụp mainnet và không phải hằng số. **Luật CHƯA ĐỌC ĐƯỢC không
+>   phải "không có giới hạn"**: check báo không đánh giá được và cặp không vào.
+> - **Danh sách cặp mặc định còn 7**: BTC, ETH, LINK, UNI, LTC, SUI, AAVE. Bỏ SOL
+>   (funding âm gần như quanh năm), XRP (funding ≈ 0, không trả nổi một vòng phí), NEAR
+>   (188 lần đảo dấu/năm), và BNB + DOGE, hai cái mà bảng xếp hạng funding 3 năm để ở đáy
+>   (CLAUDE.md, quy luật 3). Một slot tiêu vào cặp không tự trả nổi vòng phí là một slot
+>   sáu cặp kia không có.
+> - **Trang**: thẻ "Phân bổ vốn theo slot" (notional mỗi chân và vốn mỗi slot, số slot,
+>   đệm, chu kỳ + lần gần nhất, vốn đang dùng), huy hiệu **Q** trên radar, ba ô nhập
+>   (đệm %, chu kỳ giờ, công tắc tự động cân bằng) và một dòng trong hộp xác nhận nói rõ
+>   notional trên form chỉ là mức khởi tạo. `autotrade.js` vẫn KHÔNG gửi gì.
+>
+> ### Chỗ khác đặc tả, và vì sao
+>
+> 1. **Một pool vốn không tồn tại.** Đặc tả tính `E_total` như một túi tiền. Ở đây là hai
+>    ví không chuyển được cho nhau, nên công thức của đặc tả được giữ NGUYÊN và bị chặn
+>    thêm bởi khả năng của từng ví. Đây chính là mục tiêu đặc tả tự nêu — "không cạn tiền
+>    ký quỹ ví Futures": với 10.000 spot và 1.000 futures, công thức một-pool cấp 1.283
+>    mỗi chân và cần 3.850 ký quỹ từ một ví có 1.000; luật nhỏ-nhất cấp 466 và vừa cả hai.
+> 2. **Đệm tính vào ví FUTURES, không vào ví spot.** Chân spot trả tiền trọn và không bị
+>    thanh lý; đệm là khoảng thở của ký quỹ, và ký quỹ nằm một bên.
+> 3. **`OpenSpotValueQuote` phải được cộng vào.** Vị thế đang mở là vốn spot đang nằm
+>    dưới dạng coin. Bỏ nó ra thì mỗi lần mở một cặp, "tổng vốn" tụt và slot sau nhỏ đi;
+>    mỗi lần đóng lại phình ra — một cái bánh cóc, không phải một phép đo. Engine cộng từ
+>    CHÍNH vị thế của nó, đánh dấu theo giá giữa mới nhất; coin không thuộc vị thế nào của
+>    bot thì KHÔNG tính, vì bot không được cấp quy mô trên vốn nó không điều khiển.
+> 4. **"Sai số hedge ≤ 5%" là một rủi ro `internal/execution` đã khử.** Nó làm tròn mỗi
+>    chân trên lưới của sàn đó, lấy số NHỎ HƠN rồi làm tròn lại trên sàn kia, nên hai chân
+>    mở bằng nhau hoặc cả ý định bị từ chối (`execution/doc.go`). Cái 5% thật sự chặn là
+>    **VỐN KHÔNG VÀO ĐƯỢC THỊ TRƯỜNG**: đặt 65 quote BTC ở bước 0,0001 và giá 77.000 thì
+>    0,0008 lên sàn, tức 61,6 — 5,2% của slot bị bỏ lại. Điều đó đáng chặn vì cả cơ chế
+>    slot dựa trên việc mỗi slot triển khai đúng phần của nó; một slot lặng lẽ chỉ dùng
+>    90% làm cái đệm thật to hơn cái đã cấu hình. Ngưỡng, số học và hệ quả (BTC cần ~154
+>    quote) giữ đúng như đặc tả; chỉ cái TÊN được sửa cho đúng thứ nó đo.
+> 5. **65 quote không còn là một quy mô, nó là MỨC KHỞI TẠO.** Với `AutoRebalance` bật,
+>    `LastRebalancedAtMs = 0` là "đến hạn ngay", nên lượt quét đầu tiên của một run cấp
+>    quy mô trước khi bất kỳ điều kiện vào nào được chấm. Một run TẮT cân bằng mà để 65
+>    thì BTC không vào lệnh nữa — đúng như điều 4.
+> 6. **Cặp có cấu hình riêng KHÔNG bị cân bằng lại**, và console nêu tên chúng: đặt quy mô
+>    cho một cặp là một chỉ thị, một luật tự động không được ghi đè chỉ thị.
+> 7. **Một lần đọc hỏng để nguyên quy mô VÀ để nguyên đồng hồ**, nên lượt quét sau thử
+>    lại thay vì chờ hết tuần. Vì nó thử lại mỗi lượt, dòng log được khử trùng theo lý do
+>    (`logRebalanceOnceLocked`) — vòng log chỉ giữ 60 dòng và một lỗi lặp sẽ đẩy mọi sự
+>    kiện khác ra trong mười phút.
+> 8. **Cặp ĐANG GIỮ được định giá theo quy mô của CHÍNH NÓ.** Sau một lần cân bằng, quy mô
+>    slot và quy mô vị thế khác nhau; `judgeHolding` dùng notional của vị thế cho `gauge`
+>    và `assessExit`, để vòng phí và APR hiển thị mô tả hai chân thật đang nằm trên sàn.
+>
+> ### Nghiệm thu 2026-09-16 — **MỘT PHẦN**
+>
+> | tiêu chí | kết quả |
+> |---|---|
+> | 1. `go test -count=1 -race ./...` | xanh, **37 package ok, exit 0**, 0 data race; `gofmt -l .` không in gì; `go vet ./...` sạch |
+> | 2. không gãy guard/parity | `TestAutotrade_DecidesOnTheTestnetAndTradesOnlyThroughThePortal` (capital.go chỉ import `fmt`, `math`), `TestExecportal_IntentStateHasExeccheckShape`, `TestExecportal_EveryOrderPathHasFixedCallers`, `TestUI_OnlyTheExecutionTabWrites` — ĐẠT |
+> | 3. số học phân bổ | `TestPlanNotional_SizesASlotFromEquity` (từng số hạng tính tay: 15.000 → đệm 4.500 → 10.500 ÷ 6 ÷ 1,5 = 1.166,67; và một tài khoản đã triển khai hết cho ĐÚNG con số đó — không bánh cóc) |
+> | 4. hai ví | `TestPlanNotional_TheTighterWalletBindsAndIsNamed`: ví futures cạn → ký quỹ chặn, ví spot cạn → chân spot chặn, và mọi trường hợp đều được kiểm lại rằng `N × notional` VỪA cả hai ví |
+> | 5. không vượt trần | `TestPlanNotional_NeverExceedsTheCapitalCapOrThePortalCeiling` (hạn mức vốn rồi trần notional, mỗi cái đều được kiểm lại bằng tổng thực) |
+> | 6. từ chối thay vì đoán | `TestPlanNotional_RefusesRatherThanSizingOnNonsense` (10 đầu vào hỏng, mỗi cái nêu tên trường sai), `TestSizeFloorQuote_…` (4 luật chưa đọc được đều trả `ok=false`) |
+> | 7. lịch cân bằng | `TestRebalanceDue_FollowsTheClockAndTheSwitch` + `TestEngine_RebalanceRunsOnItsScheduleAndNotOnEveryScan`: 1 lần đọc ở lượt đầu, **0** lần trong 3 lượt tiếp dù số dư đã gấp 5, đúng 1 lần nữa sau khi qua 168 giờ, và **0** ở lượt ngay sau đó |
+> | 8. **không đụng vị thế đang mở** | `TestEngine_ARebalanceNeverClosesOrResizesAnOpenPosition`: sau một tuần và tài khoản gấp đôi — 0 lệnh đóng, **vị thế perp đọc TỪ SÀN GIẢ không đổi một chữ số**, `OpenedAtMs`/`QtyCoin`/`NotionalQuote` y nguyên, còn quy mô mặc định của run thì đã đổi |
+> | 9. đường hỏng | `TestEngine_AFailedBalanceReadKeepsTheSizeAndRetriesNextScan` (giữ quy mô, KHÔNG dời đồng hồ, thử lại ngay lượt sau), `TestEngine_AnEmptyAccountLeavesTheSizeAloneAndSaysSo`, `TestEngine_ARepeatingRebalanceFailureIsLoggedOnce` (4 lượt hỏng = 1 dòng; lý do khác = dòng khác; thành công xoá khoá) |
+> | 10. cấu hình riêng | `TestEngine_ARebalanceLeavesAPairsOwnConfigAlone` |
+> | 11. luật sàn | `TestAssessEntry_RefusesASizeTheVenueGridWouldEat`: 154 và 200 qua, **65 trượt**, 40 trượt; luật chưa đọc được → không đánh giá → không vào |
+> | 12. qua API | `TestAutotradeAPI_TheRebalanceSizesSlotsFromBothWallets`: start với `auto_rebalance` → một lượt quét → 1.166,67 mỗi chân, mở đúng quy mô đó, **perp đọc lại từ sàn giả khớp**, và một ví không đọc được để nguyên quy mô. Cộng 4 thân bị từ chối mới trong `…EveryWriteIsBehindTheWalls` |
+> | 13. giao diện, tĩnh | `TestUI_HasNothingTheCSPWouldRefuse` và `TestUI_EveryIdTheScriptsLookUpIsInTheMarkup` ĐẠT cho ba ô nhập mới, thẻ phân bổ vốn và huy hiệu **Q** |
+> | 14. **giao diện, chạy thật** | ❌ **CHƯA LÀM** — máy phiên này không có Chrome/Chromium |
+> | 15. **chạy thật trên testnet** | ❌ **CHƯA LÀM** — một `cmd/execportal` khác nghe 127.0.0.1:8087 suốt phiên, không bị đụng tới. Chưa có: bot đọc số dư thật, cấp quy mô thật, giữ một vị thế qua một lần cân bằng thật |
+>
+> **Chưa được coi là ✅** — tiêu chí 14 và 15 là hai tiêu chí 4.5d/4.5e phải đạt mới được
+> đánh dấu. Walkthrough cho người vận hành:
+> [`docs/reports/autotrade-capital-walkthrough-2026-09-16.md`](reports/autotrade-capital-walkthrough-2026-09-16.md).
+>
+> ### Nợ có tên
+>
+> - 🔴 (từ 4.5c) JS feed và thư viện biểu đồ cùng origin với API lệnh — chưa đổi.
+> - **`OpenSpotValueQuote` đo theo giá giữa của lượt quét TRƯỚC** (ảnh chụp lấy dưới khoá
+>   trước khi đọc số dư), nên lệch nhiều nhất một lượt quét. Một cặp chưa có giá giữa
+>   đóng góp 0, tức cấp quy mô NHỎ đi chứ không to lên.
+> - **Coin không thuộc vị thế nào của bot không được tính**, kể cả 1 BTC testnet gieo sẵn.
+>   An toàn, nhưng nghĩa là một tài khoản chủ yếu giữ coin sẽ tự cấp quy mô rất nhỏ.
+> - **Không có sàn dưới cho quy mô slot ở tầng danh mục**: nếu vốn chỉ đủ cấp 30 quote mỗi
+>   slot thì mọi cặp trượt `size_fits` và bot không vào gì — thấy rõ trên radar (huy hiệu
+>   **Q** đỏ, lý do nêu con số), nhưng không có dòng nào nói "hãy giảm số slot".
+>   Đặc tả gợi ý dồn slot cho cặp khác khi một cặp không đủ; ở đây slot không được dồn —
+>   `MaxConcurrentPositions` vẫn là N và cặp trượt chỉ đơn giản không vào.
+> - **Cân bằng đọc số dư mỗi 168 giờ, nên một lần rút tiền giữa chu kỳ không được thấy**
+>   cho tới lần đọc sau; hạn mức vốn và số slot vẫn chặn, nhưng quy mô thì cũ.
+
+
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
 - Chạy tối thiểu 4 tuần, đối chiếu từng chu kỳ funding với sổ sách bot.

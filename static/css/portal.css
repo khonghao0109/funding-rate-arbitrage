@@ -2181,6 +2181,43 @@ tr.at-row-halted td {
   accent-color: var(--cyan);
 }
 
+/* The auto-rebalance switch: a full-width row under the number fields, because
+   its label is a sentence about what the bot will do with the operator's money
+   and not a one-word toggle. */
+.at-check {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.at-check:has(input:checked) {
+  border-color: var(--cyan-line);
+  background: var(--cyan-soft);
+  color: var(--text);
+}
+
+.at-check input {
+  flex: none;
+  margin-top: 2px;
+  accent-color: var(--cyan);
+}
+
+.at-check input:disabled {
+  cursor: not-allowed;
+}
+
+.at-capital-card .stat-v {
+  font-size: var(--fs-lg);
+}
+
 .at-radar-table td {
   vertical-align: middle;
 }

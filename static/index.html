@@ -294,6 +294,18 @@
         </details>
       </article>
 
+      <!-- KHỐI 2b: PHÂN BỔ VỐN THEO SLOT -->
+      <article class="card mt16 at-capital-card" aria-labelledby="at-capital-title">
+        <div class="card-head">
+          <h2 id="at-capital-title">Phân bổ vốn theo slot</h2>
+          <span class="pill" id="at-rebalance-state">—</span>
+          <span class="spacer"></span>
+          <span class="hint" id="at-rebalance-next">—</span>
+        </div>
+        <div class="stat-grid mt12" id="at-capital-tiles"></div>
+        <p class="note mt8" id="at-capital-note"></p>
+      </article>
+
       <!-- KHỐI 3: VỊ THẾ ĐANG MỞ THEO TỪNG CẶP -->
       <article class="card mt16" aria-labelledby="at-pos-title">
         <div class="card-head">
@@ -376,7 +388,21 @@
                 <input type="number" id="at-take-profit" min="0" max="100" step="0.01" value="0.50" inputmode="decimal" required>
                 <div class="hint">0 = tắt chốt lời hội tụ basis</div>
               </div>
+              <div class="field">
+                <label for="at-buffer">Đệm ký quỹ (%)</label>
+                <input type="number" id="at-buffer" min="10" max="50" step="1" value="30" inputmode="decimal" required>
+                <div class="hint">phần vốn giữ lại, không chia cho slot nào</div>
+              </div>
+              <div class="field">
+                <label for="at-rebalance-hours">Chu kỳ cân bằng vốn (giờ)</label>
+                <input type="number" id="at-rebalance-hours" min="1" max="8760" step="1" value="168" inputmode="numeric" required>
+                <div class="hint">168 giờ = 7 ngày</div>
+              </div>
             </div>
+            <label class="at-check mt12" for="at-auto-rebalance">
+              <input type="checkbox" id="at-auto-rebalance" checked>
+              <span>Tự động cân bằng quy mô theo vốn tài khoản — notional ở trên chỉ là mức khởi tạo, lượt quét đầu sẽ thay bằng vốn thật chia đều cho các slot. KHÔNG bao giờ đóng hay thu nhỏ vị thế đang mở.</span>
+            </label>
             <fieldset class="at-symbols mt12">
               <legend>Cặp được phép giao dịch</legend>
               <div class="at-symbols-bar mb8">
@@ -421,7 +447,7 @@
               <tbody id="at-radar-body"></tbody>
             </table>
           </div>
-          <p class="hint mt8">Năm điều kiện: <strong>F</strong> funding đang hình thành &gt; 0 · <strong>B</strong> basis lúc vào ≥ ngưỡng (perp phải đắt hơn spot) · <strong>A</strong> Net APR ≥ ngưỡng · <strong>D</strong> sổ lệnh ±0,5% ≥ 2× notional ở cả 4 phía · <strong>T</strong> còn đủ xa mốc settle và đồng hồ lệch ≤ 1000 ms. Rê chuột lên một điều kiện để xem số liệu.</p>
+          <p class="hint mt8">Sáu điều kiện: <strong>F</strong> funding đang hình thành &gt; 0 · <strong>B</strong> basis lúc vào ≥ ngưỡng (perp phải đắt hơn spot) · <strong>Q</strong> quy mô slot đủ lớn cho luật sàn và bước nhảy · <strong>A</strong> Net APR ≥ ngưỡng · <strong>D</strong> sổ lệnh ±0,5% ≥ 2× notional ở cả 4 phía · <strong>T</strong> còn đủ xa mốc settle và đồng hồ lệch ≤ 1000 ms. Rê chuột lên một điều kiện để xem số liệu.</p>
           <p class="note mt8" id="at-cost-basis"></p>
         </article>
       </div>

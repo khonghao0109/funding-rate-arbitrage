@@ -126,6 +126,19 @@ func (m portalMarket) Snapshot(ctx context.Context, symbol string, settledSinceM
 	snap.ForecastRatePerIntervalFrac, snap.NextFundingTimeMs = mp.LastFundingRateFrac, mp.NextFundingTimeMs
 	snap.ReadAtMs = p.now().UnixMilli()
 
+	// The STRICTER of the two markets' order rules, so the bot can refuse a
+	// size the venue would refuse rather than learn it from a rejected order.
+	// Shared for ten minutes by rulesFor; every ORDER path still reads them
+	// fresh. A failure is reported, never defaulted: an unread step size that
+	// read as zero would turn the quantization guard off.
+	if rules, err := p.rulesFor(ctx, symbol); err != nil {
+		snap.RulesErrVI = err.Error()
+	} else {
+		snap.StepSizeCoin = math.Max(rules.Spot.StepSizeCoin, rules.Perp.StepSizeCoin)
+		snap.MinQtyCoin = math.Max(rules.Spot.MinQtyCoin, rules.Perp.MinQtyCoin)
+		snap.MinNotionalQuote = math.Max(rules.Spot.MinNotionalQuote, rules.Perp.MinNotionalQuote)
+	}
+
 	if rows, err := p.settledRates(ctx, symbol, settledSinceMs, mp.NextFundingTimeMs); err != nil {
 		snap.SettledErrVI = err.Error()
 	} else {
@@ -360,6 +373,67 @@ func (t portalTrader) Close(ctx context.Context, symbol, intentID, reasonVI stri
 	}
 }
 
+// Account is the two wallets' quote equity, read from the venues (rule 7) for
+// the bot's periodic rebalance. It is read at most once per rebalance interval,
+// never on the scan cadence, and it costs weight 20 on spot plus 5 on futures.
+//
+// The QUOTE asset is the one the PERP declares for the run's first symbol, not
+// the string "USDT": the portal reads base and quote from what the venue
+// declares and never from the symbol text (CLAUDE.md's assets trap). Both
+// markets must agree, or nothing is priced — a spot leg funded in one asset
+// and a perp margined in another is not one pool of equity by any arithmetic.
+func (t portalTrader) Account(ctx context.Context) (autotrade.Account, error) {
+	p := t.p
+	if err := p.markets.both(); err != nil {
+		return autotrade.Account{}, err
+	}
+	if err := p.markets.readBudgetError(); err != nil {
+		return autotrade.Account{}, err
+	}
+	symbols := p.symbols
+	if len(symbols) == 0 {
+		return autotrade.Account{}, errors.New("portal không có symbol nào để đọc tài sản định giá")
+	}
+	rules, err := p.rulesFor(ctx, symbols[0])
+	if err != nil {
+		return autotrade.Account{}, fmt.Errorf("luật sàn của %s: %w", symbols[0], err)
+	}
+	quote := rules.Perp.QuoteAsset
+	if quote == "" || quote != rules.Spot.QuoteAsset {
+		return autotrade.Account{}, fmt.Errorf("hai sàn khai tài sản định giá khác nhau cho %s (spot %q, perp %q) — không cộng chung được",
+			symbols[0], rules.Spot.QuoteAsset, rules.Perp.QuoteAsset)
+	}
+	out := autotrade.Account{QuoteAsset: quote}
+	for _, m := range []struct {
+		c   venue
+		dst *float64
+	}{{p.markets.spot, &out.SpotQuoteTotal}, {p.markets.perp, &out.FuturesQuoteTotal}} {
+		balances, err := m.c.GetBalance(ctx, m.c.Market())
+		if err != nil {
+			return autotrade.Account{}, fmt.Errorf("số dư %s: %w", m.c.Market(), err)
+		}
+		found := false
+		for _, b := range balances {
+			if b.Asset != quote {
+				continue
+			}
+			// Free PLUS locked: on spot the locked half is committed to resting
+			// orders, on futures it is the margin already posted against open
+			// positions. Reading only the free half reports an account with
+			// everything deployed as empty, and would size every slot to zero
+			// the moment the bot was fully invested.
+			*m.dst = b.TotalQtyCoin()
+			found = true
+			break
+		}
+		if !found {
+			return autotrade.Account{}, fmt.Errorf("sàn %s không liệt kê tài sản %s — 'không liệt kê' không phải 'bằng 0'", m.c.Market(), quote)
+		}
+	}
+	out.ReadAtMs = p.now().UnixMilli()
+	return out, nil
+}
+
 func orUnknown(s string) string {
 	if s == "" {
 		return "một thao tác khác"
@@ -433,6 +507,13 @@ type autotradeStartRequest struct {
 	MaxConcurrentPositions *int                                `json:"max_concurrent_positions"`
 	TotalCapitalCapQuote   *float64                            `json:"total_capital_cap_quote"`
 	PairOverrides          map[string]autotradeOverrideRequest `json:"pair_overrides"`
+
+	// The buffered-slot sizing (PLAN "Công cụ vận hành 4.5g"). With
+	// auto_rebalance on, notional_quote is only the SEED the first scan
+	// replaces from the account's own equity.
+	AutoRebalance          *bool    `json:"auto_rebalance"`
+	MarginBufferPct        *float64 `json:"margin_buffer_pct"`
+	RebalanceIntervalHours *float64 `json:"rebalance_interval_hours"`
 }
 
 // portfolioFromRequest turns the form into a run, every symbol through the
@@ -456,6 +537,15 @@ func (p *portal) portfolioFromRequest(req autotradeStartRequest) (autotrade.Port
 	}
 	if req.TotalCapitalCapQuote != nil {
 		pc.TotalCapitalCapQuote = *req.TotalCapitalCapQuote
+	}
+	if req.AutoRebalance != nil {
+		pc.AutoRebalance = *req.AutoRebalance
+	}
+	if req.MarginBufferPct != nil {
+		pc.MarginBufferPct = *req.MarginBufferPct
+	}
+	if req.RebalanceIntervalHours != nil {
+		pc.RebalanceIntervalHours = *req.RebalanceIntervalHours
 	}
 	if len(req.PairOverrides) > 0 {
 		pc.PairOverrides = map[string]autotrade.Config{}

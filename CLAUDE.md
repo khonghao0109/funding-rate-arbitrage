@@ -1105,6 +1105,47 @@ but this machine has no Chrome for the headless click-through and another
 profit on a real testnet pair. Read PLAN 4.5f's acceptance table — criteria 10
 and 11 are open — before calling it done.
 
+**The auto-trader's capital became BUFFERED SLOTS with a periodic rebalance on
+2026-09-16 (PLAN "Công cụ vận hành 4.5g") — still a tool, still Q18's limits,
+and NOT yet accepted on the testnet.** The bot sized every position at a
+notional a person typed once, so profit compounded into nothing. Now
+`Trader.Account` reads both wallets from the venues and `planNotional` cuts one
+slot: hold `MarginBufferPct` (0.30) back, split the rest across
+`MaxConcurrentPositions`, divide by the capital a quote of notional ties up
+(1 + perp margin). **The brief's one-pool formula is kept and then bounded by
+each wallet on its own**, because spot and futures are separate registrations on
+this testnet — a futures key on the spot host is refused -2015 — so nothing can
+move a quote between them: with 10,000 spot and 1,000 futures the one-pool
+formula sizes 1,283 a leg and asks 3,850 of margin from a 1,000 wallet, while
+the smaller-of rule sizes 466 and fits both. `BoundByVI` names which limit bound
+it. The buffer is charged against the FUTURES wallet only: the spot leg is paid
+for in full and cannot be liquidated. A position's own spot legs are added back
+as equity held in coin, or the plan would ratchet down on every open and up on
+every close; coin belonging to no position of the bot's is deliberately left out.
+`Engine.rebalance` runs at the top of each `Step` — decide under the lock, read
+with no lock held, apply under it again — every `RebalanceIntervalHours` (168),
+and it writes exactly one field: the run's default notional. **It never closes,
+shrinks or re-prices a position already on the venue**; a held pair keeps the
+size it opened at until it exits on its own terms, and is priced on that size
+rather than on the new slot. A failed read leaves both the size and the CLOCK
+alone, so the next scan retries, and the console line is de-duplicated by reason
+because it retries every scan. A new entry check `size_fits` refuses a notional
+below the stricter of the two markets' minimum notional, minimum quantity × price,
+and step × price ÷ 5% — the last being a guard on **deployed capital, not hedge
+error**, which `internal/execution` already makes zero by rounding both legs to
+one quantity or refusing the intent whole; what the grid really costs is the part
+of the slot that never reaches the market (65 quote of BTC at a 0.0001 step
+deploys 61.6). That is why BTC needs ~154 quote a slot here, and why the shipped
+65 is now a SEED that the first scan of a run replaces rather than a size
+anything trades. `-symbols` was screened to seven — BTC, ETH, LINK, UNI, LTC,
+SUI, AAVE — dropping SOL (funding negative most of the year), XRP (funding ≈ 0),
+NEAR (188 sign flips a year) and BNB/DOGE (bottom of the 3-year funding ranking).
+**Not accepted**: 37 packages pass `-race`, every rule has its own test including
+one that reads the fake VENUE to prove a rebalance moved no leg, but this machine
+has no Chrome for the click-through and another `execportal` held 8087 all
+session, so nothing has sized itself from a real balance. PLAN 4.5g's criteria 14
+and 15 are open.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1378,7 +1419,9 @@ cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17
                      floor, a fee-amortization hold floor, early take-profit on
                      a converged basis (priceHolding — an ESTIMATE, never the
                      venue's own funding), and a hysteresis on the negative
-                     funding exit. pnl.go (main
+                     funding exit. capital.go (4.5g) sizes each slot from BOTH
+                     wallets' equity behind a margin buffer and re-reads it
+                     weekly, never touching an open position. pnl.go (main
                      package) builds the result page from the intent cache,
                      the engine's marks and the venue's funding rows
   feeds/             the read-only relay and proxies (Q17): exports handlers,

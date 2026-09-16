@@ -23,6 +23,16 @@ import (
 // botPortal is fakePortal with a week of settled funding at 1 bps per 8h, a
 // forming rate of 1 bps and the next settlement seven hours away — one interval
 // after the last settled one.
+// fixedSizePortfolio is a run whose slot size is the one the test typed: the
+// shipped default re-sizes from the account on its first scan (capital.go), and
+// a test asserting a quantity has to say which size it means.
+func fixedSizePortfolio(symbols ...string) autotrade.PortfolioConfig {
+	pc := autotrade.DefaultPortfolioConfig(symbols)
+	pc.AutoRebalance = false
+	pc.DefaultPairConfig.NotionalQuote = 200
+	return pc
+}
+
 func botPortal(t *testing.T) (*portal, *fakeVenue, *fakeVenue) {
 	t.Helper()
 	p, spot, perp := fakePortal(t)
@@ -76,7 +86,7 @@ func perpQty(t *testing.T, perp *fakeVenue, symbol string) float64 {
 func TestAutotradeAPI_EveryWriteIsBehindTheWalls(t *testing.T) {
 	p, spot, perp := botPortal(t)
 	for path, c := range map[string]struct{ body, action string }{
-		"/api/autotrade/start":      {`{"symbols":["BTCUSDT"]}`, autotradeStartAction},
+		"/api/autotrade/start":      {`{"symbols":["BTCUSDT"],"notional_quote":200,"auto_rebalance":false}`, autotradeStartAction},
 		"/api/autotrade/stop":       {`{"close_now":true}`, autotradeStopCloseAction},
 		"/api/autotrade/kill":       {`{}`, autotradeKillAction},
 		"/api/autotrade/close-pair": {`{"symbol":"BTCUSDT"}`, autotradeClosePairAction},
@@ -160,7 +170,7 @@ func TestAutotradeAPI_StartCarriesTheConvergenceKnobs(t *testing.T) {
 	p, _, _ := botPortal(t) // the portal trades BTCUSDT alone here
 	code, started := postJSON[autotradeActionView](t, p, autotradeStartAction, "/api/autotrade/start",
 		map[string]any{
-			"symbols": []string{"BTCUSDT"}, "notional_quote": 65,
+			"symbols": []string{"BTCUSDT"}, "notional_quote": 200, "auto_rebalance": false,
 			"min_entry_basis_bps": 12.5, "min_hold_epochs": 9, "target_take_profit_net_pct": 0.8,
 			"pair_overrides": map[string]any{"BTCUSDT": map[string]any{"min_entry_basis_bps": 3, "target_take_profit_net_pct": 0.25}},
 		})
@@ -179,7 +189,7 @@ func TestAutotradeAPI_StartCarriesTheConvergenceKnobs(t *testing.T) {
 	}
 	// An override replaces only what it names; the rest is the run's default.
 	own := started.Status.Portfolio.PairOverrides["BTCUSDT"]
-	if own.MinEntryBasisBps != 3 || own.TargetTakeProfitNetPct != 0.25 || own.MinHoldEpochs != 9 || own.NotionalQuote != 65 {
+	if own.MinEntryBasisBps != 3 || own.TargetTakeProfitNetPct != 0.25 || own.MinHoldEpochs != 9 || own.NotionalQuote != 200 {
 		t.Errorf("BTCUSDT override = %+v", own)
 	}
 	// And the page shows the pair running with it.
@@ -190,7 +200,7 @@ func TestAutotradeAPI_StartCarriesTheConvergenceKnobs(t *testing.T) {
 
 func TestAutotradeAPI_WithoutCredentialsTheBotDoesNotStart(t *testing.T) {
 	p := testPortal(t, false)
-	rec := do(t, p, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"]}`, writeOpts(autotradeStartAction)...)
+	rec := do(t, p, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"],"notional_quote":200,"auto_rebalance":false}`, writeOpts(autotradeStartAction)...)
 	if rec.Code != http.StatusServiceUnavailable || errorCode(t, rec) != "no_credentials" {
 		t.Errorf("start without credentials = %d %s", rec.Code, rec.Body.String())
 	}
@@ -207,8 +217,8 @@ func TestAutotradeAPI_WithoutCredentialsTheBotDoesNotStart(t *testing.T) {
 func TestAutotradeAPI_StartOpensThroughThePortalAndKillFlattens(t *testing.T) {
 	p, spot, perp := botPortal(t)
 	code, started := postJSON[autotradeActionView](t, p, autotradeStartAction, "/api/autotrade/start",
-		map[string]any{"symbols": []string{"BTCUSDT"}, "notional_quote": 65, "min_net_apr_pct": 5, "max_hold_epochs": 0})
-	if code != http.StatusOK || started.Status.State != autotrade.StateRunning || started.Status.Portfolio.DefaultPairConfig.NotionalQuote != 65 {
+		map[string]any{"symbols": []string{"BTCUSDT"}, "notional_quote": 200, "auto_rebalance": false, "min_net_apr_pct": 5, "max_hold_epochs": 0})
+	if code != http.StatusOK || started.Status.State != autotrade.StateRunning || started.Status.Portfolio.DefaultPairConfig.NotionalQuote != 200 {
 		t.Fatalf("start = %d %+v", code, started.Status)
 	}
 
@@ -225,7 +235,7 @@ func TestAutotradeAPI_StartOpensThroughThePortalAndKillFlattens(t *testing.T) {
 		t.Errorf("the open's fills did not reach the position: %+v, hedge %s", btc.Position, btc.HedgeStatus)
 	}
 	pos := getJSON[positionsView](t, p, "/api/positions?symbol=BTCUSDT")
-	if pos.Status != statusBothOpen || !near(pos.DeltaResidualCoin, 0) || !near(pos.PerpQtyCoin, -0.0008) {
+	if pos.Status != statusBothOpen || !near(pos.DeltaResidualCoin, 0) || !near(pos.PerpQtyCoin, -0.0025) {
 		t.Fatalf("banner after the bot's open = %s delta %v perp %v (%s)", pos.Status, pos.DeltaResidualCoin, pos.PerpQtyCoin, pos.ReasonVI)
 	}
 	intents := getJSON[intentsView](t, p, "/api/intents?symbol=BTCUSDT")
@@ -253,14 +263,14 @@ func TestAutotradeAPI_StartOpensThroughThePortalAndKillFlattens(t *testing.T) {
 		t.Errorf("banner after the kill = %s (%s)", pos.Status, pos.ReasonVI)
 	}
 
-	rec := do(t, p, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"]}`, writeOpts(autotradeStartAction)...)
+	rec := do(t, p, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"],"notional_quote":200,"auto_rebalance":false}`, writeOpts(autotradeStartAction)...)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("start while halted = %d %s", rec.Code, rec.Body.String())
 	}
 	if code, stopped := postJSON[autotradeActionView](t, p, autotradeStopAction, "/api/autotrade/stop", map[string]any{"close_now": false, "halt_seq": killed.Status.HaltSeq}); code != http.StatusOK || stopped.Status.State != autotrade.StateDisabled {
 		t.Fatalf("acknowledge = %d %+v", code, stopped.Status)
 	}
-	if rec := do(t, p, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"]}`, writeOpts(autotradeStartAction)...); rec.Code != http.StatusOK {
+	if rec := do(t, p, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"],"notional_quote":200,"auto_rebalance":false}`, writeOpts(autotradeStartAction)...); rec.Code != http.StatusOK {
 		t.Errorf("start after the acknowledgement = %d %s", rec.Code, rec.Body.String())
 	}
 }
@@ -272,13 +282,14 @@ func TestAutotradeAPI_StartOpensThroughThePortalAndKillFlattens(t *testing.T) {
 func TestAutotradeAPI_TwoPairsOpenAndOneClosesAlone(t *testing.T) {
 	p, spot, perp := multiBotPortal(t, "BTCUSDT", "ETHUSDT")
 	code, _ := postJSON[autotradeActionView](t, p, autotradeStartAction, "/api/autotrade/start",
-		map[string]any{"symbols": []string{"BTCUSDT", "ETHUSDT"}, "max_concurrent_positions": 2, "total_capital_cap_quote": 500})
+		map[string]any{"symbols": []string{"BTCUSDT", "ETHUSDT"}, "max_concurrent_positions": 2, "total_capital_cap_quote": 900,
+			"notional_quote": 200, "auto_rebalance": false})
 	if code != http.StatusOK {
 		t.Fatalf("start = %d", code)
 	}
 	p.autotrade.Step(context.Background())
 	st := botStatus(t, p)
-	if st.OpenPositions != 2 || !near(perpQty(t, perp, "BTCUSDT"), -0.0008) || !near(perpQty(t, perp, "ETHUSDT"), -0.0008) {
+	if st.OpenPositions != 2 || !near(perpQty(t, perp, "BTCUSDT"), -0.0025) || !near(perpQty(t, perp, "ETHUSDT"), -0.0025) {
 		t.Fatalf("after one scan: %d held, perp BTC %v ETH %v · %+v", st.OpenPositions, perpQty(t, perp, "BTCUSDT"), perpQty(t, perp, "ETHUSDT"), st.Log)
 	}
 	eth := botPair(t, st, "ETHUSDT")
@@ -290,7 +301,7 @@ func TestAutotradeAPI_TwoPairsOpenAndOneClosesAlone(t *testing.T) {
 	if code != http.StatusOK || len(closed.Closes) != 1 || !closed.Closes[0].Flat || !closed.Closes[0].Attempted {
 		t.Fatalf("close pair = %d %+v", code, closed.Closes)
 	}
-	if !near(perpQty(t, perp, "ETHUSDT"), 0) || !near(perpQty(t, perp, "BTCUSDT"), -0.0008) {
+	if !near(perpQty(t, perp, "ETHUSDT"), 0) || !near(perpQty(t, perp, "BTCUSDT"), -0.0025) {
 		t.Fatalf("after closing ETH: perp BTC %v ETH %v", perpQty(t, perp, "BTCUSDT"), perpQty(t, perp, "ETHUSDT"))
 	}
 	if st := closed.Status; st.State != autotrade.StateRunning || st.OpenPositions != 1 || !botPair(t, st, "ETHUSDT").Paused {
@@ -322,7 +333,7 @@ func TestAutotradeAPI_TwoPairsOpenAndOneClosesAlone(t *testing.T) {
 	if want := ethTrade.FundingReceivedQuote - ethTrade.CommissionQuote + ethTrade.PairPriceDriftQuote; ethTrade.CashResultQuote != nil && math.Abs(*ethTrade.CashResultQuote-want) > 1e-12 {
 		t.Errorf("ETH cash result %v, want funding − commission + drift = %v", *ethTrade.CashResultQuote, want)
 	}
-	if len(pnl.Points) == 0 || pnl.Points[len(pnl.Points)-1].Source != "now" || pnl.TotalCapitalCapQuote != 500 || pnl.ReturnOnPeakCapitalPct == nil || !near(pnl.PeakCapitalQuote, 195) {
+	if len(pnl.Points) == 0 || pnl.Points[len(pnl.Points)-1].Source != "now" || pnl.TotalCapitalCapQuote != 900 || pnl.ReturnOnPeakCapitalPct == nil || !near(pnl.PeakCapitalQuote, 600) {
 		t.Errorf("points %+v, cap %v, peak %v, roi %v", pnl.Points, pnl.TotalCapitalCapQuote, pnl.PeakCapitalQuote, pnl.ReturnOnPeakCapitalPct)
 	}
 
@@ -340,7 +351,7 @@ func TestAutotradeAPI_TwoPairsOpenAndOneClosesAlone(t *testing.T) {
 // nothing.
 func TestAutotradeAPI_PairSwitches(t *testing.T) {
 	p, spot, perp := multiBotPortal(t, "BTCUSDT", "ETHUSDT")
-	if _, err := p.autotrade.Start(autotrade.DefaultPortfolioConfig([]string{"BTCUSDT", "ETHUSDT"})); err != nil {
+	if _, err := p.autotrade.Start(fixedSizePortfolio("BTCUSDT", "ETHUSDT")); err != nil {
 		t.Fatal(err)
 	}
 	code, paused := postJSON[autotradeActionView](t, p, autotradePairPauseAction, "/api/autotrade/pair", map[string]any{"symbol": "ETHUSDT", "action": "pause"})
@@ -348,7 +359,7 @@ func TestAutotradeAPI_PairSwitches(t *testing.T) {
 		t.Fatalf("pause = %d %+v", code, botPair(t, paused.Status, "ETHUSDT"))
 	}
 	p.autotrade.Step(context.Background())
-	if !near(perpQty(t, perp, "ETHUSDT"), 0) || !near(perpQty(t, perp, "BTCUSDT"), -0.0008) {
+	if !near(perpQty(t, perp, "ETHUSDT"), 0) || !near(perpQty(t, perp, "BTCUSDT"), -0.0025) {
 		t.Errorf("paused ETH / running BTC: perp ETH %v BTC %v", perpQty(t, perp, "ETHUSDT"), perpQty(t, perp, "BTCUSDT"))
 	}
 	if code, _ := postJSON[autotradeActionView](t, p, autotradePairAckAction, "/api/autotrade/pair", map[string]any{"symbol": "ETHUSDT", "action": "ack", "halt_seq": 7}); code != http.StatusConflict {
@@ -362,7 +373,7 @@ func TestAutotradeAPI_PairSwitches(t *testing.T) {
 		t.Error("the resume itself placed an order — it only lets the next scan trade")
 	}
 	p.autotrade.Step(context.Background())
-	if !near(perpQty(t, perp, "ETHUSDT"), -0.0008) {
+	if !near(perpQty(t, perp, "ETHUSDT"), -0.0025) {
 		t.Errorf("after resume and a scan: perp ETH %v", perpQty(t, perp, "ETHUSDT"))
 	}
 }
@@ -432,7 +443,7 @@ func TestAutotradeAPI_AManualPositionIsNeverTheBots(t *testing.T) {
 // without closing anything.
 func TestAutotradeAPI_ASecondHeldIntentHaltsThePair(t *testing.T) {
 	p, spot, perp := botPortal(t)
-	if _, err := p.autotrade.Start(autotrade.DefaultPortfolioConfig([]string{"BTCUSDT"})); err != nil {
+	if _, err := p.autotrade.Start(fixedSizePortfolio("BTCUSDT")); err != nil {
 		t.Fatal(err)
 	}
 	p.autotrade.Step(context.Background())
@@ -912,5 +923,50 @@ func TestSyncClock_ACallerStopsWaitingWhenItsContextEndsAndTheMeasurementRunsOn(
 			t.Fatal("the shared measurement failed with the caller that went away")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// The buffered slot through the portal's own endpoints (PLAN 4.5g): the bot
+// reads BOTH testnet wallets, sizes every slot from what they hold, and opens
+// at that size rather than at the seed the form carried.
+func TestAutotradeAPI_TheRebalanceSizesSlotsFromBothWallets(t *testing.T) {
+	p, _, perp := botPortal(t) // spot holds 10,000 USDT, futures 5,000
+	code, started := postJSON[autotradeActionView](t, p, autotradeStartAction, "/api/autotrade/start",
+		map[string]any{
+			"symbols": []string{"BTCUSDT"}, "notional_quote": 65, // a seed, not a size
+			"auto_rebalance": true, "margin_buffer_pct": 0.30, "rebalance_interval_hours": 168.0,
+			"max_concurrent_positions": 6, "total_capital_cap_quote": 100_000,
+		})
+	if code != http.StatusOK || started.Status.State != autotrade.StateRunning {
+		t.Fatalf("start = %d %+v", code, started.Status)
+	}
+	pf := started.Status.Portfolio
+	if !pf.AutoRebalance || pf.MarginBufferPct != 0.30 || pf.RebalanceIntervalHours != 168 {
+		t.Fatalf("portfolio = %+v", pf)
+	}
+
+	p.autotrade.Step(context.Background())
+	st := botStatus(t, p)
+	// (10,000 + 5,000) × 0.70 ÷ 6 slots ÷ 1.5 = 1,166.67 a leg.
+	want := 15_000 * 0.70 / 6 / 1.5
+	if got := st.Portfolio.DefaultPairConfig.NotionalQuote; math.Abs(got-want) > 1e-9 {
+		t.Fatalf("sized to %v, want %v · %+v", got, want, st.Log)
+	}
+	if st.Portfolio.LastRebalancedAtMs == 0 || st.Portfolio.NextRebalanceAtMs <= st.Portfolio.LastRebalancedAtMs {
+		t.Errorf("schedule = last %d next %d", st.Portfolio.LastRebalancedAtMs, st.Portfolio.NextRebalanceAtMs)
+	}
+	// It opened at the sized notional, and the VENUE shows that quantity.
+	btc := botPair(t, st, "BTCUSDT")
+	if btc.State != autotrade.StateInPosition || btc.Position == nil || math.Abs(btc.Position.NotionalQuote-want) > 1e-9 {
+		t.Fatalf("BTC = %s %+v · %+v", btc.State, btc.Position, st.Log)
+	}
+	if q := perpQty(t, perp, "BTCUSDT"); math.Abs(q+btc.Position.QtyCoin) > 1e-9 || q >= 0 {
+		t.Errorf("venue perp %v against the position's %v coin", q, btc.Position.QtyCoin)
+	}
+	// A wallet the bot cannot read is not a wallet worth zero: the size stays.
+	perp.balanceErr = errors.New("timeout")
+	p.autotrade.Step(context.Background())
+	if got := botStatus(t, p).Portfolio.DefaultPairConfig.NotionalQuote; math.Abs(got-want) > 1e-9 {
+		t.Errorf("size after an unreadable wallet = %v, want the %v it had", got, want)
 	}
 }

@@ -310,6 +310,54 @@ function renderLabels(v) {
   list.hidden = !(v.problems_vi || []).length;
 }
 
+// ------------------------------------------------------ capital allocation
+
+function statTile(label, value, cls, sub) {
+  return el("div", { cls: "stat" }, [
+    el("div", { cls: "stat-k", text: label }),
+    el("div", { cls: "stat-v " + (cls || ""), text: value }),
+    sub ? el("div", { cls: "stat-s", text: sub }) : null,
+  ]);
+}
+
+// renderCapital shows how one slot's size was arrived at: the buffer held
+// back, what each slot gets, and when the account is read again. Every figure
+// is the SERVER's — the page never re-derives a size, because the size the bot
+// trades is the only one worth showing.
+function renderCapital(s) {
+  const pf = s.portfolio || {};
+  const cfg = pf.default_pair_config || {};
+  const on = Boolean(pf.auto_rebalance);
+  setText("at-rebalance-state", on ? "TỰ ĐỘNG CÂN BẰNG: BẬT" : "TỰ ĐỘNG CÂN BẰNG: TẮT", "pill " + (on ? "ok" : ""));
+
+  let next = "quy mô cố định theo giá trị người vận hành nhập";
+  if (on && pf.next_rebalance_at_ms > 0) {
+    const left = pf.next_rebalance_at_ms - (s.now_ms || Date.now());
+    next = `lần cân bằng kế tiếp ${fmt.time(pf.next_rebalance_at_ms)}${left > 0 ? ` · còn ${fmt.duration(left / 1000)}` : " · đã tới hạn"}`;
+  } else if (on) {
+    next = "chưa cân bằng lần nào — lượt quét đầu sẽ đọc số dư và cấp quy mô";
+  }
+  setText("at-rebalance-next", next, "hint");
+
+  const slots = pf.max_concurrent_positions || 0;
+  const perNotional = s.capital_per_notional || 0;
+  const tiles = $("at-capital-tiles");
+  clear(tiles);
+  tiles.append(
+    statTile("Notional mỗi chân", `${fmt.quote(cfg.notional_quote, 2)} USDT`,
+      "", slots ? `vốn mỗi slot ${fmt.quote(cfg.notional_quote * perNotional, 2)} USDT (×${perNotional})` : ""),
+    statTile("Số slot", String(slots), "sm", `hạn mức vốn ${fmt.quote(pf.total_capital_cap_quote, 0)} USDT`),
+    statTile("Đệm ký quỹ", fmt.pct((pf.margin_buffer_pct || 0) * 100, 0), "sm", "giữ lại, không chia cho slot nào"),
+    statTile("Chu kỳ cân bằng", on ? `${pf.rebalance_interval_hours || 0} giờ` : "—", "sm",
+      pf.last_rebalanced_at_ms > 0 ? `lần gần nhất ${fmt.time(pf.last_rebalanced_at_ms)}` : "chưa cân bằng lần nào"),
+    statTile("Vốn đang dùng", `${fmt.quote(s.capital_deployed_quote, 2)} USDT`, "sm",
+      `${s.open_positions || 0}/${slots} slot đang giữ`),
+  );
+  setText("at-capital-note", on
+    ? "Quy mô mỗi slot = (tổng vốn hai ví × (1 − đệm) ÷ số slot) ÷ vốn trên mỗi notional, rồi lấy giá trị NHỎ NHẤT giữa nó và cái mỗi ví tự gánh nổi, hạn mức vốn và trần notional của portal. Hai ví spot và futures là hai đăng ký riêng trên testnet này, không chuyển tiền qua lại được. Cân bằng chỉ đổi quy mô các lệnh MỞ MỚI — vị thế đang mở giữ nguyên tới khi tự thoát."
+    : "Tự động cân bằng đang TẮT: quy mô giữ đúng giá trị người vận hành nhập, lãi không được tái đầu tư.");
+}
+
 // -------------------------------------------------------- the positions matrix
 
 function coin(symbol) {
@@ -514,6 +562,7 @@ function renderRadar(s) {
       cell(el("td", null, [el("span", { cls: "at-checks" }, [
         check("forming_positive", "F", sig),
         check("entry_basis", "B", sig),
+        check("size_fits", "Q", sig),
         check("net_apr", "A", sig),
         check("depth", "D", sig),
         check(["time_to_settle", "clock"], "T", sig),
@@ -715,6 +764,7 @@ export const autotradeView = {
     view.status = s;
     renderStateTile(s);
     renderCapitalTile(s);
+    renderCapital(s);
     renderPositions(s);
     renderRadar(s);
     renderLog(s);

@@ -39,8 +39,14 @@ const (
 	// records — so an opened position's entry basis is this number too.
 	testEntryBasisBps = 6.0
 	testPerpMid       = testMid * (1 + testEntryBasisBps/10_000)
-	perpStep          = 0.0001
-	spotStep          = 0.00001
+	// testNotional is one leg, and testCapital what the pair ties up at the
+	// rig's 0.5 perp margin. It clears goodSnapshot's size floor of 154 quote —
+	// the venue's step size at testMid against the 5% quantization tolerance —
+	// which the old 65 does not.
+	testNotional = 200.0
+	testCapital  = testNotional * 1.5
+	perpStep     = 0.0001
+	spotStep     = 0.00001
 )
 
 // allSymbols is the portal's allow-list in these tests.
@@ -116,6 +122,11 @@ type venueTrader struct {
 	// binary that string becomes the intent file's close_reason_vi, so a test
 	// that reads it here is reading what the history table will show.
 	closeReasons []string
+
+	// The two wallets the rebalance sizes on, and how many times it asked.
+	account      Account
+	accountErr   error
+	accountReads int
 	inFlight     int
 	busy         bool
 	holdErr      error
@@ -128,7 +139,8 @@ type venueTrader struct {
 }
 
 func newVenueTrader(t *testing.T) *venueTrader {
-	v := &venueTrader{t: t, venues: map[string]*symVenue{}}
+	v := &venueTrader{t: t, venues: map[string]*symVenue{},
+		account: Account{QuoteAsset: "USDT", SpotQuoteTotal: 10_000, FuturesQuoteTotal: 5_000, ReadAtMs: time.Now().UnixMilli()}}
 	for _, s := range allSymbols {
 		v.venues[s] = newSymVenue()
 	}
@@ -347,6 +359,28 @@ func (v *venueTrader) Open(ctx context.Context, order OpenOrder) OpenResult {
 	return out
 }
 
+// Account answers the two wallets. The shipped fixture is deliberately big
+// enough that the sizing tests are about the ARITHMETIC and not about a wallet
+// running dry; a test that wants a dry wallet sets it.
+func (v *venueTrader) Account(context.Context) (Account, error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.accountReads++
+	return v.account, v.accountErr
+}
+
+func (v *venueTrader) setAccount(spotQuote, futuresQuote float64, err error) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.account, v.accountErr = Account{QuoteAsset: "USDT", SpotQuoteTotal: spotQuote, FuturesQuoteTotal: futuresQuote, ReadAtMs: time.Now().UnixMilli()}, err
+}
+
+func (v *venueTrader) reads() int {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.accountReads
+}
+
 func (v *venueTrader) Close(ctx context.Context, symbol, intentID, reasonVI string) CloseResult {
 	v.mu.Lock()
 	if v.busy {
@@ -489,6 +523,12 @@ func goodSnapshot(now time.Time, rate float64) *Snapshot {
 		Settled:         settledEvery8h(21, rate, now),
 		SpotTakerFeeBps: 0, PerpTakerFeeBps: 4, FeeSourceVI: "test",
 		SpotClockSkewMs: ptrInt(220), PerpClockSkewMs: ptrInt(-140),
+		// The stricter of the two markets' rules, as the testnet publishes them
+		// for BTCUSDT: futures steps 0.0001 and wants 50 quote, spot steps
+		// 0.00001 and wants 5. At testMid that puts the size floor at 154 quote
+		// (7.70 a step ÷ the 5% quantization tolerance), which is why the test
+		// runs are sized at testNotional and not at the old 65.
+		StepSizeCoin: perpStep, MinQtyCoin: perpStep, MinNotionalQuote: 50,
 	}
 }
 
@@ -534,6 +574,11 @@ func testPortfolio(symbols ...string) PortfolioConfig {
 	pc := DefaultPortfolioConfig(symbols)
 	pc.DefaultPairConfig.Cooldown = time.Hour
 	pc.DefaultPairConfig.MinHoldEpochs = 0
+	// A FIXED size, so every test about slots, capital and adoption asserts on
+	// the notional it configured. The rebalance is on by default in the shipped
+	// run and has its own tests, which switch it back on explicitly.
+	pc.AutoRebalance = false
+	pc.DefaultPairConfig.NotionalQuote = testNotional
 	return pc
 }
 
@@ -683,10 +728,10 @@ func TestEngine_OpensHedgedOnASignalAndClosesFlatOnAnExit(t *testing.T) {
 	if p.Signal == nil || !p.Signal.EntryEligible || p.Signal.NetAPRPct == nil || *p.Signal.NetAPRPct < 5 {
 		t.Fatalf("signal = %+v", p.Signal)
 	}
-	if p.Position.NotionalQuote != 65 || p.Position.CapitalQuote != 97.5 || p.Position.SpotEntryAvgQuote <= 0 || p.Position.PerpEntryAvgQuote <= 0 {
+	if p.Position.NotionalQuote != testNotional || p.Position.CapitalQuote != testCapital || p.Position.SpotEntryAvgQuote <= 0 || p.Position.PerpEntryAvgQuote <= 0 {
 		t.Errorf("position sizing = %+v", p.Position)
 	}
-	if st.OpenPositions != 1 || st.SlotsUsed != 1 || st.CapitalDeployedQuote != 97.5 || len(st.Positions) != 1 {
+	if st.OpenPositions != 1 || st.SlotsUsed != 1 || st.CapitalDeployedQuote != testCapital || len(st.Positions) != 1 {
 		t.Errorf("portfolio counts: open %d slots %d capital %v positions %d", st.OpenPositions, st.SlotsUsed, st.CapitalDeployedQuote, len(st.Positions))
 	}
 	if !hasLogOn(st, "OPEN", testSymbol, "HEDGED") {
@@ -1530,6 +1575,16 @@ func TestDefaults_AreTheAuditedSafetyThresholds(t *testing.T) {
 	if pc.MaxConcurrentPositions != len(allSymbols) || MaxConcurrentPositionsCap != 50 || pc.TotalCapitalCapQuote != 10000 || pc.ScanInterval != 10*time.Second || pc.DefaultPairConfig.NotionalQuote != 65 {
 		t.Errorf("DefaultPortfolioConfig = %+v", pc)
 	}
+	// The buffered-slot sizing (4.5g): ON, 30% held back, re-read weekly, and
+	// nothing sized yet — so the first scan of a run sizes at once and the 65
+	// above is a seed rather than a size anything trades.
+	if !pc.AutoRebalance || pc.MarginBufferPct != 0.30 || pc.RebalanceIntervalHours != 168 || pc.LastRebalancedAtMs != 0 {
+		t.Errorf("rebalance defaults = auto %v buffer %v every %vh, last %d",
+			pc.AutoRebalance, pc.MarginBufferPct, pc.RebalanceIntervalHours, pc.LastRebalancedAtMs)
+	}
+	if MinMarginBufferPct != 0.10 || MaxMarginBufferPct != 0.50 || MinRebalanceIntervalHours != 1 {
+		t.Errorf("rebalance bounds = buffer [%v, %v], interval ≥ %vh", MinMarginBufferPct, MaxMarginBufferPct, MinRebalanceIntervalHours)
+	}
 	if err := pc.Validate(allSymbols, 50_000, 1.5); err != nil {
 		t.Errorf("the shipped portfolio does not validate: %v", err)
 	}
@@ -1588,7 +1643,7 @@ func TestPortfolio_RanksEligiblePairsByNetAPRAndOpensInThatOrder(t *testing.T) {
 	if bnb.Radar != RadarScanning || bnb.SkipVI != "" {
 		t.Errorf("BNB (negative funding) radar %s skip %q", bnb.Radar, bnb.SkipVI)
 	}
-	if sol.Radar != RadarHolding || st.OpenPositions != 2 || st.SlotsUsed != 2 || st.CapitalDeployedQuote != 195 || st.NotionalDeployedQuote != 130 {
+	if sol.Radar != RadarHolding || st.OpenPositions != 2 || st.SlotsUsed != 2 || st.CapitalDeployedQuote != 2*testCapital || st.NotionalDeployedQuote != 2*testNotional {
 		t.Errorf("portfolio: SOL radar %s, open %d slots %d capital %v notional %v", sol.Radar, st.OpenPositions, st.SlotsUsed, st.CapitalDeployedQuote, st.NotionalDeployedQuote)
 	}
 	// A skipped pair is not logged again on every scan.
@@ -1654,10 +1709,10 @@ func TestPortfolio_TheCapitalCapHoldsBackAnEntryThatWouldExceedIt(t *testing.T) 
 	r := newRig(t)
 	pc := testPortfolio(allSymbols...)
 	pc.MaxConcurrentPositions = 5
-	pc.TotalCapitalCapQuote = 200 // two $65 pairs at 1.5× tie up $195; a third would be $292.50
+	pc.TotalCapitalCapQuote = 2.5 * testCapital // two pairs tie up 2 × testCapital; a third would not fit
 	r.start(pc)
 	st := r.step()
-	if st.OpenPositions != 2 || st.CapitalDeployedQuote != 195 {
+	if st.OpenPositions != 2 || st.CapitalDeployedQuote != 2*testCapital {
 		t.Fatalf("held %d pairs at %v capital", st.OpenPositions, st.CapitalDeployedQuote)
 	}
 	skipped := 0
@@ -2904,8 +2959,8 @@ func TestPortfolio_AnAlarmedOpenIsSizedByItsReadingNotByWhatWasSent(t *testing.T
 		return h, err
 	})
 	st = r.step()
-	if pairOf(t, st, "ETHUSDT").Position == nil || st.CapitalCommittedQuote != 547.5 {
-		t.Errorf("ETH %+v · committed %.2f, want BTC's read 450 + ETH's 97.5", pairOf(t, st, "ETHUSDT").Position, st.CapitalCommittedQuote)
+	if pairOf(t, st, "ETHUSDT").Position == nil || st.CapitalCommittedQuote != 450+testCapital {
+		t.Errorf("ETH %+v · committed %.2f, want BTC's read 450 + ETH's %.2f", pairOf(t, st, "ETHUSDT").Position, st.CapitalCommittedQuote, testCapital)
 	}
 }
 
@@ -3113,7 +3168,7 @@ func TestPortfolio_ARefusedOpenHoldsTheScansNextEntry(t *testing.T) {
 	r := newRig(t)
 	withRates(r, map[string]float64{"BTCUSDT": 0.0003, "ETHUSDT": 0.0002, "SOLUSDT": -0.0001, "BNBUSDT": -0.0001})
 	pc := testPortfolio(allSymbols...)
-	pc.TotalCapitalCapQuote = 200
+	pc.TotalCapitalCapQuote = 1.5 * testCapital // one pair fits, two do not
 	r.trader.refuseOpen = true
 	r.trader.afterOpen = func(symbol string) {
 		if symbol != "BTCUSDT" {
@@ -3191,7 +3246,7 @@ func heldAt(t *testing.T) (*rig, *flakyTrader) {
 	r, ft := newFlakyRig(t)
 	withRates(r, map[string]float64{"BTCUSDT": 0.0003, "ETHUSDT": -0.0001, "SOLUSDT": -0.0001, "BNBUSDT": -0.0001})
 	pc := testPortfolio(allSymbols...)
-	pc.TotalCapitalCapQuote = 300
+	pc.TotalCapitalCapQuote = 3 * testCapital // room for the held BTC and the ETH each case lets in
 	r.start(pc)
 	r.step()
 	r.wantHedgedOn("BTCUSDT")
@@ -3391,7 +3446,7 @@ func TestPortfolio_AnAlarmedOpenHoldsItsScansNextEntryToTheCap(t *testing.T) {
 	withRates(r, map[string]float64{"BTCUSDT": 0.0003, "ETHUSDT": 0.0002, "SOLUSDT": -0.0001, "BNBUSDT": -0.0001})
 	r.trader.alarmOpen = true
 	pc := testPortfolio(allSymbols...)
-	pc.TotalCapitalCapQuote = 150
+	pc.TotalCapitalCapQuote = 1.5 * testCapital // one pair fits, a second does not
 	r.start(pc)
 	st := r.step()
 	if btc := pairOf(t, st, "BTCUSDT"); btc.State != StateEmergencyHalted {
@@ -3524,5 +3579,359 @@ func TestEngine_TakesProfitOnConvergenceAndNamesTheReason(t *testing.T) {
 	// stop must not be what closed this.
 	if strings.Contains(reasons[0], "Basis giãn") {
 		t.Errorf("the widening stop fired on a convergence: %q", reasons[0])
+	}
+}
+
+// ------------------------- buffered-slot sizing and rebalancing (4.5g)
+
+// The first scan of a run sizes every slot from the account, so a bot switched
+// on with the shipped seed does not trade a week at 65.
+func TestEngine_TheFirstScanSizesTheSlotsFromTheAccount(t *testing.T) {
+	r := newRig(t)
+	r.trader.setAccount(10_000, 5_000, nil)
+	pc := testPortfolio(testSymbol)
+	pc.AutoRebalance = true
+	pc.MaxConcurrentPositions = 6
+	pc.TotalCapitalCapQuote = 100_000
+	pc.DefaultPairConfig.NotionalQuote = DefaultNotionalQuote // the seed, not a size
+	r.start(pc)
+
+	st := r.step()
+	// 15,000 × 0.70 = 10,500 tradable ÷ 6 slots ÷ 1.5 = 1,166.67 a leg.
+	want := 10_500.0 / 6 / 1.5
+	got := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote
+	if math.Abs(got-want) > 1e-9 {
+		t.Fatalf("sized to %v, want %v · %v", got, want, logLines(st))
+	}
+	if !hasLog(st, "REBALANCE", "tổng vốn 15000.00 quote") || !hasLog(st, "REBALANCE", "đệm 30%") {
+		t.Errorf("the console does not show the arithmetic: %v", logLines(st))
+	}
+	// The pair it opened used the NEW size, not the seed.
+	p := r.wantState(StateInPosition)
+	if p.Position == nil || math.Abs(p.Position.NotionalQuote-want) > 1e-9 {
+		t.Errorf("opened at %+v, want the rebalanced size %v", p.Position, want)
+	}
+	if st := r.eng.Status(); st.Portfolio.LastRebalancedAtMs == 0 || st.Portfolio.NextRebalanceAtMs <= st.Portfolio.LastRebalancedAtMs {
+		t.Errorf("schedule = last %d next %d", st.Portfolio.LastRebalancedAtMs, st.Portfolio.NextRebalanceAtMs)
+	}
+}
+
+// The rule that costs money if it is ever broken: a rebalance moves the size of
+// FUTURE opens and never touches a position already on the venue.
+func TestEngine_ARebalanceNeverClosesOrResizesAnOpenPosition(t *testing.T) {
+	var clockMu sync.Mutex
+	at := time.Now()
+	now := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return at
+	}
+	r := newRigAt(t, now)
+	r.trader.setAccount(10_000, 5_000, nil)
+	pc := testPortfolio(allSymbols...)
+	pc.AutoRebalance = true
+	pc.MaxConcurrentPositions = 4
+	pc.TotalCapitalCapQuote = 100_000
+	// Only BTC pays, so exactly one pair is held across the rebalance.
+	withRates(r, map[string]float64{"BTCUSDT": 0.0003, "ETHUSDT": -0.0001, "SOLUSDT": -0.0001, "BNBUSDT": -0.0001})
+	r.start(pc)
+	r.step()
+	held := r.wantState(StateInPosition).Position
+	if held == nil {
+		t.Fatal("no position to carry across the rebalance")
+	}
+	openedAt, openedQty, openedNotional := held.OpenedAtMs, held.QtyCoin, held.NotionalQuote
+	venueQty := perpQtyOf(t, r, testSymbol)
+	closes, opens := r.trader.closes, r.trader.opens
+
+	// A week passes and the account has doubled.
+	clockMu.Lock()
+	at = at.Add(8 * 24 * time.Hour)
+	clockMu.Unlock()
+	r.trader.setAccount(20_000, 10_000, nil)
+	// The pair's own history has to reach the new instant, or the hold goes
+	// blind on funding and halts for a reason that is not this test's.
+	r.market.set(func(s *Snapshot) { *s = *goodSnapshot(now(), 0.0003) })
+	st := r.step()
+
+	if !hasLog(st, "REBALANCE", "Vị thế ĐANG MỞ giữ nguyên quy mô cũ") {
+		t.Fatalf("no rebalance line: %v", logLines(st))
+	}
+	if r.trader.closes != closes {
+		t.Errorf("the rebalance sent %d closes", r.trader.closes-closes)
+	}
+	// Read from the VENUE, not from the engine's belief: the legs are exactly
+	// as they were.
+	if got := perpQtyOf(t, r, testSymbol); math.Abs(got-venueQty) > 1e-12 {
+		t.Errorf("venue perp %v, was %v — the rebalance moved an open leg", got, venueQty)
+	}
+	after := pairOf(t, st, testSymbol).Position
+	if after == nil || after.OpenedAtMs != openedAt || after.QtyCoin != openedQty || after.NotionalQuote != openedNotional {
+		t.Errorf("position after the rebalance = %+v, want the one it opened with (%v coin, %v quote)", after, openedQty, openedNotional)
+	}
+	// The run's DEFAULT did move, so the next pair opens at the new size.
+	sized := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote
+	if want := 30_000 * 0.7 / 4 / 1.5; math.Abs(sized-want) > 1e-9 {
+		t.Errorf("default sized to %v, want %v", sized, want)
+	}
+	if r.trader.opens != opens {
+		// Only BTC pays here, so nothing new should have opened either.
+		t.Errorf("the rebalance's scan opened %d pairs", r.trader.opens-opens)
+	}
+}
+
+// The clock: a size stands for the whole interval and is re-read after it.
+func TestEngine_RebalanceRunsOnItsScheduleAndNotOnEveryScan(t *testing.T) {
+	var clockMu sync.Mutex
+	at := time.Now()
+	r := newRigAt(t, func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return at
+	})
+	r.trader.setAccount(10_000, 5_000, nil)
+	pc := testPortfolio(testSymbol)
+	pc.AutoRebalance = true
+	pc.RebalanceIntervalHours = 168
+	pc.TotalCapitalCapQuote = 100_000
+	r.start(pc)
+
+	r.step()
+	if n := r.trader.reads(); n != 1 {
+		t.Fatalf("%d account reads on the first scan, want 1", n)
+	}
+	first := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote
+
+	// Three more scans well inside the interval: the account is not read again
+	// and the size does not move.
+	r.trader.setAccount(50_000, 25_000, nil)
+	for i := 0; i < 3; i++ {
+		clockMu.Lock()
+		at = at.Add(time.Hour)
+		clockMu.Unlock()
+		r.step()
+	}
+	if n := r.trader.reads(); n != 1 {
+		t.Errorf("%d account reads inside the interval, want 1", n)
+	}
+	if got := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote; got != first {
+		t.Errorf("size moved inside the interval: %v → %v", first, got)
+	}
+
+	// Past the interval: read once, and once only.
+	clockMu.Lock()
+	at = at.Add(168 * time.Hour)
+	clockMu.Unlock()
+	r.step()
+	if n := r.trader.reads(); n != 2 {
+		t.Errorf("%d account reads after the interval, want 2", n)
+	}
+	if got := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote; got <= first {
+		t.Errorf("size after a five-fold account = %v, was %v", got, first)
+	}
+	r.step()
+	if n := r.trader.reads(); n != 2 {
+		t.Errorf("%d account reads on the scan after a rebalance, want 2", n)
+	}
+}
+
+// A run with the switch off never reads the account and never re-sizes.
+func TestEngine_RebalanceOffLeavesTheSizeTheOperatorTyped(t *testing.T) {
+	r := newRig(t)
+	r.trader.setAccount(1_000_000, 1_000_000, nil)
+	pc := testPortfolio(testSymbol) // AutoRebalance false
+	r.start(pc)
+	r.step()
+	if n := r.trader.reads(); n != 0 {
+		t.Errorf("%d account reads with the rebalance off", n)
+	}
+	if got := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote; got != testNotional {
+		t.Errorf("size = %v, want the %v the operator typed", got, testNotional)
+	}
+}
+
+// A balance the venue would not give up leaves the size alone — and stays OWED,
+// so the next scan tries again rather than waiting out the whole interval.
+func TestEngine_AFailedBalanceReadKeepsTheSizeAndRetriesNextScan(t *testing.T) {
+	r := newRig(t)
+	r.trader.setAccount(0, 0, errors.New("timeout"))
+	pc := testPortfolio(testSymbol)
+	pc.AutoRebalance = true
+	pc.TotalCapitalCapQuote = 100_000
+	r.start(pc)
+
+	st := r.step()
+	if got := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote; got != testNotional {
+		t.Errorf("size after a failed read = %v, want the %v it had", got, testNotional)
+	}
+	if !hasLog(st, "REBALANCE", "không đọc được số dư hai ví") {
+		t.Errorf("the console does not name the failure: %v", logLines(st))
+	}
+	if r.eng.Status().Portfolio.LastRebalancedAtMs != 0 {
+		t.Error("a failed read moved the schedule — the rebalance is owed until it succeeds")
+	}
+	// It is still owed, so the very next scan asks again.
+	r.trader.setAccount(10_000, 5_000, nil)
+	r.step()
+	if n := r.trader.reads(); n != 2 {
+		t.Errorf("%d account reads, want a retry on the next scan", n)
+	}
+	if got := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote; got == testNotional {
+		t.Errorf("size after the retry = %v — it did not take", got)
+	}
+}
+
+// An account too small to fund a slot leaves the size where it is rather than
+// setting one no order could use.
+func TestEngine_AnEmptyAccountLeavesTheSizeAloneAndSaysSo(t *testing.T) {
+	r := newRig(t)
+	r.trader.setAccount(0, 0, nil)
+	pc := testPortfolio(testSymbol)
+	pc.AutoRebalance = true
+	r.start(pc)
+
+	st := r.step()
+	if got := r.eng.Status().Portfolio.DefaultPairConfig.NotionalQuote; got != testNotional {
+		t.Errorf("size on an empty account = %v", got)
+	}
+	if !hasLog(st, "REBALANCE", "vốn không đủ") {
+		t.Errorf("console: %v", logLines(st))
+	}
+}
+
+// A pair the operator sized by hand is not re-sized by an automatic rule, and
+// the console says which ones were left alone.
+func TestEngine_ARebalanceLeavesAPairsOwnConfigAlone(t *testing.T) {
+	r := newRig(t)
+	r.trader.setAccount(10_000, 5_000, nil)
+	pc := testPortfolio(testSymbol, "ETHUSDT")
+	pc.AutoRebalance = true
+	pc.MaxConcurrentPositions = 4
+	pc.TotalCapitalCapQuote = 100_000
+	own := pc.DefaultPairConfig
+	own.Symbol, own.NotionalQuote = "ETHUSDT", 321
+	pc.PairOverrides = map[string]Config{"ETHUSDT": own}
+	r.start(pc)
+
+	st := r.step()
+	if !hasLog(st, "REBALANCE", "Giữ cấu hình riêng (không đổi quy mô): ETHUSDT") {
+		t.Errorf("console: %v", logLines(st))
+	}
+	if eth := pairOf(t, st, "ETHUSDT"); eth.Config.NotionalQuote != 321 {
+		t.Errorf("ETH sized to %v, want the 321 the operator named", eth.Config.NotionalQuote)
+	}
+	if btc := pairOf(t, st, testSymbol); btc.Config.NotionalQuote == testNotional {
+		t.Errorf("BTC was not re-sized: %v", btc.Config.NotionalQuote)
+	}
+}
+
+// perpQtyOf reads one symbol's perp position from the FAKE VENUE, never from
+// the engine (the 4.4a lesson).
+func perpQtyOf(t *testing.T, r *rig, symbol string) float64 {
+	t.Helper()
+	pos, err := r.trader.venues[symbol].perp.GetPosition(context.Background(), broker.MarketFuturesUSDM, symbol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pos.QtyCoin
+}
+
+// A wallet that stays unreadable is retried on every scan, so its line must not
+// be written on every scan: the console keeps 60 entries and a repeating
+// failure would push every other event out of it within ten minutes.
+func TestEngine_ARepeatingRebalanceFailureIsLoggedOnce(t *testing.T) {
+	r := newRig(t)
+	r.trader.setAccount(0, 0, errors.New("timeout"))
+	pc := testPortfolio(testSymbol)
+	pc.AutoRebalance = true
+	pc.TotalCapitalCapQuote = 100_000
+	r.start(pc)
+
+	for i := 0; i < 4; i++ {
+		r.step()
+	}
+	st := r.eng.Status()
+	lines := 0
+	for _, e := range st.Log {
+		if e.Kind == "REBALANCE" {
+			lines++
+		}
+	}
+	if lines != 1 {
+		t.Errorf("%d REBALANCE lines for one repeating failure: %v", lines, logLines(st))
+	}
+	if r.trader.reads() != 4 {
+		t.Errorf("%d account reads — a failure must stay owed and be retried", r.trader.reads())
+	}
+	// A different failure is a different line, and a success clears the key so
+	// the next failure of the first kind is reported again.
+	r.trader.setAccount(0, 0, errors.New("banned"))
+	r.step()
+	r.trader.setAccount(10_000, 5_000, nil)
+	r.step()
+	r.trader.setAccount(0, 0, errors.New("timeout"))
+	// Past the interval, so a read is owed again.
+	pcNow := r.eng.Status().Portfolio
+	if pcNow.LastRebalancedAtMs == 0 {
+		t.Fatal("the successful rebalance did not take")
+	}
+	r.eng.mu.Lock()
+	r.eng.pcfg.LastRebalancedAtMs = 1
+	r.eng.mu.Unlock()
+	r.step()
+	lines = 0
+	for _, e := range r.eng.Status().Log {
+		if e.Kind == "REBALANCE" {
+			lines++
+		}
+	}
+	if lines != 4 {
+		t.Errorf("%d REBALANCE lines, want timeout · banned · the success · timeout again: %v", lines, logLines(r.eng.Status()))
+	}
+}
+
+// After a rebalance the run's slot size and a held position's size differ. The
+// held pair's gauge must describe the legs on the venue, not the new slot.
+func TestEngine_AHeldPairIsPricedAtItsOwnSizeAfterARebalance(t *testing.T) {
+	var clockMu sync.Mutex
+	at := time.Now()
+	now := func() time.Time {
+		clockMu.Lock()
+		defer clockMu.Unlock()
+		return at
+	}
+	r := newRigAt(t, now)
+	r.trader.setAccount(10_000, 5_000, nil)
+	pc := testPortfolio(testSymbol)
+	pc.AutoRebalance = true
+	pc.MaxConcurrentPositions = 4
+	pc.TotalCapitalCapQuote = 100_000
+	r.start(pc)
+	r.step()
+	held := r.wantState(StateInPosition).Position
+	if held == nil {
+		t.Fatal("nothing opened")
+	}
+
+	clockMu.Lock()
+	at = at.Add(8 * 24 * time.Hour)
+	clockMu.Unlock()
+	r.trader.setAccount(40_000, 20_000, nil) // four times the equity
+	r.market.set(func(s *Snapshot) { *s = *goodSnapshot(now(), 0.0003) })
+	st := r.step()
+
+	slot := st.Portfolio.DefaultPairConfig.NotionalQuote
+	p := pairOf(t, st, testSymbol)
+	if p.Position == nil || math.Abs(p.Position.NotionalQuote-held.NotionalQuote) > 1e-9 {
+		t.Fatalf("the position was re-sized: %+v", p.Position)
+	}
+	if slot <= held.NotionalQuote {
+		t.Fatalf("the slot did not grow: %v against the held %v", slot, held.NotionalQuote)
+	}
+	// The gauge's required depth is DepthMultiple × notional, so it is the
+	// cheapest place to see which notional priced the reading.
+	if p.Signal == nil || math.Abs(p.Signal.RequiredDepthQuote-p.Config.DepthMultiple*held.NotionalQuote) > 1e-9 {
+		t.Errorf("held pair priced at %v of depth, want %v × its own %v",
+			p.Signal.RequiredDepthQuote, p.Config.DepthMultiple, held.NotionalQuote)
 	}
 }

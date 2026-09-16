@@ -57,6 +57,17 @@ type Snapshot struct {
 	// local, in ms; nil when it was never measured.
 	SpotClockSkewMs *int64
 	PerpClockSkewMs *int64
+
+	// The STRICTER of the two markets' order rules for this symbol, read from
+	// the venues' own exchangeInfo — never a mainnet snapshot and never a
+	// constant (PLAN 4.2). Both legs round onto the coarser step, so one set of
+	// three numbers describes the pair. RulesErrVI set, or any of them zero,
+	// means they could not be read, and the size check then refuses instead of
+	// treating "not read" as "no limit".
+	StepSizeCoin     float64
+	MinQtyCoin       float64
+	MinNotionalQuote float64
+	RulesErrVI       string
 }
 
 // CheckView is one condition, with the numbers behind it.
@@ -82,6 +93,7 @@ const (
 	CheckFormingPositive     CheckKey = "forming_positive"
 	CheckLastSettledPositive CheckKey = "last_settled_positive"
 	CheckEntryBasis          CheckKey = "entry_basis"
+	CheckSizeFits            CheckKey = "size_fits"
 	CheckNetAPR              CheckKey = "net_apr"
 	CheckDepth               CheckKey = "depth"
 	CheckClock               CheckKey = "clock"
@@ -137,6 +149,17 @@ type SignalView struct {
 
 	MinDepthWideQuote  *float64 `json:"min_depth_wide_quote"`
 	RequiredDepthQuote float64  `json:"required_depth_quote"`
+
+	// The smallest notional this symbol may be opened at, and what set it: the
+	// venue's own minimums or the quantization guard (capital.go). nil when the
+	// rules could not be read.
+	SizeFloorQuote *float64 `json:"size_floor_quote"`
+	SizeFloorVI    string   `json:"size_floor_vi"`
+	StepSizeCoin   float64  `json:"step_size_coin"`
+	// SizeErrorPct is the share of the notional the venue's step size leaves
+	// unspent — NOT a hedge error, which execution makes zero (capital.go).
+	SizeErrorPct   *float64 `json:"size_error_pct"`
+	PlannedQtyCoin *float64 `json:"planned_qty_coin"`
 
 	// A HELD pair's running result as this reading prices it (holdingResult),
 	// and the early take-profit threshold it is measured against. All nil on a
@@ -362,6 +385,26 @@ func assessEntry(in entryInput) SignalView {
 				*sig.BasisBps, cfg.MinEntryBasisBps))
 	}
 
+	// The venue's own floor on this size, and the quantization guard. A
+	// notional the venue would refuse is not merely a wasted order: the portal
+	// refuses it before placing, the engine counts that as a failed trade, and
+	// five in a row halt the pair. A notional only a few steps wide opens
+	// perfectly hedged and deploys far less of its slot than the allocation
+	// says it does (capital.go).
+	const sizeName = "Quy mô đủ lớn cho luật sàn và bước nhảy"
+	floor, floorWhy, floorOK := sizeFloorQuote(snap.StepSizeCoin, snap.MinQtyCoin, snap.MinNotionalQuote, snap.SpotBook.MidPriceQuote)
+	switch {
+	case snap.RulesErrVI != "":
+		add(CheckSizeFits, sizeName, false, false, "không đọc được luật sàn: "+snap.RulesErrVI)
+	case !floorOK:
+		add(CheckSizeFits, sizeName, false, false, floorWhy)
+	default:
+		sig.SizeFloorQuote, sig.SizeFloorVI = ptr(floor), floorWhy
+		add(CheckSizeFits, sizeName, true, cfg.NotionalQuote >= floor,
+			fmt.Sprintf("notional %.2f quote ≥ sàn %.2f (%s)? · bước %.8f ⇒ %.2f%% quy mô không vào được thị trường, trần %.0f%%",
+				cfg.NotionalQuote, floor, floorWhy, snap.StepSizeCoin, deref(sig.SizeErrorPct), maxQuantizationErrorFrac*100))
+	}
+
 	aprDetail := sig.NetAPRReasonVI
 	if sig.NetAPRPct != nil {
 		aprDetail = fmt.Sprintf("%.2f%%/năm trên notional một chân (%.2f%% trên vốn) ≥ %.2f%%? · trung bình %d mốc đã settle, giữ %s, chi phí vòng %.4f%%",
@@ -445,6 +488,14 @@ func gauge(cfg Config, snap Snapshot, now time.Time, marginFrac float64) SignalV
 	}
 	if b, ok := basisBps(snap.SpotBook.MidPriceQuote, snap.PerpBook.MidPriceQuote); ok {
 		sig.BasisBps = &b
+	}
+	sig.StepSizeCoin = snap.StepSizeCoin
+	// What the size really becomes on the venue's grid: the quantity floors onto
+	// the coarser step, and what floors away never reaches the market.
+	if snap.StepSizeCoin > 0 && snap.SpotBook.MidPriceQuote > 0 && cfg.NotionalQuote > 0 {
+		qty := math.Floor(cfg.NotionalQuote/snap.SpotBook.MidPriceQuote/snap.StepSizeCoin) * snap.StepSizeCoin
+		sig.PlannedQtyCoin = ptr(qty)
+		sig.SizeErrorPct = ptr((cfg.NotionalQuote - qty*snap.SpotBook.MidPriceQuote) / cfg.NotionalQuote * pctPerUnit)
 	}
 	if n := len(snap.Settled); n > 0 && snap.SettledErrVI == "" {
 		last := snap.Settled[n-1]

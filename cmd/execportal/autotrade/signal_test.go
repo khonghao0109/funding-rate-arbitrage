@@ -75,7 +75,14 @@ func TestHoldPlan_CountsExactlyTheSettlementsPlanned(t *testing.T) {
 }
 
 func goodInput(now time.Time) entryInput {
-	return entryInput{Cfg: DefaultConfig(testSymbol), Snap: *goodSnapshot(now, 0.0001), Now: now, MarginFrac: 0.5, Flat: true}
+	cfg := DefaultConfig(testSymbol)
+	// The shipped DefaultNotionalQuote is a SEED, not a size a run trades: with
+	// auto-rebalance on, the first scan sizes it from the account before any
+	// entry is judged. At goodSnapshot's rules it is under the venue's own size
+	// floor, so a fixture standing for "a reading every check passes" carries
+	// the size the rig's runs actually use.
+	cfg.NotionalQuote = testNotional
+	return entryInput{Cfg: cfg, Snap: *goodSnapshot(now, 0.0001), Now: now, MarginFrac: 0.5, Flat: true}
 }
 
 func check(t *testing.T, checks []CheckView, prefix string) CheckView {
@@ -92,7 +99,7 @@ func check(t *testing.T, checks []CheckView, prefix string) CheckView {
 func TestAssessEntry_AGoodReadingPassesEveryCheck(t *testing.T) {
 	now := time.Now()
 	sig := assessEntry(goodInput(now))
-	if !sig.EntryEligible || sig.VerdictVI != "ĐỦ ĐIỀU KIỆN VÀO" || len(sig.EntryChecks) != 8 {
+	if !sig.EntryEligible || sig.VerdictVI != "ĐỦ ĐIỀU KIỆN VÀO" || len(sig.EntryChecks) != 9 {
 		t.Fatalf("verdict %q, %d checks: %+v", sig.VerdictVI, len(sig.EntryChecks), sig.EntryChecks)
 	}
 	// 90 settlements of 1 bps over 30 days, a round trip of 8 bps of fees plus
@@ -325,7 +332,7 @@ func TestRingLog_KeepsTheNewestNewestFirst(t *testing.T) {
 func TestChecks_EveryConditionHasItsOwnKey(t *testing.T) {
 	now := time.Now()
 	entry := assessEntry(goodInput(now))
-	want := []CheckKey{CheckFlat, CheckFormingPositive, CheckLastSettledPositive, CheckEntryBasis, CheckNetAPR, CheckDepth, CheckClock, CheckTimeToSettle}
+	want := []CheckKey{CheckFlat, CheckFormingPositive, CheckLastSettledPositive, CheckEntryBasis, CheckSizeFits, CheckNetAPR, CheckDepth, CheckClock, CheckTimeToSettle}
 	if len(entry.EntryChecks) != len(want) {
 		t.Fatalf("%d entry checks, want %d", len(entry.EntryChecks), len(want))
 	}
@@ -688,5 +695,309 @@ func TestConfig_RefusesTheWaysTheNewThresholdsGoWrong(t *testing.T) {
 	}
 	if err := DefaultConfig(testSymbol).Validate(50_000); err != nil {
 		t.Errorf("the shipped set was refused: %v", err)
+	}
+}
+
+// ------------------------- buffered-slot sizing and rebalancing (4.5g)
+
+// The arithmetic of one slot, term by term, against the brief's own formula:
+// hold the buffer back, split what is left N ways, divide by the capital a
+// quote of notional ties up.
+func TestPlanNotional_SizesASlotFromEquity(t *testing.T) {
+	in := notionalPlanInput{
+		// Split in exactly the ratio the position needs — spot 1, futures 0.5 —
+		// so the brief's one-pool formula and the two wallets agree, and the
+		// test is about the formula rather than about which wallet binds.
+		Account: Account{QuoteAsset: "USDT", SpotQuoteTotal: 10_000, FuturesQuoteTotal: 5_000},
+		Slots:   6, MarginFrac: 0.5, BufferPct: 0.30,
+		CapQuote: 1_000_000, MaxNotionalQuote: 50_000,
+	}
+	got := planNotional(in)
+	if !got.OK {
+		t.Fatalf("refused: %s", got.ReasonVI)
+	}
+	// 15,000 × 0.70 = 10,500 tradable; ÷ 6 = 1,750 a slot; ÷ 1.5 = 1,166.67.
+	for _, tc := range []struct {
+		nameVI    string
+		got, want float64
+	}{
+		{"tổng vốn", got.TotalEquityQuote, 15_000},
+		{"đệm", got.BufferQuote, 4_500},
+		{"vốn được phân bổ", got.TradableQuote, 10_500},
+		{"vốn mỗi chỗ", got.CapitalPerSlotQuote, 1_750},
+		{"notional", got.NotionalQuote, 10_500.0 / 6 / 1.5},
+		{"vốn trên mỗi notional", got.CapitalPerNotional, 1.5},
+	} {
+		if math.Abs(tc.got-tc.want) > 1e-9 {
+			t.Errorf("%s = %v, want %v", tc.nameVI, tc.got, tc.want)
+		}
+	}
+	// The whole plan fits both wallets: 6 × 1,166.67 = 7,000 of spot against
+	// 10,000, and 6 × 0.5 × 1,166.67 = 3,500 of margin against 5,000 × 0.70.
+	if !strings.Contains(got.BoundByVI, "phần vốn mỗi chỗ") {
+		t.Errorf("bound by %q, want the equity share", got.BoundByVI)
+	}
+
+	// The bot's own open positions are spot equity held in coin. Leaving them
+	// out would shrink every plan as positions open and grow it as they close.
+	deployed := in
+	deployed.Account.SpotQuoteTotal, deployed.OpenSpotValueQuote = 3_000, 7_000
+	if same := planNotional(deployed); !same.OK || math.Abs(same.NotionalQuote-got.NotionalQuote) > 1e-9 {
+		t.Errorf("a fully deployed account sized %v, want the same %v — the plan ratchets", same.NotionalQuote, got.NotionalQuote)
+	}
+}
+
+// The two wallets are separate registrations and nothing can move funds
+// between them, so whichever runs out first sets the size — and says so.
+func TestPlanNotional_TheTighterWalletBindsAndIsNamed(t *testing.T) {
+	base := notionalPlanInput{Slots: 4, MarginFrac: 0.5, BufferPct: 0.30, CapQuote: 1_000_000, MaxNotionalQuote: 50_000}
+	for _, tc := range []struct {
+		nameVI       string
+		spot, perp   float64
+		wantNotional float64
+		wantBound    string
+	}{
+		// 10,000 spot / 4 = 2,500 a leg, against an equity share of
+		// (10,000 + 500) × 0.7 / 4 / 1.5 = 1,225 — the share still binds.
+		{"hai ví cân đối", 10_000, 5_000, 15_000 * 0.7 / 4 / 1.5, "phần vốn mỗi chỗ"},
+		// Almost nothing on the futures side: its margin, not the share, binds.
+		{"ví futures cạn", 10_000, 300, 300 * 0.7 / (4 * 0.5), "ví futures"},
+		// Almost nothing on the spot side: the spot leg is the whole notional.
+		{"ví spot cạn", 400, 9_000, 400.0 / 4, "ví spot"},
+	} {
+		in := base
+		in.Account = Account{QuoteAsset: "USDT", SpotQuoteTotal: tc.spot, FuturesQuoteTotal: tc.perp}
+		got := planNotional(in)
+		if !got.OK {
+			t.Errorf("%s: refused: %s", tc.nameVI, got.ReasonVI)
+			continue
+		}
+		if math.Abs(got.NotionalQuote-tc.wantNotional) > 1e-9 || !strings.Contains(got.BoundByVI, tc.wantBound) {
+			t.Errorf("%s: notional %v (want %v), bound by %q (want %q)", tc.nameVI, got.NotionalQuote, tc.wantNotional, got.BoundByVI, tc.wantBound)
+		}
+		// Whatever bound it, the plan must fit BOTH wallets. This is the whole
+		// point: a size the futures wallet cannot margin is an open that fails.
+		if slots := float64(in.Slots); got.NotionalQuote*slots > got.SpotPoolQuote+1e-9 ||
+			got.NotionalQuote*slots*in.MarginFrac > got.FuturesPoolQuote*(1-in.BufferPct)+1e-9 {
+			t.Errorf("%s: %d × %.2f does not fit spot %.2f / futures %.2f", tc.nameVI, in.Slots, got.NotionalQuote, got.SpotPoolQuote, got.FuturesPoolQuote)
+		}
+	}
+}
+
+// The two hard ceilings still hold however much equity there is.
+func TestPlanNotional_NeverExceedsTheCapitalCapOrThePortalCeiling(t *testing.T) {
+	rich := notionalPlanInput{
+		Account: Account{QuoteAsset: "USDT", SpotQuoteTotal: 10_000_000, FuturesQuoteTotal: 10_000_000},
+		Slots:   4, MarginFrac: 0.5, BufferPct: 0.30, CapQuote: 1_200, MaxNotionalQuote: 50_000,
+	}
+	got := planNotional(rich)
+	// 1,200 of capital over 4 slots at 1.5× is 200 a leg, and not one quote more.
+	if !got.OK || math.Abs(got.NotionalQuote-200) > 1e-9 || !strings.Contains(got.BoundByVI, "hạn mức vốn") {
+		t.Fatalf("capital cap = %+v", got)
+	}
+	if total := got.NotionalQuote * float64(rich.Slots) * got.CapitalPerNotional; total > rich.CapQuote+1e-9 {
+		t.Errorf("%d slots tie up %.2f, over the cap %.2f", rich.Slots, total, rich.CapQuote)
+	}
+	// With the cap lifted, the portal's own per-leg ceiling is the last word.
+	rich.CapQuote = 1e12
+	rich.MaxNotionalQuote = 5_000
+	if got := planNotional(rich); !got.OK || got.NotionalQuote != 5_000 || !strings.Contains(got.BoundByVI, "trần notional") {
+		t.Errorf("portal ceiling = %+v", got)
+	}
+}
+
+// An input that cannot be trusted produces NO size, so the caller leaves the
+// one it has rather than trading on a number nobody can defend.
+func TestPlanNotional_RefusesRatherThanSizingOnNonsense(t *testing.T) {
+	ok := notionalPlanInput{
+		Account: Account{QuoteAsset: "USDT", SpotQuoteTotal: 10_000, FuturesQuoteTotal: 5_000},
+		Slots:   4, MarginFrac: 0.5, BufferPct: 0.30, CapQuote: 100_000, MaxNotionalQuote: 50_000,
+	}
+	if got := planNotional(ok); !got.OK {
+		t.Fatalf("the good input was refused: %s", got.ReasonVI)
+	}
+	for _, tc := range []struct {
+		nameVI   string
+		mutate   func(*notionalPlanInput)
+		fragment string
+	}{
+		{"không có chỗ nào", func(in *notionalPlanInput) { in.Slots = 0 }, "số chỗ"},
+		{"ký quỹ bằng 0", func(in *notionalPlanInput) { in.MarginFrac = 0 }, "tỷ lệ ký quỹ"},
+		{"đệm quá thấp", func(in *notionalPlanInput) { in.BufferPct = 0.05 }, "đệm ký quỹ"},
+		{"đệm quá cao", func(in *notionalPlanInput) { in.BufferPct = 0.9 }, "đệm ký quỹ"},
+		{"đệm NaN", func(in *notionalPlanInput) { in.BufferPct = math.NaN() }, "đệm ký quỹ"},
+		{"số dư âm", func(in *notionalPlanInput) { in.Account.SpotQuoteTotal = -1 }, "số dư đọc được"},
+		{"số dư vô hạn", func(in *notionalPlanInput) { in.Account.FuturesQuoteTotal = math.Inf(1) }, "số dư đọc được"},
+		{"vị thế đang giữ âm", func(in *notionalPlanInput) { in.OpenSpotValueQuote = -1 }, "chân spot đang giữ"},
+		{"không có hạn mức vốn", func(in *notionalPlanInput) { in.CapQuote = 0 }, "hạn mức vốn"},
+		{"tài khoản rỗng", func(in *notionalPlanInput) { in.Account = Account{} }, "vốn không đủ"},
+	} {
+		in := ok
+		tc.mutate(&in)
+		got := planNotional(in)
+		if got.OK || got.NotionalQuote != 0 {
+			t.Errorf("%s: sized anyway = %+v", tc.nameVI, got)
+			continue
+		}
+		if !strings.Contains(got.ReasonVI, tc.fragment) {
+			t.Errorf("%s: %q does not name %q", tc.nameVI, got.ReasonVI, tc.fragment)
+		}
+	}
+}
+
+// The venue's own floor on one leg, and the guard that keeps a slot from being
+// mostly rounding error.
+func TestSizeFloorQuote_ReadsTheVenuesRulesAndTheQuantizationGuard(t *testing.T) {
+	// BTCUSDT as this testnet publishes it: futures steps 0.0001 and wants 50
+	// quote, at 77,000 a coin. The step is 7.70, so the 5% tolerance asks 154 —
+	// three times the venue's own minimum, and it is the binding one.
+	floor, why, ok := sizeFloorQuote(0.0001, 0.0001, 50, 77_000)
+	if !ok || math.Abs(floor-154) > 1e-9 || !strings.Contains(why, "bước nhảy") {
+		t.Errorf("BTC floor = %v (%s, ok %v), want 154 from the step", floor, why, ok)
+	}
+	// A cheap coin with a coarse step: the venue's own minimum notional wins.
+	if floor, why, ok := sizeFloorQuote(1, 1, 20, 0.15); !ok || math.Abs(floor-20) > 1e-9 || !strings.Contains(why, "notional tối thiểu") {
+		t.Errorf("cheap coin floor = %v (%s, ok %v), want the venue's 20", floor, why, ok)
+	}
+	// A minimum quantity worth more than either: it wins.
+	if floor, why, ok := sizeFloorQuote(0.001, 10, 5, 100); !ok || math.Abs(floor-1_000) > 1e-9 || !strings.Contains(why, "lượng tối thiểu") {
+		t.Errorf("min-qty floor = %v (%s, ok %v), want 1000", floor, why, ok)
+	}
+	// An unread rule is NOT "no limit": the floor is unknown, and the entry
+	// check that reads it refuses rather than opening an order the venue bins.
+	for _, tc := range []struct {
+		nameVI                           string
+		step, minQty, minNotional, price float64
+	}{
+		{"chưa có giá", 0.0001, 0.0001, 50, 0},
+		{"chưa đọc bước nhảy", 0, 0.0001, 50, 77_000},
+		{"chưa đọc lượng tối thiểu", 0.0001, 0, 50, 77_000},
+		{"chưa đọc notional tối thiểu", 0.0001, 0.0001, 0, 77_000},
+	} {
+		if floor, why, ok := sizeFloorQuote(tc.step, tc.minQty, tc.minNotional, tc.price); ok || floor != 0 || why == "" {
+			t.Errorf("%s: floor %v (%s, ok %v) — an unread rule must not read as no limit", tc.nameVI, floor, why, ok)
+		}
+	}
+}
+
+// A size the venue would refuse, or one mostly lost to its grid, never opens.
+// Both cost real money: the first is an order the portal refuses before
+// placing, which the engine counts as a failed trade and halts the pair after
+// five; the second opens and deploys far less of its slot than the allocation
+// says (capital.go).
+func TestAssessEntry_RefusesASizeTheVenueGridWouldEat(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		nameVI     string
+		notional   float64
+		wantPassed bool
+	}{
+		{"đúng bằng sàn quy mô", 154, true},
+		{"trên sàn quy mô", 200, true},
+		{"quy mô cũ 65 quote", 65, false},
+		{"dưới notional tối thiểu của sàn", 40, false},
+	} {
+		in := goodInput(now)
+		in.Cfg.NotionalQuote = tc.notional
+		c := check(t, assessEntry(in).EntryChecks, "Quy mô đủ lớn")
+		if !c.Evaluated || c.Passed != tc.wantPassed {
+			t.Errorf("%s: size check = %+v, want passed=%v", tc.nameVI, c, tc.wantPassed)
+		}
+	}
+	// The gauge says what the size really becomes on the grid, whether or not
+	// the check passes: 200 quote at 77,000 and a 0.0001 step is 0.0025 coin.
+	sig := assessEntry(goodInput(now))
+	if sig.PlannedQtyCoin == nil || math.Abs(*sig.PlannedQtyCoin-0.0025) > 1e-12 ||
+		sig.SizeErrorPct == nil || *sig.SizeErrorPct < 0 || *sig.SizeErrorPct > 5 {
+		t.Errorf("planned qty %v, size error %v%%", sig.PlannedQtyCoin, sig.SizeErrorPct)
+	}
+	if sig.SizeFloorQuote == nil || math.Abs(*sig.SizeFloorQuote-154) > 1e-9 {
+		t.Errorf("size floor on the gauge = %v", sig.SizeFloorQuote)
+	}
+	// Rules that could not be read are not evaluated, and an entry check that
+	// could not be evaluated never passes.
+	blind := goodInput(now)
+	blind.Snap.RulesErrVI = "timeout"
+	if c := check(t, assessEntry(blind).EntryChecks, "Quy mô đủ lớn"); c.Evaluated || c.Passed {
+		t.Errorf("unread rules = %+v", c)
+	}
+	if assessEntry(blind).EntryEligible {
+		t.Error("a pair with unread venue rules was eligible")
+	}
+}
+
+// The schedule, as a value: when a size read is owed and when it is not.
+func TestRebalanceDue_FollowsTheClockAndTheSwitch(t *testing.T) {
+	const hourMs = int64(3_600_000)
+	base := DefaultPortfolioConfig([]string{testSymbol})
+	base.RebalanceIntervalHours = 168
+
+	// Never sized: due at once, so a bot switched on does not trade a week at
+	// the seed before it first looks at the account.
+	if !base.rebalanceDue(1_000) {
+		t.Error("a run that never sized is not due")
+	}
+	sized := base
+	sized.LastRebalancedAtMs = 1_000_000
+	for _, tc := range []struct {
+		nameVI  string
+		atMs    int64
+		wantDue bool
+	}{
+		{"ngay sau khi cân bằng", sized.LastRebalancedAtMs + 1, false},
+		{"một giờ trước hạn", sized.LastRebalancedAtMs + 167*hourMs, false},
+		{"đúng hạn", sized.LastRebalancedAtMs + 168*hourMs, true},
+		{"quá hạn", sized.LastRebalancedAtMs + 400*hourMs, true},
+	} {
+		if got := sized.rebalanceDue(tc.atMs); got != tc.wantDue {
+			t.Errorf("%s: due = %v, want %v", tc.nameVI, got, tc.wantDue)
+		}
+	}
+	if want := sized.LastRebalancedAtMs + 168*hourMs; sized.nextRebalanceAtMs() != want {
+		t.Errorf("next = %d, want %d", sized.nextRebalanceAtMs(), want)
+	}
+	// The switch off means never, however long it has been.
+	off := sized
+	off.AutoRebalance = false
+	if off.rebalanceDue(sized.LastRebalancedAtMs+10_000*hourMs) || off.nextRebalanceAtMs() != 0 {
+		t.Errorf("a switched-off run is due at %d", off.nextRebalanceAtMs())
+	}
+	offNever := off
+	offNever.LastRebalancedAtMs = 0
+	if offNever.rebalanceDue(1) {
+		t.Error("a switched-off run that never sized is due")
+	}
+}
+
+// A run no start may begin with, for each of the two new values.
+func TestPortfolio_RefusesTheWaysTheRebalanceValuesGoWrong(t *testing.T) {
+	for _, tc := range []struct {
+		nameVI   string
+		mutate   func(*PortfolioConfig)
+		fragment string
+	}{
+		{"đệm quá thấp", func(pc *PortfolioConfig) { pc.MarginBufferPct = 0.05 }, "margin_buffer_pct"},
+		{"đệm quá cao", func(pc *PortfolioConfig) { pc.MarginBufferPct = 0.6 }, "margin_buffer_pct"},
+		{"đệm NaN", func(pc *PortfolioConfig) { pc.MarginBufferPct = math.NaN() }, "margin_buffer_pct"},
+		{"chu kỳ quá ngắn", func(pc *PortfolioConfig) { pc.RebalanceIntervalHours = 0.5 }, "rebalance_interval_hours"},
+		{"chu kỳ vô hạn", func(pc *PortfolioConfig) { pc.RebalanceIntervalHours = math.Inf(1) }, "rebalance_interval_hours"},
+		{"mốc cân bằng âm", func(pc *PortfolioConfig) { pc.LastRebalancedAtMs = -1 }, "last_rebalanced_at_ms"},
+		// Validated even with the switch off: a run started off with a nonsense
+		// buffer would size wrongly the moment somebody turns it on.
+		{"đệm sai khi đã tắt", func(pc *PortfolioConfig) { pc.AutoRebalance, pc.MarginBufferPct = false, 0 }, "margin_buffer_pct"},
+	} {
+		pc := DefaultPortfolioConfig([]string{testSymbol})
+		tc.mutate(&pc)
+		err := pc.Validate([]string{testSymbol}, 50_000, 1.5)
+		if err == nil {
+			t.Errorf("%s: accepted", tc.nameVI)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.fragment) {
+			t.Errorf("%s: %v does not name %q", tc.nameVI, err, tc.fragment)
+		}
+	}
+	if err := DefaultPortfolioConfig([]string{testSymbol}).Validate([]string{testSymbol}, 50_000, 1.5); err != nil {
+		t.Errorf("the shipped run was refused: %v", err)
 	}
 }
