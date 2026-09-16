@@ -390,8 +390,13 @@
               </div>
               <div class="field">
                 <label for="at-take-profit">Chốt lời sớm (% trên vốn)</label>
-                <input type="number" id="at-take-profit" min="0" max="100" step="0.01" value="0.50" inputmode="decimal" required>
+                <input type="number" id="at-take-profit" min="0" max="100" step="0.01" value="1.50" inputmode="decimal" required>
                 <div class="hint">0 = tắt chốt lời hội tụ basis</div>
+              </div>
+              <div class="field">
+                <label for="at-max-exit-spread">Trần spread chốt lời (bps)</label>
+                <input type="number" id="at-max-exit-spread" min="0" max="10000" step="0.5" value="10.0" inputmode="decimal" required>
+                <div class="hint">hoãn chốt lời 1 lượt quét khi sổ lệnh giãn quá mức; 0 = tắt. KHÔNG chặn cắt lỗ.</div>
               </div>
               <div class="field">
                 <label for="at-buffer">Đệm ký quỹ (%)</label>
@@ -803,6 +808,22 @@
         <p class="note mt8" id="bt-equity-note"></p>
       </article>
 
+      <article class="card">
+        <div class="card-head">
+          <h2>Hiệu suất theo sàn</h2>
+          <span class="tag paper">BACKTEST</span>
+          <span class="spacer"></span>
+          <span class="hint">APR tính trên số ngày TỪNG SÀN thực sự phủ — không phải trên 3 năm</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Sàn (Perp ← Spot)</th><th class="r">Nhịp</th><th class="r">Chuỗi</th><th class="r">Lệnh</th><th class="r">Trên vốn</th><th class="r">%/năm</th><th class="r">Giữ suốt %/năm</th><th class="r">Thắng</th><th class="r">Vòng phí</th><th class="r">Ngày phủ</th></tr></thead>
+            <tbody id="bt-venues"><tr><td class="empty" colspan="10">—</td></tr></tbody>
+          </table>
+        </div>
+        <p class="hint mt8" id="bt-venues-note"></p>
+      </article>
+
       <div class="labels-grid">
         <article class="card">
           <div class="card-head"><h2>Phân rã theo năm</h2></div>
@@ -831,11 +852,13 @@
           <span class="spacer"></span>
           <label class="hint" for="bt-filter">Lọc cặp</label>
           <select id="bt-filter" class="at-filter" aria-label="Lọc theo cặp"><option value="">Tất cả</option></select>
+          <label class="hint" for="bt-venue-filter">Lọc sàn</label>
+          <select id="bt-venue-filter" class="at-filter" aria-label="Lọc theo sàn"><option value="">Tất cả sàn</option></select>
           <span class="hint" id="bt-trade-count">—</span>
         </div>
         <div class="table-wrap scroll">
           <table>
-            <thead><tr><th>Cặp</th><th>Vào</th><th>Ra</th><th class="r">Ngày</th><th class="r">Mốc</th><th class="r">Basis vào → ra</th><th class="r">Funding</th><th class="r">Trôi giá</th><th class="r">Phí</th><th class="r">P&amp;L</th><th class="r">Trên vốn</th><th>Lý do đóng</th></tr></thead>
+            <thead><tr><th>Cặp / Perp ← Spot</th><th>Vào</th><th>Ra</th><th class="r">Ngày</th><th class="r">Mốc</th><th class="r">Basis vào → ra</th><th class="r">Funding</th><th class="r">Trôi giá</th><th class="r">Phí</th><th class="r">P&amp;L</th><th class="r">Trên vốn</th><th>Lý do đóng</th></tr></thead>
             <tbody id="bt-trades"><tr><td class="empty" colspan="12">—</td></tr></tbody>
           </table>
         </div>

@@ -1562,10 +1562,11 @@ func TestDefaults_AreTheAuditedSafetyThresholds(t *testing.T) {
 	// The convergence-and-amortization set of
 	// docs/AUTOTRADE-CONVERGENCE-HOLDING-STRATEGY.md §3, testnet column: enter
 	// only at a perp premium, hold six settlements before the funding exit may
-	// run, take profit at +0.50% of CAPITAL, and leave on a run of two
-	// settlements at or below -2.0 bps or a basis break of 100 bps.
+	// run, take profit at +1.50% of CAPITAL once the touch is no wider than
+	// 10 bps, and leave on a run of two settlements at or below -2.0 bps or a
+	// basis break of 100 bps.
 	want := Config{Symbol: testSymbol, NotionalQuote: 65, MinNetAPRPct: 5, MinEntryBasisBps: 5,
-		MaxHoldEpochs: 0, MinHoldEpochs: 6, TargetTakeProfitNetPct: 0.50,
+		MaxHoldEpochs: 0, MinHoldEpochs: 6, TargetTakeProfitNetPct: 1.50, MaxExitSpreadBps: 10.0,
 		ExitNegativeFundingRateBps: -2.0, ExitNegativeConsecutiveEpochs: 2, Cooldown: 60 * time.Second,
 		ProjectionHoldDays: 30, MaxBasisWidenBps: 100, MinTimeToSettle: 300 * time.Second, DepthMultiple: 2, MaxConsecutiveFailures: 5}
 	if c != want {
@@ -3559,17 +3560,17 @@ func TestEngine_TakesProfitOnConvergenceAndNamesTheReason(t *testing.T) {
 	r.step()
 	r.wantState(StateInPosition)
 
-	// The perp falls 1.5% towards and past the spot: the SHORT leg gains it,
-	// which on a $65 pair at 1.5× capital is well past the +0.50% target. (A
-	// full percent is not: the fake venue fills each leg about 0.1% off its
-	// mid, so the entry's own slippage eats a third of the move.)
-	r.market.set(func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*0.985, time.Now()) })
+	// The perp falls 3.5% towards and past the spot: the SHORT leg gains it,
+	// which at 1.5× capital is well past the +1.50% target. (A smaller move is
+	// not: the fake venue fills each leg about 0.1% off its mid, so the entry's
+	// own slippage eats part of it, and the target rose again at 4.5j.)
+	r.market.set(func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*0.965, time.Now()) })
 	st := r.step()
 	r.wantState(StateCooldown)
 	r.wantVenueFlat()
 
 	reasons := closeReasonsOf(r)
-	if len(reasons) != 1 || !strings.HasPrefix(reasons[0], "Chốt lời hội tụ Basis: Net PnL ") || !strings.Contains(reasons[0], "≥ ngưỡng +0.50%") {
+	if len(reasons) != 1 || !strings.HasPrefix(reasons[0], "Chốt lời hội tụ Basis: Net PnL ") || !strings.Contains(reasons[0], "≥ ngưỡng +1.50%") {
 		t.Fatalf("the reason handed to Close = %q", reasons)
 	}
 	if !hasLogOn(st, "EXIT", testSymbol, "Chốt lời hội tụ Basis") {

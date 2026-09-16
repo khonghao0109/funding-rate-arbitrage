@@ -298,6 +298,30 @@ func basisBps(spotMidQuote, perpMidQuote float64) (float64, bool) {
 	return (perpMidQuote - spotMidQuote) / spotMidQuote * 10_000, true
 }
 
+// spreadBps is one book's touch width, (best ask − best bid) ÷ mid, in basis
+// points. It is depth.Summary.SpreadPct in another unit, recomputed from the
+// two touch prices rather than read from that derived field: a Summary built
+// by hand with the field left at zero would otherwise read as a perfectly
+// tight book and turn the take-profit's spread brake off without saying so.
+//
+// ok is false when the touch is not there to measure. A caller must not read
+// that as "tight" — it is "unknown", and what to do about it is the caller's
+// decision, stated where the decision is made.
+func spreadBps(b depth.Summary) (float64, bool) {
+	if !(b.MidPriceQuote > 0) || !(b.BestBidQuote > 0) || !(b.BestAskQuote > 0) {
+		return 0, false
+	}
+	return (b.BestAskQuote - b.BestBidQuote) / b.MidPriceQuote * bpsPerUnit, true
+}
+
+// spreadTextVI prints a spread, or says it was not measurable — never "0".
+func spreadTextVI(bps float64, ok bool) string {
+	if !ok {
+		return "không đo được"
+	}
+	return fmt.Sprintf("%.1f bps", bps)
+}
+
 func ptr(v float64) *float64 {
 	if math.IsNaN(v) || math.IsInf(v, 0) {
 		return nil
@@ -924,10 +948,35 @@ func assessExit(cfg Config, snap Snapshot, pos PositionView, now time.Time) exit
 		add(CheckExitTakeProfit, takeProfitName, false, false, "không định giá được kết quả tạm tính: "+out.Result.ReasonVI)
 	default:
 		r := out.Result
-		addReason(CheckExitTakeProfit, takeProfitName, true, r.ReturnOnCapitalPct >= cfg.TargetTakeProfitNetPct,
-			fmt.Sprintf("tạm tính %+.4f quote trên vốn %.2f = %+.2f%%, cần ≥ %+.2f%% · funding %+.4f, trôi giá %+.4f, phí vào %.4f, đóng ước %.4f",
-				r.CashResultQuote, r.CapitalQuote, r.ReturnOnCapitalPct, cfg.TargetTakeProfitNetPct,
-				r.FundingQuote, r.DriftQuote, r.EntryFeeQuote, r.ExitCostQuote),
+		reached := r.ReturnOnCapitalPct >= cfg.TargetTakeProfitNetPct
+		spotSpread, spotOK := spreadBps(snap.SpotBook)
+		perpSpread, perpOK := spreadBps(snap.PerpBook)
+		// The brake bites only on a spread it could actually MEASURE. An
+		// unreadable touch does not hold the exit: this guard saves a few bps
+		// of slippage on a gain worth about a hundred and fifty, so a brake
+		// that jammed on a missing auxiliary figure would cost far more than
+		// it ever saved — and it would silence the one exit that closes a
+		// pair for a gain. The wording says which case it is either way.
+		wide := cfg.MaxExitSpreadBps > 0 &&
+			((spotOK && spotSpread > cfg.MaxExitSpreadBps) || (perpOK && perpSpread > cfg.MaxExitSpreadBps))
+		spreadVI := fmt.Sprintf("Spot %s, Perp %s", spreadTextVI(spotSpread, spotOK), spreadTextVI(perpSpread, perpOK))
+		resultVI := fmt.Sprintf("tạm tính %+.4f quote trên vốn %.2f = %+.2f%%, cần ≥ %+.2f%% · funding %+.4f, trôi giá %+.4f, phí vào %.4f, đóng ước %.4f",
+			r.CashResultQuote, r.CapitalQuote, r.ReturnOnCapitalPct, cfg.TargetTakeProfitNetPct,
+			r.FundingQuote, r.DriftQuote, r.EntryFeeQuote, r.ExitCostQuote)
+		if reached && wide {
+			// HELD BACK, not refused: the next scan re-prices everything and
+			// closes as soon as the book is tight again. Nothing about the
+			// position changes in the meantime, and the two risk exits above
+			// have already had their say on this same reading.
+			add(CheckExitTakeProfit, takeProfitName, true, false,
+				fmt.Sprintf("đạt mục tiêu %+.2f%% (≥ %+.2f%%) nhưng HOÃN CHỐT: Spread bị giãn (%s > trần %.1f bps) — đợi sổ lệnh co hẹp để tránh trượt giá · %s",
+					r.ReturnOnCapitalPct, cfg.TargetTakeProfitNetPct, spreadVI, cfg.MaxExitSpreadBps, resultVI))
+			break
+		}
+		if cfg.MaxExitSpreadBps > 0 {
+			resultVI += fmt.Sprintf(" · spread %s (trần %.1f bps)", spreadVI, cfg.MaxExitSpreadBps)
+		}
+		addReason(CheckExitTakeProfit, takeProfitName, true, reached, resultVI,
 			fmt.Sprintf("Chốt lời hội tụ Basis: Net PnL %+.2f%% trên vốn ≥ ngưỡng %+.2f%%", r.ReturnOnCapitalPct, cfg.TargetTakeProfitNetPct))
 	}
 	return out

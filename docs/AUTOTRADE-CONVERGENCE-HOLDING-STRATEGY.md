@@ -39,7 +39,7 @@ graph TD
     B -- Không --> C["Bỏ qua (Tránh bẫy basis lõm)"]
     B -- Có --> D["MỞ VỊ THẾ HEDGED"]
     D --> E{"Trụ cột 2: Sàn Giữ Khấu Hao<br/>Đã qua MinHoldEpochs (≥6 mốc)?"}
-    E -- Chưa --> F{"Trụ cột 3: Chốt lời sớm Convergence?<br/>Net PnL ≥ +0.50% vốn?"}
+    E -- Chưa --> F{"Trụ cột 3: Chốt lời sớm Convergence?<br/>Net PnL ≥ +1.50% vốn VÀ spread ≤ 10 bps?"}
     F -- Đạt --> G["CHỐT LỜI SỚM (Take-Profit)"]
     F -- Chưa --> H["Tiếp tục giữ & Tích lũy Funding"]
     E -- Đã qua --> I{"Trụ cột 4: Kiểm tra Thoát An Toàn<br/>Funding âm trễ hoặc Basis nổ?"}
@@ -67,8 +67,14 @@ graph TD
     $$\text{CashResultQuote} = \text{Funding đã nhận} - \text{Phí vào} - \text{Phí ra ước tính} + \text{Trôi giá hiện tại}$$
     $$\text{NetReturnOnCapitalPct} = \frac{\text{CashResultQuote}}{\text{Vốn cam kết}} \times 100\%$$
   - **Điều kiện Chốt Lời Chủ Động**:
-    $$\text{NetReturnOnCapitalPct} \ge \text{TargetTakeProfitNetPct} \quad (\text{Mặc định: } +0,50\% \text{ trên vốn})$$
+    $$\text{NetReturnOnCapitalPct} \ge \text{TargetTakeProfitNetPct} \quad (\text{Mặc định: } +1,50\% \text{ trên vốn})$$
   - **Ý nghĩa**: Nếu basis co hẹp mạnh chỉ sau 2-3 ngày đem lại lợi nhuận ròng vượt chỉ tiêu, bot chốt lời ngay lập tức để quay vòng vốn sang cặp khác, không cần giam vốn đủ 30 ngày.
+  - **Van chặn trượt giá theo spread (`MaxExitSpreadBps`, 4.5i)**: khi đã đạt ngưỡng, engine đo độ rộng chạm của CẢ HAI sổ lệnh:
+    $$\text{SpreadBps} = \frac{\text{BestAsk} - \text{BestBid}}{\text{Mid}} \times 10^4$$
+    Nếu spread của Spot **hoặc** Perp vượt `MaxExitSpreadBps`, lệnh đóng bị **HOÃN một chu kỳ quét** (10 giây) để đợi market maker đặt lại lệnh, thay vì quét Market vào một sổ đã rỗng. Vị thế không thay đổi gì trong lúc chờ; lượt quét sau định giá lại từ đầu và đóng ngay khi sổ co hẹp.
+    - **Ranh giới**: van này **CHỈ** hoãn chốt lời. Cắt lỗ doãng basis, thoát funding âm trễ, `Stop & Close` và `Kill` **không bao giờ** bị chặn — hoãn một lối thoát rủi ro là cách một khoản lỗ nhỏ trở thành lớn.
+    - **Vì sao ngưỡng 10 bps**: chạm đo được trên các cặp lớn ~1 bps, nên 10 bps chỉ chạm tới khi maker thực sự rút lệnh; còn khoản lãi đang được bảo vệ là $\approx 150\text{ bps}$ trên notional, lớn hơn hai bậc.
+    - **Lưu ý định lượng**: `priceHolding` đã tính một phần chi phí spread qua `strategy.EstimateFill` (sổ giãn ⇒ phí đóng ước tính cao hơn ⇒ Net PnL tụt). Van này là lớp phòng vệ THỨ HAI trên nền đó, không phải lớp duy nhất.
 
 ### Trụ cột 4: Van Thoát Hiểm & Bảo Vệ Vốn (Safety Stop-Loss)
 Vị thế chỉ bị buộc đóng trước hạn khi rơi vào các tình huống rủi ro thực sự:
@@ -84,7 +90,8 @@ Vị thế chỉ bị buộc đóng trước hạn khi rơi vào các tình hu�
 | :--- | :--- | :--- | :--- |
 | `MinEntryBasisBps` | Ngưỡng basis tối thiểu lúc vào lệnh | $+5,0\text{ bps}$ | $+10,0\text{ bps}$ |
 | `MinHoldEpochs` | Sàn giữ tối thiểu để khấu hao phí | $6\text{ mốc (48h)}$ | $6\text{ mốc (48h)}$ |
-| `TargetTakeProfitNetPct` | Ngưỡng chốt lời sớm khi basis hội tụ | $+0,50\%$ trên vốn | $+0,80\%$ trên vốn |
+| `TargetTakeProfitNetPct` | Ngưỡng chốt lời sớm khi basis hội tụ | $+1,50\%$ trên vốn | $+1,50\%$ trên vốn |
+| `MaxExitSpreadBps` | Trần spread cho phép GỬI lệnh chốt lời | $10,0\text{ bps}$ | $10,0\text{ bps}$ |
 | `MaxBasisWidenBps` | Cắt lỗ do doãng basis cực đoan | $100\text{ bps}$ | $100\text{ bps}$ |
 | `ExitNegativeFundingRateBps` | Ngưỡng rate âm để xét thoát trễ | $-2,0\text{ bps}$ | $-2,0\text{ bps}$ |
 | `ExitNegativeConsecutiveEpochs` | Số mốc âm liên tiếp cần thiết | $2\text{ mốc}$ | $2\text{ mốc}$ |
@@ -97,7 +104,7 @@ Vị thế chỉ bị buộc đóng trước hạn khi rơi vào các tình hu�
 
 Mọi lệnh đóng trên hệ thống phải gắn nhãn lý do cụ thể và lưu vào trường `CloseReasonVI` trong file ý định `.paper/exec/*.json`:
 
-- Chốt lời sớm: `"Chốt lời hội tụ Basis: Net PnL +0.62% trên vốn ≥ ngưỡng +0.50%"`
+- Chốt lời sớm: `"Chốt lời hội tụ Basis: Net PnL +1.82% trên vốn ≥ ngưỡng +1.50%"`
 - Hết chu kỳ giữ: `"Đã qua đủ số mốc settle tối đa (90/90 mốc)"`
 - Cắt lỗ funding âm: `"2 mốc settle liên tiếp ≤ -2.0 bps sau sàn giữ 6 mốc"`
 - Cắt lỗ basis nổ: `"Basis giãn +102.5 bps > 100 bps so với lúc vào"`

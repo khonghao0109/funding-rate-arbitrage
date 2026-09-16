@@ -457,7 +457,7 @@ func (p *portal) handleAutotradeStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // autotradeOverrideRequest is one pair's own values; an absent field takes the
-// run's default. The three convergence knobs are here too, so a pair may be
+// run's default. The four convergence knobs are here too, so a pair may be
 // tuned exactly as the run's default may be (PLAN "Công cụ vận hành 4.5f").
 // Everything NOT here — the hysteresis, the basis stop, the depth multiple, the
 // failure count — is a safety threshold pinned by
@@ -469,6 +469,7 @@ type autotradeOverrideRequest struct {
 	MaxHoldEpochs          *int     `json:"max_hold_epochs"`
 	MinHoldEpochs          *int     `json:"min_hold_epochs"`
 	TargetTakeProfitNetPct *float64 `json:"target_take_profit_net_pct"`
+	MaxExitSpreadBps       *float64 `json:"max_exit_spread_bps"`
 }
 
 // apply overwrites only the fields the request states. Every one of them is
@@ -492,6 +493,9 @@ func (o autotradeOverrideRequest) apply(c *autotrade.Config) {
 	}
 	if o.TargetTakeProfitNetPct != nil {
 		c.TargetTakeProfitNetPct = *o.TargetTakeProfitNetPct
+	}
+	if o.MaxExitSpreadBps != nil {
+		c.MaxExitSpreadBps = *o.MaxExitSpreadBps
 	}
 }
 

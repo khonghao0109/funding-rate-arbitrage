@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/exchanges"
+	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/strategy"
 )
 
@@ -508,9 +509,12 @@ func TestAssessExit_TakesProfitWhenTheBasisConverges(t *testing.T) {
 		t.Fatalf("a pair that has earned nothing = %+v", ex)
 	}
 
-	// The perp falls 1% towards (and past) the spot: the SHORT leg gains it.
+	// The perp falls 2.8% towards (and past) the spot: the SHORT leg gains it.
+	// The fixture tracks the shipped target, which is now +1.50% on capital —
+	// measured on this fixture the move converts at roughly 0.71 points of
+	// capital per percent of perp, less a fixed ~0.06 for the round trip.
 	converged := base
-	converged.PerpBook = book("binance_futures", testMid*0.99, now)
+	converged.PerpBook = book("binance_futures", testMid*0.972, now)
 	ex := assessExit(cfg, converged, pos, now)
 	if !ex.Due {
 		t.Fatalf("a converged basis did not take profit: %+v", ex)
@@ -675,6 +679,9 @@ func TestConfig_RefusesTheWaysTheNewThresholdsGoWrong(t *testing.T) {
 		{"chốt lời không bao giờ tới", func(c *Config) { c.TargetTakeProfitNetPct = 500 }, "target_take_profit_net_pct"},
 		{"ngưỡng thoát âm lại dương", func(c *Config) { c.ExitNegativeFundingRateBps = 2 }, "exit_negative_funding_rate_bps"},
 		{"số mốc âm liên tiếp bằng 0", func(c *Config) { c.ExitNegativeConsecutiveEpochs = 0 }, "exit_negative_consecutive_epochs"},
+		{"trần spread âm", func(c *Config) { c.MaxExitSpreadBps = -1 }, "max_exit_spread_bps"},
+		{"trần spread vô hạn", func(c *Config) { c.MaxExitSpreadBps = math.Inf(1) }, "max_exit_spread_bps"},
+		{"trần spread vô lý", func(c *Config) { c.MaxExitSpreadBps = 20_000 }, "max_exit_spread_bps"},
 	} {
 		c := DefaultConfig(testSymbol)
 		tc.mutate(&c)
@@ -1000,4 +1007,135 @@ func TestPortfolio_RefusesTheWaysTheRebalanceValuesGoWrong(t *testing.T) {
 	if err := DefaultPortfolioConfig([]string{testSymbol}).Validate([]string{testSymbol}, 50_000, 1.5); err != nil {
 		t.Errorf("the shipped run was refused: %v", err)
 	}
+}
+
+// widenTouch returns the same book with the same MID and a touch of exactly
+// wantBps. The mid is held so that the pair's running result does not move:
+// what is being tested is the brake, not a different profit.
+func widenTouch(b depth.Summary, wantBps float64) depth.Summary {
+	half := wantBps / 2 / bpsPerUnit
+	b.BestBidQuote = b.MidPriceQuote * (1 - half)
+	b.BestAskQuote = b.MidPriceQuote * (1 + half)
+	b.SpreadPct = wantBps / 100
+	return b
+}
+
+// Trụ cột 3's brake (4.5i): a reading that has cleared the take-profit target
+// is HELD BACK while either book's touch is wider than MaxExitSpreadBps, and
+// leaves on the first scan the book is tight again. The position is untouched
+// in between — this defers an order, it does not cancel a decision.
+func TestAssessExit_DefersTakeProfitOnWideSpread(t *testing.T) {
+	now := time.Now()
+	pos := heldPosition(now)
+	cfg := DefaultConfig(testSymbol)
+
+	// A convergence well past the +1.50% target.
+	converged := *goodSnapshot(now, 0.0001)
+	converged.PerpBook = book("binance_futures", testMid*0.972, now)
+	if ex := assessExit(cfg, converged, pos, now); !ex.Due || ex.Result.ReturnOnCapitalPct < cfg.TargetTakeProfitNetPct {
+		t.Fatalf("the fixture does not reach the target: %+v", ex.Result)
+	}
+
+	// Each leg on its own: either wide book defers, so one maker stepping away
+	// is enough. 15 bps against a 10 bps ceiling.
+	for _, leg := range []string{"spot", "perp"} {
+		t.Run(leg+" giãn", func(t *testing.T) {
+			wide := converged
+			if leg == "spot" {
+				wide.SpotBook = widenTouch(wide.SpotBook, 15)
+			} else {
+				wide.PerpBook = widenTouch(wide.PerpBook, 15)
+			}
+			ex := assessExit(cfg, wide, pos, now)
+			if ex.Due {
+				t.Fatalf("a wide %s book still sent the close: %v", leg, ex.ReasonsVI)
+			}
+			c := check(t, ex.Checks, "Chốt lời")
+			if !strings.Contains(c.DetailVI, "HOÃN CHỐT: Spread bị giãn") {
+				t.Errorf("the deferral does not say why: %q", c.DetailVI)
+			}
+			// The result itself is untouched: it is the ORDER that waits.
+			if !ex.Result.OK || ex.Result.ReturnOnCapitalPct < cfg.TargetTakeProfitNetPct {
+				t.Errorf("the deferral changed the running result: %+v", ex.Result)
+			}
+		})
+	}
+
+	// The book comes back: 1 bps, and the close goes on the very next reading.
+	tight := converged
+	tight.SpotBook = widenTouch(tight.SpotBook, 1)
+	tight.PerpBook = widenTouch(tight.PerpBook, 1)
+	ex := assessExit(cfg, tight, pos, now)
+	if !ex.Due {
+		t.Fatalf("a tight book did not release the take-profit: %+v", ex)
+	}
+	if got := strings.Join(ex.ReasonsVI, "; "); !strings.HasPrefix(got, "Chốt lời hội tụ Basis: Net PnL ") {
+		t.Errorf("close reason = %q", got)
+	}
+
+	// And with the brake off, the SAME 15 bps touch closes: this is a knob, not
+	// a wall, and 0 is the pre-4.5i behaviour exactly.
+	//
+	// 15 rather than something larger, because the running result already
+	// prices part of a wide touch: strategy.EstimateFill charges the exit at
+	// the book it is given, so widening both legs to 40 bps raises the priced
+	// exit from 0.03 to 0.27 quote and drops this fixture from +1.22% to
+	// +0.92% — under the target on its own merits, with the brake never
+	// consulted. The brake is a SECOND line of defence over that pricing, not
+	// the only one, and a test that confused the two would pass either way.
+	off := cfg
+	off.MaxExitSpreadBps = 0
+	if ex := assessExit(off, widenBoth(converged, 15), pos, now); !ex.Due {
+		t.Errorf("MaxExitSpreadBps 0 should disable the brake: %+v", ex.Checks)
+	}
+}
+
+func widenBoth(s Snapshot, bps float64) Snapshot {
+	s.SpotBook = widenTouch(s.SpotBook, bps)
+	s.PerpBook = widenTouch(s.PerpBook, bps)
+	return s
+}
+
+// The boundary that matters most: the brake is the TAKE-PROFIT's alone. A
+// hedge that is breaking leaves into whatever book exists, because deferring a
+// risk exit is how a small loss becomes a large one.
+func TestAssessExit_WideSpreadDoesNotBlockRiskExits(t *testing.T) {
+	now := time.Now()
+	cfg := DefaultConfig(testSymbol)
+
+	t.Run("cắt lỗ basis nổ", func(t *testing.T) {
+		pos := heldPosition(now)
+		blown := widenBoth(*goodSnapshot(now, 0.0001), 30)
+		// The perp runs far ABOVE the spot: the basis widens past 100 bps.
+		blown.PerpBook = widenTouch(book("binance_futures", testMid*1.05, now), 30)
+		ex := assessExit(cfg, blown, pos, now)
+		if !ex.Due {
+			t.Fatalf("a 30 bps touch deferred the basis stop: %+v", ex.Checks)
+		}
+		if !strings.Contains(strings.Join(ex.ReasonsVI, "; "), "Cắt lỗ basis nổ") {
+			t.Errorf("reasons = %v", ex.ReasonsVI)
+		}
+	})
+
+	t.Run("thoát funding âm trễ", func(t *testing.T) {
+		pos := heldPosition(now)
+		snap := widenBoth(*goodSnapshot(now, 0.0001), 30)
+		// Past the amortization floor, on a run of settlements below the floor.
+		snap.Settled = settledEvery8h(21, 0.0001, now)
+		for i := len(snap.Settled) - DefaultMinHoldEpochs; i < len(snap.Settled); i++ {
+			snap.Settled[i].SettledAtMs = now.Add(time.Duration(i-len(snap.Settled)+1) * time.Minute).UnixMilli()
+			snap.Settled[i].RatePerIntervalFrac = -0.0005
+		}
+		ex := assessExit(cfg, snap, pos2(pos, now), now)
+		if !ex.Due {
+			t.Fatalf("a 30 bps touch deferred the funding exit: %+v", ex.Checks)
+		}
+	})
+}
+
+// pos2 is heldPosition opened far enough back that every settlement in the
+// fixture counts as "after the open".
+func pos2(p PositionView, now time.Time) PositionView {
+	p.OpenedAtMs = now.Add(-30 * 24 * time.Hour).UnixMilli()
+	return p
 }

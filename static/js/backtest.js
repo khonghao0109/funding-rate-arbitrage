@@ -17,7 +17,7 @@ import { shell } from "./shell.js";
 
 const POLL_MS = 300000;
 
-const state = { chart: null, series: null, poll: null, report: null, filter: "" };
+const state = { chart: null, series: null, poll: null, report: null, filter: "", venue: "" };
 
 const tag = () => el("span", { cls: "tag paper", text: "BACKTEST" });
 const usdt = (v, d) => (isNum(v) ? fmt.quote(v, d === undefined ? 2 : d, true) : "—");
@@ -89,6 +89,46 @@ function renderTiles(r) {
   );
 }
 
+// The venue table is the one place a corpus-depth mistake is easy to make, so
+// every row carries the days that venue ACTUALLY covered and the APR is the
+// server's own figure over those days. A venue with a quarter of history is not
+// comparable with one that has three years, and the row says which it is.
+function renderVenues(r) {
+  const body = $("bt-venues");
+  clear(body);
+  const rows = r.venues_breakdown || [];
+  if (!rows.length) return emptyRow(body, 10, "—");
+  let bridged = 0;
+  for (const v of rows) {
+    if (v.quote_bridged) bridged++;
+    const beat = v.apr_on_capital_pct > v.hold_through_apr_on_capital_pct;
+    const name = el("td", {}, [
+      el("strong", { text: v.label }),
+      v.quote_bridged
+        ? el("div", { cls: "cell-sub warn", text: "perp USD ↔ spot USDT — hở rủi ro quy đổi, KHÔNG trừ ở đâu cả" })
+        : el("div", { cls: "cell-sub", text: `${v.perp_venue} ← ${v.spot_venue}` }),
+    ]);
+    body.append(el("tr", {}, [
+      name,
+      el("td", { cls: "r num", text: v.interval_sec === 3600 ? "1h" : `${Math.round(v.interval_sec / 3600)}h` }),
+      el("td", { cls: "r num", text: String(v.series) }),
+      el("td", { cls: "r num", text: String(v.trades) }),
+      el("td", { cls: "r num " + signCls(v.return_on_capital_pct), text: fmt.pct(v.return_on_capital_pct, 3, true) }),
+      el("td", { cls: "r num " + signCls(v.apr_on_capital_pct), text: fmt.pct(v.apr_on_capital_pct, 3, true) }),
+      el("td", { cls: "r num " + (beat ? "" : "warn"), text: fmt.pct(v.hold_through_apr_on_capital_pct, 3, true) }),
+      el("td", { cls: "r num", text: v.trades ? fmt.pct(v.win_rate_pct, 0) : "—" }),
+      el("td", { cls: "r num", text: fmt.bps(v.round_trip_cost_frac * 1e4, 0) + " bps" }),
+      el("td", { cls: "r num" }, [
+        el("span", { text: String(Math.round(v.covered_days)) }),
+        el("div", { cls: "cell-sub", text: `${v.covered_from} → ${v.covered_to}` }),
+      ]),
+    ]));
+  }
+  setText("bt-venues-note",
+    `${rows.length} sàn · ${bridged} sàn ghép perp USD với spot USDT (nhãn vàng): delta-neutral theo coin nhưng MỞ rủi ro USDT/USD, và không con số nào trên trang này trừ khoản đó. `
+    + `Nhịp settle đo từ chính chuỗi: các luật đếm theo MỐC, nên sàn giữ ${r.params.min_hold_epochs} mốc là ${r.params.min_hold_epochs * 8} giờ ở sàn 8h nhưng chỉ ${r.params.min_hold_epochs} giờ ở sàn 1h.`);
+}
+
 function renderYearly(r) {
   const body = $("bt-yearly");
   clear(body);
@@ -98,7 +138,7 @@ function renderYearly(r) {
     body.append(el("tr", {}, [
       el("td", {}, [el("strong", { text: y.label }), el("div", { cls: "cell-sub", text: `${y.from_day} → ${y.to_day}` })]),
       el("td", { cls: "r num", text: String(y.trades) }),
-      el("td", { cls: "r num", text: String(y.symbols_traded) }),
+      el("td", { cls: "r num", text: `${y.series_active}/${y.venues_active}` }),
       el("td", { cls: "r num " + signCls(y.pnl_quote), text: usdt(y.pnl_quote, 0) }),
       el("td", { cls: "r num " + signCls(y.return_on_capital_pct), text: fmt.pct(y.return_on_capital_pct, 3, true) }),
       el("td", { cls: "r num", text: y.trades ? fmt.pct(y.win_rate_pct, 0) : "—" }),
@@ -139,13 +179,23 @@ function renderFilter(r) {
     sel.append(el("option", { text: x.symbol, attrs: { value: x.symbol } }));
   }
   sel.value = want;
+
+  const vsel = $("bt-venue-filter");
+  const wantV = state.venue;
+  clear(vsel);
+  vsel.append(el("option", { text: "Tất cả sàn", attrs: { value: "" } }));
+  for (const v of r.venues_breakdown || []) {
+    vsel.append(el("option", { text: v.label, attrs: { value: v.perp_venue } }));
+  }
+  vsel.value = wantV;
 }
 
 function renderTrades(r) {
   const body = $("bt-trades");
   clear(body);
   const all = r.trades || [];
-  const rows = state.filter ? all.filter((t) => t.symbol === state.filter) : all;
+  const rows = all.filter((t) => (!state.filter || t.symbol === state.filter)
+    && (!state.venue || t.perp_venue === state.venue));
   setText("bt-trade-count", `${rows.length} / ${all.length} lệnh`);
   if (!rows.length) return emptyRow(body, 12, "Không có lệnh nào khớp bộ lọc.");
   for (const t of rows) {
@@ -154,7 +204,10 @@ function renderTrades(r) {
       el("div", { cls: "cell-sub", text: t.exit_reason_vi || t.exit_reason }),
     ]);
     body.append(el("tr", {}, [
-      el("td", {}, [el("strong", { text: t.symbol }), el("div", { cls: "cell-sub mono", text: t.venue })]),
+      el("td", {}, [
+        el("strong", { text: t.symbol }),
+        el("div", { cls: "cell-sub mono " + (t.quote_bridged ? "warn" : ""), text: t.venue_label || "" }),
+      ]),
       el("td", { cls: "mono", text: t.entry_time }),
       el("td", { cls: "mono", text: t.exit_time }),
       el("td", { cls: "r num", text: String(t.duration_days) }),
@@ -180,12 +233,10 @@ const PARAM_LABELS = {
   min_net_apr_pct: "Lối vào · Net APR dự phóng tối thiểu (%)",
   projection_hold_days: "Lối vào · Thời gian giữ dự phóng (ngày)",
   trailing_days: "Lối vào · Cửa sổ trung bình trượt (ngày)",
+  max_exit_spread_bps: "Trụ cột 3 · Trần spread khi gửi lệnh chốt lời (bps)",
   capital_per_notional: "Vốn mỗi quote notional",
   notional_quote: "Notional mỗi chân (quote)",
-  round_trip_cost_frac: "Chi phí vòng (phần của notional)",
-  fees_profile: "Hồ sơ phí",
-  perp_source: "Nguồn perp",
-  spot_source: "Nguồn spot",
+  capital_per_slot_quote: "Vốn mỗi chỗ (quote)",
 };
 
 function renderMethod(r) {
@@ -205,25 +256,26 @@ function renderMethod(r) {
       el("td", { cls: "r num mono", text: String(p[k]) }),
     ]));
   }
-  if (p.round_trip_cost_vi) {
-    body.append(el("tr", {}, [
-      el("td", { text: "Chi phí vòng — đo thế nào" }),
-      el("td", { cls: "r", text: p.round_trip_cost_vi }),
-    ]));
-  }
+  // The round trip is no longer one number: each venue pays its own verified
+  // taker schedule, so it belongs in the venue table and is pointed at here.
+  body.append(el("tr", {}, [
+    el("td", { text: "Chi phí vòng" }),
+    el("td", { cls: "r", text: "theo từng sàn — xem cột \"Vòng phí\" ở bảng Hiệu suất theo sàn" }),
+  ]));
 }
 
 function render(r) {
   const s = r.summary;
-  setText("bt-source", `${r.label_vi || "backtest"} · ${s.slots} cặp`);
+  setText("bt-source", `${r.label_vi || "backtest"} · ${s.slots} chuỗi / ${s.venues} sàn`);
   const reasons = Object.entries(s.exit_reasons || {}).map(([k, v]) => `${k} ${v}`).join(" · ") || "không có";
   setText("bt-status",
-    `cửa sổ ${r.window.from_day} → ${r.window.to_day} (${r.window.years} năm) · ${s.total_trades} lệnh đóng, ${s.still_open} còn mở · lý do ra: ${reasons}`,
+    `cửa sổ ${r.window.from_day} → ${r.window.to_day} (${r.window.years} năm) · ${s.slots} chuỗi trên ${s.venues} sàn · phủ TB ${Math.round(s.mean_covered_days)} ngày/chuỗi · ${s.total_trades} lệnh đóng, ${s.still_open} còn mở · lý do ra: ${reasons}`,
     "note");
   setText("bt-equity-unit", `quote · vốn = notional × ${r.params.capital_per_notional}`);
   renderTiles(r);
   ensureChart();
   drawChart(r);
+  renderVenues(r);
   renderYearly(r);
   renderSymbols(r);
   renderFilter(r);
@@ -235,6 +287,10 @@ export function initBacktest() {
   $("bt-refresh").addEventListener("click", () => state.poll && state.poll.kick());
   $("bt-filter").addEventListener("change", (e) => {
     state.filter = e.target.value;
+    if (state.report) renderTrades(state.report);
+  });
+  $("bt-venue-filter").addEventListener("change", (e) => {
+    state.venue = e.target.value;
     if (state.report) renderTrades(state.report);
   });
   state.poll = schedule(refresh, () => (shell.isActive("backtest") ? POLL_MS : 15000));

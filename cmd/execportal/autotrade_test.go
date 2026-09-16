@@ -173,13 +173,14 @@ func TestAutotradeAPI_StartCarriesTheConvergenceKnobs(t *testing.T) {
 		map[string]any{
 			"symbols": []string{"BTCUSDT"}, "notional_quote": 200, "auto_rebalance": false,
 			"min_entry_basis_bps": 12.5, "min_hold_epochs": 9, "target_take_profit_net_pct": 0.8,
-			"pair_overrides": map[string]any{"BTCUSDT": map[string]any{"min_entry_basis_bps": 3, "target_take_profit_net_pct": 0.25}},
+			"max_exit_spread_bps": 6.5,
+			"pair_overrides":      map[string]any{"BTCUSDT": map[string]any{"min_entry_basis_bps": 3, "target_take_profit_net_pct": 0.25, "max_exit_spread_bps": 25}},
 		})
 	if code != http.StatusOK || started.Status.State != autotrade.StateRunning {
 		t.Fatalf("start = %d %s", code, started.Status.State)
 	}
 	d := started.Status.Portfolio.DefaultPairConfig
-	if d.MinEntryBasisBps != 12.5 || d.MinHoldEpochs != 9 || d.TargetTakeProfitNetPct != 0.8 {
+	if d.MinEntryBasisBps != 12.5 || d.MinHoldEpochs != 9 || d.TargetTakeProfitNetPct != 0.8 || d.MaxExitSpreadBps != 6.5 {
 		t.Errorf("default pair config = %+v", d)
 	}
 	// Not on any form, so still the audited safety values.
@@ -190,7 +191,7 @@ func TestAutotradeAPI_StartCarriesTheConvergenceKnobs(t *testing.T) {
 	}
 	// An override replaces only what it names; the rest is the run's default.
 	own := started.Status.Portfolio.PairOverrides["BTCUSDT"]
-	if own.MinEntryBasisBps != 3 || own.TargetTakeProfitNetPct != 0.25 || own.MinHoldEpochs != 9 || own.NotionalQuote != 200 {
+	if own.MinEntryBasisBps != 3 || own.TargetTakeProfitNetPct != 0.25 || own.MinHoldEpochs != 9 || own.NotionalQuote != 200 || own.MaxExitSpreadBps != 25 {
 		t.Errorf("BTCUSDT override = %+v", own)
 	}
 	// And the page shows the pair running with it.

@@ -886,13 +886,14 @@ function syncAtForm(s) {
   $("at-min-basis").value = String(d.min_entry_basis_bps);
   $("at-min-epochs").value = String(d.min_hold_epochs);
   $("at-take-profit").value = String(d.target_take_profit_net_pct);
+  $("at-max-exit-spread").value = String(d.max_exit_spread_bps);
   $("at-buffer").value = String((pf.margin_buffer_pct || 0) * 100);
   $("at-rebalance-hours").value = String(pf.rebalance_interval_hours);
   $("at-auto-rebalance").checked = Boolean(pf.auto_rebalance);
   $("at-max-pairs").value = String(pf.max_concurrent_positions);
   $("at-capital-cap").value = String(pf.total_capital_cap_quote);
   for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) input.checked = (pf.symbols || []).includes(input.value);
-  setText("at-shipped", `Lượt đang chạy: quét mỗi ${pf.scan_interval_sec} giây · basis giãn tối đa ${d.max_basis_widen_bps} bps · thoát khi ${d.exit_negative_consecutive_epochs} mốc liên tiếp ≤ ${d.exit_negative_funding_rate_bps} bps · độ sâu ≥ ${d.depth_multiple}× · còn > ${fmt.duration(d.min_time_to_settle_sec)} tới mốc settle · hồi phục ${d.cooldown_sec} giây · ${d.max_consecutive_failures} lỗi liên tiếp thì cặp DỪNG BẢO VỆ.`);
+  setText("at-shipped", `Lượt đang chạy: quét mỗi ${pf.scan_interval_sec} giây · chốt lời ≥ ${d.target_take_profit_net_pct}% trên vốn khi spread ≤ ${d.max_exit_spread_bps} bps · basis giãn tối đa ${d.max_basis_widen_bps} bps · thoát khi ${d.exit_negative_consecutive_epochs} mốc liên tiếp ≤ ${d.exit_negative_funding_rate_bps} bps · độ sâu ≥ ${d.depth_multiple}× · còn > ${fmt.duration(d.min_time_to_settle_sec)} tới mốc settle · hồi phục ${d.cooldown_sec} giây · ${d.max_consecutive_failures} lỗi liên tiếp thì cặp DỪNG BẢO VỆ.`);
 }
 
 function syncAtButtons() {
@@ -913,7 +914,7 @@ function syncAtButtons() {
   setText("at-toggle-label", halted ? "XÁC NHẬN & TẮT" : enabled ? "TẮT AUTO-TRADER" : "BẬT AUTO-TRADER");
   setText("at-stop", halted ? "[XÁC NHẬN DỪNG BẢO VỆ → TẮT]" : "[DỪNG & GIỮ VỊ THẾ]");
   for (const id of ["at-notional", "at-min-apr", "at-max-epochs", "at-min-basis", "at-min-epochs", "at-take-profit",
-    "at-buffer", "at-rebalance-hours", "at-auto-rebalance", "at-max-pairs", "at-capital-cap"]) {
+    "at-max-exit-spread", "at-buffer", "at-rebalance-hours", "at-auto-rebalance", "at-max-pairs", "at-capital-cap"]) {
     $(id).disabled = enabled || halted || busy;
   }
   for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) input.disabled = enabled || halted || busy;
@@ -957,6 +958,7 @@ async function atStart() {
   const minBasis = Number($("at-min-basis").value);
   const minEpochs = Number($("at-min-epochs").value);
   const takeProfit = Number($("at-take-profit").value);
+  const maxExitSpread = Number($("at-max-exit-spread").value);
   const bufferPct = Number($("at-buffer").value);
   const rebalanceHours = Number($("at-rebalance-hours").value);
   const autoRebalance = $("at-auto-rebalance").checked;
@@ -973,6 +975,7 @@ async function atStart() {
   if (!Number.isInteger(minEpochs) || minEpochs < 0 || minEpochs > 1000) problems.push("sàn giữ khấu hao phí phải là số nguyên trong [0, 1000]");
   else if (epochs > 0 && minEpochs >= epochs) problems.push(`sàn giữ ${minEpochs} mốc ≥ trần giữ ${epochs} mốc — lối thoát funding không bao giờ chạy được`);
   if (!isNum(takeProfit) || takeProfit < 0 || takeProfit > 100) problems.push("ngưỡng chốt lời sớm phải là số trong [0, 100] phần trăm trên vốn");
+  if (!isNum(maxExitSpread) || maxExitSpread < 0 || maxExitSpread > 10000) problems.push("trần spread chốt lời phải là số trong [0, 10000] bps");
   // Validated whether or not the switch is on, exactly as the server does: a
   // run started off with a nonsense buffer would size wrongly the moment
   // somebody turns it on.
@@ -1005,6 +1008,9 @@ async function atStart() {
     ["Chốt lời sớm", takeProfit > 0
       ? `khi lãi tạm tính ≥ ${takeProfit}% trên vốn cặp (funding + trôi giá − phí vào − phí đóng ước tính). TẠM TÍNH, không phải lãi ròng.`
       : "TẮT — chỉ thoát theo funding, số mốc hoặc basis"],
+    ["Van chặn trượt giá", maxExitSpread > 0
+      ? `đạt ngưỡng chốt lời nhưng spread Spot hoặc Perp > ${maxExitSpread} bps thì HOÃN gửi lệnh 1 lượt quét, đợi sổ co hẹp. CHỈ hoãn chốt lời — cắt lỗ basis, thoát funding âm, ĐÓNG CẶP / DỪNG / KILL không bao giờ bị chặn.`
+      : "TẮT — chốt lời gửi lệnh ngay kể cả khi sổ lệnh đang giãn"],
     ["Thoát khi", `chốt lời đạt ngưỡng · ${d.exit_negative_consecutive_epochs} mốc settle liên tiếp ≤ ${d.exit_negative_funding_rate_bps} bps sau sàn giữ · đủ số mốc · basis giãn > ${d.max_basis_widen_bps} bps · ĐÓNG CẶP / DỪNG / KILL`],
     ["Sàn", st ? `${st.spot.host} + ${st.futures.host}` : "—"],
   ];
@@ -1030,6 +1036,7 @@ async function atStart() {
   const r = await post("autotrade-start", "/api/autotrade/start", {
     symbols, notional_quote: notional, min_net_apr_pct: minApr, max_hold_epochs: epochs,
     min_entry_basis_bps: minBasis, min_hold_epochs: minEpochs, target_take_profit_net_pct: takeProfit,
+    max_exit_spread_bps: maxExitSpread,
     auto_rebalance: autoRebalance, margin_buffer_pct: bufferPct / 100, rebalance_interval_hours: rebalanceHours,
     max_concurrent_positions: maxPairs, total_capital_cap_quote: cap,
   });

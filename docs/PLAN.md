@@ -5105,9 +5105,27 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 
 #### Công cụ vận hành 4.5h — Tab Backtest 3 Năm trên `cmd/execportal` — ✅ (2026-09-16)
 > Replay 3 năm cơ chế 4.5f (Hội tụ Basis & Khấu hao Phí) qua `tools/report/bt3y.py` trên 12 cặp.
-> Kết quả: +7,05% trên vốn danh mục (2,35%/năm), hold-through +13,24% (4,41%/năm), win rate 99,4%
+> Kết quả ban đầu: +7,05% trên vốn danh mục (2,35%/năm), hold-through +13,24% (4,41%/năm), win rate 99,4%
 > (do chốt lời sớm +0,50%), time in market 26,44%, max drawdown 0,12%.
 > Tab thứ 6 được tích hợp ngay sau Paper Ledger; endpoint `GET /api/backtest` phục vụ từ file JSON cache.
+> Cập nhật 2026-09-16: Mở rộng Replay ĐA SÀN (6 sàn: Binance, Bybit, Hyperliquid, Kraken, Gate, OKX) với Van chặn Spread $\le 10\text{ bps}$ và Take Profit 1.50%. Kết quả: Net Profit +201,797.26 USDT (+3.74% trên vốn), Max Drawdown 0.0442%, Win Rate 94.58% qua 203 lệnh.
+
+
+#### Bước 4.5i — Mở rộng chân kết nối Broker sang sàn thứ 2 (Bybit / Hyperliquid) — 🟡 (Lên kế hoạch)
+- **Bối cảnh & Mục tiêu:** Hiện tại Auto-Trader và hệ sinh thái thực thi chỉ có chân broker cho Binance (`internal/broker/binance`). Để triển khai chiến lược Arbitrage chéo sàn (Cross-Exchange Arbitrage) nhằm khai thác triệt để chênh lệch Funding Rate và Basis giữa các sàn (ví dụ: Long Spot Binance + Short Perp Bybit, hoặc Spot Bybit + Perp Hyperliquid), cần bổ sung adapter broker hoàn chỉnh cho sàn thứ 2 (ưu tiên Bybit Testnet v5 hoặc Hyperliquid Testnet).
+- **Phạm vi triển khai:**
+  1. **Tạo Broker Adapter mới (`internal/broker/bybit` hoặc `internal/broker/hyperliquid`):**
+     - Hiện thực hoá đầy đủ interface `broker.Client`: `PlaceOrder`, `GetPosition`, `GetBalance`, `CancelOrder`.
+     - Xác thực REST có ký (HMAC SHA256 cho Bybit v5 API hoặc EIP-712 signing cho Hyperliquid DEX) trong môi trường Testnet an toàn.
+  2. **Chuẩn hoá quy tắc khớp lệnh & bước nhảy (Tick/Step size):**
+     - Đồng bộ hoá metadata instrument giữa 2 sàn khác nhau để đảm bảo khối lượng hai chân sau làm tròn luôn đối ứng phòng hộ delta-neutral (sai số $\le 5\%$).
+  3. **Tích hợp Auto-Trader Cross-Exchange:**
+     - Cho phép cấu hình cặp giao dịch với `SpotSource` và `PerpSource` ở 2 sàn khác nhau.
+     - Tự động đánh giá tín hiệu Net APR, Basis và Funding Rate chéo sàn theo thời gian thực trước khi vào lệnh.
+- **Tiêu chí nghiệm thu:**
+  - Unit test với mock HTTP client bao phủ 100% các kịch bản lỗi mạng, trượt giá và từ chối lệnh.
+  - Tích hợp vào `cmd/execcheck`, chạy mở và đóng vị thế delta-neutral chéo sàn 10/10 lần trên Testnet đạt sai số delta = 0.
+  - Tuân thủ nguyên tắc an toàn: Tiếp tục khóa cờ Mainnet cho tới khi hoàn thành Bước 4.6.
 
 
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦

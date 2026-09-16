@@ -139,6 +139,24 @@ type Config struct {
 	// churn MinHoldEpochs exists to stop.
 	TargetTakeProfitNetPct float64
 
+	// MaxExitSpreadBps is a brake on the TAKE-PROFIT exit alone: when a
+	// reading has already cleared TargetTakeProfitNetPct but either book's
+	// top is wider than this, the close is HELD BACK for one scan so the
+	// order is not sent into a book the makers have stepped out of.
+	//
+	// It applies to nothing else. The basis stop, the funding exit, a stop
+	// with close, and the kill switch all ignore it, because a wide book is
+	// a reason to wait for a GAIN and never a reason to wait while a hedge
+	// is breaking — deferring a risk exit is how a small loss becomes a
+	// large one. 0 disables the brake.
+	//
+	// It is a ceiling in basis points on (best ask − best bid) ÷ mid, which
+	// is depth.Summary.SpreadPct in another unit; it is recomputed here from
+	// the two touch prices rather than read from that field so that a book
+	// which never had the derived field filled cannot silently turn the
+	// brake off.
+	MaxExitSpreadBps float64
+
 	// ExitNegativeFundingRateBps and ExitNegativeConsecutiveEpochs are the
 	// hysteresis on the funding exit, past the MinHoldEpochs floor: the pair
 	// leaves only once this many settlements IN A ROW have settled at or below
@@ -192,7 +210,13 @@ const (
 	DefaultMinEntryBasisBps       = 5.0
 	DefaultMaxHoldEpochs          = 0
 	DefaultMinHoldEpochs          = 6
-	DefaultTargetTakeProfitNetPct = 0.50
+	DefaultTargetTakeProfitNetPct = 1.50
+
+	// DefaultMaxExitSpreadBps is the take-profit's spread brake. 10 bps is
+	// wide for the majors this bot trades — the measured touch is ~1 bps —
+	// so it bites only when the makers have really stepped away, and the
+	// profit being protected is ~150 bps of notional, which dwarfs it.
+	DefaultMaxExitSpreadBps = 10.0
 	// The single print this hysteresis refuses to act on: on the 3-year corpus
 	// the median negative episode costs 0.3 bps against a 30 bps round trip
 	// (CLAUDE.md, step 3.3), so one settlement at -0.1 bps is noise and two in
@@ -228,6 +252,7 @@ func DefaultConfig(symbol string) Config {
 		MinEntryBasisBps: DefaultMinEntryBasisBps,
 		MaxHoldEpochs:    DefaultMaxHoldEpochs, MinHoldEpochs: DefaultMinHoldEpochs,
 		TargetTakeProfitNetPct:     DefaultTargetTakeProfitNetPct,
+		MaxExitSpreadBps:           DefaultMaxExitSpreadBps,
 		ExitNegativeFundingRateBps: DefaultExitNegativeFundingRateBps, ExitNegativeConsecutiveEpochs: DefaultExitNegativeConsecutiveEpochs,
 		Cooldown:           DefaultCooldown,
 		ProjectionHoldDays: DefaultProjectionHoldDays, MaxBasisWidenBps: DefaultMaxBasisWidenBps,
@@ -288,6 +313,9 @@ func (c Config) problems(maxNotionalQuote float64) []string {
 	}
 	if !finite(c.TargetTakeProfitNetPct) || c.TargetTakeProfitNetPct < 0 || c.TargetTakeProfitNetPct > maxTakeProfitPctBound {
 		out = append(out, fmt.Sprintf("target_take_profit_net_pct %v phải trong [0, %.0f] phần trăm trên vốn (0 = tắt chốt lời sớm)", c.TargetTakeProfitNetPct, maxTakeProfitPctBound))
+	}
+	if !finite(c.MaxExitSpreadBps) || c.MaxExitSpreadBps < 0 || c.MaxExitSpreadBps > maxBasisBpsBound {
+		out = append(out, fmt.Sprintf("max_exit_spread_bps %v phải trong [0, %.0f] bps (0 = tắt van chặn spread khi chốt lời)", c.MaxExitSpreadBps, maxBasisBpsBound))
 	}
 	// A positive threshold would read "thoát khi funding dương", which is the
 	// opposite of what this exit is for.
@@ -494,6 +522,7 @@ type ConfigView struct {
 	MaxHoldEpochs                 int     `json:"max_hold_epochs"`
 	MinHoldEpochs                 int     `json:"min_hold_epochs"`
 	TargetTakeProfitNetPct        float64 `json:"target_take_profit_net_pct"`
+	MaxExitSpreadBps              float64 `json:"max_exit_spread_bps"`
 	ExitNegativeFundingRateBps    float64 `json:"exit_negative_funding_rate_bps"`
 	ExitNegativeConsecutiveEpochs int     `json:"exit_negative_consecutive_epochs"`
 	CooldownSec                   float64 `json:"cooldown_sec"`
@@ -509,6 +538,7 @@ func (c Config) view() ConfigView {
 		Symbol: c.Symbol, NotionalQuote: c.NotionalQuote, MinNetAPRPct: c.MinNetAPRPct,
 		MinEntryBasisBps: c.MinEntryBasisBps, MaxHoldEpochs: c.MaxHoldEpochs, MinHoldEpochs: c.MinHoldEpochs,
 		TargetTakeProfitNetPct:     c.TargetTakeProfitNetPct,
+		MaxExitSpreadBps:           c.MaxExitSpreadBps,
 		ExitNegativeFundingRateBps: c.ExitNegativeFundingRateBps, ExitNegativeConsecutiveEpochs: c.ExitNegativeConsecutiveEpochs,
 		CooldownSec: c.Cooldown.Seconds(), ProjectionHoldDays: c.ProjectionHoldDays,
 		MaxBasisWidenBps: c.MaxBasisWidenBps, MinTimeToSettleSec: c.MinTimeToSettle.Seconds(),
