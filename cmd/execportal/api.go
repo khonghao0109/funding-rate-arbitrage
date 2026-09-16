@@ -70,6 +70,10 @@ type execSettings struct {
 	MaxSlippageBps float64
 	LegTimeout     time.Duration
 	ActionTimeout  time.Duration
+	// BacktestJSONPath is the report tools/report/bt3y.py writes, served
+	// read-only by /api/backtest. Empty means the tab has nothing to draw and
+	// says so, which is what every test that does not set it gets.
+	BacktestJSONPath string
 }
 
 type portal struct {
@@ -126,6 +130,10 @@ type portal struct {
 
 	// pnl keeps the auto-trader's equity samples (pnl.go).
 	pnl *pnlTracker
+
+	// backtest is the three-year report on disk (backtest.go). It is a FILE
+	// cache, not a computation: no rule is replayed inside this process.
+	backtest *backtestFile
 }
 
 func newPortal(m markets, symbols []string, bindIP, port string, settings execSettings, now func() time.Time) *portal {
@@ -152,6 +160,7 @@ func newPortal(m markets, symbols []string, bindIP, port string, settings execSe
 		pingsMs:     map[broker.Market]int64{},
 		clockSyncs:  newTTLCache[struct{}](now),
 		feeds:       feeds.New("", "", now),
+		backtest:    newBacktestFile(settings.BacktestJSONPath),
 
 		fundingRates: newTTLCache[[]binancebroker.FundingRate](now),
 		commissions:  newTTLCache[commissionPair](now),

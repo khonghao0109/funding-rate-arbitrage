@@ -1392,12 +1392,10 @@ cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      position and balances back from the venue, printing both
                      when they disagree (rule 7). No database, no schema
 cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17):
-                     five tabs on LOOPBACK 127.0.0.1:8087 (Execution Control
-                     split into Auto-Trader and Manual Execution on 2026-09-15)
-                     — Market Scanner (a READ-ONLY relay of cmd/scanner's /ws),
-                     Auto-Trader, Manual Execution,
-                     Paper Ledger (relay of cmd/paperledger), Crowding Reversal
-                     (research fixture snapshot, not live). Execution is
+                     six tabs on LOOPBACK 127.0.0.1:8087 (Market Scanner,
+                     Auto-Trader, Manual Execution, Paper Ledger,
+                     Backtest 3 Năm, Crowding Reversal). Backtest tab renders
+                     docs/reports/backtest-3y-latest.json via /api/backtest. Execution is
                      cmd/execcheck's open / close / reconcile behind the page —
                      same execution machine,
                      same derived ClientOrderIDs, same .paper/exec intent files.
@@ -1539,7 +1537,9 @@ docs/                PLAN.md, DATA-REQUIREMENTS.md, CONVENTIONS.md
 tools/report/        READ-ONLY Python that turns cmd/backtest's CSVs into those
                      reports (rule 8's "Python reads SQLite to plot"): stdlib
                      only, mode=ro, and it never recomputes a rule — every
-                     profit figure on a page traces to a column Go wrote
+                     profit figure on a page traces to a column Go wrote.
+                     bt3y.py replays auto-trader 4.5f convergence & fee amortization
+                     rules on the 3-year corpus and writes backtest-3y-latest.json
 config.yaml          pairs, venues, thresholds, fees, symbol mapping
 ```
 

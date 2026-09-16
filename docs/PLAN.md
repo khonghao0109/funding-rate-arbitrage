@@ -5103,6 +5103,13 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   cho tới lần đọc sau; hạn mức vốn và số slot vẫn chặn, nhưng quy mô thì cũ.
 
 
+#### Công cụ vận hành 4.5h — Tab Backtest 3 Năm trên `cmd/execportal` — ✅ (2026-09-16)
+> Replay 3 năm cơ chế 4.5f (Hội tụ Basis & Khấu hao Phí) qua `tools/report/bt3y.py` trên 12 cặp.
+> Kết quả: +7,05% trên vốn danh mục (2,35%/năm), hold-through +13,24% (4,41%/năm), win rate 99,4%
+> (do chốt lời sớm +0,50%), time in market 26,44%, max drawdown 0,12%.
+> Tab thứ 6 được tích hợp ngay sau Paper Ledger; endpoint `GET /api/backtest` phục vụ từ file JSON cache.
+
+
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
 - Chạy tối thiểu 4 tuần, đối chiếu từng chu kỳ funding với sổ sách bot.

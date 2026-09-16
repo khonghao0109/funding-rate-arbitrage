@@ -220,4 +220,9 @@ Thêm một Card chuyên biệt **"Auto-Trader (Binance Demo)"** vào đầu Tab
 9. **Nghiệm thu 2026-09-15:** bấm BẬT thật → bot tự mở $65 BTCUSDT sau 5,0 s (Net APR dự
    phóng +6,05%/năm trên notional), lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s;
    `execcheck -status` xác nhận từ sàn; cổng 3.5 không bị đụng.
+10. **Báo cáo Backtest 3 năm (2026-09-16):** Tab "Backtest 3 Năm" được tích hợp trên execportal
+    ngay sau tab Paper Ledger. Replay 3 năm luật 4.5f (`tools/report/bt3y.py`) trên 12 cặp cho
+    thấy win rate 99,4%, +7,05% trên vốn (2,35%/năm), max drawdown 0,12%, thời gian giữ TB
+    20,4 ngày, phục vụ qua endpoint `GET /api/backtest`.
+
 

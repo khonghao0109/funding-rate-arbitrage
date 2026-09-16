@@ -92,6 +92,9 @@ func (p *portal) handler() http.Handler {
 	get("/api/funding", p.handleFunding)
 	get("/api/intents", p.handleIntents)
 	get("/api/market", p.handleMarket)
+	// The three-year backtest report, read from disk and cached by mtime
+	// (backtest.go). It touches no venue and costs no request weight.
+	get("/api/backtest", p.handleBacktest)
 	post("/api/open", "open", p.handleOpen)
 	post("/api/close", "close", p.handleClose)
 	post("/api/reconcile", "reconcile", p.handleReconcile)

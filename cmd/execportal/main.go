@@ -91,6 +91,7 @@ func main() {
 		scanAddr = flag.String("scanner-addr", "127.0.0.1:8085", "loopback host:port of the running cmd/scanner whose /ws and funding history the Scanner tab relays READ-ONLY; empty turns the tab off")
 		papAddr  = flag.String("paper-addr", "127.0.0.1:8086", "loopback host:port of cmd/paperledger whose /api/ledger the Paper tab relays READ-ONLY; empty turns the tab off")
 		autoOn   = flag.Bool("autotrade", true, "switch the TESTNET auto-trader on at launch, with its shipped parameters on every -symbols entry (PLAN Q18); on by default — pass -autotrade=false to launch in paused state")
+		btJSON   = flag.String("backtest-json", "docs/reports/backtest-3y-latest.json", "the three-year backtest report the Backtest tab draws, built OUTSIDE this process by tools/report/bt3y.py; it is read from disk and cached by modification time, and the tab says so when the file is absent")
 	)
 	flag.Parse()
 	_ = godotenv.Load()
@@ -128,6 +129,7 @@ func main() {
 	m := dialMarkets()
 	p := newPortal(m, symbolList, bindIP, *port, execSettings{
 		MarginFrac: *marginFr, MaxSlippageBps: *slipBps, LegTimeout: *legTmo, ActionTimeout: *actTmo,
+		BacktestJSONPath: *btJSON,
 	}, time.Now)
 	p.feeds = feeds.New(scannerAddr, paperAddr, time.Now)
 

@@ -2783,3 +2783,18 @@ dialog .actions {
     grid-column: 1 / -1;
   }
 }
+
+/* The backtest tab prints the report's own assumptions rather than a summary:
+   its profit figure rests on a STATED round-trip cost, and a reader who cannot
+   see that cannot read the number (CLAUDE.md rule 2). */
+.assume-list {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.1rem;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.65;
+}
+
+.assume-list li {
+  margin-bottom: var(--space-2);
+}

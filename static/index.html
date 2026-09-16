@@ -79,6 +79,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
         Paper Ledger
       </button>
+      <button class="tab" role="tab" id="tab-backtest" data-tab="backtest" aria-controls="panel-backtest" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-6 6"/></svg>
+        Backtest 3 Năm
+      </button>
       <button class="tab" role="tab" id="tab-crowding" data-tab="crowding" aria-controls="panel-crowding" aria-selected="false" tabindex="-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.7"/></svg>
         Crowding Reversal
@@ -768,6 +772,85 @@
           <span class="hint" id="pp-events-count">—</span>
         </div>
         <ul class="event-list" id="pp-events"></ul>
+      </article>
+    </section>
+
+    <!-- =========================================================== BACKTEST -->
+    <section class="tab-panel" id="panel-backtest" role="tabpanel" aria-labelledby="tab-backtest" hidden>
+      <div class="paper-banner">
+        <span class="tag paper">BACKTEST 3 NĂM</span>
+        MÔ PHỎNG TRÊN LỊCH SỬ — không tài khoản, không lệnh, không phải lợi nhuận đã thực hiện. Replay luật 4.5f (Hội tụ Basis &amp; Khấu hao Phí) của auto-trader trên corpus thật.
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Tổng quan 3 năm</h2>
+          <span class="spacer"></span>
+          <span class="hint" id="bt-source">—</span>
+          <button type="button" class="btn ghost small" id="bt-refresh">Đọc lại</button>
+        </div>
+        <p class="note" id="bt-status">Mở tab để đọc /api/backtest.</p>
+        <div class="stat-grid mt12" id="bt-tiles"></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Đường cong vốn</h2>
+          <span class="tag paper">BACKTEST</span>
+          <span class="unit" id="bt-equity-unit">quote · vốn = notional × 1,5</span>
+        </div>
+        <div class="chart short" id="bt-equity"><div class="chart-empty" id="bt-equity-empty">Chưa có dữ liệu.</div></div>
+        <p class="note mt8" id="bt-equity-note"></p>
+      </article>
+
+      <div class="labels-grid">
+        <article class="card">
+          <div class="card-head"><h2>Phân rã theo năm</h2></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Giai đoạn</th><th class="r">Lệnh</th><th class="r">Cặp</th><th class="r">Lợi nhuận</th><th class="r">Trên vốn</th><th class="r">Thắng</th><th class="r">Funding</th><th class="r">Phí</th></tr></thead>
+              <tbody id="bt-yearly"><tr><td class="empty" colspan="8">—</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head"><h2>Hiệu suất theo cặp</h2></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Cặp</th><th class="r">Lệnh</th><th class="r">Trên vốn</th><th class="r">Mỗi năm</th><th class="r">Giữ suốt</th><th class="r">Thắng</th><th class="r">Giữ TB</th></tr></thead>
+              <tbody id="bt-symbols"><tr><td class="empty" colspan="7">—</td></tr></tbody>
+            </table>
+          </div>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Sổ lệnh backtest</h2>
+          <span class="tag paper">BACKTEST</span>
+          <span class="spacer"></span>
+          <label class="hint" for="bt-filter">Lọc cặp</label>
+          <select id="bt-filter" class="at-filter" aria-label="Lọc theo cặp"><option value="">Tất cả</option></select>
+          <span class="hint" id="bt-trade-count">—</span>
+        </div>
+        <div class="table-wrap scroll">
+          <table>
+            <thead><tr><th>Cặp</th><th>Vào</th><th>Ra</th><th class="r">Ngày</th><th class="r">Mốc</th><th class="r">Basis vào → ra</th><th class="r">Funding</th><th class="r">Trôi giá</th><th class="r">Phí</th><th class="r">P&amp;L</th><th class="r">Trên vốn</th><th>Lý do đóng</th></tr></thead>
+            <tbody id="bt-trades"><tr><td class="empty" colspan="12">—</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head"><h2>Phương pháp &amp; giả định</h2></div>
+        <p class="note" id="bt-engine">—</p>
+        <ul id="bt-assumptions" class="assume-list"></ul>
+        <div class="table-wrap mt12">
+          <table>
+            <thead><tr><th>Tham số</th><th class="r">Giá trị</th></tr></thead>
+            <tbody id="bt-params"><tr><td class="empty" colspan="2">—</td></tr></tbody>
+          </table>
+        </div>
       </article>
     </section>
 
