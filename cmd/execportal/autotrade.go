@@ -23,27 +23,36 @@ import (
 //   - portalMarket reads the two testnet markets — books, mark price and
 //     forming rate, the settled rates, this account's fees — through the same
 //     venue clients the page reads with, under the same half-of-the-budget
-//     read wall.
-//   - portalTrader reads the hedge through readPositions (the venue's orders
-//     and position, exactly what the banner shows) and opens and closes
-//     through openAs and close — the functions a button press runs, under the
-//     same write lock, so a manual write and a bot write can never overlap and
-//     neither can reach the venue by a road the other does not take.
-//     guard_test.go holds this file to that: no order is placed here, and no
-//     execution machine is built here.
-//   - The four endpoints: status, and start / stop / kill behind the same
-//     header, origin and JSON walls as every other write.
+//     read wall. The engine reads several symbols at once through it.
+//   - portalTrader reads the hedge through readHedge (the venue's orders and
+//     position, exactly what the banner shows, without the wallet read the
+//     verdict does not use) and opens and closes through openAs and close —
+//     the functions a button press runs, under the same write lock, so a manual
+//     write and a bot write can never overlap and neither can reach the venue
+//     by a road the other does not take. guard_test.go holds this file to that:
+//     no order is placed here, and no execution machine is built here.
+//   - The endpoints: status and PnL, and start / stop / kill / close-pair /
+//     pair behind the same header, origin and JSON walls as every other write.
 
 // The action header values of the bot's writes. A write is refused unless it
 // carries its own name, which only the page's confirmed path sends.
 const (
 	autotradeStartAction = "autotrade-start"
-	// autotradeStopAction keeps the position and sends no order, so the page
+	// autotradeStopAction keeps the positions and sends no order, so the page
 	// sends it without a dialog; a stop that CLOSES sends orders and carries
 	// its own name, which only a confirmed path may send.
 	autotradeStopAction      = "autotrade-stop"
 	autotradeStopCloseAction = "autotrade-stop-close"
 	autotradeKillAction      = "autotrade-kill"
+	// autotradeClosePairAction closes one pair: orders, so a confirmed path.
+	autotradeClosePairAction = "autotrade-close-pair"
+	// The three switches on one pair; each name must agree with the body's
+	// action. PAUSE sends nothing and leads to nothing. RESUME lets the bot
+	// open the pair again, and ACK releases a halted pair's position to
+	// adoption — its exits may then send a close — so both go behind a dialog.
+	autotradePairPauseAction  = "autotrade-pair-pause"
+	autotradePairResumeAction = "autotrade-pair-resume"
+	autotradePairAckAction    = "autotrade-pair-ack"
 
 	// The portal's write lock names what holds it; these appear on the page's
 	// busy line when a button press finds the bot mid-trade.
@@ -69,16 +78,17 @@ type commissionPair struct {
 	Perp binancebroker.CommissionRates
 }
 
-// newAutotrade builds the portal's engine. It does not run until main starts
-// Run, and it trades nothing until someone presses BẬT (or -autotrade).
+// newAutotrade builds the portal's engine over every symbol the portal trades.
+// It does not run until main starts Run, and it trades nothing until someone
+// presses BẬT (or -autotrade).
 func newAutotrade(p *portal) *autotrade.Engine {
-	symbol := "BTCUSDT"
-	if len(p.symbols) > 0 {
-		symbol = p.symbols[0]
+	symbols := p.symbols
+	if len(symbols) == 0 {
+		symbols = []string{"BTCUSDT"}
 	}
 	eng, err := autotrade.New(autotrade.Options{
 		Market: portalMarket{p}, Trader: portalTrader{p},
-		DefaultSymbol: symbol, MaxNotionalQuote: maxNotionalQuote,
+		Symbols: symbols, MaxNotionalQuote: maxNotionalQuote,
 		PerpMarginFrac: p.exec.MarginFrac, ActionTimeout: max(p.exec.ActionTimeout, time.Minute),
 		Now: p.now, Logf: log.Printf,
 	})
@@ -146,14 +156,20 @@ func (m portalMarket) Snapshot(ctx context.Context, symbol string, settledSinceM
 		snap.SpotTakerFeeBps, snap.PerpTakerFeeBps = fees.Spot.TakerBps(), fees.Perp.TakerBps()
 		snap.FeeSourceVI = fees.Spot.SourceVI + " · " + fees.Perp.SourceVI
 	}
-	// The offset every signed request is corrected by, as the broker last
-	// measured it — read, never re-measured here: a sync taken while an order
-	// is being signed is how a -1021 happens (api.go).
+	// The offset every signed request is corrected by. Re-measured only on the
+	// account tiles' own cadence (syncClockIfStale: at most once per clockEvery
+	// per market, whoever asks), because a sync taken while an order is being
+	// signed is how a -1021 happens (api.go). A market whose clock could not be
+	// measured now reports none, and the entry check refuses on it.
 	for _, pair := range []struct {
 		c   venue
 		dst **int64
 	}{{p.markets.spot, &snap.SpotClockSkewMs}, {p.markets.perp, &snap.PerpClockSkewMs}} {
-		if h := pair.c.HTTP(); !h.ClockMeasuredAt().IsZero() {
+		h := pair.c.HTTP()
+		if err := p.syncClockIfStale(ctx, pair.c.Market(), h); err != nil {
+			continue
+		}
+		if !h.ClockMeasuredAt().IsZero() {
 			skew := h.ClockSkewMs()
 			*pair.dst = &skew
 		}
@@ -169,21 +185,22 @@ func (m portalMarket) Snapshot(ctx context.Context, symbol string, settledSinceM
 // measured, so a short page is not proof the newest settlements — the ones the
 // exits read — were included.
 //
-// The cache is keyed by the hour the window starts in AND by the venue's next
-// settlement stamp, so a settlement that has just happened moves the key and is
-// read at the next scan instead of after the TTL. The caller filters to its
-// exact start.
+// The cache is keyed by the symbol, the hour the window starts in AND the
+// venue's next settlement stamp, so a settlement that has just happened moves
+// the key and is read at the next scan instead of after the TTL. The caller
+// filters to its exact start.
 func (p *portal) settledRates(ctx context.Context, symbol string, sinceMs, nextFundingTimeMs int64) ([]binancebroker.FundingRate, error) {
 	hourMs := time.Hour.Milliseconds()
 	startMs := sinceMs / hourMs * hourMs
 	key := fmt.Sprintf("%s|%d|%d", symbol, startMs, nextFundingTimeMs)
-	// The key moves every hour and every settlement; the cache keeps only the
-	// newest one rather than growing for the life of the process.
+	// The key moves every hour and every settlement; the cache keeps only each
+	// symbol's newest key rather than growing for the life of the process, and
+	// several symbols scanned in one pass do not evict one another.
 	p.fundingKeyMu.Lock()
-	if key != p.fundingKey {
-		p.fundingRates.invalidate()
-		p.fundingKey = key
+	if old, ok := p.fundingKeys[symbol]; ok && old != key {
+		p.fundingRates.forget(old)
 	}
+	p.fundingKeys[symbol] = key
 	p.fundingKeyMu.Unlock()
 	rows, _, err := p.fundingRates.get(key, fundingRatesTTL, func() ([]binancebroker.FundingRate, error) {
 		var all []binancebroker.FundingRate
@@ -230,11 +247,12 @@ func (p *portal) settledRates(ctx context.Context, symbol string, sinceMs, nextF
 
 type portalTrader struct{ p *portal }
 
-// Holding is the banner's own reading: readPositions, from the venue.
+// Holding is the banner's own verdict: readHedge, from the venue.
 func (t portalTrader) Holding(ctx context.Context, symbol string) (autotrade.Holding, error) {
 	p := t.p
-	v := p.readPositions(ctx, symbol)
-	h := autotrade.Holding{Status: autotrade.HedgeStatus(v.Status), ReasonVI: strings.TrimPrefix(v.ReasonVI+" · "+v.ErrorVI, " · ")}
+	v := p.readHedge(ctx, symbol, false)
+	h := autotrade.Holding{Status: autotrade.HedgeStatus(v.Status), ReasonVI: strings.TrimPrefix(v.ReasonVI+" · "+v.ErrorVI, " · "),
+		ResidualQtyCoin: v.DeltaResidualCoin, ToleranceQtyCoin: v.ToleranceQtyCoin}
 	h.ReasonVI = strings.TrimSuffix(h.ReasonVI, " · ")
 	tol := v.ToleranceQtyCoin + gridEpsilon
 	var held []intentHedgeView
@@ -249,9 +267,12 @@ func (t portalTrader) Holding(ctx context.Context, symbol string) (autotrade.Hol
 		h.FromAutotrade = originOf(h.IntentID) == "autotrade"
 		h.QtyCoin = -held[0].Perp.QtyCoin
 		// The cache is read only for what the venue cannot say: when the
-		// intent opened and the mids its entry was decided on.
+		// intent opened, its notional, the mids its entry was decided on and
+		// the average prices its two legs filled at.
 		if st, err := loadState(p.stateDir, h.IntentID); err == nil {
-			h.OpenedAtMs, h.SpotRefMidQuote, h.PerpRefMidQuote = st.OpenedAtMs, st.SpotRefMidQuote, st.PerpRefMidQuote
+			h.OpenedAtMs, h.NotionalQuote = st.OpenedAtMs, st.NotionalQuote
+			h.SpotRefMidQuote, h.PerpRefMidQuote = st.SpotRefMidQuote, st.PerpRefMidQuote
+			h.SpotAvgFillQuote, h.PerpAvgFillQuote = st.SpotAvgPriceQuote, st.PerpAvgPriceQuote
 		}
 	}
 	return h, nil
@@ -286,11 +307,12 @@ func (t portalTrader) Open(ctx context.Context, order autotrade.OpenOrder) autot
 		IntentID: v.IntentID, Refused: v.RefusedBeforePlacing, Hedged: v.Hedged, Alarm: v.Alarm,
 		OpenedAtMs: v.OpenedAtMs, QtyCoin: v.Perp.FilledQtyCoin, ResidualQtyCoin: v.ResidualQtyCoin,
 		SpotRefMidQuote: v.SpotRefMidQuote, PerpRefMidQuote: v.PerpRefMidQuote,
+		SpotAvgFillQuote: v.Spot.AvgFillPriceQuote, PerpAvgFillQuote: v.Perp.AvgFillPriceQuote,
 		UnhedgedWindowMs: v.UnhedgedWindowMs, UnwindDurationMs: v.UnwindDurationMs, ErrorVI: errorVI,
 	}
 }
 
-func (t portalTrader) Close(ctx context.Context, symbol, intentID string) autotrade.CloseResult {
+func (t portalTrader) Close(ctx context.Context, symbol, intentID, reasonVI string) autotrade.CloseResult {
 	p := t.p
 	out := autotrade.CloseResult{IntentID: intentID, Refused: true}
 	symbol, err := p.allowedSymbol(symbol)
@@ -323,7 +345,7 @@ func (t portalTrader) Close(ctx context.Context, symbol, intentID string) autotr
 		out.ErrorVI = fmt.Sprintf("ý định %s là %s, không phải %s", intentID, st.Symbol, symbol)
 		return out
 	}
-	v, _ := p.close(ctx, st)
+	v, _ := p.close(ctx, st, reasonVI)
 	log.Printf("execportal: AUTOTRADE CLOSE %s %s → %s flat=%v refused=%v alarm=%v closed=%.8f %s",
 		v.IntentID, v.Symbol, v.Outcome, v.Flat, v.Refused, v.Alarm, v.ClosedQtyCoin, v.ErrorVI)
 	errorVI := v.ErrorVI
@@ -348,24 +370,110 @@ func orUnknown(s string) string {
 // --------------------------------------------------------------- endpoints
 
 // autotradeActionView answers every bot write: the status after it, what a
-// stop-and-close or a kill did to the position, and the position a stop kept.
+// stop-and-close, a kill or a close-pair did to each symbol, and the positions
+// a stop kept.
 type autotradeActionView struct {
-	Status       autotrade.StatusView     `json:"status"`
-	Close        *autotrade.OperatorClose `json:"close"`
-	KeptIntentID string                   `json:"kept_intent_id"`
+	Status        autotrade.StatusView      `json:"status"`
+	Closes        []autotrade.OperatorClose `json:"closes"`
+	KeptIntentIDs []string                  `json:"kept_intent_ids"`
 }
 
 func (p *portal) handleAutotradeStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, p.autotrade.Status())
 }
 
+// autotradeOverrideRequest is one pair's own values; an absent field takes the
+// run's default. The three convergence knobs are here too, so a pair may be
+// tuned exactly as the run's default may be (PLAN "Công cụ vận hành 4.5f").
+// Everything NOT here — the hysteresis, the basis stop, the depth multiple, the
+// failure count — is a safety threshold pinned by
+// TestDefaults_AreTheAuditedSafetyThresholds and is not on a form.
+type autotradeOverrideRequest struct {
+	NotionalQuote          *float64 `json:"notional_quote"`
+	MinNetAPRPct           *float64 `json:"min_net_apr_pct"`
+	MinEntryBasisBps       *float64 `json:"min_entry_basis_bps"`
+	MaxHoldEpochs          *int     `json:"max_hold_epochs"`
+	MinHoldEpochs          *int     `json:"min_hold_epochs"`
+	TargetTakeProfitNetPct *float64 `json:"target_take_profit_net_pct"`
+}
+
+// apply overwrites only the fields the request states. Every one of them is
+// then validated by autotrade.Config, never clamped here: a value a person
+// typed is either run or refused by name.
+func (o autotradeOverrideRequest) apply(c *autotrade.Config) {
+	if o.NotionalQuote != nil {
+		c.NotionalQuote = *o.NotionalQuote
+	}
+	if o.MinNetAPRPct != nil {
+		c.MinNetAPRPct = *o.MinNetAPRPct
+	}
+	if o.MinEntryBasisBps != nil {
+		c.MinEntryBasisBps = *o.MinEntryBasisBps
+	}
+	if o.MaxHoldEpochs != nil {
+		c.MaxHoldEpochs = *o.MaxHoldEpochs
+	}
+	if o.MinHoldEpochs != nil {
+		c.MinHoldEpochs = *o.MinHoldEpochs
+	}
+	if o.TargetTakeProfitNetPct != nil {
+		c.TargetTakeProfitNetPct = *o.TargetTakeProfitNetPct
+	}
+}
+
 // autotradeStartRequest is the page's form. An absent field takes the shipped
-// default; a present one is validated, never clamped.
+// default; a present one is validated, never clamped. symbols is required: a
+// run that trades "whatever the portal lists" is not one a person chose.
+//
+// The embedded override carries the per-pair keys at the TOP level, which is
+// what makes "the run's default" and "this pair's value" the same set of names.
 type autotradeStartRequest struct {
-	Symbol        string   `json:"symbol"`
-	NotionalQuote *float64 `json:"notional_quote"`
-	MinNetAPRPct  *float64 `json:"min_net_apr_pct"`
-	MaxHoldEpochs *int     `json:"max_hold_epochs"`
+	autotradeOverrideRequest
+	Symbols                []string                            `json:"symbols"`
+	MaxConcurrentPositions *int                                `json:"max_concurrent_positions"`
+	TotalCapitalCapQuote   *float64                            `json:"total_capital_cap_quote"`
+	PairOverrides          map[string]autotradeOverrideRequest `json:"pair_overrides"`
+}
+
+// portfolioFromRequest turns the form into a run, every symbol through the
+// portal's allow-list.
+func (p *portal) portfolioFromRequest(req autotradeStartRequest) (autotrade.PortfolioConfig, error) {
+	if len(req.Symbols) == 0 {
+		return autotrade.PortfolioConfig{}, errors.New("symbols trống — chọn ít nhất một cặp")
+	}
+	var symbols []string
+	for _, raw := range req.Symbols {
+		s, err := p.allowedSymbol(raw)
+		if err != nil {
+			return autotrade.PortfolioConfig{}, err
+		}
+		symbols = append(symbols, s)
+	}
+	pc := autotrade.DefaultPortfolioConfig(symbols)
+	req.autotradeOverrideRequest.apply(&pc.DefaultPairConfig)
+	if req.MaxConcurrentPositions != nil {
+		pc.MaxConcurrentPositions = *req.MaxConcurrentPositions
+	}
+	if req.TotalCapitalCapQuote != nil {
+		pc.TotalCapitalCapQuote = *req.TotalCapitalCapQuote
+	}
+	if len(req.PairOverrides) > 0 {
+		pc.PairOverrides = map[string]autotrade.Config{}
+		for raw, o := range req.PairOverrides {
+			s, err := p.allowedSymbol(raw)
+			if err != nil {
+				return autotrade.PortfolioConfig{}, fmt.Errorf("pair_overrides: %w", err)
+			}
+			if _, dup := pc.PairOverrides[s]; dup {
+				return autotrade.PortfolioConfig{}, fmt.Errorf("pair_overrides nêu %s hai lần", s)
+			}
+			c := pc.DefaultPairConfig
+			c.Symbol = s
+			o.apply(&c)
+			pc.PairOverrides[s] = c
+		}
+	}
+	return pc, nil
 }
 
 func (p *portal) handleAutotradeStart(w http.ResponseWriter, r *http.Request) {
@@ -373,7 +481,7 @@ func (p *portal) handleAutotradeStart(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	symbol, err := p.allowedSymbol(req.Symbol)
+	pc, err := p.portfolioFromRequest(req)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "bad_symbol", err.Error()+" — bot KHÔNG bật")
 		return
@@ -382,30 +490,32 @@ func (p *portal) handleAutotradeStart(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "no_credentials", "thiếu credential, bot không bật: "+err.Error())
 		return
 	}
-	cfg := autotrade.DefaultConfig(symbol)
-	if req.NotionalQuote != nil {
-		cfg.NotionalQuote = *req.NotionalQuote
-	}
-	if req.MinNetAPRPct != nil {
-		cfg.MinNetAPRPct = *req.MinNetAPRPct
-	}
-	if req.MaxHoldEpochs != nil {
-		cfg.MaxHoldEpochs = *req.MaxHoldEpochs
-	}
-	st, err := p.autotrade.Start(cfg)
+	st, err := p.autotrade.Start(pc)
 	if err != nil {
-		code, status := "autotrade_refused", http.StatusBadRequest
-		if errors.Is(err, autotrade.ErrBusy) || errors.Is(err, autotrade.ErrNotStartable) {
-			code, status = "autotrade_conflict", http.StatusConflict
-		}
-		writeError(w, status, code, err.Error()+" — bot KHÔNG bật")
+		writeAutotradeError(w, err, " — bot KHÔNG bật")
 		return
 	}
 	writeJSON(w, http.StatusOK, autotradeActionView{Status: st})
 }
 
+// writeAutotradeError maps an engine refusal to a status.
+func writeAutotradeError(w http.ResponseWriter, err error, suffixVI string) {
+	code, status := "autotrade_refused", http.StatusBadRequest
+	switch {
+	case errors.Is(err, autotrade.ErrBusy), errors.Is(err, autotrade.ErrNotStartable),
+		errors.Is(err, autotrade.ErrHaltedWhileStopping), errors.Is(err, autotrade.ErrStaleAcknowledgement):
+		code, status = "autotrade_conflict", http.StatusConflict
+	case errors.Is(err, autotrade.ErrUnknownSymbol):
+		code = "bad_symbol"
+	}
+	writeError(w, status, code, err.Error()+suffixVI)
+}
+
 type autotradeStopRequest struct {
 	CloseNow bool `json:"close_now"`
+	// HaltSeq is the status's halt_seq as the page showed it when the operator
+	// pressed. Required: a stop acknowledges halts, and only the ones read.
+	HaltSeq *int `json:"halt_seq"`
 }
 
 func (p *portal) handleAutotradeStop(w http.ResponseWriter, r *http.Request) {
@@ -420,14 +530,19 @@ func (p *portal) handleAutotradeStop(w http.ResponseWriter, r *http.Request) {
 			"close_now="+fmt.Sprint(req.CloseNow)+" cần header "+actionHeader+": "+want+" — dừng-và-đóng gửi lệnh và chỉ đi sau hộp xác nhận")
 		return
 	}
-	// Detached from the request: a tab closed half-way through a close must not
-	// cancel the close (actions.go).
-	st, out, err := p.autotrade.Stop(context.WithoutCancel(r.Context()), req.CloseNow)
-	if err != nil {
-		writeError(w, http.StatusConflict, "autotrade_conflict", err.Error())
+	if req.HaltSeq == nil || *req.HaltSeq < 0 {
+		writeError(w, http.StatusBadRequest, "halt_seq_required",
+			"thiếu halt_seq — lệnh dừng xác nhận các DỪNG BẢO VỆ, nên phải nói trang đã hiển thị tới DỪNG BẢO VỆ số mấy")
 		return
 	}
-	writeJSON(w, http.StatusOK, autotradeActionView{Status: st, Close: out.Close, KeptIntentID: out.KeptIntentID})
+	// Detached from the request: a tab closed half-way through a close must not
+	// cancel the close (actions.go).
+	st, out, err := p.autotrade.Stop(context.WithoutCancel(r.Context()), req.CloseNow, *req.HaltSeq)
+	if err != nil {
+		writeAutotradeError(w, err, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, autotradeActionView{Status: st, Closes: out.Closes, KeptIntentIDs: out.KeptIntentIDs})
 }
 
 type autotradeKillRequest struct{}
@@ -437,11 +552,100 @@ func (p *portal) handleAutotradeKill(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	st, oc, err := p.autotrade.Kill(context.WithoutCancel(r.Context()))
+	st, closes, err := p.autotrade.Kill(context.WithoutCancel(r.Context()))
 	if err != nil {
-		writeError(w, http.StatusConflict, "autotrade_conflict", err.Error())
+		writeAutotradeError(w, err, "")
 		return
 	}
-	log.Printf("execportal: AUTOTRADE KILL → %s flat=%v %s", st.State, oc != nil && oc.Flat, st.HaltReasonVI)
-	writeJSON(w, http.StatusOK, autotradeActionView{Status: st, Close: oc})
+	log.Printf("execportal: AUTOTRADE KILL → %s %s", st.State, st.HaltReasonVI)
+	writeJSON(w, http.StatusOK, autotradeActionView{Status: st, Closes: closes})
+}
+
+type autotradeClosePairRequest struct {
+	Symbol string `json:"symbol"`
+}
+
+// handleAutotradeClosePair closes the bot's position on ONE symbol and pauses
+// that pair; every other pair keeps running.
+func (p *portal) handleAutotradeClosePair(w http.ResponseWriter, r *http.Request) {
+	var req autotradeClosePairRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	symbol, err := p.allowedSymbol(req.Symbol)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_symbol", err.Error()+" — không đóng gì")
+		return
+	}
+	if err := p.markets.both(); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "no_credentials", "thiếu credential, không đóng được: "+err.Error())
+		return
+	}
+	st, oc, err := p.autotrade.ClosePair(context.WithoutCancel(r.Context()), symbol)
+	if err != nil {
+		writeAutotradeError(w, err, " — không đóng gì")
+		return
+	}
+	log.Printf("execportal: AUTOTRADE CLOSE-PAIR %s → attempted=%v flat=%v %s", symbol, oc.Attempted, oc.Flat, oc.DetailVI)
+	writeJSON(w, http.StatusOK, autotradeActionView{Status: st, Closes: []autotrade.OperatorClose{oc}})
+}
+
+type autotradePairRequest struct {
+	Symbol string `json:"symbol"`
+	Action string `json:"action"`
+	// HaltSeq is the pair's halt number as the page showed it; an
+	// acknowledgement of any other halt is refused.
+	HaltSeq int `json:"halt_seq"`
+}
+
+var pairActionHeaders = map[autotrade.PairAction]string{
+	autotrade.PairPause:       autotradePairPauseAction,
+	autotrade.PairResume:      autotradePairResumeAction,
+	autotrade.PairAcknowledge: autotradePairAckAction,
+}
+
+// handleAutotradePair pauses, resumes or acknowledges one pair. It never sends
+// an order itself; RESUME lets the bot send them again.
+func (p *portal) handleAutotradePair(w http.ResponseWriter, r *http.Request) {
+	var req autotradePairRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	action := autotrade.PairAction(req.Action)
+	want, known := pairActionHeaders[action]
+	if !known {
+		writeError(w, http.StatusBadRequest, "bad_action", "action "+quoteForMessage(req.Action)+" không phải pause, resume hay ack")
+		return
+	}
+	if r.Header.Get(actionHeader) != want {
+		writeError(w, http.StatusForbidden, "action_header_mismatch",
+			"action="+string(action)+" cần header "+actionHeader+": "+want+" — tiếp tục một cặp cho bot đặt lệnh và chỉ đi sau hộp xác nhận")
+		return
+	}
+	symbol, err := p.allowedSymbol(req.Symbol)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "bad_symbol", err.Error())
+		return
+	}
+	if action == autotrade.PairResume {
+		if err := p.markets.both(); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "no_credentials", "thiếu credential, không tiếp tục cặp: "+err.Error())
+			return
+		}
+	}
+	st, err := p.autotrade.PairControl(symbol, action, req.HaltSeq)
+	if err != nil {
+		writeAutotradeError(w, err, "")
+		return
+	}
+	writeJSON(w, http.StatusOK, autotradeActionView{Status: st})
+}
+
+// handleAutotradePnL is the auto-trader's result page: closed pairs from the
+// intent cache, open pairs marked to mid with the funding the venue paid, the
+// settlement bars and the equity samples (pnl.go).
+func (p *portal) handleAutotradePnL(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := readContext(r)
+	defer cancel()
+	writeJSON(w, http.StatusOK, p.buildPnL(ctx, p.autotrade.Status(), true))
 }

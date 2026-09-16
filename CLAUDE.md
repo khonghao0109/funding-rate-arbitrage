@@ -1033,6 +1033,78 @@ single-print "settled ≤ 0" exit is the step-3.2 rule the backtest measured as
 churn (the `ExitNegative*` gates are the ready alternative), and the Q17
 same-origin debt now covers start and kill too. PLAN "Công cụ vận hành 4.5d".
 
+**The same day the auto-trader became MULTI-PAIR, with a result page (PLAN
+"Công cụ vận hành 4.5e") — still a tool, still Q18's limits, still one order in
+flight at a time.** `-symbols` now defaults to BTC/ETH/SOL/BNB. Each scan reads
+every pair (four at once, 30 s each), judges them one by one, then trades one at
+a time: due exits first, then eligible entries by strategy.NetAPR, each re-checked
+at send time against `MaxConcurrentPositions` (default 3, cap 5),
+`TotalCapitalCapQuote`, the reading's age and the next settlement. **The limits
+count what the VENUE may hold, not what the engine believes**: a pair takes a
+place when it is held, trading, halted with legs possibly on the venue, or — while
+running — not proven flat by its newest reading (a failed or `unknown` read, a
+person's position, a refused open); every pair's holding is read every scan, and
+a place whose capital cannot be stated stops all new entries rather than being
+guessed. Only a venue reading states a size — legs under exactly one intent
+with a known notional, or both legs flat; a failed or `unknown` read, a
+conflict, several intents, a halt, and the bot's own record of what it holds or
+sent state none. Six review rounds each found an over-limit route before round
+7 passed; read PLAN 4.5e before touching `placeLocked`/`sizeLocked`. Unhedged/conflict halts ONE pair; a
+pair's acknowledgement and the bot's stop both quote the `halt_seq` the page
+showed. New writes: `/api/autotrade/close-pair` (closes and pauses one pair) and
+`/api/autotrade/pair` (pause | resume | ack, header must match the action). The
+PnL page (`GET /api/autotrade/pnl`, `pnl.go`) reports a closed pair as funding −
+commission + drift at the FILL prices (execution's RealizedQuote subtracts
+slippage and leaves drift out; adding the two counts slippage twice), open pairs
+marked to mid plus venue funding rows, ROI over the peak capital held at once, and
+names what is excluded. Accepted on the testnet through the page: ETH opened
+before BTC by Net APR, one pair closed in 5.66 s without touching the other, a
+portal restart re-adopted two held pairs in 2.47 s, three kills flat in 6.7–10.7 s,
+`execcheck -status` agreeing on all six intents.
+
+**The auto-trader's rule set became CONVERGENCE-AND-AMORTIZATION on 2026-09-16
+(PLAN "Công cụ vận hành 4.5f") — still a tool, still Q18's limits, and NOT yet
+accepted on the testnet.** A hedged pair is born owing its whole round trip —
+~8 bps on this testnet (spot 0, futures taker 4 bps), 25–35 on mainnet — and one
+settlement at ~0.35 bps/8h repays a few percent of it, so the 4.5d/4.5e rule of
+leaving on the first settlement ≤ 0 realized the entire cost to dodge a charge
+hundreds of times smaller. The named debt for that is now paid, by four
+thresholds on `autotrade.Config`, all shipped at the design document's TESTNET
+column: `MinEntryBasisBps` **+5.0** refuses an entry unless the perp trades above
+the spot (a pair earns `basis_in − basis_out`, so entering on a dip pays the
+convergence out instead of collecting it, and arms the widening stop against its
+own recovery); `MinHoldEpochs` **6** locks the FUNDING exit for the first six
+settlements — and locks neither the take-profit nor the basis stop, because the
+floor buys funding time to amortize a cost, it is not a promise to hold a broken
+hedge; `TargetTakeProfitNetPct` **+0.50%** of the pair's CAPITAL closes early when
+the basis has converged enough to pay the trip, which is days rather than the
+20–80 settlements funding alone needs; and the funding exit past the floor now
+needs `ExitNegativeConsecutiveEpochs` **2** settlements in a row at or below
+`ExitNegativeFundingRateBps` **−2.0**, because on the 3-year corpus the median
+negative episode costs 0.3 bps against a 30 bps trip. `MaxBasisWidenBps` stays
+**100** — a structural break, not a thin book, since the measured basis on this
+testnet moves tens of bps between two scans. **Every figure the take-profit acts
+on is an ESTIMATE and says so** (`holdingResult`, rule 2): funding is the venue's
+published RATES times the perp leg's notional AT ENTRY, not the `FUNDING_FEE`
+rows the account was paid — those are `cmd/paperledger`'s and the PnL page's —
+and the exit half is priced on the current book. Entry slippage is subtracted
+ONCE, through the drift, which is measured from the FILL price, not from the mid:
+subtracting it again is the double count PLAN 4.5e records. The take-profit
+REFUSES a book older than 60 s (or stamped in the future) because it is the only
+exit that closes a position for a gain and it reads two mids; the basis STOP has
+no such guard on purpose — a stop that goes quiet as a book ages is worse than
+one acting on a slightly stale price. Every close now writes `CloseReasonVI` into
+its intent file and the history table prints it, which is the only record left
+once a pair is off the venue. `min_entry_basis_bps`, `min_hold_epochs` and
+`target_take_profit_net_pct` are on the start form and in `pair_overrides`; the
+safety thresholds are not, and stay pinned by
+`TestDefaults_AreTheAuditedSafetyThresholds`. **Not accepted**: 37 packages pass
+`-race`, every pillar has its own test at both the signal and the engine level,
+but this machine has no Chrome for the headless click-through and another
+`execportal` held 8087 all session, so nothing here has opened, held or taken
+profit on a real testnet pair. Read PLAN 4.5f's acceptance table — criteria 10
+and 11 are open — before calling it done.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1274,8 +1346,10 @@ cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      position and balances back from the venue, printing both
                      when they disagree (rule 7). No database, no schema
 cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17):
-                     four tabs on LOOPBACK 127.0.0.1:8087 — Market Scanner (a
-                     READ-ONLY relay of cmd/scanner's /ws), Execution Control,
+                     five tabs on LOOPBACK 127.0.0.1:8087 (Execution Control
+                     split into Auto-Trader and Manual Execution on 2026-09-15)
+                     — Market Scanner (a READ-ONLY relay of cmd/scanner's /ws),
+                     Auto-Trader, Manual Execution,
                      Paper Ledger (relay of cmd/paperledger), Crowding Reversal
                      (research fixture snapshot, not live). Execution is
                      cmd/execcheck's open / close / reconcile behind the page —
@@ -1289,14 +1363,24 @@ cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17
                      evidence_conflict, never reconciled. ONE position per
                      symbol, because execution.Close proves "closed" from the
                      account's whole perp position. No database, no schema.
-                     The Execution tab also switches the TESTNET auto-trader
-                     (Q18) on and off: GET /api/autotrade/status, POST
-                     start / stop / kill; its orders go through openAs and
-                     close (autotrade.go), never a second path
-  autotrade/         the auto-trader's state machine (Q18): DECIDES from the
-                     testnet's own books, settled funding and account fees,
-                     through strategy.RoundTripCost/NetAPR; imports no broker
-                     or execution; halts rather than squares
+                     Its own Auto-Trader tab switches the TESTNET auto-trader
+                     (Q18, multi-pair 4.5e) on and off: GET /api/autotrade/
+                     status and /pnl, POST start / stop / kill / close-pair /
+                     pair; its orders go through openAs and close
+                     (autotrade.go), never a second path, one at a time
+  autotrade/         the auto-trader's state machine (Q18, multi-pair since
+                     4.5e): DECIDES from the testnet's own books, settled
+                     funding and account fees, through strategy.RoundTripCost/
+                     NetAPR; one machine per pair, portfolio limits counted
+                     from venue evidence; imports no broker or execution;
+                     halts a pair rather than squares it. Since 4.5f its rules
+                     are the convergence-and-amortization set: an entry basis
+                     floor, a fee-amortization hold floor, early take-profit on
+                     a converged basis (priceHolding — an ESTIMATE, never the
+                     venue's own funding), and a hysteresis on the negative
+                     funding exit. pnl.go (main
+                     package) builds the result page from the intent cache,
+                     the engine's marks and the venue's funding rows
   feeds/             the read-only relay and proxies (Q17): exports handlers,
                      a health view and CloseAll only; decodes nothing; its
                      upstream reader never blocks the gate's broadcast
@@ -1389,7 +1473,8 @@ internal/
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
                      holds the perp liquidation model strategy calls
 static/              the operator page (Q17, moved here 2026-09-15): vanilla ES
-                     modules in js/ (scanner, execution, paper, crowding, shell,
+                     modules in js/ (scanner, execution, autotrade — the bot's
+                     read-only view — paper, crowding, shell,
                      core, main) + CSS tokens; fonts and Lightweight Charts
                      VENDORED (sha256 pinned) — the order page loads no script
                      from another host. embed.go makes it package static, which

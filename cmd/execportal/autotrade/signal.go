@@ -61,7 +61,10 @@ type Snapshot struct {
 
 // CheckView is one condition, with the numbers behind it.
 type CheckView struct {
-	NameVI string `json:"name_vi"`
+	// Key names the condition for a program — stable across wording changes of
+	// NameVI, which is for a person.
+	Key    CheckKey `json:"key"`
+	NameVI string   `json:"name_vi"`
 	// Passed is the condition holding. Evaluated false means its input could
 	// not be read, and Passed is then false for an entry and "no exit" for an
 	// exit — never a guess in the direction of trading.
@@ -69,6 +72,26 @@ type CheckView struct {
 	Evaluated bool   `json:"evaluated"`
 	DetailVI  string `json:"detail_vi"`
 }
+
+// CheckKey is a condition's stable name.
+type CheckKey string
+
+// The entry conditions, then the exit conditions.
+const (
+	CheckFlat                CheckKey = "flat"
+	CheckFormingPositive     CheckKey = "forming_positive"
+	CheckLastSettledPositive CheckKey = "last_settled_positive"
+	CheckEntryBasis          CheckKey = "entry_basis"
+	CheckNetAPR              CheckKey = "net_apr"
+	CheckDepth               CheckKey = "depth"
+	CheckClock               CheckKey = "clock"
+	CheckTimeToSettle        CheckKey = "time_to_settle"
+
+	CheckExitFunding    CheckKey = "exit_funding"
+	CheckExitEpochs     CheckKey = "exit_epochs"
+	CheckExitBasis      CheckKey = "exit_basis"
+	CheckExitTakeProfit CheckKey = "exit_take_profit"
+)
 
 // SignalView is the gauge: the last reading and what the bot made of it.
 type SignalView struct {
@@ -114,6 +137,20 @@ type SignalView struct {
 
 	MinDepthWideQuote  *float64 `json:"min_depth_wide_quote"`
 	RequiredDepthQuote float64  `json:"required_depth_quote"`
+
+	// A HELD pair's running result as this reading prices it (holdingResult),
+	// and the early take-profit threshold it is measured against. All nil on a
+	// flat pair and on a held one whose inputs could not be read;
+	// HoldingResultReasonVI then says which.
+	HoldingFundingQuote       *float64 `json:"holding_funding_quote"`
+	HoldingDriftQuote         *float64 `json:"holding_drift_quote"`
+	HoldingEntryFeeQuote      *float64 `json:"holding_entry_fee_quote"`
+	HoldingExitCostQuote      *float64 `json:"holding_exit_cost_quote"`
+	HoldingCashResultQuote    *float64 `json:"holding_cash_result_quote"`
+	HoldingReturnOnCapitalPct *float64 `json:"holding_return_on_capital_pct"`
+	TakeProfitTargetPct       float64  `json:"take_profit_target_pct"`
+	HoldingResultReasonVI     string   `json:"holding_result_reason_vi"`
+	HoldingResultLabelVI      string   `json:"holding_result_label_vi"`
 
 	EntryChecks   []CheckView `json:"entry_checks"`
 	EntryEligible bool        `json:"entry_eligible"`
@@ -286,27 +323,43 @@ func assessEntry(in entryInput) SignalView {
 	cfg, snap := in.Cfg, in.Snap
 	sig := gauge(cfg, snap, in.Now, in.MarginFrac)
 
-	add := func(name string, evaluated, passed bool, detail string) {
-		sig.EntryChecks = append(sig.EntryChecks, CheckView{NameVI: name, Evaluated: evaluated, Passed: evaluated && passed, DetailVI: detail})
+	add := func(key CheckKey, name string, evaluated, passed bool, detail string) {
+		sig.EntryChecks = append(sig.EntryChecks, CheckView{Key: key, NameVI: name, Evaluated: evaluated, Passed: evaluated && passed, DetailVI: detail})
 	}
 
 	if in.Flat {
-		add("Không có vị thế nào mở trên symbol", true, true, "sàn báo hai chân phẳng")
+		add(CheckFlat, "Không có vị thế nào mở trên symbol", true, true, "sàn báo hai chân phẳng")
 	} else {
-		add("Không có vị thế nào mở trên symbol", true, false, "sàn đang giữ: "+in.HeldVI+" — bot không mở thêm và không quản lý vị thế không phải của nó")
+		add(CheckFlat, "Không có vị thế nào mở trên symbol", true, false, "sàn đang giữ: "+in.HeldVI+" — bot không mở thêm và không quản lý vị thế không phải của nó")
 	}
 
-	add("Funding đang hình thành > 0", true, snap.ForecastRatePerIntervalFrac > 0,
+	add(CheckFormingPositive, "Funding đang hình thành > 0", true, snap.ForecastRatePerIntervalFrac > 0,
 		fmt.Sprintf("premiumIndex.lastFundingRate %+.4f bps mỗi chu kỳ của symbol — chưa settle, chỉ để chặn, không dùng để dự phóng", snap.ForecastRatePerIntervalFrac*10_000))
 
 	switch {
 	case snap.SettledErrVI != "":
-		add("Mốc settle gần nhất > 0", false, false, "không đọc được lịch sử funding: "+snap.SettledErrVI)
+		add(CheckLastSettledPositive, "Mốc settle gần nhất > 0", false, false, "không đọc được lịch sử funding: "+snap.SettledErrVI)
 	case sig.LastSettledRatePerIntervalBps == nil:
-		add("Mốc settle gần nhất > 0", false, false, "sàn không liệt kê mốc settle nào trong cửa sổ")
+		add(CheckLastSettledPositive, "Mốc settle gần nhất > 0", false, false, "sàn không liệt kê mốc settle nào trong cửa sổ")
 	default:
-		add("Mốc settle gần nhất > 0", true, *sig.LastSettledRatePerIntervalBps > 0,
+		add(CheckLastSettledPositive, "Mốc settle gần nhất > 0", true, *sig.LastSettledRatePerIntervalBps > 0,
 			fmt.Sprintf("%+.4f bps, settle lúc %s", *sig.LastSettledRatePerIntervalBps, time.UnixMilli(sig.LastSettledAtMs).Format("02/01 15:04")))
+	}
+
+	// Trụ cột 1 — the entry basis filter. A hedged pair collects
+	// (basis at entry − basis at exit) on top of the funding, so a perp trading
+	// ABOVE the spot is the discount this strategy is paid for and a perp
+	// trading below it is the same amount paid out. Entering on a dip also
+	// arms the widening exit: the book recovers, the basis climbs back towards
+	// zero, and a stop sized for a structural break fires on a recovery.
+	const basisEntryName = "Basis lúc vào ≥ ngưỡng"
+	switch {
+	case sig.BasisBps == nil:
+		add(CheckEntryBasis, basisEntryName, false, false, "không có giá giữa của cả hai sổ lệnh — không đo được basis")
+	default:
+		add(CheckEntryBasis, basisEntryName, true, *sig.BasisBps >= cfg.MinEntryBasisBps,
+			fmt.Sprintf("perp trên spot %+.2f bps, cần ≥ %+.2f bps (vào lúc basis lõm là trả trước phần hội tụ, không phải thu)",
+				*sig.BasisBps, cfg.MinEntryBasisBps))
 	}
 
 	aprDetail := sig.NetAPRReasonVI
@@ -314,26 +367,26 @@ func assessEntry(in entryInput) SignalView {
 		aprDetail = fmt.Sprintf("%.2f%%/năm trên notional một chân (%.2f%% trên vốn) ≥ %.2f%%? · trung bình %d mốc đã settle, giữ %s, chi phí vòng %.4f%%",
 			*sig.NetAPRPct, deref(sig.NetAPROnCapitalPct), cfg.MinNetAPRPct, sig.TrailingSettlements, holdVI(cfg, sig), deref(sig.RoundTripCostPct))
 	}
-	add("Net APR dự phóng ≥ ngưỡng", sig.NetAPRPct != nil, sig.NetAPRPct != nil && *sig.NetAPRPct >= cfg.MinNetAPRPct, aprDetail)
+	add(CheckNetAPR, "Net APR dự phóng ≥ ngưỡng", sig.NetAPRPct != nil, sig.NetAPRPct != nil && *sig.NetAPRPct >= cfg.MinNetAPRPct, aprDetail)
 
 	depthOK, depthEval, depthDetail := depthCheck(cfg, snap)
-	add(fmt.Sprintf("Độ sâu ±0,5%% ≥ %.0f× notional ở cả 4 phía", cfg.DepthMultiple), depthEval, depthOK, depthDetail)
+	add(CheckDepth, fmt.Sprintf("Độ sâu ±0,5%% ≥ %.0f× notional ở cả 4 phía", cfg.DepthMultiple), depthEval, depthOK, depthDetail)
 
 	const clockName = "Lệch đồng hồ sàn ≤ 1000 ms"
 	if snap.SpotClockSkewMs == nil || snap.PerpClockSkewMs == nil {
-		add(clockName, false, false, "chưa đo được đồng hồ của cả hai sàn")
+		add(CheckClock, clockName, false, false, "chưa đo được đồng hồ của cả hai sàn")
 	} else {
 		spot, perp := *snap.SpotClockSkewMs, *snap.PerpClockSkewMs
 		worst := max(abs64(spot), abs64(perp))
-		add(clockName, true, worst <= maxClockSkewMs, fmt.Sprintf("spot %+d ms, futures %+d ms", spot, perp))
+		add(CheckClock, clockName, true, worst <= maxClockSkewMs, fmt.Sprintf("spot %+d ms, futures %+d ms", spot, perp))
 	}
 
 	switch {
 	case snap.NextFundingTimeMs <= 0:
-		add("Còn đủ xa mốc settle kế tiếp", false, false, "sàn không cho nextFundingTime")
+		add(CheckTimeToSettle, "Còn đủ xa mốc settle kế tiếp", false, false, "sàn không cho nextFundingTime")
 	default:
 		left := time.UnixMilli(snap.NextFundingTimeMs).Sub(in.Now)
-		add("Còn đủ xa mốc settle kế tiếp", true, left > cfg.MinTimeToSettle,
+		add(CheckTimeToSettle, "Còn đủ xa mốc settle kế tiếp", true, left > cfg.MinTimeToSettle,
 			fmt.Sprintf("còn %s tới %s, cần > %s", left.Round(time.Second), time.UnixMilli(snap.NextFundingTimeMs).Format("15:04"), cfg.MinTimeToSettle))
 	}
 
@@ -477,6 +530,21 @@ func gauge(cfg Config, snap Snapshot, now time.Time, marginFrac float64) SignalV
 	return sig
 }
 
+// fillHolding puts a held pair's running result on the gauge. It is called only
+// for a pair the bot HOLDS: on a flat pair every one of these stays nil, so a
+// reader cannot mistake a scan for a position.
+func (sig *SignalView) fillHolding(cfg Config, r holdingResult) {
+	sig.TakeProfitTargetPct = cfg.TargetTakeProfitNetPct
+	sig.HoldingResultLabelVI = holdingResultLabelVI
+	if !r.OK {
+		sig.HoldingResultReasonVI = r.ReasonVI
+		return
+	}
+	sig.HoldingFundingQuote, sig.HoldingDriftQuote = ptr(r.FundingQuote), ptr(r.DriftQuote)
+	sig.HoldingEntryFeeQuote, sig.HoldingExitCostQuote = ptr(r.EntryFeeQuote), ptr(r.ExitCostQuote)
+	sig.HoldingCashResultQuote, sig.HoldingReturnOnCapitalPct = ptr(r.CashResultQuote), ptr(r.ReturnOnCapitalPct)
+}
+
 // depthCheck asks each side the round trip takes — spot ask and perp bid on the
 // way in, spot bid and perp ask on the way out — for DepthMultiple × notional
 // inside ±0.5% of mid. A side whose book stops short of the window reports a
@@ -522,6 +590,150 @@ func depthCheck(cfg Config, snap Snapshot) (passed, evaluated bool, detailVI str
 	return !definiteFail && !unknown, definiteFail || !unknown, fmt.Sprintf("cần %.0f quote mỗi phía: %s", need, strings.Join(parts, " · "))
 }
 
+// The two conversions this file does by hand, named so a reader can check them
+// against the identifier's unit (rule 4).
+const (
+	bpsPerUnit = 10_000.0
+	pctPerUnit = 100.0
+)
+
+// holdingResult is what a held pair has made SO FAR, as ONE reading prices it:
+//
+//	CashResultQuote = funding the venue's published rates imply
+//	                + the pair's drift from its two ENTRY FILLS to the current mids
+//	                − the commission the two entry fills paid
+//	                − what closing on the CURRENT book would cost
+//
+// Entry SLIPPAGE is deliberately NOT a term of its own. The drift is measured
+// from the FILL price, not from the mid the decision was taken on, so whatever
+// the entry gave up crossing the spread is already inside it; subtracting it
+// again is the double count PLAN 4.5e records against RealizedQuote + drift.
+//
+// Three things this figure is not, and each one travels on holdingResultLabelVI:
+//
+//   - It is not the funding the VENUE paid. The engine reads settled RATES and
+//     multiplies by the perp leg's notional AT ENTRY, because the mark at a past
+//     settlement is not republished (measured on the testnet 2026-09-13: the
+//     venue's own funding row and the book's figure differed by -0.0228%, all
+//     of it the mark). cmd/paperledger and the PnL page read the FUNDING_FEE rows;
+//     this does not, and must not be read as if it did.
+//   - It is not "net" (CLAUDE.md rule 2). The exit half is an ESTIMATE from a
+//     book that will have moved by the time the order is sent, and the five
+//     costs internal/strategy excludes by name are still excluded here.
+//   - It is not realized. Nothing is realized until execution proves both legs
+//     flat and reads the fills back from the venue.
+//
+// OK false means NO number here may be used — not that the result is zero.
+type holdingResult struct {
+	OK       bool
+	ReasonVI string
+
+	FundingQuote  float64
+	DriftQuote    float64
+	EntryFeeQuote float64
+	ExitCostQuote float64
+
+	CashResultQuote    float64
+	CapitalQuote       float64
+	ReturnOnCapitalPct float64
+}
+
+// holdingResultLabelVI travels with every figure holdingResult produces.
+const holdingResultLabelVI = "TẠM TÍNH, chưa hiện thực hoá: funding suy ra từ RATE sàn công bố nhân notional chân perp LÚC VÀO " +
+	"(không phải các dòng FUNDING_FEE sàn đã trả) + trôi giá từ GIÁ KHỚP lúc vào tới giá giữa lượt quét này " +
+	"− phí taker hai lượt khớp lúc vào − phí và trượt giá ƯỚC TÍNH để đóng trên sổ lệnh HIỆN TẠI. " +
+	"Trượt giá lúc vào đã nằm trong phần trôi giá, không trừ lần hai. Không phải lãi ròng."
+
+// priceHolding prices one held pair from one reading. after is the settlements
+// the venue listed strictly after the open, which is also what the funding and
+// epoch exits count (rule 6: counted, never derived from a duration).
+//
+// now is the instant it is being priced AT, passed in and never read from the
+// clock, the same contract internal/strategy holds itself to. It is here for
+// one reason: this figure is the only one that closes a position for a GAIN,
+// and it is computed from two mids. A book minutes old makes a drift the market
+// does not have, and a take-profit acting on it pays a real round trip for an
+// imagined profit. The basis STOP deliberately has no such guard — a stop that
+// silently stops working when a book ages is worse than one acting on a stale
+// price, and its job is to act.
+func priceHolding(snap Snapshot, pos PositionView, after []SettledRate, now time.Time) holdingResult {
+	out := holdingResult{ReasonVI: ""}
+	switch {
+	case snap.FeesErrVI != "":
+		out.ReasonVI = "không đọc được phí của tài khoản: " + snap.FeesErrVI + " — 'chưa tra' không phải 'miễn phí'"
+		return out
+	case snap.SettledErrVI != "":
+		out.ReasonVI = "không đọc được lịch sử funding: " + snap.SettledErrVI
+		return out
+	case !(pos.QtyCoin > 0):
+		out.ReasonVI = "không biết khối lượng hai chân đang giữ"
+		return out
+	case !(pos.SpotEntryAvgQuote > 0) || !(pos.PerpEntryAvgQuote > 0):
+		out.ReasonVI = "không có giá khớp lúc vào của cả hai chân (vị thế tiếp nhận thiếu file ý định?)"
+		return out
+	case !(snap.SpotBook.MidPriceQuote > 0) || !(snap.PerpBook.MidPriceQuote > 0):
+		out.ReasonVI = "không có giá giữa của cả hai sổ lệnh"
+		return out
+	case !(pos.CapitalQuote > 0):
+		out.ReasonVI = "không biết vốn cặp này đang khoá"
+		return out
+	}
+	for _, b := range []depth.Summary{snap.SpotBook, snap.PerpBook} {
+		if age := now.Sub(time.UnixMilli(b.SampledAtMs)); b.SampledAtMs <= 0 || age > maxBookAge || age < -maxBookAge {
+			out.ReasonVI = fmt.Sprintf("sổ %s đo lúc %s, cách lúc đánh giá %s — quá %s, không định giá chốt lời trên giá cũ",
+				b.Source, time.UnixMilli(b.SampledAtMs).Format("15:04:05"), age.Round(time.Second), maxBookAge)
+			return out
+		}
+	}
+
+	qty := pos.QtyCoin
+	spotEntryNotional := qty * pos.SpotEntryAvgQuote
+	perpEntryNotional := qty * pos.PerpEntryAvgQuote
+
+	// The SHORT perp leg is paid the rate on its own notional at each
+	// settlement. Only the settlements strictly after the open count — holding
+	// 7h59m of an 8h period pays nothing (rule 6) — and a Special rate is a
+	// settlement the account really crossed, so it is counted here even though
+	// the cadence and the entry mean leave it out.
+	rateSum := 0.0
+	for _, r := range after {
+		rateSum += r.RatePerIntervalFrac
+	}
+	out.FundingQuote = rateSum * perpEntryNotional
+	out.DriftQuote = (snap.SpotBook.MidPriceQuote-pos.SpotEntryAvgQuote)*qty + (pos.PerpEntryAvgQuote-snap.PerpBook.MidPriceQuote)*qty
+	out.EntryFeeQuote = spotEntryNotional*snap.SpotTakerFeeBps/bpsPerUnit + perpEntryNotional*snap.PerpTakerFeeBps/bpsPerUnit
+
+	// The exit is priced at what the two legs are worth NOW — the 4.3 rule that
+	// an exit leg is sized at the coins' current value, never at the entry
+	// notional — against the sides it would really take: SELL the spot, BUY the
+	// perp back. A book that cannot absorb either one prices nothing: a refused
+	// fill contributing zero cost is how a loss is shown as a profit.
+	spotExitNotional := qty * snap.SpotBook.MidPriceQuote
+	perpExitNotional := qty * snap.PerpBook.MidPriceQuote
+	spotSell := strategy.EstimateFill(snap.SpotBook, strategy.SideSell, spotExitNotional)
+	perpBuy := strategy.EstimateFill(snap.PerpBook, strategy.SideBuy, perpExitNotional)
+	if !spotSell.Fillable {
+		out.ReasonVI = "sổ spot không hấp thụ nổi lệnh BÁN để đóng: " + spotSell.ReasonVI
+		return out
+	}
+	if !perpBuy.Fillable {
+		out.ReasonVI = "sổ perp không hấp thụ nổi lệnh MUA để đóng: " + perpBuy.ReasonVI
+		return out
+	}
+	out.ExitCostQuote = spotExitNotional*(snap.SpotTakerFeeBps/bpsPerUnit+spotSell.SlippagePct/pctPerUnit) +
+		perpExitNotional*(snap.PerpTakerFeeBps/bpsPerUnit+perpBuy.SlippagePct/pctPerUnit)
+
+	out.CashResultQuote = out.FundingQuote + out.DriftQuote - out.EntryFeeQuote - out.ExitCostQuote
+	out.CapitalQuote = pos.CapitalQuote
+	out.ReturnOnCapitalPct = out.CashResultQuote / out.CapitalQuote * pctPerUnit
+	if !finite(out.CashResultQuote) || !finite(out.ReturnOnCapitalPct) {
+		out.ReasonVI = "kết quả tạm tính không phải số hữu hạn — không công bố"
+		return out
+	}
+	out.OK = true
+	return out
+}
+
 // exitAssessment is what one reading says about a held pair.
 type exitAssessment struct {
 	Due                  bool
@@ -529,19 +741,30 @@ type exitAssessment struct {
 	Checks               []CheckView
 	SettlementsSinceOpen int
 	BasisWidenBps        *float64
+	// Result is the running result the take-profit exit is judged on, priced
+	// whether or not it fired; Result.OK false says why it could not be.
+	Result holdingResult
 }
 
 // assessExit runs every exit check on a held pair. A check that cannot be
 // evaluated never closes the pair: missing data is not a reason to trade.
-func assessExit(cfg Config, snap Snapshot, pos PositionView) exitAssessment {
+func assessExit(cfg Config, snap Snapshot, pos PositionView, now time.Time) exitAssessment {
 	var out exitAssessment
-	add := func(name string, evaluated, exit bool, detail string) {
+	// reasonVI empty takes the default shape, "name (detail)"; a check whose
+	// wording is a contract of its own passes the whole sentence.
+	addReason := func(key CheckKey, name string, evaluated, exit bool, detail, reasonVI string) {
 		// Passed is "no exit", so the page reads green as "keep holding".
-		out.Checks = append(out.Checks, CheckView{NameVI: name, Evaluated: evaluated, Passed: !(evaluated && exit), DetailVI: detail})
+		out.Checks = append(out.Checks, CheckView{Key: key, NameVI: name, Evaluated: evaluated, Passed: !(evaluated && exit), DetailVI: detail})
 		if evaluated && exit {
 			out.Due = true
-			out.ReasonsVI = append(out.ReasonsVI, name+" ("+detail+")")
+			if reasonVI == "" {
+				reasonVI = name + " (" + detail + ")"
+			}
+			out.ReasonsVI = append(out.ReasonsVI, reasonVI)
 		}
+	}
+	add := func(key CheckKey, name string, evaluated, exit bool, detail string) {
+		addReason(key, name, evaluated, exit, detail, "")
 	}
 
 	var after []SettledRate
@@ -553,40 +776,108 @@ func assessExit(cfg Config, snap Snapshot, pos PositionView) exitAssessment {
 	sort.SliceStable(after, func(i, j int) bool { return after[i].SettledAtMs < after[j].SettledAtMs })
 	out.SettlementsSinceOpen = len(after)
 
-	const fundingName = "Mốc settle gần nhất sau khi vào ≤ 0"
+	const fundingName = "Mốc settle sau khi vào ≤ 0"
 	switch {
 	case snap.SettledErrVI != "":
-		add(fundingName, false, false, "không đọc được lịch sử funding: "+snap.SettledErrVI)
+		add(CheckExitFunding, fundingName, false, false, "không đọc được lịch sử funding: "+snap.SettledErrVI)
 	case len(after) == 0:
-		add(fundingName, true, false, "chưa có mốc settle nào sau khi vào")
-	default:
+		add(CheckExitFunding, fundingName, true, false, "chưa có mốc settle nào sau khi vào")
+	case cfg.MinHoldEpochs > 0 && len(after) < cfg.MinHoldEpochs:
+		// Trụ cột 2 — the amortization floor. The funding exit is forbidden
+		// here whatever the rate did; the take-profit and the basis stop below
+		// are NOT, so a position that has already earned its round trip back,
+		// or one whose basis broke, still leaves.
 		last := after[len(after)-1]
-		add(fundingName, true, last.RatePerIntervalFrac <= 0,
-			fmt.Sprintf("mốc %s settle %+.4f bps", time.UnixMilli(last.SettledAtMs).Format("02/01 15:04"), last.RatePerIntervalFrac*10_000))
+		add(CheckExitFunding, fundingName, true, false,
+			fmt.Sprintf("đang trong sàn giữ tối thiểu %d mốc để khấu hao phí vòng (đã qua %d mốc · mốc gần nhất %+.4f bps) — lối thoát funding khoá, chốt lời và cắt lỗ basis vẫn chạy",
+				cfg.MinHoldEpochs, len(after), last.RatePerIntervalFrac*bpsPerUnit))
+	default:
+		// Trụ cột 4 — hysteresis. Past the amortization floor the pair leaves
+		// only on a RUN of settlements at or below the configured charge: one
+		// print is noise beside a round trip, and paying the trip to dodge it
+		// is the churn the retired step-3.3 rule measured.
+		floorFrac := cfg.ExitNegativeFundingRateBps / bpsPerUnit
+		consecutiveNeg := 0
+		for i := len(after) - 1; i >= 0; i-- {
+			if after[i].RatePerIntervalFrac <= floorFrac {
+				consecutiveNeg++
+			} else {
+				break
+			}
+		}
+		need := cfg.ExitNegativeConsecutiveEpochs
+		last := after[len(after)-1]
+		lastVI := func(r SettledRate) string {
+			return fmt.Sprintf("mốc %s: %+.2f bps", time.UnixMilli(r.SettledAtMs).Format("02/01 15:04"), r.RatePerIntervalFrac*bpsPerUnit)
+		}
+		exitDue := false
+		detail := ""
+		switch {
+		case need > 0 && consecutiveNeg >= need:
+			exitDue = true
+			var runVI []string
+			for _, r := range after[len(after)-consecutiveNeg:] {
+				runVI = append(runVI, lastVI(r))
+			}
+			detail = fmt.Sprintf("%d mốc liên tiếp ≤ %.1f bps, cần %d (%s)", consecutiveNeg, cfg.ExitNegativeFundingRateBps, need, strings.Join(runVI, " · "))
+		case cfg.MinHoldEpochs == 0 && last.RatePerIntervalFrac <= 0:
+			// No amortization floor: the step-3.2 rule, kept so a run configured
+			// the old way behaves exactly the old way.
+			exitDue = true
+			detail = fmt.Sprintf("mốc %s settle %+.4f bps ≤ 0", time.UnixMilli(last.SettledAtMs).Format("02/01 15:04"), last.RatePerIntervalFrac*bpsPerUnit)
+		case last.RatePerIntervalFrac <= 0:
+			detail = fmt.Sprintf("%s — chưa kích hoạt thoát: mới %d mốc liên tiếp ≤ %.1f bps, cần %d (tránh trả trọn vòng phí để né một khoản âm nhỏ hơn nhiều)",
+				lastVI(last), consecutiveNeg, cfg.ExitNegativeFundingRateBps, need)
+		default:
+			detail = fmt.Sprintf("mốc %s settle %+.4f bps > 0",
+				time.UnixMilli(last.SettledAtMs).Format("02/01 15:04"), last.RatePerIntervalFrac*bpsPerUnit)
+		}
+		add(CheckExitFunding, fundingName, true, exitDue, detail)
 	}
 
 	const epochName = "Đã giữ qua đủ số mốc settle"
 	switch {
 	case cfg.MaxHoldEpochs == 0:
-		add(epochName, true, false, fmt.Sprintf("không giới hạn (giữ khi funding còn dương) · đã qua %d mốc", len(after)))
+		add(CheckExitEpochs, epochName, true, false, fmt.Sprintf("không giới hạn (giữ khi funding còn dương) · đã qua %d mốc", len(after)))
 	case snap.SettledErrVI != "":
-		add(epochName, false, false, "không đọc được lịch sử funding: "+snap.SettledErrVI)
+		add(CheckExitEpochs, epochName, false, false, "không đọc được lịch sử funding: "+snap.SettledErrVI)
 	default:
-		add(epochName, true, len(after) >= cfg.MaxHoldEpochs, fmt.Sprintf("đã qua %d / %d mốc sàn liệt kê sau lúc vào", len(after), cfg.MaxHoldEpochs))
+		add(CheckExitEpochs, epochName, true, len(after) >= cfg.MaxHoldEpochs, fmt.Sprintf("đã qua %d / %d mốc sàn liệt kê sau lúc vào", len(after), cfg.MaxHoldEpochs))
 	}
 
 	const basisName = "Basis giãn quá ngưỡng so với lúc vào"
-	now, okNow := basisBps(snap.SpotBook.MidPriceQuote, snap.PerpBook.MidPriceQuote)
+	nowBps, okNow := basisBps(snap.SpotBook.MidPriceQuote, snap.PerpBook.MidPriceQuote)
 	switch {
 	case !okNow:
-		add(basisName, false, false, "không có giá giữa của hai sổ lệnh")
+		add(CheckExitBasis, basisName, false, false, "không có giá giữa của hai sổ lệnh")
 	case pos.EntryBasisBps == 0 && pos.Adopted:
-		add(basisName, false, false, "vị thế tiếp nhận không mang giá giữa lúc vào — không đo được độ giãn")
+		add(CheckExitBasis, basisName, false, false, "vị thế tiếp nhận không mang giá giữa lúc vào — không đo được độ giãn")
 	default:
-		widen := now - pos.EntryBasisBps
+		widen := nowBps - pos.EntryBasisBps
 		out.BasisWidenBps = &widen
-		add(basisName, true, widen > cfg.MaxBasisWidenBps,
-			fmt.Sprintf("basis %+.2f bps, lúc vào %+.2f bps, giãn %+.2f > %.0f?", now, pos.EntryBasisBps, widen, cfg.MaxBasisWidenBps))
+		addReason(CheckExitBasis, basisName, true, widen > cfg.MaxBasisWidenBps,
+			fmt.Sprintf("basis %+.2f bps, lúc vào %+.2f bps, giãn %+.2f > %.0f?", nowBps, pos.EntryBasisBps, widen, cfg.MaxBasisWidenBps),
+			fmt.Sprintf("Cắt lỗ basis nổ: Basis giãn %+.1f bps > %.0f bps so với lúc vào", widen, cfg.MaxBasisWidenBps))
+	}
+
+	// Trụ cột 3 — take profit on convergence. Priced on every reading, whether
+	// or not it fires, so the page can show how far a held pair is from it; a
+	// reading that could not be priced never closes anything.
+	out.Result = priceHolding(snap, pos, after, now)
+	const takeProfitName = "Chốt lời hội tụ Basis"
+	switch {
+	case cfg.TargetTakeProfitNetPct <= 0:
+		add(CheckExitTakeProfit, takeProfitName, true, false,
+			"không đặt ngưỡng chốt lời sớm (0 = tắt) — vị thế giữ tới khi funding hoặc basis quyết định")
+	case !out.Result.OK:
+		add(CheckExitTakeProfit, takeProfitName, false, false, "không định giá được kết quả tạm tính: "+out.Result.ReasonVI)
+	default:
+		r := out.Result
+		addReason(CheckExitTakeProfit, takeProfitName, true, r.ReturnOnCapitalPct >= cfg.TargetTakeProfitNetPct,
+			fmt.Sprintf("tạm tính %+.4f quote trên vốn %.2f = %+.2f%%, cần ≥ %+.2f%% · funding %+.4f, trôi giá %+.4f, phí vào %.4f, đóng ước %.4f",
+				r.CashResultQuote, r.CapitalQuote, r.ReturnOnCapitalPct, cfg.TargetTakeProfitNetPct,
+				r.FundingQuote, r.DriftQuote, r.EntryFeeQuote, r.ExitCostQuote),
+			fmt.Sprintf("Chốt lời hội tụ Basis: Net PnL %+.2f%% trên vốn ≥ ngưỡng %+.2f%%", r.ReturnOnCapitalPct, cfg.TargetTakeProfitNetPct))
 	}
 	return out
 }

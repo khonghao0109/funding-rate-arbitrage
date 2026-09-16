@@ -18,6 +18,7 @@ script này cũng là máy đang chạy tiến trình live.
 | `lev.py` | Khối đòn bẩy. Tách riêng vì nó chỉ được so **những chuỗi mở được lệnh ở MỌI mức đòn bẩy**: bật mô hình ký quỹ làm `strategy` từ chối vào lệnh ở sàn chưa xác minh biểu duy trì, nên các dòng của lưới chính không so ngang được theo trục đó. Nó cũng quy lợi nhuận về **VỐN** = N·(1+f), mẫu số duy nhất trả lời được câu "có nên dùng đòn bẩy không". |
 | `iso.py` | So hai lượt chạy thường chỉ khác ngưỡng basis, ra giá của lối thoát đó. |
 | `build.py` | JSON + `report.template.html` → một file HTML tự chứa, song ngữ VI/ZH. |
+| `autoparams.py` | **Không đọc CSV của `cmd/backtest`.** Thẩm định bộ tham số của auto-trader (`cmd/execportal/autotrade`) bằng cách replay ĐÚNG luật của nó — vào bằng trung bình trượt 7 ngày qua `strategy.NetAPR`, ra ở mốc settle âm đầu tiên — ngay trên corpus, vì `cmd/backtest` chưa có trục để quét luật ấy. Mọi công thức là bản chép của `cmd/execportal/autotrade/signal.go`; sửa một bên thì đọc chéo bên kia. Dựng thẳng ra `docs/reports/autotrade-params-<ngày>.html` qua `autoparams.template.html`. |
 
 ## Chạy
 

@@ -5,13 +5,16 @@
 // set only on that path and the server refuses a write without it. The tab
 // reads nothing from the Scanner or Paper tabs — no signal reaches a button.
 //
-// The Auto-Trader card (PLAN Q18) switches the server's testnet bot on and off.
-// The bot's own orders are placed by the server, through the same open and
-// close these buttons use; this page only starts it (confirmed), stops it, or
-// kills it (confirmed), and shows what it decided.
+// The Auto-Trader tab (PLAN Q18) switches the server's testnet bot on and off
+// across several pairs. The bot's own orders are placed by the server, through
+// the same open and close these buttons use; this page only starts it
+// (confirmed), stops it, kills it (confirmed), closes one of its pairs
+// (confirmed), pauses or — confirmed — resumes a pair, and acknowledges a
+// pair's halt. autotrade.js draws what the bot decided and sends nothing.
 
 import { $, el, clear, setText, isNum, tidy, fmt, signCls, api, post, schedule, emptyRow } from "./core.js";
 import { shell } from "./shell.js";
+import { autotradeView, tick as autotradeTick } from "./autotrade.js";
 
 const FAST_MS = 3000;
 const BACKGROUND_MS = 15000;
@@ -32,7 +35,7 @@ const state = {
   hedges: {},
 };
 
-const execActive = () => shell.isActive("execution");
+const execActive = () => shell.isActive("manual") || shell.isActive("autotrade");
 const q = (path) => `${path}?symbol=${encodeURIComponent(state.symbol)}`;
 
 function baseAsset() {
@@ -564,8 +567,16 @@ function showResult(title, nodes) {
   const body = $("result-body");
   clear(body);
   for (const n of nodes) if (n) body.append(n);
-  $("result").hidden = false;
-  $("result").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  const res = $("result");
+  if (res) {
+    const activeTab = shell.active || "manual";
+    const activePanel = $("panel-" + activeTab) || $("panel-manual");
+    if (activePanel && res.parentElement !== activePanel) {
+      activePanel.prepend(res);
+    }
+    res.hidden = false;
+    res.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
 }
 
 function kvList(rows) {
@@ -783,25 +794,19 @@ async function doReconcile() {
 }
 
 // ------------------------------------------------------------- auto-trader
+//
+// The server's testnet bot (PLAN Q18), across every pair the portal trades. The
+// view (autotrade.js) draws it and sends nothing; every write below goes out
+// only after its dialog, except the two that send no order and lead to none:
+// a stop that keeps the positions, and pausing one pair.
 
-const AT_BADGE = {
-  disabled: "[TẮT]",
-  idle_scanning: "[ĐANG QUÉT]",
-  evaluating: "[ĐANG QUÉT]",
-  opening: "[ĐANG MỞ LỆNH]",
-  in_position: "[ĐANG GIỮ VỊ THẾ - HEDGED]",
-  closing: "[ĐANG ĐÓNG LỆNH]",
-  cooldown: "[HỒI PHỤC]",
-  emergency_halted: "[DỪNG BẢO VỆ]",
-};
-const AT_LOG_LINES = 10;
-
-// acting is a start or stop this tab sent; killing is a kill it sent. A kill is
-// never blocked behind a stop: a stop can wait minutes for an open in flight,
+// acting is a write this tab sent; killing is a kill it sent. A kill is never
+// blocked behind another action: a stop can wait minutes for an open in flight,
 // and that is exactly when KILL must stay pressable.
-const at = { status: null, acting: false, killing: false, stale: false };
+const at = { status: null, pnl: null, acting: false, killing: false, stale: false };
 
 const atHalted = (s) => Boolean(s && s.state === "emergency_halted");
+const PNL_MS = 15000;
 
 async function refreshAutotrade() {
   const r = await api("/api/autotrade/status");
@@ -815,150 +820,76 @@ async function refreshAutotrade() {
   }
   at.stale = false;
   at.status = r.body;
-  renderAutotrade(r.body);
-}
-
-function renderAutotrade(s) {
-  $("at-card").dataset.state = s.state;
-  const badge = $("at-badge");
-  badge.dataset.state = s.state;
-  setText(badge, AT_BADGE[s.state] || `[${s.state_vi || s.state}]`);
-  badge.title = `${s.state_vi || s.state} từ ${fmt.time(s.state_since_ms)}`;
-
-  const toggle = $("at-toggle");
-  toggle.setAttribute("aria-checked", s.enabled ? "true" : "false");
-  toggle.dataset.halted = atHalted(s) ? "true" : "false";
-  setText("at-toggle-label", atHalted(s) ? "XÁC NHẬN & TẮT" : s.enabled ? "TẮT AUTO-TRADER" : "BẬT AUTO-TRADER");
-  setText("at-stop", atHalted(s) ? "[XÁC NHẬN DỪNG BẢO VỆ → TẮT]" : "[DỪNG & GIỮ VỊ THẾ]");
-  if (s.notice_vi) setText("at-notice", s.notice_vi);
-
-  const halt = $("at-halt");
-  halt.hidden = !s.halt_reason_vi;
-  setText(halt, s.halt_reason_vi ? `DỪNG BẢO VỆ — ${s.halt_reason_vi}. Xử lý nguyên nhân (đọc vị thế bên dưới, LÀM PHẲNG nếu cần), rồi XÁC NHẬN & TẮT trước khi bật lại.` : "");
-
-  // While a run is on, the form shows the parameters it runs with; while it is
-  // off, it keeps whatever the operator typed.
-  if (s.enabled || atHalted(s)) {
-    const c = s.config || {};
-    if (c.symbol) $("at-symbol").value = c.symbol;
-    if (isNum(c.notional_quote)) $("at-notional").value = String(c.notional_quote);
-    if (isNum(c.min_net_apr_pct)) $("at-min-apr").value = String(c.min_net_apr_pct);
-    if (isNum(c.max_hold_epochs)) $("at-max-epochs").value = String(c.max_hold_epochs);
-  }
-
-  const pos = s.position;
-  setText("at-position-line", pos
-    ? `bot giữ ${pos.intent_id} · ${fmt.coin(pos.qty_coin)} coin mỗi chân · qua ${pos.settlements_since_open} mốc settle${pos.adopted ? " · tiếp nhận sau khi bật lại" : ""}`
-    : "bot không giữ vị thế nào");
-
-  renderAtSignal(s);
-  renderAtLog(s);
+  autotradeView.renderStatus(r.body);
+  syncAtForm(r.body);
   syncAtButtons();
 }
 
-function atMark(text, cls) {
-  return el("span", { cls: "at-mark " + cls, text });
-}
-
-function renderAtSignal(s) {
-  const sig = s.signal;
-  const scanned = s.last_scan_at_ms ? `quét lúc ${fmt.time(s.last_scan_at_ms)}` : "chưa quét";
-  setText("at-age", s.next_scan_at_ms ? `${scanned} · lần sau ${fmt.time(s.next_scan_at_ms)}` : scanned, "hint");
-  const verdict = $("at-verdict");
-  const checks = $("at-checks");
-  if (!sig) {
-    verdict.dataset.state = "none";
-    setText(verdict, s.enabled ? "Đang chờ lượt quét đầu tiên…" : "Chưa quét — bật bot để bắt đầu đánh giá");
-    for (const id of ["at-funding", "at-funding-sub", "at-basis", "at-basis-sub", "at-apr", "at-apr-sub"]) setText(id, "—");
-    clear(checks);
-    setText("at-checks-summary", "Điều kiện vào / thoát");
-    setText("at-cost-basis", "");
-    renderAtCountdown();
+async function refreshPnL() {
+  if (!shell.isActive("autotrade")) return;
+  const r = await api("/api/autotrade/pnl");
+  if (!r.ok) {
+    autotradeView.pnlFailed(r.body.error_vi || `HTTP ${r.status}`);
     return;
   }
-  const holding = (sig.exit_checks || []).length > 0;
-  verdict.dataset.state = holding ? (sig.exit_due ? "exit" : "hold") : sig.entry_eligible ? "go" : "wait";
-  setText(verdict, sig.verdict_vi || "—");
-
-  const hours = sig.interval_sec > 0 ? sig.interval_sec / 3600 : null;
-  setText("at-funding", isNum(sig.forecast_rate_per_interval_bps) ? `${fmt.bps(sig.forecast_rate_per_interval_bps)} bps` : "—",
-    "stat-v sm " + signCls(sig.forecast_rate_per_interval_bps));
-  setText("at-funding-sub", [
-    isNum(sig.forecast_rate_per_8h_bps) ? `${fmt.bps(sig.forecast_rate_per_8h_bps)} bps/8h` : "",
-    hours ? `chu kỳ đo được ${hours}h` : "chu kỳ chưa đo được",
-    isNum(sig.last_settled_rate_per_interval_bps) ? `mốc gần nhất ${fmt.bps(sig.last_settled_rate_per_interval_bps)}` : "",
-    isNum(sig.trailing_mean_rate_per_interval_bps) ? `TB ${sig.trailing_window_days} ngày ${fmt.bps(sig.trailing_mean_rate_per_interval_bps)} (${sig.trailing_settlements} mốc)` : "",
-  ].filter(Boolean).join(" · "));
-
-  setText("at-basis", isNum(sig.basis_bps) ? `${fmt.bps(sig.basis_bps)} bps` : "—");
-  const limit = s.config ? s.config.max_basis_widen_bps : null;
-  setText("at-basis-sub", isNum(sig.basis_widen_bps)
-    ? `lúc vào ${fmt.bps(sig.entry_basis_bps)} · giãn ${fmt.bps(sig.basis_widen_bps)} / ngưỡng ${limit} bps`
-    : `spot ${fmt.price(sig.spot_mid_quote)} · perp ${fmt.price(sig.perp_mid_quote)}`);
-
-  if (isNum(sig.net_apr_pct)) {
-    setText("at-apr", fmt.pct(sig.net_apr_pct, 2, true), "stat-v sm " + signCls(sig.net_apr_pct));
-    setText("at-apr-sub",
-      `trên notional một chân · trên vốn ${fmt.pct(sig.net_apr_on_capital_pct, 2, true)} (${sig.capital_per_notional}× notional) · ` +
-      `giữ ${sig.holding_days < 2 ? sig.holding_days.toFixed(2) : Math.round(sig.holding_days)} ngày, ${sig.settlements_in_hold} mốc · ` +
-      `chi phí vòng ${fmt.pct(sig.round_trip_cost_pct, 4)} (phí ${fmt.pct(sig.fees_pct, 4)} + trượt ${fmt.pct(sig.slippage_pct, 4)})`);
-  } else {
-    setText("at-apr", "không tính", "stat-v sm warn");
-    setText("at-apr-sub", sig.net_apr_reason_vi || "—");
-  }
-
-  clear(checks);
-  const group = (title, list, exit) => {
-    if (!list || list.length === 0) return 0;
-    checks.append(el("li", { cls: "at-group", text: title }));
-    let good = 0;
-    for (const c of list) {
-      const mark = !c.evaluated ? atMark("KHÔNG ĐO", "na") : exit ? (c.passed ? atMark("GIỮ", "ok") : atMark("THOÁT", "bad")) : c.passed ? atMark("ĐẠT", "ok") : atMark("CHƯA", "bad");
-      if (c.passed && c.evaluated) good++;
-      checks.append(el("li", null, [mark, el("span", { cls: "at-detail" }, [el("strong", { text: c.name_vi }), " — " + (c.detail_vi || "")])]));
-    }
-    return good;
-  };
-  const entryGood = group("VÀO LỆNH", sig.entry_checks, false);
-  const exitGood = group("THOÁT LỆNH", sig.exit_checks, true);
-  setText("at-checks-summary", holding
-    ? `Điều kiện thoát: ${exitGood}/${sig.exit_checks.length} nói GIỮ`
-    : `Điều kiện vào: ${entryGood}/${(sig.entry_checks || []).length} đạt`);
-  const applied = (sig.applied_vi || []).join(" ");
-  const excluded = (sig.excluded_vi || []).join(" ");
-  setText("at-cost-basis", [applied ? "Đã tính: " + applied : "", excluded ? "Chưa trừ: " + excluded : "", sig.fee_source_vi ? "Nguồn phí: " + sig.fee_source_vi : ""].filter(Boolean).join(" · "));
-  renderAtCountdown();
+  at.pnl = r.body;
+  autotradeView.renderPnL(r.body);
 }
 
-// renderAtCountdown runs every second, so the countdown moves between polls.
-function renderAtCountdown() {
-  const sig = at.status && at.status.signal;
-  if (!sig || !sig.next_funding_time_ms) {
-    setText("at-countdown", "—");
-    setText("at-settle-at", "—");
-    return;
+const SYMBOLS_STORAGE_KEY = "execportal.autotrade.symbols";
+
+function syncMaxPairsWithChecked() {
+  if (at.status && (at.status.enabled || atHalted(at.status))) return;
+  const count = atCheckedSymbols().length;
+  if (count > 0) {
+    $("at-max-pairs").value = String(count);
   }
-  const left = (sig.next_funding_time_ms - Date.now()) / 1000;
-  setText("at-countdown", left > 0 ? fmt.duration(left) : "đang settle");
-  const minSec = at.status.config ? at.status.config.min_time_to_settle_sec : 0;
-  setText("at-settle-at", `settle ${fmt.time(sig.next_funding_time_ms)}${left > 0 && left <= minSec ? " · quá gần để vào" : ""}`);
 }
 
-function renderAtLog(s) {
-  const list = $("at-log");
-  clear(list);
-  const lines = (s.log || []).slice(0, AT_LOG_LINES);
-  if (lines.length === 0) {
-    list.append(el("li", { cls: "at-empty", text: "chưa có sự kiện" }));
-    return;
+function fillAtSymbols(symbols) {
+  const box = $("at-symbols");
+  clear(box);
+  let saved = null;
+  try {
+    const raw = window.localStorage.getItem(SYMBOLS_STORAGE_KEY);
+    if (raw) saved = JSON.parse(raw);
+  } catch (_) {}
+  const hasSaved = Array.isArray(saved);
+
+  for (const sym of symbols) {
+    const input = el("input", { attrs: { type: "checkbox", value: sym, name: "at-symbol" } });
+    input.checked = hasSaved ? saved.includes(sym) : true;
+    input.addEventListener("change", () => {
+      try {
+        window.localStorage.setItem(SYMBOLS_STORAGE_KEY, JSON.stringify(atCheckedSymbols()));
+      } catch (_) {}
+      syncMaxPairsWithChecked();
+    });
+    box.append(el("label", null, [input, sym]));
   }
-  for (const line of lines) {
-    list.append(el("li", null, [
-      el("span", { text: fmt.time(line.at_ms) }),
-      el("span", { cls: "at-kind", text: `[${line.kind}]`, data: { kind: line.kind } }),
-      el("span", { cls: "at-msg", text: line.message_vi }),
-    ]));
-  }
+  syncMaxPairsWithChecked();
+}
+
+function atCheckedSymbols() {
+  return [...document.querySelectorAll('#at-symbols input[type="checkbox"]')].filter((i) => i.checked).map((i) => i.value);
+}
+
+// While a run is on, the form shows the parameters it runs with; while it is
+// off, it keeps whatever the operator typed.
+function syncAtForm(s) {
+  if (!(s.enabled || atHalted(s)) || !s.portfolio) return;
+  const pf = s.portfolio;
+  const d = pf.default_pair_config || {};
+  $("at-notional").value = String(d.notional_quote);
+  $("at-min-apr").value = String(d.min_net_apr_pct);
+  $("at-max-epochs").value = String(d.max_hold_epochs);
+  $("at-min-basis").value = String(d.min_entry_basis_bps);
+  $("at-min-epochs").value = String(d.min_hold_epochs);
+  $("at-take-profit").value = String(d.target_take_profit_net_pct);
+  $("at-max-pairs").value = String(pf.max_concurrent_positions);
+  $("at-capital-cap").value = String(pf.total_capital_cap_quote);
+  for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) input.checked = (pf.symbols || []).includes(input.value);
+  setText("at-shipped", `Lượt đang chạy: quét mỗi ${pf.scan_interval_sec} giây · basis giãn tối đa ${d.max_basis_widen_bps} bps · thoát khi ${d.exit_negative_consecutive_epochs} mốc liên tiếp ≤ ${d.exit_negative_funding_rate_bps} bps · độ sâu ≥ ${d.depth_multiple}× · còn > ${fmt.duration(d.min_time_to_settle_sec)} tới mốc settle · hồi phục ${d.cooldown_sec} giây · ${d.max_consecutive_failures} lỗi liên tiếp thì cặp DỪNG BẢO VỆ.`);
 }
 
 function syncAtButtons() {
@@ -972,8 +903,21 @@ function syncAtButtons() {
   $("at-start").disabled = !ready || busy || !s || at.stale || enabled || halted;
   $("at-stop").disabled = busy || !s || !(enabled || halted);
   $("at-kill").disabled = !ready || killBusy || !s;
-  $("at-toggle").disabled = busy || !s || at.stale || (!ready && !enabled && !halted);
-  for (const id of ["at-symbol", "at-notional", "at-min-apr", "at-max-epochs"]) $(id).disabled = enabled || halted || busy;
+  const toggle = $("at-toggle");
+  toggle.disabled = busy || !s || at.stale || (!ready && !enabled && !halted);
+  toggle.setAttribute("aria-checked", enabled ? "true" : "false");
+  toggle.dataset.halted = halted ? "true" : "false";
+  setText("at-toggle-label", halted ? "XÁC NHẬN & TẮT" : enabled ? "TẮT AUTO-TRADER" : "BẬT AUTO-TRADER");
+  setText("at-stop", halted ? "[XÁC NHẬN DỪNG BẢO VỆ → TẮT]" : "[DỪNG & GIỮ VỊ THẾ]");
+  for (const id of ["at-notional", "at-min-apr", "at-max-epochs", "at-min-basis", "at-min-epochs", "at-take-profit", "at-max-pairs", "at-capital-cap"]) {
+    $(id).disabled = enabled || halted || busy;
+  }
+  for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) input.disabled = enabled || halted || busy;
+  const allBtn = $("at-symbols-all");
+  if (allBtn) allBtn.disabled = enabled || halted || busy;
+  const noneBtn = $("at-symbols-none");
+  if (noneBtn) noneBtn.disabled = enabled || halted || busy;
+  autotradeView.setWritable(Boolean(ready && s && !busy && !at.stale));
 }
 
 function atActionFailed(title, action, r) {
@@ -984,17 +928,47 @@ function atActionFailed(title, action, r) {
   }
 }
 
+function closesBlock(closes) {
+  const nodes = [];
+  for (const oc of closes || []) {
+    const res = oc.result || {};
+    nodes.push(kvList([
+      ["Cặp", oc.symbol],
+      ["Kết cục", oc.detail_vi || "—", oc.flat || oc.not_the_bots ? "pos" : "neg"],
+      ["Đã gửi lệnh đóng", oc.attempted ? "có" : "không"],
+      ["Đã đóng / còn lại", oc.attempted ? `${fmt.coin(res.closed_qty_coin)} / ${fmt.coin(res.remaining_qty_coin)} coin` : "—"],
+      ["Funding sàn đã trả", oc.attempted ? `${fmt.quote(res.funding_received_quote, 8, true)} · ${res.settlements_counted} mốc` : "—"],
+      ["RealizedQuote (không phải lãi ròng)", oc.attempted ? fmt.quote(res.realized_quote, 8, true) : "—", signCls(res.realized_quote)],
+    ]));
+    if (res.error_vi) nodes.push(callout("Lý do: " + res.error_vi, oc.flat ? "" : "bad"));
+  }
+  return nodes;
+}
+
 async function atStart() {
-  const symbol = $("at-symbol").value;
+  const symbols = atCheckedSymbols();
   const notional = Number($("at-notional").value);
   const minApr = Number($("at-min-apr").value);
   const epochs = Number($("at-max-epochs").value);
+  const minBasis = Number($("at-min-basis").value);
+  const minEpochs = Number($("at-min-epochs").value);
+  const takeProfit = Number($("at-take-profit").value);
+  const maxPairs = Number($("at-max-pairs").value);
+  const cap = Number($("at-capital-cap").value);
   const max = state.status ? state.status.max_notional_quote : 50000;
+  const perNotional = (at.status && at.status.capital_per_notional) || 1 + ((state.status && state.status.perp_margin_frac) || 0);
   const problems = [];
-  if (!symbol) problems.push("chưa chọn symbol");
+  if (symbols.length === 0) problems.push("chưa chọn cặp nào");
   if (!isNum(notional) || notional <= 0 || notional > max) problems.push(`notional phải trong (0, ${max}]`);
   if (!isNum(minApr) || Math.abs(minApr) > 1000) problems.push("Net APR tối thiểu phải là số trong ±1000");
   if (!Number.isInteger(epochs) || epochs < 0 || epochs > 1000) problems.push("số mốc settle tối đa phải là số nguyên trong [0, 1000]");
+  if (!isNum(minBasis) || Math.abs(minBasis) > 10000) problems.push("basis tối thiểu lúc vào phải là số trong ±10000 bps");
+  if (!Number.isInteger(minEpochs) || minEpochs < 0 || minEpochs > 1000) problems.push("sàn giữ khấu hao phí phải là số nguyên trong [0, 1000]");
+  else if (epochs > 0 && minEpochs >= epochs) problems.push(`sàn giữ ${minEpochs} mốc ≥ trần giữ ${epochs} mốc — lối thoát funding không bao giờ chạy được`);
+  if (!isNum(takeProfit) || takeProfit < 0 || takeProfit > 100) problems.push("ngưỡng chốt lời sớm phải là số trong [0, 100] phần trăm trên vốn");
+  if (!Number.isInteger(maxPairs) || maxPairs < 1 || maxPairs > 50) problems.push("số cặp mở tối đa phải là số nguyên trong [1, 50]");
+  if (!isNum(cap) || cap <= 0) problems.push("hạn mức vốn phải là số dương");
+  else if (isNum(notional) && notional * perNotional > cap) problems.push(`một cặp ${fmt.quote(notional, 2)} USDT buộc ${fmt.quote(notional * perNotional, 2)} USDT vốn, vượt hạn mức ${fmt.quote(cap, 2)}`);
   if (problems.length) {
     showResult("Không bật — dữ liệu nhập sai", [callout(problems.join(" · "), "bad")]);
     return;
@@ -1002,43 +976,72 @@ async function atStart() {
   const st = state.status;
   // The run's other parameters are the server's shipped ones, read from the
   // status rather than repeated here.
-  const c = (at.status && at.status.config) || {};
+  const d = (at.status && at.status.portfolio && at.status.portfolio.default_pair_config) || {};
   const rows = [
-    ["Symbol", symbol],
-    ["Notional mỗi chân", `${fmt.quote(notional, 2)} quote`],
-    ["Ngưỡng vào", `Net APR dự phóng ≥ ${minApr}%/năm trên notional một chân (strategy.NetAPR, phí đọc từ tài khoản testnet), độ sâu ±0,5% ≥ ${c.depth_multiple}× notional, còn > ${fmt.duration(c.min_time_to_settle_sec)} tới mốc settle`],
-    ["Giữ", epochs > 0 ? `tối đa ${epochs} mốc settle` : `khi funding đã settle còn dương (dự phóng ${c.projection_hold_days} ngày)`],
-    ["Thoát khi", `mốc settle sau lúc vào ≤ 0 · đủ số mốc · basis giãn > ${c.max_basis_widen_bps} bps · DỪNG/KILL`],
-    ["Nhịp", `quét mỗi ${c.scan_interval_sec} giây · hồi phục ${c.cooldown_sec} giây sau mỗi lần đóng/mở hỏng · ${c.max_consecutive_failures} lỗi liên tiếp thì DỪNG BẢO VỆ`],
+    ["Cặp được phép", symbols.join(", ")],
+    ["Notional mỗi cặp", `${fmt.quote(notional, 2)} USDT mỗi chân · vốn ${fmt.quote(notional * perNotional, 2)} USDT (spot + ký quỹ perp)`],
+    ["Giới hạn danh mục", `tối đa ${maxPairs} cặp cùng lúc · hạn mức vốn ${fmt.quote(cap, 2)} USDT · vốn tối đa dùng thật ${fmt.quote(Math.min(cap, maxPairs * notional * perNotional), 2)} USDT`],
+    ["Ngưỡng vào", `basis lúc vào ≥ ${minBasis} bps (perp phải đắt hơn spot), Net APR dự phóng ≥ ${minApr}%/năm trên notional một chân (strategy.NetAPR, phí đọc từ tài khoản testnet), độ sâu ±0,5% ≥ ${d.depth_multiple}× notional, còn > ${fmt.duration(d.min_time_to_settle_sec)} tới mốc settle`],
+    ["Chọn cặp", "các cặp đủ điều kiện xếp theo Net APR, mở lần lượt từng lệnh từ cao xuống thấp tới khi hết chỗ hoặc hết hạn mức"],
+    ["Giữ", epochs > 0 ? `tối đa ${epochs} mốc settle` : `khi funding đã settle còn dương (dự phóng ${d.projection_hold_days} ngày)`],
+    ["Sàn giữ khấu hao phí", minEpochs > 0
+      ? `${minEpochs} mốc settle đầu KHÔNG thoát vì funding âm — một vòng phí lớn hơn nhiều so với vài mốc âm nhỏ (chốt lời và cắt lỗ basis vẫn chạy)`
+      : "TẮT — thoát ngay ở mốc settle ≤ 0 đầu tiên (luật cũ, mỗi lần thoát trả trọn một vòng phí)"],
+    ["Chốt lời sớm", takeProfit > 0
+      ? `khi lãi tạm tính ≥ ${takeProfit}% trên vốn cặp (funding + trôi giá − phí vào − phí đóng ước tính). TẠM TÍNH, không phải lãi ròng.`
+      : "TẮT — chỉ thoát theo funding, số mốc hoặc basis"],
+    ["Thoát khi", `chốt lời đạt ngưỡng · ${d.exit_negative_consecutive_epochs} mốc settle liên tiếp ≤ ${d.exit_negative_funding_rate_bps} bps sau sàn giữ · đủ số mốc · basis giãn > ${d.max_basis_widen_bps} bps · ĐÓNG CẶP / DỪNG / KILL`],
     ["Sàn", st ? `${st.spot.host} + ${st.futures.host}` : "—"],
   ];
+  // A bot position already on the venue is adopted and managed to its exit
+  // even on a pair not chosen here; name the ones the header's readings show.
+  const outside = [];
+  for (const [sym, h] of Object.entries(state.hedges)) {
+    if (symbols.includes(sym)) continue;
+    for (const it of h.intents || []) {
+      if (it.intent_id.startsWith("a") && (Math.abs(tidy(it.spot.qty_coin)) > 0 || Math.abs(tidy(it.perp.qty_coin)) > 0)) outside.push(`${sym} ${it.intent_id}`);
+    }
+  }
+  rows.push(["Ngoài các cặp đã chọn", outside.length
+    ? `sẽ TIẾP NHẬN và quản lý tới lúc thoát (không vào lại): ${outside.join(", ")}`
+    : "mọi vị thế của bot đang có trên sàn ở cặp không chọn (nếu có) cũng được tiếp nhận và quản lý tới lúc thoát, không vào lại"]);
   const warning = el("div");
-  warning.append(callout("Bot sẽ TỰ ĐỘNG mở và đóng lệnh thật trên TESTNET, không hỏi lại từng lệnh, cho tới khi bạn DỪNG hoặc KILL.", "warn"));
-  warning.append(callout("Một vị thế duy nhất. Hai chân lệch hay bằng chứng không khớp → bot DỪNG BẢO VỆ, không tự làm phẳng.", ""));
-  if (!(await confirmDialog("BẬT AUTO-TRADER?", rows, "XÁC NHẬN BẬT", "primary", warning))) return;
+  warning.append(callout("Bot sẽ TỰ ĐỘNG mở và đóng lệnh thật trên TESTNET cho mọi cặp đã chọn, không hỏi lại từng lệnh, cho tới khi bạn DỪNG hoặc KILL.", "warn"));
+  warning.append(callout("Mỗi cặp một vị thế. Một cặp lệch hay bằng chứng không khớp → CHỈ cặp đó DỪNG BẢO VỆ, giữ nguyên vị thế; các cặp khác chạy tiếp. Bot không tự làm phẳng.", ""));
+  if (!(await confirmDialog("BẬT AUTO-TRADER ĐA CẶP?", rows, "XÁC NHẬN BẬT", "primary", warning))) return;
 
   at.acting = true;
   syncAtButtons();
-  const r = await post("autotrade-start", "/api/autotrade/start", { symbol, notional_quote: notional, min_net_apr_pct: minApr, max_hold_epochs: epochs });
+  const r = await post("autotrade-start", "/api/autotrade/start", {
+    symbols, notional_quote: notional, min_net_apr_pct: minApr, max_hold_epochs: epochs,
+    min_entry_basis_bps: minBasis, min_hold_epochs: minEpochs, target_take_profit_net_pct: takeProfit,
+    max_concurrent_positions: maxPairs, total_capital_cap_quote: cap,
+  });
   at.acting = false;
   if (!r.ok) {
     atActionFailed("BẬT AUTO-TRADER", "bật bot", r);
   } else {
-    showResult("AUTO-TRADER ĐÃ BẬT", [callout(`Đang quét ${symbol} mỗi ${r.body.status.config.scan_interval_sec} giây. Nhật ký bot ở card phía trên.`, "ok")]);
+    showResult("AUTO-TRADER ĐÃ BẬT", [callout(`Đang quét ${symbols.join(", ")} mỗi ${r.body.status.portfolio.scan_interval_sec} giây, tối đa ${maxPairs} cặp.`, "ok")]);
   }
   refreshAll();
 }
 
 async function atStop() {
   const s = at.status;
-  if (atHalted(s)) {
-    const rows = [["Lý do dừng", s.halt_reason_vi || "—"], ["Sau khi xác nhận", "bot về TẮT; vị thế (nếu có) giữ nguyên, không lệnh nào được gửi"]];
+  const haltedPairs = ((s && s.pairs) || []).filter((p) => p.state === "emergency_halted");
+  if (atHalted(s) || haltedPairs.length) {
+    const rows = [];
+    if (s.halt_reason_vi) rows.push(["Bot dừng vì", s.halt_reason_vi]);
+    for (const p of haltedPairs) rows.push([`${p.symbol} dừng vì`, p.halt_reason_vi]);
+    rows.push(["Sau khi xác nhận", "bot về TẮT; mọi vị thế giữ nguyên trên sàn, không lệnh nào được gửi"]);
     if (!(await confirmDialog("XÁC NHẬN ĐÃ XỬ LÝ DỪNG BẢO VỆ?", rows, "XÁC NHẬN & TẮT", "secondary"))) return;
   }
-  // A stop that keeps the position sends no order, so it asks no confirmation.
+  // A stop that keeps the positions sends no order, so it asks no confirmation
+  // of its own.
   at.acting = true;
   syncAtButtons();
-  const r = await post("autotrade-stop", "/api/autotrade/stop", { close_now: false });
+  // The halt count this page showed: a halt raised since is not acknowledged.
+  const r = await post("autotrade-stop", "/api/autotrade/stop", { close_now: false, halt_seq: s ? s.halt_seq : 0 });
   at.acting = false;
   if (!r.ok) {
     atActionFailed("DỪNG AUTO-TRADER", "dừng bot", r);
@@ -1047,9 +1050,9 @@ async function atStop() {
     // on its way when DỪNG was pressed is included. The title is the state the
     // server reports, never assumed.
     const after = r.body.status || {};
-    const kept = r.body.kept_intent_id;
+    const kept = r.body.kept_intent_ids || [];
     showResult(after.state === "disabled" ? "AUTO-TRADER ĐÃ TẮT" : `AUTO-TRADER: ${after.state_vi || after.state}`, [
-      callout(kept ? `Vị thế ${kept} GIỮ NGUYÊN trên sàn — đóng bằng ĐÓNG VỊ THẾ, hoặc BẬT lại để bot tiếp nhận.` : "Bot không giữ vị thế nào.", ""),
+      callout(kept.length ? `Vị thế ${kept.join(", ")} GIỮ NGUYÊN trên sàn — đóng ở tab Thực thi thủ công, hoặc BẬT lại để bot tiếp nhận.` : "Bot không giữ vị thế nào.", ""),
       after.halt_reason_vi ? callout("DỪNG BẢO VỆ: " + after.halt_reason_vi, "bad") : null,
     ]);
   }
@@ -1058,42 +1061,107 @@ async function atStop() {
 
 async function atKill() {
   const s = at.status;
-  const symbol = (s && s.config && s.config.symbol) || state.symbol;
-  const pos = s && s.position;
-  const held = state.symbol === symbol && state.positions ? `${state.positions.status_vi || state.positions.status} · spot ${fmt.coin(state.positions.spot_qty_coin)} / perp ${fmt.coin(state.positions.perp_qty_coin, true)} coin` : "đọc lại từ sàn khi bấm";
+  const held = (s && s.positions) || [];
   const rows = [
-    ["Symbol", symbol],
-    ["Bot đang giữ", pos ? `${pos.intent_id} · ${fmt.coin(pos.qty_coin)} coin mỗi chân` : "không có vị thế của bot"],
-    ["Sàn đang giữ", held],
-    ["Sẽ làm", "dừng quét ngay; lệnh mở/đóng ĐÃ GỬI thì chờ nó xong (không huỷ giữa chừng); rồi ĐÓNG cả hai chân của bot bằng MARKET qua portal; bot về DỪNG BẢO VỆ"],
+    ["Bot đang giữ", held.length ? held.map((p) => `${p.symbol} ${p.intent_id} · ${fmt.coin(p.qty_coin)} coin`).join(" · ") : "không có cặp nào của bot"],
+    ["Sẽ làm", "dừng quét ngay; lệnh mở/đóng ĐÃ GỬI thì chờ nó xong (không huỷ giữa chừng); rồi đọc từng cặp từ sàn và ĐÓNG hai chân của MỌI cặp của bot, lần lượt, bằng MARKET qua portal; bot về DỪNG BẢO VỆ"],
   ];
-  const warning = callout("Kill chỉ đóng cặp CỦA BOT đang phòng hộ trên symbol này. Vị thế người vận hành tự mở, cặp lệch hoặc bằng chứng không khớp sẽ KHÔNG bị đụng — dùng ĐÓNG VỊ THẾ hoặc LÀM PHẲNG.", "bad");
-  if (!(await confirmDialog("KILL SWITCH: DỪNG & ĐÓNG NGAY?", rows, "KILL — ĐÓNG NGAY", "danger", warning))) return;
+  const warning = callout("Kill chỉ đóng các cặp CỦA BOT đang phòng hộ. Vị thế người vận hành tự mở, cặp lệch hoặc bằng chứng không khớp sẽ KHÔNG bị đụng — dùng ĐÓNG VỊ THẾ hoặc LÀM PHẲNG ở tab Thực thi thủ công.", "bad");
+  if (!(await confirmDialog("KILL SWITCH: DỪNG & ĐÓNG TẤT CẢ?", rows, "KILL — ĐÓNG NGAY", "danger", warning))) return;
 
   at.killing = true;
   syncAtButtons();
-  setText("busy-line", "KILL SWITCH — đang dừng bot và đóng hai chân trên testnet…");
+  setText("busy-line", "KILL SWITCH — đang dừng bot và đóng mọi cặp trên testnet…");
   const r = await post("autotrade-kill", "/api/autotrade/kill", {});
   at.killing = false;
   setText("busy-line", "");
   if (!r.ok) {
     atActionFailed("KILL SWITCH", "kill", r);
   } else {
-    const oc = r.body.close || {};
-    const res = oc.result || {};
+    const closes = r.body.closes || [];
+    const allFlat = closes.every((oc) => oc.flat || oc.not_the_bots);
     showResult("KILL SWITCH", [
-      callout(oc.flat ? "ĐÃ DỪNG KHẨN CẤP · PHẲNG CẢ HAI CHÂN" : "ĐÃ DỪNG KHẨN CẤP — CHƯA PHẲNG, KIỂM TRA VỊ THẾ NGAY", oc.flat ? "ok" : "bad"),
-      kvList([
-        ["Kết cục", oc.detail_vi || "—", oc.flat ? "pos" : "neg"],
-        ["Đã gửi lệnh đóng", oc.attempted ? "có" : "không"],
-        ["Đã đóng / còn lại", oc.attempted ? `${fmt.coin(res.closed_qty_coin)} / ${fmt.coin(res.remaining_qty_coin)} coin` : "—"],
-        ["Funding sàn đã trả", oc.attempted ? `${fmt.quote(res.funding_received_quote, 8, true)} · ${res.settlements_counted} mốc` : "—"],
-        ["RealizedQuote (không phải lãi ròng)", oc.attempted ? fmt.quote(res.realized_quote, 8, true) : "—", signCls(res.realized_quote)],
-        ["Trạng thái bot", r.body.status.state_vi],
-      ]),
-      res.error_vi ? callout("Lý do: " + res.error_vi, "bad") : null,
+      callout(allFlat ? "ĐÃ DỪNG KHẨN CẤP · MỌI CẶP CỦA BOT PHẲNG" : "ĐÃ DỪNG KHẨN CẤP — CÓ CẶP CHƯA PHẲNG, KIỂM TRA NGAY", allFlat ? "ok" : "bad"),
+      callout("Trạng thái bot: " + (r.body.status.state_vi || r.body.status.state), ""),
+      ...closesBlock(closes.filter((oc) => oc.attempted || !(oc.flat || oc.not_the_bots))),
     ]);
   }
+  refreshAll();
+}
+
+// atClosePair closes ONE pair of the bot's; the rest keep running.
+async function atClosePair(symbol) {
+  const s = at.status;
+  const pos = ((s && s.positions) || []).find((p) => p.symbol === symbol);
+  const rows = [
+    ["Cặp", symbol],
+    ["Ý định", pos ? pos.intent_id : "bot không giữ — portal sẽ đọc lại từ sàn"],
+    ["Khối lượng", pos ? `${fmt.coin(pos.qty_coin)} coin mỗi chân · ${fmt.quote(pos.notional_quote, 2)} USDT` : "—"],
+    ["Tạm tính theo mid", pos && isNum(pos.pair_drift_quote) ? `${fmt.quote(pos.pair_drift_quote, 4, true)} USDT (chưa gồm funding, chưa trừ phí & trượt khi đóng)` : "—"],
+    ["Sẽ làm", "đọc cặp từ sàn; MUA perp (reduce-only) trước, rồi BÁN spot đúng bằng phần perp đã đóng; cặp này TẠM DỪNG vào lệnh mới"],
+  ];
+  const warning = callout("Chỉ cặp này. Các cặp khác của bot giữ nguyên và bot vẫn chạy. Cặp lệch hay bằng chứng không khớp sẽ KHÔNG bị đóng — cặp đó DỪNG BẢO VỆ.", "warn");
+  if (!(await confirmDialog(`ĐÓNG CẶP ${symbol} NGAY?`, rows, "XÁC NHẬN ĐÓNG CẶP", "danger", warning))) return;
+
+  at.acting = true;
+  syncAtButtons();
+  setText("busy-line", `đang đóng cặp ${symbol} trên testnet…`);
+  const r = await post("autotrade-close-pair", "/api/autotrade/close-pair", { symbol });
+  at.acting = false;
+  setText("busy-line", "");
+  if (!r.ok) {
+    atActionFailed(`ĐÓNG CẶP ${symbol}`, "đóng cặp", r);
+  } else {
+    const oc = (r.body.closes || [])[0] || {};
+    showResult(`ĐÓNG CẶP ${symbol}`, [
+      callout(oc.flat ? "ĐÃ ĐÓNG · PHẲNG CẢ HAI CHÂN · cặp TẠM DỪNG" : oc.not_the_bots ? "KHÔNG PHẢI CẶP CỦA BOT — không đóng" : "CHƯA PHẲNG — cặp DỪNG BẢO VỆ, kiểm tra ngay", oc.flat || oc.not_the_bots ? "ok" : "bad"),
+      ...closesBlock([oc]),
+    ]);
+  }
+  refreshAll();
+}
+
+// atTogglePair pauses a pair at once (it sends nothing) or, after a dialog,
+// lets the bot open it again.
+async function atTogglePair(pair) {
+  const on = pair.in_run && !pair.paused;
+  if (on) {
+    at.acting = true;
+    syncAtButtons();
+    const r = await post("autotrade-pair-pause", "/api/autotrade/pair", { symbol: pair.symbol, action: "pause" });
+    at.acting = false;
+    if (!r.ok) atActionFailed(`TẠM DỪNG ${pair.symbol}`, "tạm dừng cặp", r);
+    refreshAll();
+    return;
+  }
+  const rows = [
+    ["Cặp", pair.symbol],
+    ["Notional", `${fmt.quote(pair.config.notional_quote, 2)} USDT mỗi chân`],
+    ["Sẽ làm", "bot được mở cặp này ở lượt quét sau nếu mọi điều kiện đạt và danh mục còn chỗ, còn vốn"],
+  ];
+  if (!(await confirmDialog(`CHO BOT VÀO LỆNH ${pair.symbol}?`, rows, "XÁC NHẬN CHO PHÉP", "primary",
+    callout("Bot sẽ TỰ ĐỘNG đặt lệnh thật trên TESTNET cho cặp này.", "warn")))) return;
+  at.acting = true;
+  syncAtButtons();
+  const r = await post("autotrade-pair-resume", "/api/autotrade/pair", { symbol: pair.symbol, action: "resume" });
+  at.acting = false;
+  if (!r.ok) atActionFailed(`CHO PHÉP ${pair.symbol}`, "cho phép cặp", r);
+  refreshAll();
+}
+
+// atAckPair acknowledges ONE pair's halt, quoting the number on screen.
+async function atAckPair(pair) {
+  const rows = [
+    ["Cặp", pair.symbol],
+    [`DỪNG BẢO VỆ #${pair.halt_seq}`, pair.halt_reason_vi || "—"],
+    ["Sau khi xác nhận", "cặp TẠM DỪNG vào lệnh; vị thế của bot còn trên sàn (nếu có) được tiếp nhận ở lượt quét sau và quản lý tới lúc thoát; không lệnh nào được gửi lúc này"],
+  ];
+  if (!(await confirmDialog(`XÁC NHẬN DỪNG BẢO VỆ ${pair.symbol}?`, rows, "ĐÃ XỬ LÝ — XÁC NHẬN", "secondary"))) return;
+  at.acting = true;
+  syncAtButtons();
+  const r = await post("autotrade-pair-ack", "/api/autotrade/pair", { symbol: pair.symbol, action: "ack", halt_seq: pair.halt_seq });
+  at.acting = false;
+  if (!r.ok) atActionFailed(`XÁC NHẬN ${pair.symbol}`, "xác nhận cặp", r);
   refreshAll();
 }
 
@@ -1123,8 +1191,8 @@ export function initExecution(status) {
     $("result").hidden = true;
   });
   fillSymbols(status.symbols || []);
-  const atSymbol = $("at-symbol");
-  for (const sym of status.symbols || []) atSymbol.append(el("option", { text: sym }));
+  fillAtSymbols(status.symbols || []);
+  autotradeView.init({ closePair: atClosePair, togglePair: atTogglePair, ackPair: atAckPair });
   $("at-form").addEventListener("submit", (ev) => {
     ev.preventDefault();
     atStart();
@@ -1132,6 +1200,30 @@ export function initExecution(status) {
   $("at-stop").addEventListener("click", atStop);
   $("at-kill").addEventListener("click", atKill);
   $("at-toggle").addEventListener("click", atToggle);
+  const allBtn = $("at-symbols-all");
+  if (allBtn) {
+    allBtn.addEventListener("click", () => {
+      for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) {
+        if (!input.disabled) input.checked = true;
+      }
+      try {
+        window.localStorage.setItem(SYMBOLS_STORAGE_KEY, JSON.stringify(atCheckedSymbols()));
+      } catch (_) {}
+      syncMaxPairsWithChecked();
+    });
+  }
+  const noneBtn = $("at-symbols-none");
+  if (noneBtn) {
+    noneBtn.addEventListener("click", () => {
+      for (const input of document.querySelectorAll('#at-symbols input[type="checkbox"]')) {
+        if (!input.disabled) input.checked = false;
+      }
+      try {
+        window.localStorage.setItem(SYMBOLS_STORAGE_KEY, JSON.stringify([]));
+      } catch (_) {}
+      syncMaxPairsWithChecked();
+    });
+  }
   onStatus(status);
 
   // Account and positions feed the shared header, so they run on every tab —
@@ -1148,11 +1240,13 @@ export function initExecution(status) {
     schedule(onlyHere(refreshIntents), () => (execActive() ? SLOW_MS : 5000)),
     schedule(onlyHere(refreshFunding), () => (execActive() ? FUNDING_MS : 5000)),
     schedule(refreshAutotrade, () => (execActive() ? FAST_MS : BACKGROUND_MS)),
+    schedule(refreshPnL, () => (shell.isActive("autotrade") ? PNL_MS : 5000)),
   ];
-  shell.onTab("execution", { enter: refreshAll });
+  shell.onTab("manual", { enter: refreshAll });
+  shell.onTab("autotrade", { enter: refreshAll });
   setInterval(() => {
     renderPositionsAge();
-    renderAtCountdown();
+    autotradeTick();
     shell.renderHedges(state.hedges);
   }, 1000);
 }

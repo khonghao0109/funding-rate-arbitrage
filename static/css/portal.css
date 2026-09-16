@@ -48,6 +48,11 @@
   /* The auto-trader's HEDGED state: a neon green that no other state uses. */
   --live: #2cf59a;
   --live-line: rgba(44, 245, 154, 0.45);
+  /* Gain and loss marks of the auto-trader's charts: teal and rose, checked
+   * for colour-vision separation on --bg-1 (deutan ΔE 10.1). Every such mark
+   * also sits above or below a zero line and every figure carries its sign. */
+  --gain: #14b8a6;
+  --loss: #f43f5e;
 
   --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
@@ -716,7 +721,7 @@ dl + .callout {
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
-  min-height: 44px;
+  min-height: 42px;
   padding: 0 var(--space-4);
   border: 1px solid transparent;
   border-radius: var(--radius);
@@ -725,6 +730,11 @@ dl + .callout {
   font-weight: 700;
   letter-spacing: 0.02em;
   cursor: pointer;
+  box-sizing: border-box;
+  white-space: nowrap;
+  line-height: 1.2;
+  text-decoration: none;
+  vertical-align: middle;
   transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur) var(--ease-out),
     background-color var(--dur) var(--ease-out), border-color var(--dur) var(--ease-out), opacity var(--dur);
 }
@@ -842,6 +852,11 @@ input:focus-visible {
 .field {
   display: grid;
   gap: 6px;
+  min-width: 0;
+}
+
+.field select {
+  max-width: 100%;
 }
 
 .field label,
@@ -1548,6 +1563,34 @@ details summary {
   display: grid;
   grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-3);
+  align-items: stretch;
+}
+
+.control .box {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+#close-intent {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.control .btn {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+  box-sizing: border-box;
 }
 
 .box {
@@ -1558,11 +1601,31 @@ details summary {
   border: 1px solid var(--glass-border);
   border-radius: var(--radius);
   background: rgba(0, 0, 0, 0.2);
+  min-width: 0;
+  box-sizing: border-box;
 }
 
 .box.danger {
   border-color: var(--neg-line);
   background: linear-gradient(160deg, rgba(255, 75, 75, 0.08), rgba(0, 0, 0, 0.2));
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  position: relative;
+  isolation: isolate;
+  box-sizing: border-box;
+}
+
+#btn-reconcile {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  justify-content: center;
+  text-align: center;
+  white-space: nowrap;
+  position: relative;
+  z-index: 2;
+  box-sizing: border-box;
 }
 
 .busy-line {
@@ -1593,28 +1656,24 @@ pre.events {
   gap: var(--space-4);
 }
 
-/* Auto-Trader card (PLAN Q18). The badge colour follows the machine's state;
- * every state also carries its word, so colour is never the only signal. */
+/* Auto-Trader tab (PLAN Q18, multi-pair). Every state carries its word and
+ * every figure its sign, so colour is never the only signal. The chart marks
+ * use --gain/--loss (validated for colour-vision separation on --bg-1); text
+ * keeps the page's own .pos/.neg ink. */
 .tag.auto {
   background: rgba(44, 245, 154, 0.12);
   color: var(--live);
   border: 1px solid var(--live-line);
 }
 
-.autotrader {
-  border-color: var(--glass-border-strong);
-}
-
-.autotrader[data-state="in_position"] {
-  border-color: var(--live-line);
-  box-shadow: 0 0 0 1px rgba(44, 245, 154, 0.12), 0 0 32px rgba(44, 245, 154, 0.08);
-}
-
-.autotrader[data-state="emergency_halted"] {
-  border-color: var(--neg-line);
+.at-notice {
+  margin: 0;
 }
 
 .at-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 3px 12px;
   border: 1px solid var(--glass-border-strong);
   border-radius: var(--radius-pill);
@@ -1627,31 +1686,20 @@ pre.events {
   white-space: nowrap;
 }
 
-.at-badge[data-state="idle_scanning"],
-.at-badge[data-state="evaluating"] {
-  border-color: rgba(79, 172, 254, 0.5);
-  background: rgba(79, 172, 254, 0.14);
-  color: var(--blue);
-  animation: at-pulse 1.6s ease-in-out infinite;
-}
-
-.at-badge[data-state="cooldown"] {
-  border-color: rgba(79, 172, 254, 0.35);
-  color: var(--blue);
-}
-
-.at-badge[data-state="opening"],
-.at-badge[data-state="closing"] {
-  border-color: var(--warn-line);
-  background: var(--warn-soft);
-  color: var(--warn);
-}
-
-.at-badge[data-state="in_position"] {
+.at-badge[data-state="running"] {
   border-color: var(--live-line);
-  background: rgba(44, 245, 154, 0.14);
+  background: rgba(44, 245, 154, 0.12);
   color: var(--live);
-  box-shadow: 0 0 18px rgba(44, 245, 154, 0.25);
+}
+
+.at-badge[data-state="running"]::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--live);
+  box-shadow: 0 0 0 0 var(--live-line);
+  animation: at-live 1.8s ease-out infinite;
 }
 
 .at-badge[data-state="emergency_halted"] {
@@ -1659,6 +1707,12 @@ pre.events {
   background: var(--neg-soft);
   color: var(--neg);
   animation: blink-border 1s steps(2, start) infinite;
+}
+
+.at-badge[data-busy="true"] {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+  color: var(--warn);
 }
 
 .at-switch {
@@ -1689,6 +1743,7 @@ pre.events {
 
 .at-switch-track {
   position: relative;
+  flex-shrink: 0;
   width: 40px;
   height: 22px;
   border-radius: 11px;
@@ -1720,150 +1775,524 @@ pre.events {
   background: var(--neg-soft);
 }
 
-.at-grid {
+/* the per-pair switch in the radar: same control, row-sized */
+.at-switch.row {
+  min-height: 36px;
+  padding: 0 var(--space-2) 0 4px;
+  font-size: 11px;
+}
+
+/* 1. KPI strip */
+.at-kpi-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: var(--space-3);
+}
+
+.at-kpi-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-width: 0;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius);
+  background: linear-gradient(145deg, rgba(20, 24, 33, 0.75), rgba(8, 10, 14, 0.85));
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  overflow: hidden;
+}
+
+.at-kpi-lbl {
+  color: var(--text-2);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.at-kpi-val {
+  margin: 4px 0 2px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.at-kpi-sub {
+  color: var(--text-3);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.at-capital-meter {
+  margin: 2px 0 4px;
+}
+
+/* 2. PnL chart */
+.at-pnl-chart,
+.at-bars-chart {
+  margin-top: var(--space-2);
+}
+
+.at-chart-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--space-2) var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.at-chart-sub h3 {
+  margin: 0;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.at-tip {
+  position: absolute;
+  z-index: 3;
+  top: var(--space-2);
+  left: var(--space-2);
+  min-width: 190px;
+  max-width: min(280px, calc(100% - 16px));
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--glass-strong);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  pointer-events: none;
+}
+
+.at-tip .tip-time {
+  margin-bottom: 4px;
+  color: var(--text-3);
+}
+
+.at-tip .tip-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  line-height: 1.5;
+}
+
+.at-tip .tip-row span:first-child {
+  color: var(--text-2);
+}
+
+.at-tip .tip-row.total {
+  margin-top: 2px;
+  padding-top: 2px;
+  border-top: 1px solid var(--glass-border);
+  font-weight: 700;
+}
+
+/* 3. positions matrix */
+.at-pos-flat {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  border: 1px dashed var(--glass-border-strong);
+  border-radius: var(--radius);
+  background: rgba(44, 245, 154, 0.03);
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+}
+
+.at-pos-flat-icon {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: rgba(44, 245, 154, 0.15);
+  color: var(--live);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.at-pos-table td,
+.at-history-card td {
+  vertical-align: middle;
+}
+
+.at-pos-table th,
+.at-history-card th {
+  line-height: 1.35;
+}
+
+.at-history-card td.at-intent {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+/* Narrow screens: the positions matrix and the radar become cards, one per
+ * pair, each value under its own label — the close button and the pair's
+ * switch stay on screen instead of past a horizontal scroll. */
+@media (max-width: 1200px) {
+  .at-pos-table thead,
+  .at-radar-table thead {
+    display: none;
+  }
+
+  .at-pos-table,
+  .at-pos-table tbody,
+  .at-radar-table,
+  .at-radar-table tbody {
+    display: block;
+    width: 100%;
+  }
+
+  .at-pos-table tr,
+  .at-radar-table tr {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: var(--space-2) var(--space-4);
+    margin-bottom: var(--space-2);
+    padding: var(--space-3);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-sm);
+  }
+
+  .at-pos-table td,
+  .at-radar-table td,
+  .at-pos-table td.r,
+  .at-radar-table td.r {
+    display: block;
+    padding: 0;
+    border: 0;
+    text-align: left;
+  }
+
+  .at-pos-table td[data-label]::before,
+  .at-radar-table td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 2px;
+    color: var(--text-3);
+    font-size: 10px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+
+  .at-pos-table td.at-sym-cell,
+  .at-radar-table td.at-sym-cell {
+    grid-column: 1 / -1;
+  }
+
+  .at-pos-table td.at-action-cell,
+  .at-radar-table td.at-action-cell {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+
+  .at-radar-table td.at-rank-cell {
+    order: -1;
+  }
+
+  .at-radar-table td.at-rank-cell.no-rank {
+    display: none;
+  }
+
+  .at-radar-table .cell-sub.clip {
+    max-width: none;
+    white-space: normal;
+  }
+}
+
+.at-radar-table .cell-sub.clip {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.at-status-cell .cell-sub.clip {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.at-sym {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.at-coin {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--cyan-line);
+  border-radius: 50%;
+  background: var(--cyan-soft);
+  color: var(--cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.at-sym-text {
+  display: grid;
+  min-width: 0;
+}
+
+.at-sym-text strong {
+  color: var(--text);
+  font-size: var(--fs-sm);
+}
+
+.at-sym-text .mono {
+  max-width: 200px;
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell-sub {
+  display: block;
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.at-pair-result {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+}
+
+tr.at-row-halted td {
+  background: rgba(255, 75, 75, 0.06);
+}
+
+/* 4. control + radar — stacked until the radar's eight columns fit beside
+ * the form */
+.at-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+}
+
+@media (min-width: 1680px) {
+  .at-control-grid {
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.7fr);
+  }
+}
+
+.at-cfg-card,
+.at-radar-card {
+  min-width: 0;
 }
 
 .at-fields {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   align-items: start;
   gap: var(--space-3);
 }
 
 .at-actions {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: var(--space-2);
 }
 
-.at-actions .btn.danger {
-  grid-column: 1 / -1;
+.at-symbols {
+  margin: 0;
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
 }
 
-.at-gauge {
-  align-content: start;
+.at-symbols legend {
+  padding: 0 4px;
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
 }
 
-.at-gauge-head,
-.at-console-head {
+.at-symbols-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}
+
+.at-symbol-list {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: var(--space-2) var(--space-3);
-}
-
-.at-gauge-head .spacer,
-.at-console-head .spacer {
-  flex: 1;
-}
-
-.at-gauge-head h3,
-.at-console-head h3 {
-  font-size: var(--fs-xs);
-  letter-spacing: 0.08em;
-  color: var(--text-2);
-  text-transform: uppercase;
-}
-
-.at-verdict {
-  padding: var(--space-2) var(--space-3);
-  border: 1px solid var(--glass-border-strong);
-  border-left-width: 3px;
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: var(--fs-sm);
-  font-weight: 700;
-}
-
-.at-verdict[data-state="go"] {
-  border-color: var(--live-line);
-  border-left-color: var(--live);
-  color: var(--live);
-  background: rgba(44, 245, 154, 0.08);
-}
-
-.at-verdict[data-state="wait"] {
-  border-left-color: var(--warn);
-  color: var(--warn);
-}
-
-.at-verdict[data-state="hold"] {
-  border-left-color: var(--cyan);
-  color: var(--cyan);
-}
-
-.at-verdict[data-state="exit"] {
-  border-color: var(--neg-line);
-  border-left-color: var(--neg);
-  color: var(--neg);
-}
-
-.at-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: var(--space-2);
+}
+
+.at-symbol-list label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  cursor: pointer;
+}
+
+.at-symbol-list label:has(input:checked) {
+  border-color: var(--cyan-line);
+  background: var(--cyan-soft);
+}
+
+.at-symbol-list input {
+  accent-color: var(--cyan);
+}
+
+.at-radar-table td {
+  vertical-align: middle;
+}
+
+.at-rank {
+  color: var(--text-3);
+  font-family: var(--font-mono);
+}
+
+.at-rank.top {
+  color: var(--cyan);
+  font-weight: 700;
 }
 
 .at-checks {
-  display: grid;
-  gap: 6px;
-  margin-top: var(--space-2);
+  display: inline-flex;
+  gap: 4px;
 }
 
-.at-checks li {
-  display: grid;
-  grid-template-columns: 92px minmax(0, 1fr);
-  gap: var(--space-2);
-  align-items: baseline;
-  font-size: var(--fs-xs);
-}
-
-.at-checks .at-mark {
-  padding: 0 6px;
+.at-chk {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--glass-border-strong);
   border-radius: 4px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-3);
   font-family: var(--font-mono);
+  font-size: 11px;
   font-weight: 700;
-  text-align: center;
+  cursor: help;
 }
 
-.at-checks .at-mark.ok {
+.at-chk[data-state="ok"] {
+  border-color: var(--live-line);
   background: rgba(44, 245, 154, 0.12);
   color: var(--live);
 }
 
-.at-checks .at-mark.bad {
+.at-chk[data-state="bad"] {
+  border-color: var(--neg-line);
   background: var(--neg-soft);
   color: var(--neg);
+  text-decoration: line-through;
 }
 
-.at-checks .at-mark.na {
+.at-radar-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.at-radar-pill[data-radar="eligible"],
+.at-radar-pill[data-radar="holding"] {
+  border-color: var(--live-line);
+  background: rgba(44, 245, 154, 0.12);
+  color: var(--live);
+}
+
+.at-radar-pill[data-radar="opening"],
+.at-radar-pill[data-radar="skipped"] {
+  border-color: var(--warn-line);
   background: var(--warn-soft);
   color: var(--warn);
 }
 
-.at-checks .at-group {
-  grid-template-columns: minmax(0, 1fr);
-  margin-top: var(--space-1);
-  color: var(--text-2);
-  font-weight: 700;
-  letter-spacing: 0.04em;
+.at-radar-pill[data-radar="scanning"],
+.at-radar-pill[data-radar="cooldown"] {
+  border-color: rgba(79, 172, 254, 0.45);
+  color: var(--blue);
 }
 
-.at-checks .at-detail {
-  color: var(--text-2);
-  word-break: break-word;
+.at-radar-pill[data-radar="unproven"] {
+  border-color: var(--warn);
+  border-style: dashed;
+  color: var(--warn);
 }
 
+.at-radar-pill[data-radar="halted"] {
+  border-color: var(--neg);
+  background: var(--neg-soft);
+  color: var(--neg);
+}
+
+.at-row-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.at-filter {
+  min-height: 36px;
+}
+
+/* 5. console */
 .at-console {
   display: grid;
-  gap: 2px;
-  max-height: 260px;
-  overflow: auto;
+  gap: 3px;
+  max-height: 240px;
   margin: var(--space-2) 0 0;
   padding: var(--space-3);
+  overflow: auto;
   border-radius: var(--radius-sm);
   background: rgba(0, 0, 0, 0.4);
   font-family: var(--font-mono);
@@ -1873,9 +2302,10 @@ pre.events {
 
 .at-console li {
   display: grid;
-  grid-template-columns: max-content 76px minmax(0, 1fr);
+  grid-template-columns: max-content 150px minmax(0, 1fr);
   gap: var(--space-2);
   color: var(--text-2);
+  line-height: 1.4;
 }
 
 .at-console .at-kind {
@@ -1883,14 +2313,22 @@ pre.events {
 }
 
 .at-console .at-kind[data-kind="OPEN"],
-.at-console .at-kind[data-kind="ADOPT"] {
+.at-console .at-kind[data-kind="ADOPT"],
+.at-console .at-kind[data-kind="RESUME"] {
   color: var(--live);
 }
 
 .at-console .at-kind[data-kind="CLOSE"],
 .at-console .at-kind[data-kind="EXIT"],
-.at-console .at-kind[data-kind="STOP"] {
+.at-console .at-kind[data-kind="STOP"],
+.at-console .at-kind[data-kind="CLOSE_PAIR"] {
   color: var(--cyan);
+}
+
+.at-console .at-kind[data-kind="SKIP"],
+.at-console .at-kind[data-kind="PAUSE"],
+.at-console .at-kind[data-kind="WARN"] {
+  color: var(--warn);
 }
 
 .at-console .at-kind[data-kind="KILL"],
@@ -1907,6 +2345,18 @@ pre.events {
 .at-console .at-empty {
   display: block;
   color: var(--text-3);
+}
+
+.at-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.at-table tfoot td {
+  border-top: 2px solid var(--glass-border-strong);
+  background: rgba(0, 0, 0, 0.4);
+  color: var(--text);
+  font-weight: 700;
 }
 
 /* 10 ------------------------------------------------------------- paper */
@@ -2164,10 +2614,12 @@ dialog .actions {
   }
 }
 
-@keyframes at-pulse {
-  50% {
-    border-color: rgba(79, 172, 254, 0.15);
-    background-color: rgba(79, 172, 254, 0.05);
+@keyframes at-live {
+  0% {
+    box-shadow: 0 0 0 0 rgba(44, 245, 154, 0.55);
+  }
+  100% {
+    box-shadow: 0 0 0 7px rgba(44, 245, 154, 0);
   }
 }
 
@@ -2236,12 +2688,19 @@ dialog .actions {
   }
 
   .control,
-  .at-grid {
+  .at-control-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .at-kpi-strip {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 900px) {
+  .at-kpi-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .legs {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -2268,6 +2727,10 @@ dialog .actions {
 
   .chart {
     height: 300px;
+  }
+
+  .at-kpi-strip {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .at-fields,

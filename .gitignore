@@ -33,3 +33,4 @@ data/
 *.db-wal
 *.db-shm
 .paper/
+.agents/

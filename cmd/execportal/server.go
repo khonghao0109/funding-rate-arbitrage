@@ -80,10 +80,10 @@ func (p *portal) handler() http.Handler {
 	post := func(path, action string, h http.HandlerFunc) {
 		mux.Handle(path, onlyMethod(http.MethodPost, p.apiGuard(action, p.writeGuard(h))))
 	}
-	// postEither is post for a route two action names may reach; the handler
+	// postAny is post for a route several action names may reach; the handler
 	// then checks the body agrees with the name that was sent.
-	postEither := func(path, action, other string, h http.HandlerFunc) {
-		mux.Handle(path, onlyMethod(http.MethodPost, p.apiGuardAny([]string{action, other}, p.writeGuard(h))))
+	postAny := func(path string, actions []string, h http.HandlerFunc) {
+		mux.Handle(path, onlyMethod(http.MethodPost, p.apiGuardAny(actions, p.writeGuard(h))))
 	}
 	get("/api/status", p.handleStatus)
 	get("/api/account", p.handleAccount)
@@ -95,13 +95,16 @@ func (p *portal) handler() http.Handler {
 	post("/api/open", "open", p.handleOpen)
 	post("/api/close", "close", p.handleClose)
 	post("/api/reconcile", "reconcile", p.handleReconcile)
-	// The testnet auto-trader (PLAN Q18): its state, and the three operator
-	// writes. Its own orders go through handleOpen's and handleClose's
-	// functions, not through these routes.
+	// The testnet auto-trader (PLAN Q18): its state and result, and the
+	// operator's writes. Its own orders go through handleOpen's and
+	// handleClose's functions, not through these routes.
 	get("/api/autotrade/status", p.handleAutotradeStatus)
+	get("/api/autotrade/pnl", p.handleAutotradePnL)
 	post("/api/autotrade/start", autotradeStartAction, p.handleAutotradeStart)
-	postEither("/api/autotrade/stop", autotradeStopAction, autotradeStopCloseAction, p.handleAutotradeStop)
+	postAny("/api/autotrade/stop", []string{autotradeStopAction, autotradeStopCloseAction}, p.handleAutotradeStop)
 	post("/api/autotrade/kill", autotradeKillAction, p.handleAutotradeKill)
+	post("/api/autotrade/close-pair", autotradeClosePairAction, p.handleAutotradeClosePair)
+	postAny("/api/autotrade/pair", []string{autotradePairPauseAction, autotradePairResumeAction, autotradePairAckAction}, p.handleAutotradePair)
 	// Read-only feeds from cmd/scanner and cmd/paperledger (PLAN Q17): bytes
 	// relayed, never decoded, and not reachable from any order path.
 	get("/api/scanner/funding-history", p.feeds.ScannerHistory)

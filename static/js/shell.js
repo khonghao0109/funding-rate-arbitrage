@@ -5,7 +5,10 @@
 
 import { $, setText, fmt, isNum } from "./core.js";
 
-const TABS = ["scanner", "execution", "paper", "crowding"];
+const TABS = ["scanner", "autotrade", "manual", "paper", "crowding"];
+const TAB_ALIASES = {
+  execution: "manual",
+};
 const TAB_KEY = "portal.tab";
 const handlers = new Map();
 const BALANCE_STALE_MS = 30000;
@@ -32,7 +35,8 @@ let active = null;
 
 function remembered() {
   try {
-    return window.localStorage.getItem(TAB_KEY);
+    const r = window.localStorage.getItem(TAB_KEY);
+    return TAB_ALIASES[r] || r;
   } catch (_) {
     return null;
   }
@@ -53,7 +57,8 @@ function moveInk() {
   ink.style.transform = `translateX(${button.offsetLeft}px) scaleX(${button.offsetWidth})`;
 }
 
-function select(name, focus) {
+function select(rawName, focus) {
+  const name = TAB_ALIASES[rawName] || rawName;
   if (!TABS.includes(name) || name === active) return;
   const previous = active;
   active = name;
@@ -61,11 +66,18 @@ function select(name, focus) {
     const button = $("tab-" + tab);
     const panel = $("panel-" + tab);
     const on = tab === name;
-    button.setAttribute("aria-selected", on ? "true" : "false");
-    button.tabIndex = on ? 0 : -1;
-    panel.hidden = !on;
+    if (button) {
+      button.setAttribute("aria-selected", on ? "true" : "false");
+      button.tabIndex = on ? 0 : -1;
+    }
+    if (panel) {
+      panel.hidden = !on;
+    }
   }
-  if (focus) $("tab-" + name).focus();
+  if (focus) {
+    const btn = $("tab-" + name);
+    if (btn) btn.focus();
+  }
   moveInk();
   remember(name);
   if (location.hash !== "#" + name) history.replaceState(null, "", "#" + name);
@@ -80,12 +92,14 @@ export const shell = {
 
   // isActive is true when the tab is selected AND the page is visible.
   isActive(name) {
-    return active === name && !document.hidden;
+    const resolved = TAB_ALIASES[name] || name;
+    return active === resolved && !document.hidden;
   },
 
   onTab(name, h) {
-    if (!handlers.has(name)) handlers.set(name, []);
-    handlers.get(name).push(h);
+    const resolved = TAB_ALIASES[name] || name;
+    if (!handlers.has(resolved)) handlers.set(resolved, []);
+    handlers.get(resolved).push(h);
   },
 
   onVisibility(fn) {
@@ -94,7 +108,8 @@ export const shell = {
 
   init() {
     for (const tab of TABS) {
-      $("tab-" + tab).addEventListener("click", () => select(tab, false));
+      const btn = $("tab-" + tab);
+      if (btn) btn.addEventListener("click", () => select(tab, false));
     }
     $("tabs").addEventListener("keydown", (ev) => {
       const index = TABS.indexOf(active);
@@ -122,7 +137,9 @@ export const shell = {
   // start selects the first tab once every module has registered its handlers.
   start() {
     const fromHash = location.hash.slice(1);
-    select(TABS.includes(fromHash) ? fromHash : TABS.includes(remembered()) ? remembered() : "scanner", false);
+    const resolvedHash = TAB_ALIASES[fromHash] || fromHash;
+    const rem = remembered();
+    select(TABS.includes(resolvedHash) ? resolvedHash : TABS.includes(rem) ? rem : "scanner", false);
   },
 
   setChip(id, state, value, title) {

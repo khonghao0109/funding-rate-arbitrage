@@ -214,7 +214,8 @@ const (
 //     (through the link check) nothing of the scanner, the store or the feeds;
 //   - of strategy it names only the cost and APR arithmetic, never a decision;
 //   - in the main package only the wiring names it (api.go builds it, main.go
-//     runs it, server.go routes to handlers in autotrade.go); that its orders
+//     runs it and its PnL sampler, server.go routes to handlers in
+//     autotrade.go, pnl.go reads its status views); that its orders
 //     reach the venue only through openAs and close is held for the WHOLE
 //     package by TestExecportal_EveryOrderPathHasFixedCallers.
 func TestAutotrade_DecidesOnTheTestnetAndTradesOnlyThroughThePortal(t *testing.T) {
@@ -225,7 +226,17 @@ func TestAutotrade_DecidesOnTheTestnetAndTradesOnlyThroughThePortal(t *testing.T
 		"futures-arbitrage-scanner/internal/fees":  true,
 		strategyImportPath:                         true,
 	}
-	allowedStrategy := map[string]bool{"NetAPR": true, "NetAPRInput": true, "RoundTripCost": true, "RoundTripInput": true, "RoundTrip": true}
+	// The cost and APR arithmetic, and nothing else. EstimateFill and its two
+	// sides are the same family as RoundTripCost — which calls EstimateFill
+	// itself — and a held pair needs them per leg: pricing its exit through
+	// RoundTripCost would also price the two ENTRY fills and refuse the whole
+	// figure when the side the exit never takes cannot be filled. What stays
+	// banned is every function that DECIDES: EvaluateEntry, EvaluateExit,
+	// Params, Candidate — the gate's rules stay the gate's (PLAN Q18).
+	allowedStrategy := map[string]bool{
+		"NetAPR": true, "NetAPRInput": true, "RoundTripCost": true, "RoundTripInput": true, "RoundTrip": true,
+		"EstimateFill": true, "FillEstimate": true, "Side": true, "SideBuy": true, "SideSell": true,
+	}
 	fset := token.NewFileSet()
 	files := 0
 	for _, path := range ownGoFiles(t, false) {
@@ -268,7 +279,7 @@ func TestAutotrade_DecidesOnTheTestnetAndTradesOnlyThroughThePortal(t *testing.T
 
 	// In the main package: who may name the package, and what the adapter may
 	// call to reach a venue.
-	mayImport := map[string]bool{"api.go": true, "autotrade.go": true, "main.go": true}
+	mayImport := map[string]bool{"api.go": true, "autotrade.go": true, "main.go": true, "pnl.go": true}
 	for _, path := range topLevelGoFiles(t, false) {
 		file, err := parser.ParseFile(fset, path, nil, 0)
 		if err != nil {
@@ -627,9 +638,12 @@ func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
 		// when called directly: they may only be registered as routes.
 		"handleOpen": {"portal.handler": true}, "handleClose": {"portal.handler": true}, "handleReconcile": {"portal.handler": true},
 		"handleAutotradeStart": {"portal.handler": true}, "handleAutotradeStop": {"portal.handler": true}, "handleAutotradeKill": {"portal.handler": true},
+		"handleAutotradeClosePair": {"portal.handler": true}, "handleAutotradePair": {"portal.handler": true},
 		// The bot's Trader and Market wrap openAs and close; the one engine gets
-		// the one pair, built in newAutotrade (review of Q18, round 2).
+		// the one pair, built in newAutotrade (review of Q18, round 2). The PnL
+		// page reads its status; main's sampler reads it too.
 		"autotrade": {"portal.handleAutotradeStatus": true, "portal.handleAutotradeStart": true, "portal.handleAutotradeStop": true, "portal.handleAutotradeKill": true,
+			"portal.handleAutotradeClosePair": true, "portal.handleAutotradePair": true, "portal.handleAutotradePnL": true,
 			"newPortal": true, "main": true},
 	}
 	// Types a value of which is an order path, and the only functions that may
@@ -717,6 +731,106 @@ func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
 		if seen[name] == 0 {
 			t.Errorf("no use of .%s found — the test is not reading the package it guards", name)
 		}
+	}
+}
+
+// declCaller names a declaration the way the order-path guards do:
+// "portalTrader.Close", "main", or "<outside any function>".
+func declCaller(decl ast.Decl) string {
+	fn, ok := decl.(*ast.FuncDecl)
+	if !ok {
+		return "<outside any function>"
+	}
+	caller := fn.Name.Name
+	if fn.Recv != nil && len(fn.Recv.List) == 1 {
+		recv := fn.Recv.List[0].Type
+		if star, ok := recv.(*ast.StarExpr); ok {
+			recv = star.X
+		}
+		if id, ok := recv.(*ast.Ident); ok {
+			caller = id.Name + "." + caller
+		}
+	}
+	return caller
+}
+
+// The multi-pair engine's surface in the main package is pinned METHOD BY
+// METHOD, not only by who names p.autotrade (review of the multi-pair change,
+// 2026-09-15): a read handler that could also call PairControl or Kill, or a
+// sampler that built a second engine, would be a path to an order no dialog
+// guards. So:
+//
+//   - every use of the .autotrade field is the receiver of a method call, and
+//     each caller may call only its own methods — a read handler only Status;
+//   - the one exception is newPortal assigning it;
+//   - newAutotrade is called by newPortal only, and autotrade.New by
+//     newAutotrade only: one engine, one Trader, one Market;
+//   - pnl.go may name the package's two status TYPES and nothing else.
+func TestAutotrade_EachCallerReachesOnlyItsOwnEngineMethods(t *testing.T) {
+	allowedMethods := map[string]map[string]bool{
+		"portal.handleAutotradeStatus":    {"Status": true},
+		"portal.handleAutotradePnL":       {"Status": true},
+		"portal.handleAutotradeStart":     {"Start": true},
+		"portal.handleAutotradeStop":      {"Stop": true},
+		"portal.handleAutotradeKill":      {"Kill": true},
+		"portal.handleAutotradeClosePair": {"ClosePair": true},
+		"portal.handleAutotradePair":      {"PairControl": true},
+		"main":                            {"Run": true, "Start": true, "Status": true},
+	}
+	pnlMayName := map[string]bool{"StatusView": true, "PositionView": true}
+	fset := token.NewFileSet()
+	methods, builds := 0, 0
+	for _, path := range topLevelGoFiles(t, false) {
+		file, err := parser.ParseFile(fset, path, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range file.Decls {
+			caller := declCaller(decl)
+			qualified := map[*ast.SelectorExpr]bool{}
+			ast.Inspect(decl, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "autotrade" {
+					qualified[inner] = true
+					methods++
+					if !allowedMethods[caller][sel.Sel.Name] {
+						t.Errorf("%s: %s calls .autotrade.%s — it may call only %v", fset.Position(sel.Pos()), caller, sel.Sel.Name, keys(allowedMethods[caller]))
+					}
+				}
+				return true
+			})
+			fn, _ := decl.(*ast.FuncDecl)
+			ast.Inspect(decl, func(n ast.Node) bool {
+				switch x := n.(type) {
+				case *ast.SelectorExpr:
+					if x.Sel.Name == "autotrade" && !qualified[x] && caller != "newPortal" {
+						t.Errorf("%s: %s holds .autotrade without calling a pinned method on it", fset.Position(x.Pos()), caller)
+					}
+					if id, ok := x.X.(*ast.Ident); ok && id.Name == "autotrade" {
+						if x.Sel.Name == "New" {
+							builds++
+							if caller != "newAutotrade" {
+								t.Errorf("%s: %s builds an engine — only newAutotrade may", fset.Position(x.Pos()), caller)
+							}
+						}
+						if filepath.Base(path) == "pnl.go" && !pnlMayName[x.Sel.Name] {
+							t.Errorf("%s: pnl.go names autotrade.%s — it reads status types only", fset.Position(x.Pos()), x.Sel.Name)
+						}
+					}
+				case *ast.Ident:
+					if x.Name == "newAutotrade" && caller != "newPortal" && !(fn != nil && fn.Name == x) {
+						t.Errorf("%s: %s names newAutotrade — only newPortal builds the engine", fset.Position(x.Pos()), caller)
+					}
+				}
+				return true
+			})
+		}
+	}
+	if methods < 8 || builds != 1 {
+		t.Fatalf("saw %d engine method calls and %d engine builds — the test is not reading the package it guards", methods, builds)
 	}
 }
 

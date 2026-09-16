@@ -405,6 +405,7 @@ func (p *portal) mintIntentIDWith(prefix, symbol string) (string, error) {
 type closeRequest struct {
 	Symbol   string `json:"symbol"`
 	IntentID string `json:"intent_id"`
+	ReasonVI string `json:"reason_vi,omitempty"`
 }
 
 type closeView struct {
@@ -502,7 +503,11 @@ func (p *portal) handleClose(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := p.actionContext(r)
 	defer cancel()
-	view, status := p.close(ctx, st)
+	reasonVI := req.ReasonVI
+	if reasonVI == "" {
+		reasonVI = "Đóng thủ công bởi người vận hành"
+	}
+	view, status := p.close(ctx, st, reasonVI)
 	log.Printf("execportal: CLOSE %s %s → %s flat=%v refused=%v alarm=%v closed=%.8f %s",
 		view.IntentID, view.Symbol, view.Outcome, view.Flat, view.Refused, view.Alarm, view.ClosedQtyCoin, view.ErrorVI)
 	writeJSON(w, status, view)
@@ -517,7 +522,7 @@ func (p *portal) handleClose(w http.ResponseWriter, r *http.Request) {
 // now wrong. So the portal sizes the close from the VENUE's record of THIS
 // intent's own orders, which execution then checks against the venue position
 // rather than trusts (CloseRequest.QtyCoin). Still rule 7; narrower.
-func (p *portal) close(ctx context.Context, st intentState) (closeView, int) {
+func (p *portal) close(ctx context.Context, st intentState, reasonVI string) (closeView, int) {
 	v := closeView{IntentID: st.IntentID, Symbol: st.Symbol, Outcome: string(execution.OutcomeBothOpen),
 		Refused: true, RealizedLabelVI: realizedLabelVI}
 
@@ -685,6 +690,9 @@ func (p *portal) close(ctx context.Context, st intentState) (closeView, int) {
 			log.Printf("execportal: %s closed flat; clearing the earlier note: %s", st.IntentID, st.NoteVI)
 		}
 		st.NoteVI = ""
+		if reasonVI != "" {
+			st.CloseReasonVI = reasonVI
+		}
 	}
 	if err := saveState(p.stateDir, st); err != nil {
 		v.CacheErrorVI = "KHÔNG ghi được file ý định: " + err.Error()

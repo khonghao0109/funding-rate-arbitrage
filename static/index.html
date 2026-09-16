@@ -66,9 +66,13 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         Market Scanner
       </button>
-      <button class="tab" role="tab" id="tab-execution" data-tab="execution" aria-controls="panel-execution" aria-selected="false" tabindex="-1">
+      <button class="tab" role="tab" id="tab-autotrade" data-tab="autotrade" aria-controls="panel-autotrade" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        Auto-Trader (Funding Arb)
+      </button>
+      <button class="tab" role="tab" id="tab-manual" data-tab="manual" aria-controls="panel-manual" aria-selected="false" tabindex="-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20V4M7 4 4 7M7 4l3 3M17 4v16M17 20l-3-3M17 20l3-3"/></svg>
-        Execution Control
+        Manual Execution
         <span class="tab-count" id="tab-exec-alarm" hidden>!</span>
       </button>
       <button class="tab" role="tab" id="tab-paper" data-tab="paper" aria-controls="panel-paper" aria-selected="false" tabindex="-1">
@@ -224,8 +228,249 @@
       </div>
     </section>
 
-    <!-- ========================================================== EXECUTION -->
-    <section class="tab-panel" id="panel-execution" role="tabpanel" aria-labelledby="tab-execution" hidden>
+    <!-- ======================================================== AUTO-TRADER -->
+    <section class="tab-panel" id="panel-autotrade" role="tabpanel" aria-labelledby="tab-autotrade" hidden>
+      <p class="note at-notice" id="at-notice">CHỈ TESTNET — bot tự mở và đóng lệnh thật trên Binance testnet qua đúng đường MỞ/ĐÓNG của portal, mỗi lúc một lệnh (PLAN Q18). Mọi con số là của tài khoản testnet.</p>
+      <div class="callout bad mt8" id="at-halt" role="alert" hidden></div>
+
+      <!-- KHỐI 1: KPI DANH MỤC -->
+      <div class="at-kpi-strip mt12" id="at-kpi-strip">
+        <div class="at-kpi-card" id="at-kpi-closed">
+          <div class="at-kpi-lbl">Lãi/lỗ đã chốt</div>
+          <div class="at-kpi-val num" id="at-kpi-closed-val">—</div>
+          <div class="at-kpi-sub" id="at-kpi-closed-sub">chưa có cặp nào đóng</div>
+        </div>
+        <div class="at-kpi-card" id="at-kpi-open">
+          <div class="at-kpi-lbl">Lãi/lỗ tạm tính (đang mở)</div>
+          <div class="at-kpi-val num" id="at-kpi-open-val">—</div>
+          <div class="at-kpi-sub" id="at-kpi-open-sub">không giữ cặp nào</div>
+        </div>
+        <div class="at-kpi-card" id="at-kpi-roi">
+          <div class="at-kpi-lbl">ROI danh mục</div>
+          <div class="at-kpi-val num" id="at-kpi-roi-val">—</div>
+          <div class="at-kpi-sub" id="at-kpi-roi-sub">trên hạn mức vốn</div>
+        </div>
+        <div class="at-kpi-card" id="at-kpi-capital">
+          <div class="at-kpi-lbl">Vốn đang triển khai</div>
+          <div class="at-kpi-val num" id="at-kpi-capital-val">—</div>
+          <div class="meter at-capital-meter" id="at-capital-meter" role="img" aria-label="Tỷ lệ vốn đang dùng"><span></span></div>
+          <div class="at-kpi-sub" id="at-kpi-capital-sub">spot + ký quỹ perp</div>
+        </div>
+        <div class="at-kpi-card" id="at-kpi-state">
+          <div class="at-kpi-lbl">Trạng thái &amp; vị thế</div>
+          <div class="at-kpi-val"><span class="at-badge" id="at-badge" data-state="disabled" role="status" aria-atomic="true">TẮT</span></div>
+          <div class="at-kpi-sub" id="at-kpi-state-sub">chưa kích hoạt</div>
+        </div>
+      </div>
+
+      <!-- KHỐI 2: BIỂU ĐỒ LÃI/LỖ & DÒNG TIỀN FUNDING -->
+      <article class="card mt16 at-pnl-card" aria-labelledby="at-pnl-title">
+        <div class="card-head">
+          <h2 id="at-pnl-title">Đường vốn của bot</h2>
+          <span class="hint" id="at-pnl-headline">Tổng = đã chốt + tạm tính, USDT</span>
+          <span class="spacer"></span>
+          <span class="hint" id="at-pnl-age">chưa đọc</span>
+        </div>
+        <div class="chart short at-pnl-chart" id="at-pnl-chart">
+          <div class="chart-empty" id="at-pnl-empty">Chưa có dữ liệu — đường vốn xuất hiện khi bot có cặp mở hoặc đã đóng</div>
+          <div class="at-tip" id="at-pnl-tip" hidden></div>
+        </div>
+        <div class="at-chart-sub">
+          <h3>Dòng tiền funding theo từng mốc settle</h3>
+          <span class="hint" id="at-bars-headline">7 ngày gần nhất</span>
+        </div>
+        <div class="chart tiny at-bars-chart" id="at-bars-chart">
+          <div class="chart-empty" id="at-bars-empty">Chưa có mốc settle nào sàn trả cho cặp của bot</div>
+          <div class="at-tip" id="at-bars-tip" hidden></div>
+        </div>
+        <details class="evidence mt8">
+          <summary>Con số này gồm gì, không gồm gì</summary>
+          <p class="note mt8" id="at-label-closed"></p>
+          <p class="note mt8" id="at-label-open"></p>
+          <p class="note mt8" id="at-label-total"></p>
+          <p class="note mt8" id="at-label-bars"></p>
+          <p class="note mt8" id="at-label-points"></p>
+          <ul class="warnings" id="at-pnl-problems" hidden></ul>
+        </details>
+      </article>
+
+      <!-- KHỐI 3: VỊ THẾ ĐANG MỞ THEO TỪNG CẶP -->
+      <article class="card mt16" aria-labelledby="at-pos-title">
+        <div class="card-head">
+          <h2 id="at-pos-title">Vị thế đang mở theo từng cặp</h2>
+          <span class="pill" id="at-pos-count">0 cặp</span>
+          <span class="spacer"></span>
+          <span class="hint">giá hiện tại = giá giữa sổ lệnh ở lượt quét gần nhất</span>
+        </div>
+        <div class="at-pos-flat" id="at-pos-flat">
+          <span class="at-pos-flat-icon" aria-hidden="true">✓</span>
+          <span id="at-pos-flat-text">Tất cả các cặp đang phẳng — Bot sẵn sàng đón cơ hội</span>
+        </div>
+        <div class="table-wrap" id="at-pos-wrap" hidden>
+          <table class="at-table at-pos-table">
+            <thead>
+              <tr>
+                <th>Cặp</th>
+                <th class="r">Khối lượng · Notional</th>
+                <th class="r">Spot: vào → giữa<br>Perp: vào → giữa</th>
+                <th class="r">Lệch delta</th>
+                <th class="r">Tạm tính spot<br>Tạm tính perp</th>
+                <th class="r">Funding đã nhận</th>
+                <th class="r">Tạm tính cặp</th>
+                <th class="r">Chốt lời / Sàn giữ</th>
+                <th class="r">Mốc</th>
+                <th><span class="sr-only">Thao tác</span></th>
+              </tr>
+            </thead>
+            <tbody id="at-pos-body"></tbody>
+          </table>
+        </div>
+      </article>
+
+      <!-- KHỐI 4: RADAR CƠ HỘI & ĐIỀU KHIỂN DANH MỤC -->
+      <div class="at-control-grid mt16">
+        <article class="card at-cfg-card" aria-labelledby="at-cfg-title">
+          <div class="card-head">
+            <h2 id="at-cfg-title">Điều khiển danh mục</h2>
+            <span class="spacer"></span>
+            <button type="button" class="at-switch" id="at-toggle" role="switch" aria-checked="false" aria-describedby="at-toggle-hint">
+              <span class="at-switch-track" aria-hidden="true"><span class="at-switch-thumb"></span></span>
+              <span id="at-toggle-label">BẬT AUTO-TRADER</span>
+            </button>
+          </div>
+          <form id="at-form" novalidate class="mt12">
+            <div class="at-fields">
+              <div class="field">
+                <label for="at-notional">Notional mỗi cặp (USDT/chân)</label>
+                <input type="number" id="at-notional" min="1" max="50000" step="0.01" value="65" inputmode="decimal" required>
+              </div>
+              <div class="field">
+                <label for="at-min-apr">Net APR tối thiểu (%/năm)</label>
+                <input type="number" id="at-min-apr" min="-1000" max="1000" step="0.1" value="5.0" inputmode="decimal" required>
+              </div>
+              <div class="field">
+                <label for="at-max-pairs">Số cặp mở tối đa đồng thời</label>
+                <input type="number" id="at-max-pairs" min="1" max="50" step="1" value="12" inputmode="numeric" required>
+              </div>
+              <div class="field">
+                <label for="at-capital-cap">Hạn mức vốn (USDT)</label>
+                <input type="number" id="at-capital-cap" min="1" step="1" value="10000" inputmode="decimal" required>
+              </div>
+              <div class="field">
+                <label for="at-max-epochs">Số mốc settle tối đa</label>
+                <input type="number" id="at-max-epochs" min="0" max="1000" step="1" value="0" inputmode="numeric" required>
+                <div class="hint">0 = giữ khi funding còn dương</div>
+              </div>
+              <div class="field">
+                <label for="at-min-basis">Basis tối thiểu lúc vào (bps)</label>
+                <input type="number" id="at-min-basis" min="-10000" max="10000" step="0.1" value="5.0" inputmode="decimal" required>
+                <div class="hint">chỉ vào khi perp đắt hơn spot — tránh bẫy basis lõm</div>
+              </div>
+              <div class="field">
+                <label for="at-min-epochs">Sàn giữ khấu hao phí (mốc)</label>
+                <input type="number" id="at-min-epochs" min="0" max="1000" step="1" value="6" inputmode="numeric" required>
+                <div class="hint">0 = thoát ngay ở mốc settle ≤ 0 đầu tiên</div>
+              </div>
+              <div class="field">
+                <label for="at-take-profit">Chốt lời sớm (% trên vốn)</label>
+                <input type="number" id="at-take-profit" min="0" max="100" step="0.01" value="0.50" inputmode="decimal" required>
+                <div class="hint">0 = tắt chốt lời hội tụ basis</div>
+              </div>
+            </div>
+            <fieldset class="at-symbols mt12">
+              <legend>Cặp được phép giao dịch</legend>
+              <div class="at-symbols-bar mb8">
+                <span class="hint">Chọn các cặp để bot quét và mở lệnh:</span>
+                <span class="spacer"></span>
+                <button type="button" class="btn ghost small" id="at-symbols-all">Tất cả</button>
+                <button type="button" class="btn ghost small" id="at-symbols-none">Bỏ chọn</button>
+              </div>
+              <div class="at-symbol-list" id="at-symbols"></div>
+            </fieldset>
+            <div class="at-actions mt12">
+              <button type="submit" class="btn primary" id="at-start">[BẬT AUTO-TRADING]</button>
+              <button type="button" class="btn secondary" id="at-stop">[DỪNG &amp; GIỮ VỊ THẾ]</button>
+              <button type="button" class="btn danger" id="at-kill">[KILL SWITCH: DỪNG &amp; ĐÓNG TẤT CẢ]</button>
+            </div>
+            <div class="hint mt8" id="at-toggle-hint">Bật: bot quét mọi cặp đã chọn, xếp hạng theo Net APR và tự mở trong giới hạn số cặp và vốn. Dừng: không mở/đóng gì thêm, mọi vị thế giữ nguyên. Kill: dừng ngay và đóng mọi cặp của bot.</div>
+            <p class="note mt8" id="at-shipped"></p>
+          </form>
+        </article>
+
+        <article class="card at-radar-card" aria-labelledby="at-radar-title">
+          <div class="card-head">
+            <h2 id="at-radar-title">Radar cơ hội</h2>
+            <span class="hint">xếp theo Net APR dự phóng</span>
+            <span class="spacer"></span>
+            <span class="hint" id="at-age">chưa quét</span>
+          </div>
+          <div class="table-wrap">
+            <table class="at-table at-radar-table">
+              <thead>
+                <tr>
+                  <th class="r">#</th>
+                  <th>Cặp</th>
+                  <th class="r">Funding</th>
+                  <th>Chu kỳ · settle</th>
+                  <th class="r">Net APR</th>
+                  <th>Điều kiện</th>
+                  <th>Trạng thái</th>
+                  <th>Cho phép</th>
+                </tr>
+              </thead>
+              <tbody id="at-radar-body"></tbody>
+            </table>
+          </div>
+          <p class="hint mt8">Năm điều kiện: <strong>F</strong> funding đang hình thành &gt; 0 · <strong>B</strong> basis lúc vào ≥ ngưỡng (perp phải đắt hơn spot) · <strong>A</strong> Net APR ≥ ngưỡng · <strong>D</strong> sổ lệnh ±0,5% ≥ 2× notional ở cả 4 phía · <strong>T</strong> còn đủ xa mốc settle và đồng hồ lệch ≤ 1000 ms. Rê chuột lên một điều kiện để xem số liệu.</p>
+          <p class="note mt8" id="at-cost-basis"></p>
+        </article>
+      </div>
+
+      <!-- KHỐI 5: LỊCH SỬ LỆNH & NHẬT KÝ -->
+      <article class="card at-history-card mt16" aria-labelledby="at-history-title">
+        <div class="card-head">
+          <h2 id="at-history-title">Lịch sử lệnh của bot</h2>
+          <span class="tag auto">CHIẾN LƯỢC 1: CASH &amp; CARRY</span>
+          <span class="spacer"></span>
+          <label class="hint" for="at-history-filter">Lọc</label>
+          <select id="at-history-filter" class="at-filter">
+            <option value="">Tất cả các cặp</option>
+          </select>
+        </div>
+        <div class="table-wrap">
+          <table class="at-table">
+            <thead>
+              <tr>
+                <th>Mở lúc</th>
+                <th>Cặp</th>
+                <th>Ý định</th>
+                <th class="r">Notional</th>
+                <th class="r">Giá vào spot<br>Giá vào perp</th>
+                <th>Giữ</th>
+                <th class="r">Funding</th>
+                <th class="r">Phí</th>
+                <th class="r">Trôi giá</th>
+                <th class="r">Kết quả USDT<br>% trên vốn</th>
+                <th>Trạng thái</th>
+              </tr>
+            </thead>
+            <tbody id="at-trades-body"></tbody>
+            <tfoot id="at-trades-foot"></tfoot>
+          </table>
+        </div>
+        <p class="hint mt8">Trượt giá nằm sẵn trong trôi giá theo giá khớp; rê chuột lên cột Trôi giá để xem phần trượt. Cặp đang mở hiện kết quả tạm tính.</p>
+      </article>
+
+      <article class="card at-console-card mt16" aria-labelledby="at-console-title">
+        <div class="card-head">
+          <h2 id="at-console-title">Nhật ký hoạt động</h2>
+          <span class="hint">8 sự kiện gần nhất</span>
+        </div>
+        <ol class="at-console" id="at-log"><li class="at-empty">chưa có sự kiện</li></ol>
+      </article>
+    </section>
+    <!-- ========================================================== MANUAL EXECUTION -->
+    <section class="tab-panel" id="panel-manual" role="tabpanel" aria-labelledby="tab-manual" hidden>
       <article class="card">
         <div class="card-head">
           <h2>Kết nối testnet</h2>
@@ -266,77 +511,6 @@
             </dl>
           </div>
         </div>
-      </article>
-
-      <article class="card autotrader" id="at-card" aria-labelledby="at-title">
-        <div class="card-head">
-          <h2 id="at-title">Auto-Trader (Binance Demo)</h2>
-          <span class="tag auto">TỰ ĐỘNG HÓA</span>
-          <span class="spacer"></span>
-          <span class="at-badge" id="at-badge" data-state="disabled" role="status" aria-atomic="true">[TẮT]</span>
-          <button type="button" class="at-switch" id="at-toggle" role="switch" aria-checked="false" aria-describedby="at-toggle-hint">
-            <span class="at-switch-track" aria-hidden="true"><span class="at-switch-thumb"></span></span>
-            <span id="at-toggle-label">BẬT AUTO-TRADER</span>
-          </button>
-        </div>
-        <p class="note" id="at-notice">CHỈ TESTNET — bot tự mở và đóng lệnh thật trên Binance testnet qua đúng đường MỞ/ĐÓNG của portal (PLAN Q18). Mọi con số là của tài khoản testnet.</p>
-        <div class="callout bad mt8" id="at-halt" role="alert" hidden></div>
-        <div class="at-grid mt12">
-          <form class="box" id="at-form" novalidate>
-            <div class="at-fields">
-              <div class="field">
-                <label for="at-symbol">Symbol</label>
-                <select id="at-symbol"></select>
-              </div>
-              <div class="field">
-                <label for="at-notional">Notional mỗi chân (quote)</label>
-                <input type="number" id="at-notional" min="1" max="50000" step="0.01" value="65" inputmode="decimal" required>
-              </div>
-              <div class="field">
-                <label for="at-min-apr">Net APR tối thiểu (%/năm)</label>
-                <input type="number" id="at-min-apr" min="-1000" max="1000" step="0.1" value="5.0" inputmode="decimal" required>
-              </div>
-              <div class="field">
-                <label for="at-max-epochs">Số mốc settle tối đa</label>
-                <input type="number" id="at-max-epochs" min="0" max="1000" step="1" value="0" inputmode="numeric" required>
-                <div class="hint">0 = giữ khi funding còn dương (dự phóng trên 30 ngày)</div>
-              </div>
-            </div>
-            <div class="at-actions">
-              <button type="submit" class="btn primary" id="at-start">[BẬT AUTO-TRADING]</button>
-              <button type="button" class="btn secondary" id="at-stop">[DỪNG &amp; GIỮ VỊ THẾ]</button>
-              <button type="button" class="btn danger" id="at-kill">[KILL SWITCH: DỪNG &amp; ĐÓNG NGAY]</button>
-            </div>
-            <div class="hint" id="at-toggle-hint">Bật: bot quét định kỳ và tự mở khi mọi điều kiện đạt. Dừng: không mở/đóng gì thêm, vị thế giữ nguyên. Kill: dừng ngay và đóng cả hai chân của bot.</div>
-          </form>
-
-          <div class="box at-gauge" aria-labelledby="at-gauge-title">
-            <div class="at-gauge-head">
-              <h3 id="at-gauge-title">Tín hiệu trực tiếp</h3>
-              <span class="spacer"></span>
-              <span class="hint" id="at-age">chưa đọc</span>
-            </div>
-            <div class="at-verdict" id="at-verdict" data-state="none">Chưa quét — bật bot để bắt đầu đánh giá</div>
-            <div class="at-stats">
-              <div class="stat"><div class="stat-k">Funding hiện tại</div><div class="stat-v sm" id="at-funding">—</div><div class="stat-s" id="at-funding-sub">—</div></div>
-              <div class="stat"><div class="stat-k">Tới mốc settle</div><div class="stat-v sm" id="at-countdown">—</div><div class="stat-s" id="at-settle-at">—</div></div>
-              <div class="stat"><div class="stat-k">Basis perp − spot</div><div class="stat-v sm" id="at-basis">—</div><div class="stat-s" id="at-basis-sub">—</div></div>
-              <div class="stat"><div class="stat-k">Net APR dự phóng</div><div class="stat-v sm" id="at-apr">—</div><div class="stat-s" id="at-apr-sub">—</div></div>
-            </div>
-            <details class="evidence" id="at-checks-box">
-              <summary id="at-checks-summary">Điều kiện vào / thoát</summary>
-              <ul class="at-checks" id="at-checks"></ul>
-              <p class="note mt8" id="at-cost-basis"></p>
-            </details>
-          </div>
-        </div>
-        <div class="at-console-head mt12">
-          <h3>Nhật ký bot</h3>
-          <span class="hint">10 dòng mới nhất</span>
-          <span class="spacer"></span>
-          <span class="hint" id="at-position-line">—</span>
-        </div>
-        <ol class="at-console" id="at-log"><li class="at-empty">chưa có sự kiện</li></ol>
       </article>
 
       <article class="card" aria-label="Theo dõi vị thế">
@@ -422,7 +596,10 @@
           </div>
 
           <div class="box danger">
-            <div class="hint">Khẩn cấp: quét MỌI ý định của symbol, đọc lệnh từ sàn, làm phẳng phần LỆCH (chân trần). Xem kế hoạch trước khi gửi.</div>
+            <div class="field">
+              <span class="lbl">Cứu hộ khẩn cấp</span>
+              <div class="hint">Quét MỌI ý định của symbol, đọc lệnh từ sàn, làm phẳng phần LỆCH (chân trần). Xem kế hoạch trước khi gửi.</div>
+            </div>
             <button type="button" class="btn danger" id="btn-reconcile">[LÀM PHẲNG TOÀN BỘ (RECONCILE)]</button>
           </div>
         </div>

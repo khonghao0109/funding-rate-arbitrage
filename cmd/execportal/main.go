@@ -64,14 +64,14 @@ func main() {
 	var (
 		port     = flag.String("port", "8087", "HTTP port (never 8082, 8085 or 8086 — those belong to the scanner runs and the paper ledger)")
 		bind     = flag.String("bind", "127.0.0.1", "loopback IP to listen on — 127.0.0.1 or ::1; anything else is refused, because this page places orders")
-		symbols  = flag.String("symbols", "BTCUSDT,ETHUSDT", "comma-separated symbols the page may trade, each the same string on both markets")
+		symbols  = flag.String("symbols", "BTCUSDT,ETHUSDT,SOLUSDT,BNBUSDT,XRPUSDT,DOGEUSDT,LTCUSDT,SUIUSDT,LINKUSDT,UNIUSDT,NEARUSDT,AAVEUSDT", "comma-separated symbols the page and the auto-trader may trade, each the same string on both markets")
 		marginFr = flag.Float64("margin-frac", 0.50, "collateral posted on the perp leg as a fraction of notional — a DECISION, not a venue fact")
 		slipBps  = flag.Float64("max-slippage-bps", execution.DefaultMaxSlippageBps, "how far past the touch a leg's marketable limit may sit, in basis points")
 		legTmo   = flag.Duration("leg-timeout", execution.DefaultLegTimeout, "how long one leg may work before its remainder is cancelled")
 		actTmo   = flag.Duration("action-timeout", 3*time.Minute, "overall deadline for one open, close or reconcile")
 		scanAddr = flag.String("scanner-addr", "127.0.0.1:8085", "loopback host:port of the running cmd/scanner whose /ws and funding history the Scanner tab relays READ-ONLY; empty turns the tab off")
 		papAddr  = flag.String("paper-addr", "127.0.0.1:8086", "loopback host:port of cmd/paperledger whose /api/ledger the Paper tab relays READ-ONLY; empty turns the tab off")
-		autoOn   = flag.Bool("autotrade", false, "switch the TESTNET auto-trader on at launch, with its shipped parameters on the first -symbols entry (PLAN Q18); off by default — the page's BẬT button does the same")
+		autoOn   = flag.Bool("autotrade", true, "switch the TESTNET auto-trader on at launch, with its shipped parameters on every -symbols entry (PLAN Q18); on by default — pass -autotrade=false to launch in paused state")
 	)
 	flag.Parse()
 	_ = godotenv.Load()
@@ -169,13 +169,27 @@ func main() {
 		p.autotrade.Run(botCtx)
 		close(botDone)
 	}()
+	// The equity series of the PnL page: one sample a minute while the bot runs
+	// or holds a pair (pnl.go). It reads, and never trades.
+	go func() {
+		ticker := time.NewTicker(pnlSampleEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-botCtx.Done():
+				return
+			case <-ticker.C:
+				p.samplePnL(botCtx, p.autotrade.Status())
+			}
+		}
+	}()
 	if *autoOn {
 		if err := m.both(); err != nil {
 			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — thiếu credential: %v", err)
-		} else if _, err := p.autotrade.Start(autotrade.DefaultConfig(symbolList[0])); err != nil {
+		} else if _, err := p.autotrade.Start(autotrade.DefaultPortfolioConfig(symbolList)); err != nil {
 			log.Printf("execportal: -autotrade BỊ TỪ CHỐI: %v", err)
 		} else {
-			log.Printf("execportal: AUTO-TRADER BẬT từ lúc khởi động (-autotrade) trên %s — TESTNET, tự đặt lệnh (PLAN Q18)", symbolList[0])
+			log.Printf("execportal: AUTO-TRADER BẬT từ lúc khởi động (-autotrade) trên %s — TESTNET, tự đặt lệnh (PLAN Q18)", strings.Join(symbolList, ", "))
 		}
 	}
 	go func() {

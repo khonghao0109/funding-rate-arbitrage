@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -4632,13 +4632,330 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   tới trang rỗng nên không phụ thuộc vào con số đó. Trang tài liệu
 >   `User-Commission-Rate` không đọc được từ môi trường này — tên trường đo trên
 >   testnet, trọng số 20 là giả định bảo thủ.
-> - Bot quản lý MỘT symbol; nhật ký bot sống trong bộ nhớ (20 dòng), mất khi portal
->   tắt — dấu vết bền là file ý định và log tiến trình.
+> - ~~Bot quản lý MỘT symbol~~ (đa cặp từ 4.5e, cùng ngày); nhật ký bot sống trong bộ
+>   nhớ (nay 60 dòng), mất khi portal tắt — dấu vết bền là file ý định và log tiến trình.
 > - Guard "mọi đường lệnh có người gọi cố định" so theo TÊN trên AST (đã chặn alias,
 >   nhúng kiểu, request tự dựng); một kiểm tra bằng `go/types` theo đối tượng thay vì
 >   tên sẽ bền hơn — review vòng 3 đề xuất, chưa làm.
 > - `stopSeq` không có test bắt được nếu bỏ (chỉ với tới được sau một kill, lúc bot đã
 >   DỪNG BẢO VỆ và Start/Step đều bị chặn).
+
+#### Công cụ vận hành 4.5e — Auto-Trader ĐA CẶP & trang lãi/lỗ trong `cmd/execportal` — ✅ TRÊN TESTNET (2026-09-15, Q18)
+
+> **Không phải một bước mới của lộ trình** — GĐ 4 vẫn 5/6, 4.6 vẫn sau phán quyết
+> 3.5. Người vận hành giao đặc tả "Multi-Pair Auto-Trader Arbitrage Engine & PnL
+> Dashboard": quét, xếp hạng và giữ ĐỒNG THỜI nhiều cặp (BTC/ETH/SOL/BNB), giới hạn
+> tổng danh mục, bảng vị thế và radar theo từng cặp, biểu đồ lãi/lỗ cho người mới.
+> Không giới hạn nào của Q18 đổi: vẫn chỉ testnet, vẫn quyết-không-thực-thi, mọi lệnh
+> vẫn qua `openAs`/`close` dưới `writeMu` — **mỗi lúc MỘT lệnh**, dù giữ nhiều cặp —
+> vẫn không bao giờ tự làm phẳng, KILL vẫn chỉ đóng cặp CỦA BOT. Không đụng `cmd/scanner`,
+> tiến trình cổng 3.5 (PID 55475) sống suốt phiên, không SQLite, không dependency mới.
+>
+> ### Cái gì làm gì
+>
+> - **Máy trạng thái theo từng cặp** (`autotrade/engine.go`), một vòng quét 5 s ba pha:
+>   (1) ĐỌC song song tối đa 4 cặp, mỗi cặp hạn 30 s riêng, không giữ khoá; (2) PHÁN
+>   từng cặp nối tiếp dưới khoá — dừng bảo vệ, tiếp nhận, thước đo; (3) GIAO DỊCH nối
+>   tiếp: mọi lối thoát tới hạn trước (thoát giảm rủi ro và trả chỗ), rồi các cặp đủ
+>   điều kiện theo **Net APR giảm dần** (hoà thì theo symbol), mỗi lệnh kiểm lại NGAY
+>   lúc gửi: số chỗ, vốn, tuổi của lần đọc (≤ 60 s), khoảng cách tới mốc settle. DỪNG,
+>   KILL hay tắt portal giữa hai lệnh bỏ mọi lệnh chưa gửi.
+> - **`PortfolioConfig`**: `Symbols` (cặp được VÀO), `MaxConcurrentPositions` (mặc
+>   định 3, trần 5), `TotalCapitalCapQuote` (mặc định 1.000; trần = 5 × notional tối đa
+>   × vốn/notional), `ScanInterval`, `DefaultPairConfig` và `PairOverrides` (thay trọn
+>   `Config` của cặp — qua API `pair_overrides`, trang chưa có ô sửa). Ngưỡng an toàn
+>   đã kiểm toán và ghim bằng test: $65, Net APR ≥ 5%, MaxHoldEpochs 0, basis giãn ≤ 30
+>   bps, độ sâu ≥ 2×, còn > 300 s tới mốc, 3 lỗi liên tiếp.
+> - **Giới hạn đếm cái SÀN có thể đang giữ, không phải cái máy tin** (review vòng 1–7):
+>   một chỗ bị chiếm bởi cặp đang giữ, cặp có lệnh đang trên đường, cặp DỪNG BẢO VỆ có
+>   thể còn chân, và — khi bot chạy — MỌI cặp mà lần đọc sàn mới nhất không chứng minh
+>   phẳng (đọc hỏng, `unknown`, lệch, vị thế của người). Mọi cặp được đọc vị thế MỖI
+>   lượt quét (cặp ngoài danh sách, tạm dừng, hồi phục, dừng bảo vệ chỉ đọc vị thế, không
+>   đọc thị trường). Lệnh mở bị portal từ chối KHÔNG chứng minh phẳng (portal từ chối
+>   đúng khi symbol không phẳng — nên cặp đó "chưa rõ cỡ" tới lần đọc sau; portal BẬN thì
+>   bỏ mọi lệnh còn lại của lượt, kể cả khi bận lúc gửi lệnh thoát). **Chỉ một lần đọc sàn
+>   nêu được cỡ**, và chỉ hai loại: hai chân giữ dưới ĐÚNG MỘT ý định có notional (tính
+>   theo notional đó, của ai cũng vậy) và hai chân phẳng. Mọi thứ khác — chưa đọc, đọc hỏng,
+>   `unknown`, `evidence_conflict` (perp không ý định nào giải thích), nhiều ý định, một ý
+>   định thiếu notional — không nêu cỡ. **DỪNG BẢO VỆ không phải một cỡ, và cái bot GHI (vị
+>   thế đang giữ, lệnh đã gửi) cũng không**: cặp dừng, kể cả cặp còn tên vị thế của bot,
+>   vẫn được đọc mỗi lượt (chỉ đọc vị thế, không đọc thị trường, không hành động); cặp đang
+>   giữ mà lần đọc không cho thấy đúng vị thế đó (ý định khác, thêm ý định, không khớp, đọc
+>   hỏng hay `unknown`) thì đếm theo lần đọc. Cặp chiếm chỗ mà không gì nêu được cỡ thì
+>   **dừng mọi lệnh mở mới** thay vì đoán — một lần đọc chập chờn trên cặp đang giữ chặn
+>   lệnh mở của đúng lượt đó, không chặn lệnh thoát hay KILL; lý do BỎ QUA nêu từng cặp chặn
+>   cùng trạng thái, thẻ vốn ghi "CHƯA RÕ VỐN" (`unsized_pairs`) vì con số cam kết khi đó
+>   chỉ là mức sàn.
+> - **Dừng bảo vệ theo cặp**: lệch, bằng chứng không khớp, hai ý định, 3 lần đọc/3 lần
+>   giao dịch hỏng, báo động mở/đóng, lịch sử funding mù 30 phút, tiếp nhận thiếu thời
+>   điểm mở → CHỈ cặp đó dừng, các cặp khác chạy tiếp. Xác nhận một cặp phải nêu đúng
+>   số DỪNG BẢO VỆ trang đã hiển thị (`halt_seq`); xác nhận để cặp ở TẠM DỪNG. DỪNG cả
+>   bot cũng phải nêu `halt_seq`; BẬT bị từ chối khi còn cặp dừng bảo vệ. Vị thế của bot
+>   trên cặp KHÔNG được chọn vẫn được tiếp nhận và quản lý tới lúc thoát (không vào lại).
+> - **Người vận hành**: `POST /api/autotrade/start` `{symbols, notional_quote,
+>   min_net_apr_pct, max_hold_epochs, max_concurrent_positions, total_capital_cap_quote,
+>   pair_overrides}` (hộp xác nhận); `/stop` `{close_now, halt_seq}`; `/kill` (hộp xác
+>   nhận, đóng MỌI cặp của bot, lần lượt); **`/close-pair`** `{symbol}` (hộp xác nhận —
+>   đóng một cặp và TẠM DỪNG nó, cặp khác chạy tiếp); **`/pair`** `{symbol, action:
+>   pause|resume|ack, halt_seq}`, header phải đúng `autotrade-pair-<action>` — resume
+>   và ack đi sau hộp xác nhận vì dẫn tới lệnh; **`GET /api/autotrade/pnl`**.
+> - **Trang lãi/lỗ** (`pnl.go`): *Đã chốt* = funding sàn trả − phí sàn thu bằng quote +
+>   trôi giá hai chân theo GIÁ KHỚP (trượt giá đã nằm trong đó — không trừ lần hai);
+>   *Tạm tính* = trôi giá theo giá giữa lượt quét gần nhất (≤ 2 phút) + dòng funding sàn
+>   đã ghi có; *ROI* = Tổng ÷ vốn cao nhất các cặp từng buộc CÙNG LÚC (từ thời điểm
+>   mở/đóng). Cột funding = từng mốc settle sàn thực trả (7 ngày, dòng thuộc đúng một ý
+>   định của bot). Đường vốn: bậc thang từ file ý định trước mẫu đầu, rồi mẫu mỗi phút
+>   trong bộ nhớ; một lần đọc thiếu định giá cặp mở không thành điểm.
+> - **Tab Auto-Trader** (`static/js/autotrade.js` CHỈ VẼ, không gửi gì; mọi lệnh vẫn ở
+>   `execution.js`): 5 thẻ KPI; hai biểu đồ Lightweight Charts dùng chung trục thời gian
+>   (đường vốn baseline dạng bậc + cột funding); bảng vị thế theo cặp với [ĐÓNG CẶP NÀY];
+>   radar xếp theo Net APR với bốn điều kiện F/A/D/T (đọc theo `CheckView.Key`), trạng
+>   thái, công tắc từng cặp và [XÁC NHẬN]; lịch sử lệnh lọc theo cặp có dòng tổng; nhật
+>   ký 8 dòng `[KIND SYMBOL]`. Dưới 1200 px bảng vị thế và radar thành thẻ.
+>
+> ### Chỗ khác đặc tả, và vì sao
+>
+> 1. **"Tổng Realized PnL" không phải `realized_quote`**: RealizedQuote của execution
+>    trừ trượt giá và để trôi giá ra ngoài; cộng thêm trôi giá theo giá khớp sẽ đếm trượt
+>    hai lần. Con số dùng là funding − phí + trôi giá theo giá khớp, nhãn nói rõ gồm gì,
+>    thiếu gì (quy tắc 2). Tổng có phần mở ghi "tạm lãi/tạm lỗ".
+> 2. **ROI trên vốn cao nhất cùng lúc, không trên hạn mức**: tử số là mọi cặp của bot
+>    trong thư mục ý định; chia cho hạn mức hiện tại thì đổi hạn mức là đổi lợi suất cũ.
+> 3. **"Vốn đang triển khai" = spot trọn notional + ký quỹ perp** (1,5× notional), không
+>    phải tổng notional như ví dụ $195 của đặc tả (bộ nhớ: mẫu số là vốn).
+> 4. **Màu lãi #14b8a6 thay #10b981**: cặp #10b981/#f43f5e chỉ cách ΔE 5,6 với người mù
+>    màu đỏ-lục (dưới sàn 6, validator dataviz); #14b8a6 cách 10,1. Mọi số còn mang dấu
+>    và chữ, đường vốn có mốc 0.
+> 5. **Hai biểu đồ, không một biểu đồ hai trục** (đường vốn là tổng luỹ kế, cột là dòng
+>    tiền một mốc — hai thang khác nhau).
+> 6. **Vị thế của người vận hành chiếm chỗ**: số cặp tối đa giới hạn cái tài khoản giữ;
+>    bot không biết vốn đó là thừa.
+> 7. **Cột "Perp Mark" là giá giữa sổ perp** của lượt quét, không phải mark price.
+> 8. **`-symbols` mặc định thành BTC,ETH,SOL,BNB** (đã kiểm cả hai testnet liệt kê, min
+>    notional 50/20/5/5); `-autotrade` bật trên cả bốn.
+>
+> ### Nghiệm thu 2026-09-15
+>
+> | tiêu chí | kết quả |
+> |---|---|
+> | 1. `go test -count=1 -race ./...` | xanh, **37 package ok, exit 0**; `gofmt`, `go vet` sạch. `cmd/execportal/autotrade` 97 hàm test (phủ 93,1%) chạy trên máy `execution` THẬT với `brokertest` MỖI SYMBOL một cặp sàn giả; `cmd/execportal` phủ 80,5% |
+> | 1a. xếp hạng Net APR | `TestPortfolio_RanksEligiblePairsByNetAPRAndOpensInThatOrder` (SOL→ETH mở theo thứ tự, BTC BỎ QUA "2/2 chỗ", BNB funding âm không xếp), hoà → theo symbol |
+> | 1b. MaxConcurrentPositions | `…MaxConcurrentHoldsBackABetterFourthUntilOneCloses`: đủ 3 cặp, BNB Net APR cao nhất vẫn BỎ QUA; ETH thoát → BNB mở trong CÙNG lượt, sau lệnh thoát; cộng: hạn mức vốn, đọc hỏng/`unknown`/đã xác nhận lệch/vị thế người vận hành/cặp dừng bảo vệ phẳng mà người vận hành mở — đều giữ chỗ, sàn không bao giờ vượt giới hạn |
+> | 1c. đóng một cặp | `…ClosingOnePairLeavesTheOthersRunning`: ETH phẳng + TẠM DỪNG, BTC/SOL còn phòng hộ và vẫn được quản lý thoát, bot vẫn chạy, ETH không bị vào lại; resume → mở lại |
+> | 2. giao diện | headless Chrome qua DevTools, cú bấm chuột THẬT: xác nhận bằng script → **0** request ghi (ba lần); **0** lỗi console/CSP/HTTP ở 1440 px, 1024 px và 400 px; ở 1440 px ba bảng không tràn; ở 1024 px bảng vị thế và radar thành thẻ (không tràn), lịch sử lệnh cuộn trong khung của nó |
+> | 3. chạy thật trên testnet, lượt 1 | dừng portal cũ (bot DỪNG BẢO VỆ giữ `abtcusdt-20260915-071551-693`) theo quyết định người vận hành; BẬT 4 cặp qua trang → **4,4 s**: tiếp nhận BTC cũ + **tự mở `aethusdt-20260915-094847-844`** (0,026 ETH mỗi chân, lệch 0, cửa sổ trần 355 ms, Net APR +6,31%); SOL/BNB không đủ (funding hình thành ≤ 0). [ĐÓNG CẶP NÀY] ETH → **5,66 s** PHẲNG (RealizedQuote −0,05281264), BTC giữ nguyên, bot chạy, ETH TẠM DỪNG không vào lại sau 20 s. KILL → **6,69 s** "4/4 symbol phẳng", BTC nhận funding thật **+0,00615125** qua 1 mốc; XÁC NHẬN (halt_seq 1) → TẮT |
+> | 3. lượt 2 (sau sửa bố cục) và 3 (binary cuối) | ETH (+6,26% / +6,31%) mở TRƯỚC BTC (+6,15% / +6,17%) — xếp hạng thấy được trên sàn thật; cửa sổ trần 444/399 và 472/972 ms, lệch 0; **tắt portal giữa lúc giữ 2 cặp → BẬT lại tiếp nhận cả hai sau 2,47 s**; KILL 9,7 s và 10,7 s, bốn symbol phẳng; 0 lỗi console |
+> | 3. đối chiếu sàn | `execcheck -status` cho cả 6 ý định bot đã mở/tiếp nhận: 4 lệnh FILLED mỗi ý định, perp 0, **0 lệnh mở** hai sàn, BTC spot và ETH spot về đúng **1,00000000**, "cache và sàn khớp nhau"; số trang lãi/lỗ khớp tay từ giá khớp (ETH: trôi giá −0,04602, kết quả −0,09753) |
+> | 4. cổng 3.5 | PID 55475 sống suốt phiên (3 ngày chạy), vẫn nghe `*:8085` |
+> | 5. binary sau review vòng 4–7 | ba lượt chạy thật ở trên dùng binary sau vòng 3; các sửa vòng 4–7 chỉ đổi cách đếm vốn của cặp dừng bảo vệ/chưa rõ cỡ — không dựng được an toàn trên tài khoản thật (cần vị thế perp trần của người, lệnh mở báo động), nên được nghiệm thu bằng test + đột biến. Binary cuối triển khai lại trên 8087 với bot TẮT: bốn symbol `both_flat`, perp 0, lệch 0 đọc từ sàn; trang ở 1440/1024 px **0** lệnh ghi, **0** lỗi console/CSP/HTTP, không tràn ngang; `go test -count=1 -race ./...` **37 package ok**; cổng 3.5 vẫn sống |
+>
+> ### Review
+>
+> Các vòng trong ngữ cảnh sạch (tính đúng; bảo mật), đột biến chạy trên bản sao.
+> **Vòng 1** — bảo mật: 0 chặn, 1 lớn (guard chỉ ghim AI được gọi `p.autotrade`, không
+> ghim GỌI GÌ: handler đọc PnL gọi được `PairControl(resume)`, sampler dựng được engine
+> thứ hai — 7 đột biến sống) → ghim từng phương thức theo người gọi, một chỗ dựng engine,
+> test "mọi lệnh dẫn tới lệnh đi sau hộp xác nhận", cấm tra cứu động trong JS. Tính
+> đúng: **1 chặn** — giới hạn chỉ đếm niềm tin của máy: đọc hỏng/`unknown` tính là 0 chỗ
+> (tái hiện 4 cặp trên sàn với giới hạn 3), xác nhận một cặp lệch trả chỗ (3 symbol với
+> giới hạn 2); 1 lớn — BẬT xoá DỪNG BẢO VỆ phát sinh lúc bot tắt; PnL chia cho hạn mức,
+> cộng số "chưa đọc" như 0, bỏ lần mở hỏng. **Vòng 2**: 1 lớn MỚI do chính bản sửa —
+> lệnh mở bị từ chối được coi là đã chứng minh phẳng (portal từ chối đúng khi KHÔNG
+> phẳng → vượt giới hạn); cặp hồi phục/thăm dò không được đọc lại; lời báo "3/3 chỗ"
+> không nêu ai chiếm. **Vòng 3**: 0 chặn, 2 lớn — execution ghi lần gỡ và báo động với
+> khối lượng 0 nên PnL bỏ sót báo động; vị thế giữ lại không đọc được bị tính vốn theo
+> notional mới (vượt hạn mức vốn) → dừng lệnh mở khi không nói được vốn; nhỏ: đóng cặp
+> kết thúc hồi phục, cặp dừng bảo vệ phẳng không được đọc lại. **Vòng 4**: 1 chặn — cặp
+> DỪNG BẢO VỆ vẫn bị tính vốn theo notional cấu hình, vì mọi lần dừng đều mang cờ "có thể
+> còn giữ" (tái hiện: BTC giữ 500 đọc hỏng 3 lượt → dừng; đọc lại `both_open` 500 lúc vẫn
+> dừng → tính 97,5 và ETH mở dưới hạn mức 300) → một hàm `placeLocked` trả vốn KÈM "có ai
+> nêu cỡ không", vốn đã gửi chỉ ghi ở lần mở báo động; nhỏ: xác nhận cặp rơi vào giữa lần
+> đọc làm lần đọc lập cho cặp dừng bảo vệ được tiếp nhận; đồng bộ đồng hồ dùng chung giữ
+> DỪNG/KILL tới 20 s → hạn 5 s và người gọi thôi chờ theo context của mình; lý do BỎ QUA
+> nói "sàn chưa đọc được" cả khi đọc được; khử trùng cảnh báo theo loại chưa có test.
+> **Vòng 5**: 1 chặn cùng lớp — cặp DỪNG BẢO VỆ còn tên vị thế của bot được đếm theo vị
+> thế GHI và không bao giờ được đọc lại (tái hiện bằng chính các nút của portal: bot giữ
+> BTC 65, người đóng tay rồi mở BTC 500 của mình → lượt dừng tính 97,5, ETH rồi SOL mở
+> dưới hạn mức 300) → mọi cặp dừng đều được đọc, lần đọc trái vị thế thì đếm theo lần đọc;
+> 1 quan trọng — `evidence_conflict` bị tính theo notional của một ý định dù perp dư không
+> thuộc ý định nào; nhỏ: lệnh mở bị từ chối/portal bận vẫn cho lệnh mở kế tiếp cùng lượt
+> đi, tiếp nhận thiếu notional đoán theo cấu hình, con số vốn cam kết không nói phần tạm
+> tính. **Vòng 6**: 1 chặn — vốn bot tự ghi (vị thế giữ / lệnh mở báo động) vẫn được coi là
+> một cỡ cả khi lần đọc thấy chân mà không một ý định có notional nào giải thích (ý định thứ
+> hai mở bằng `execcheck -open`, vốn không kiểm phẳng) → ETH/SOL mở dưới hạn mức 300 bên
+> cạnh 1.042,5 thật; 1 quan trọng — cặp đang giữ đọc hỏng/`unknown` được tính theo vị thế
+> ghi → chọn luật CHẶT: chỉ lần đọc nêu cỡ (bỏ hẳn cờ vốn-đã-gửi của vòng 4, thừa khi bot
+> chỉ gửi notional cấu hình); nhỏ: lệnh mở bị từ chối đóng dấu giờ như một lần đọc, lệnh
+> bị bỏ giữ hạng/lý do cũ, bận lúc thoát không dừng lượt, hai lỗ test. Mỗi phát hiện có test
+> tái hiện. **Vòng 7: ĐẠT, 0 chặn** — duyệt từng tổ hợp trạng thái × lần đọc không còn chỗ
+> nào được tính dưới cái sàn có thể giữ; 2 lỗ test quan trọng đã lấp trước khi triển khai
+> (lần mở báo động bị giữ đúng cỡ đã gửi trong CHÍNH lượt đó; lệnh thoát gặp portal bận
+> quay về IN_POSITION và đóng ở lượt sau) cùng một chốt "nhiều ý định không nêu cỡ". Mọi
+> đột biến tương ứng đều đỏ (16 + 10 + 7 + 9 + 9 + 8 + 12 + 3). Trong lúc chạy thật tìm thêm:
+> cảnh báo "vượt tối đa" sai lúc tiếp nhận (các cặp chưa phán trong lượt) và ba bảng tràn
+> ở 1440/1024 px — đã sửa và chạy thật lại.
+>
+> ### Nợ có tên
+>
+> - 🔴 (từ 4.5c) JS feed và thư viện biểu đồ cùng origin với API lệnh — nay gồm cả
+>   `autotrade-close-pair` và `autotrade-pair-*`; tách trước 4.6.
+> - ~~**Lối thoát "một mốc ≤ 0"** vẫn là luật 3.2 gây churn (nợ của 4.5d, nay nhân theo số cặp).~~
+>   **Đã trả 2026-09-16** — xem "Công cụ vận hành 4.5f": mặc định nay là sàn giữ khấu hao
+>   phí 6 mốc cộng hysteresis 2 mốc ≤ −2,0 bps. `MinHoldEpochs 0` dựng lại luật cũ nguyên vẹn.
+> - **Một symbol mà sàn không nêu được cỡ** — đọc hỏng kéo dài, file ý định hỏng, vị thế
+>   perp trần của người (0 ý định), kể cả trên cặp NGOÀI danh sách vào lệnh — giữ một chỗ
+>   và dừng MỌI lệnh mở mới; xác nhận không gỡ được. An toàn và hiện rõ (radar "CHƯA
+>   PHẲNG"/BỎ QUA nêu từng cặp); xử lý bằng làm phẳng/sửa file hoặc bỏ symbol khỏi
+>   `-symbols` (LÀM PHẲNG theo ý định không gỡ được perp trần — cần đóng tay trên sàn hoặc
+>   khởi động lại portal không có symbol đó). Định cỡ vị thế trần từ sàn (số lượng × giá)
+>   chưa làm; một lần `unknown` thoáng qua trên một cặp phẳng, hay một lần portal từ chối
+>   vì lý do không liên quan tới phẳng, cũng chặn lệnh mở tới lần đọc sau.
+> - **KILL ra quyết định qua bức tường nửa ngân sách đọc**: trong phút đã dùng quá nửa
+>   weight, KILL đọc `unknown` và không đóng gì (có từ trước; bốn symbol làm dễ gặp hơn).
+>   Ước lượng tải đọc thường ~600 weight/phút futures, xa trần 3.000.
+> - Mẫu đường vốn nằm trong bộ nhớ, mất khi portal tắt; file ý định không phân biệt phí/
+>   trôi giá "chưa đọc" với 0 thật (hàng được đánh dấu), không ghi chi phí lần mở hỏng.
+> - `listStates` đọc mọi file ý định ở mỗi lần đọc vị thế của mỗi cặp mỗi lượt; thư mục
+>   lớn dần.
+> - Cặp trong danh sách đang TẠM DỪNG mà sàn báo lệch thì chỉ cảnh báo và giữ chỗ, không
+>   DỪNG BẢO VỆ; hạn đọc 30 s theo cặp chưa có test; trục thời gian Lightweight Charts
+>   cách đều theo điểm, không theo thời gian thực.
+
+
+#### Công cụ vận hành 4.5f — Bộ luật Hội tụ Basis & Khấu hao Phí cho Auto-Trader — 🟡 CHƯA NGHIỆM THU TRÊN TESTNET (2026-09-16, Q18)
+
+> **Không phải một bước mới của lộ trình** — GĐ 4 vẫn 5/6, 4.6 vẫn sau phán quyết 3.5.
+> Người vận hành giao đặc tả `docs/AUTOTRADE-CONVERGENCE-HOLDING-STRATEGY.md` và báo cáo
+> định lượng `docs/reports/autotrade-params-2026-09-16.html`: thay bộ luật vào/ra của bot
+> testnet bằng bộ "không bao giờ đóng non để chịu lỗ phí — tận dụng độ co basis để chốt
+> lời sớm và dùng sàn giữ tối thiểu để khấu hao phí". Không giới hạn nào của Q18 đổi: vẫn
+> chỉ testnet, vẫn quyết-không-thực-thi, mọi lệnh vẫn qua `openAs`/`close` dưới `writeMu`,
+> mỗi lúc MỘT lệnh, không bao giờ tự làm phẳng. Không đụng `cmd/scanner`, không SQLite,
+> không dependency mới.
+>
+> ### Bài toán bộ luật cũ không giải
+>
+> Một vị thế hedged **mặc định âm ngay lúc khớp**: phí vào + phí ra dự kiến + trượt giá
+> hai chiều ≈ 25–35 bps trên mainnet, ~8 bps trên testnet này (spot 0, futures taker 4
+> bps, đo 2026-09-15). Một mốc funding ~0,35 bps/8h trả lại vài phần trăm của khoản đó,
+> nên **đóng sau vài giờ là hiện thực hoá trọn vẹn chi phí** để né một khoản âm nhỏ hơn
+> nó hàng trăm lần. Luật 3.2 của 4.5d làm đúng như vậy — thoát ở mốc settle ≤ 0 đầu tiên
+> — và nợ đó đã có tên từ 4.5d, nhân theo số cặp ở 4.5e. Đây là chỗ trả nó.
+>
+> Vế thứ hai là nguồn tiền bộ luật cũ không nhìn: lãi/lỗ của một cặp gồm funding **và**
+> `Basis_vào − Basis_ra`. Vào lúc perp đắt hơn spot rồi đóng khi khoảng cách co lại là
+> một khoản thu trả hết chi phí phí mà không phải chờ 20–80 mốc settle; vào lúc basis
+> lõm là trả trước đúng khoản đó.
+>
+> ### Năm trụ cột, và chỗ mỗi cái được quyết
+>
+> - **Trụ 1 — lọc basis lúc vào** (`Config.MinEntryBasisBps`, mặc định **+5,0 bps** trên
+>   testnet, đặc tả khuyến nghị +10,0 trên mainnet). `assessEntry` thêm điều kiện
+>   `CheckEntryBasis`: basis perp-trên-spot của lượt đọc phải ≥ ngưỡng. Không đo được hai
+>   giá giữa thì KHÔNG ĐÁNH GIÁ, và một điều kiện vào không đánh giá được thì không đạt.
+>   0 nhận basis phẳng, số âm nhận chiết khấu — đều là lựa chọn, đều không phải bản ship.
+> - **Trụ 2 — sàn giữ khấu hao phí** (`Config.MinHoldEpochs`, mặc định **6 mốc ≈ 48 h**).
+>   Trong sàn, lối thoát funding bị KHOÁ dù mốc settle âm bao nhiêu. **Chốt lời và cắt lỗ
+>   basis KHÔNG bị khoá** — sàn mua thời gian cho funding khấu hao một chi phí, nó không
+>   phải lời hứa giữ qua một phòng hộ đã gãy. 0 khôi phục nguyên luật 3.2, ghim bằng test.
+> - **Trụ 3 — chốt lời khi basis hội tụ** (`Config.TargetTakeProfitNetPct`, mặc định
+>   **+0,50%** trên VỐN cặp khoá; đặc tả khuyến nghị +0,80% trên mainnet). Mỗi lượt quét,
+>   `priceHolding` định giá kết quả chạy của cặp đang giữ:
+>   `funding + trôi giá − phí vào − chi phí đóng ước tính`. Đạt ngưỡng → đóng ngay, kể cả
+>   trong sàn giữ. 0 = tắt: ngưỡng 0 sẽ đóng ở lần đọc đầu tiên vừa qua hoà vốn, đúng cái
+>   churn trụ 2 sinh ra để chặn.
+> - **Trụ 4 — van thoát có trễ** (`Config.ExitNegativeFundingRateBps` **−2,0**,
+>   `ExitNegativeConsecutiveEpochs` **2**; `MaxBasisWidenBps` **100 bps**). Qua sàn giữ,
+>   cặp chỉ ra khi có ĐỦ SỐ mốc LIÊN TIẾP ≤ ngưỡng. Trên kho 3 năm, một đợt âm trung vị
+>   tốn 0,3 bps so với một vòng phí 30 bps (CLAUDE.md, bước 3.3), nên một mốc −0,1 bps là
+>   nhiễu. 100 bps là gãy CẤU TRÚC, không phải sổ mỏng: basis đo được trên testnet dịch
+>   hàng chục bps giữa hai lượt quét, một chốt ở 30 bps sẽ nổ vì nhiễu và trả một vòng phí
+>   cho nó.
+> - **Trụ 5 — `CloseReasonVI`**. Mọi lệnh đóng ghi LÝ DO vào file ý định
+>   (`.paper/exec/<id>.json`), và trang lãi/lỗ in nó dưới nhãn ĐÃ ĐÓNG. Câu của bot là câu
+>   `assessExit` viết, nguyên văn; câu của người vận hành là "Dừng bot: Stop & Close",
+>   "Kill bot khẩn cấp", "Người vận hành đóng qua nút Đóng vị thế", "Đóng thủ công bởi
+>   người vận hành". Một cặp đã đóng không còn trên sàn — file ý định là bản ghi DUY NHẤT
+>   của việc vì sao nó đóng.
+>
+> ### Quyết định trong lúc làm, và vì sao
+>
+> 1. **`priceHolding` là ƯỚC TÍNH và mang nhãn đi cùng con số** (quy tắc 2): funding suy
+>    ra từ RATE sàn công bố nhân notional chân perp LÚC VÀO, **không phải** các dòng
+>    `FUNDING_FEE` sàn đã trả (mark ở mốc cũ không được công bố lại — đo 2026-09-13, lệch
+>    −0,0228%); chi phí đóng là ước tính trên sổ HIỆN TẠI; năm khoản `internal/strategy`
+>    loại trừ vẫn bị loại trừ. `cmd/paperledger` và trang PnL đọc dòng funding thật; cái
+>    này không, và không được đọc như thể có.
+> 2. **Trượt giá lúc vào KHÔNG bị trừ riêng.** Trôi giá đo từ GIÁ KHỚP, không từ giá giữa
+>    lúc quyết định, nên phần nhường cho spread đã nằm trong đó. Trừ thêm lần nữa là đúng
+>    cái đếm hai lần PLAN 4.5e ghi cho `RealizedQuote + drift`. Có test ghim từng số hạng.
+> 3. **Chốt lời từ chối định giá trên sổ cũ; cắt lỗ basis thì không.** Chốt lời là lối ra
+>    DUY NHẤT đóng vị thế để LẤY LỜI, và nó tính từ hai giá giữa: một sổ vài phút tuổi tạo
+>    ra khoản trôi giá thị trường không có, và đóng theo nó là trả một vòng phí thật cho
+>    một khoản lãi tưởng tượng. Ngưỡng là `maxBookAge` (60 s), cùng con số
+>    `strategy.RoundTripCost` dùng cho lối vào, và một sổ đóng dấu Ở TƯƠNG LAI cũng bị từ
+>    chối. Chốt an toàn thì ngược lại: một chốt im lặng khi sổ già đi tệ hơn một chốt hành
+>    động trên giá hơi cũ, nên `CheckExitBasis` giữ nguyên.
+> 4. **Ba núm lên form, ba núm không.** `min_entry_basis_bps`, `min_hold_epochs`,
+>    `target_take_profit_net_pct` là thứ người vận hành chỉnh (và là ba dòng khác nhau
+>    giữa cột testnet và cột mainnet của đặc tả), có ô nhập và `pair_overrides`. Ngưỡng an
+>    toàn — hysteresis, basis giãn, độ sâu, số lỗi — KHÔNG lên form và vẫn do
+>    `TestDefaults_AreTheAuditedSafetyThresholds` ghim.
+> 5. **`Validate` từ chối, không kẹp.** Sàn giữ ≥ trần giữ là một cặp số đọc như thể hợp
+>    tác nhưng khiến lối thoát funding không bao giờ chạy — bị từ chối nêu tên, không chạy.
+>    Ngưỡng rate âm phải ≤ 0 (số dương đọc thành "thoát khi funding dương").
+> 6. **Guard `strategy` mở thêm `EstimateFill`/`FillEstimate`/`Side*`.** Cùng họ số học
+>    với `RoundTripCost` (vốn tự gọi `EstimateFill`), và một cặp đang giữ cần nó THEO
+>    CHÂN: định giá lối ra bằng `RoundTripCost` sẽ định giá luôn hai chân VÀO và từ chối
+>    cả con số khi phía mà lối ra không bao giờ chạm không khớp được. Thứ vẫn bị cấm là mọi
+>    hàm QUYẾT ĐỊNH — `EvaluateEntry`, `EvaluateExit`, `Params`, `Candidate`.
+> 7. **Fixture "một lượt đọc đạt mọi điều kiện" nay phải có basis dương.** `testPerpMid`
+>    = spot + 6 bps ở `autotrade`, `fakePerpMidQuote` ở `cmd/execportal`, dùng nhất quán
+>    cho cả sổ lệnh, giá khớp của sàn giả và giá giữa ý định ghi lại — nên một vị thế vừa
+>    mở có basis lúc vào +6 bps và trôi giá ~0.
+>
+> ### Nghiệm thu 2026-09-16 — **MỘT PHẦN**
+>
+> | tiêu chí | kết quả |
+> |---|---|
+> | 1. `go test -count=1 -race ./...` | xanh, **37 package ok, exit 0**; `gofmt -l .` không in gì; `go vet ./...` sạch |
+> | 2. bốn test đặc tả nêu đích danh | `TestExecportal_IntentStateHasExeccheckShape`, `TestAssessExit`, `TestEngine_ClosesWhenTheBasisWidens`, `TestDefaults_AreTheAuditedSafetyThresholds` — ĐẠT |
+> | 3. trụ 1 | `TestAssessEntry_RefusesAnEntryBelowTheBasisFloor` (5 mức basis, và "không đo được" thì không đạt), `TestEngine_DoesNotOpenOnAFlatBasisAndOpensWhenThePremiumReturns` (basis phẳng → 0 lệnh, basis lõm −38 bps → 0 lệnh, basis +6 bps → mở, phòng hộ đọc từ sàn giả) |
+> | 4. trụ 2 | `TestAssessExit_TheAmortizationFloorHoldsThroughNegativeSettlements` (5 mốc −10 bps trong sàn 6 → không ra; mốc thứ 6 → ra; basis nổ TRONG sàn → vẫn ra), `TestEngine_TheAmortizationFloorSendsNoOrderOnASingleCharge` (mốc −0,5 bps → `closes` không đổi, cặp vẫn hedged trên sàn giả) |
+> | 5. trụ 3 | `TestAssessExit_TakesProfitWhenTheBasisConverges` (thị trường đứng yên → âm bằng phí, giữ; perp rơi 1% → ra, câu đóng ĐÚNG TỪNG CHỮ; ngưỡng 0 → không ra; phí chưa đọc → không định giá, không ra; **sổ quá 60 s và sổ ở tương lai → không ra, còn cắt lỗ basis trên CÙNG lượt đọc đó vẫn ra**), `TestPriceHolding_CountsEachTermOnceAndEntrySlippageOnlyThroughTheDrift` (từng số hạng tính tay, 7 đầu vào thiếu đều TỪ CHỐI thay vì định giá bằng 0), `TestEngine_TakesProfitOnConvergenceAndNamesTheReason` (câu tới `Trader.Close`, không phải câu của cắt lỗ basis) |
+> | 6. trụ 4 | `TestAssessExit_NegativeFundingNeedsARunPastTheFloor`: 1 mốc −3 bps không ra, 2 mốc liên tiếp ra, 2 mốc bị cắt quãng không ra, 3 mốc −0,1 bps không ra; hai ngưỡng là THAM SỐ (1 mốc / −50 bps đổi kết quả); `MinHoldEpochs 0` vẫn là luật 3.2 nguyên vẹn |
+> | 7. trụ 5 | `TestActions_ACloseRecordsItsReasonAndThePageReadsItBack`: đóng không nêu lý do → "Đóng thủ công bởi người vận hành"; đóng nêu lý do → nguyên văn trong file ý định; trang lãi/lỗ in đúng câu đó |
+> | 8. API | `TestAutotradeAPI_StartCarriesTheConvergenceKnobs` (ba núm tới run, `pair_overrides` chỉ thay cái nó nêu, ngưỡng an toàn không dịch) + 5 thân bị từ chối mới trong `TestAutotradeAPI_EveryWriteIsBehindTheWalls` |
+> | 9. giao diện, tĩnh | `TestUI_HasNothingTheCSPWouldRefuse` ĐẠT (không inline script/style/handler, không script ngoài origin, không `innerHTML`); **test mới `TestUI_EveryIdTheScriptsLookUpIsInTheMarkup`** — mọi `$("…")` trong `static/js/` có phần tử tương ứng trong `index.html`, vì `$` là `getElementById` và một id thiếu là `TypeError` giữa lúc vẽ; `TestUI_OnlyTheExecutionTabWrites` vẫn ĐẠT (`autotrade.js` không gửi gì) |
+> | 10. **giao diện, chạy thật** | ❌ **CHƯA LÀM** — máy phiên này không có Chrome/Chromium, nên không dựng lại được cú bấm chuột headless của 4.5d/4.5e. Chưa có bằng chứng 0 lỗi console ở 1440/1024/400 px cho ba ô nhập mới, cột "Chốt lời / Sàn giữ" và huy hiệu **B** |
+> | 11. **chạy thật trên testnet** | ❌ **CHƯA LÀM** — một `cmd/execportal` khác đang nghe 127.0.0.1:8087 suốt phiên và không bị đụng tới. Chưa có: bot mở một cặp dưới luật basis mới, giữ qua một mốc âm trong sàn, hay chốt lời hội tụ trên sàn thật |
+>
+> **Chưa được coi là ✅.** Tiêu chí 10 và 11 là hai tiêu chí 4.5d và 4.5e phải đạt mới
+> được đánh dấu; cho tới khi chạy lại trên testnet qua trang, đây là mã đã kiểm bằng test
+> chứ chưa phải một bộ luật đã chạy.
+>
+> ### Nợ có tên
+>
+> - 🔴 (từ 4.5c) JS feed và thư viện biểu đồ cùng origin với API lệnh — chưa đổi; tách
+>   trước 4.6.
+> - ✅ **Nợ "một mốc ≤ 0" của 4.5d/4.5e đã trả**: mặc định nay là sàn giữ 6 mốc cộng
+>   hysteresis 2 mốc ≤ −2,0 bps. Luật cũ vẫn dựng lại được bằng `MinHoldEpochs 0` và vẫn
+>   có test — nó không bị xoá, nó thôi là mặc định.
+> - **Funding trong `priceHolding` là ước tính, không phải số sàn trả.** Đọc dòng
+>   `FUNDING_FEE` mỗi lượt quét cho mỗi cặp là thêm một lần gọi ký mỗi 10 s mỗi cặp;
+>   chưa làm. Hệ quả: ngưỡng chốt lời có thể lệch theo đúng phần chênh mark (đo được
+>   −0,0228% ở 4.4b/4.5 trên một mốc).
+> - **Chi phí đóng định giá trên sổ của lượt quét, không phải sổ lúc lệnh tới sàn.** Cùng
+>   giới hạn `internal/strategy` đã nêu tên ("sổ lệnh lúc THOÁT"); `execution` vẫn định
+>   giá lại ngay trước khi đặt và vẫn từ chối nếu sổ đã doãng.
+> - **Chốt lời chưa có sàn giữ tối thiểu của riêng nó.** Về lý thuyết một cú dịch basis
+>   đủ lớn ngay lượt quét sau lúc mở sẽ chốt lời — khoản lãi là thật và đã trừ phí hai
+>   chiều, nên đây là hành vi đúng theo đặc tả, nhưng nó chưa bao giờ xảy ra trên sàn
+>   thật ở đây và chưa được đo.
+> - **Ngưỡng testnet ≠ ngưỡng mainnet.** Bản ship là cột testnet của đặc tả §3. Cột
+>   mainnet (+10 bps vào, +0,80% chốt lời) vẫn là tài liệu tới 4.6 vì vòng phí mainnet
+>   25–35 bps chứ không phải ~8.
+
 
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
@@ -5577,7 +5894,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

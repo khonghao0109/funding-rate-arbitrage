@@ -242,6 +242,7 @@ type state struct {
 	SlippageQuote       float64 `json:"slippage_quote"`
 	SettlementsCounted  int     `json:"settlements_counted"`
 	PairPriceDriftQuote float64 `json:"pair_price_drift_quote"`
+	CloseReasonVI       string  `json:"close_reason_vi,omitempty"`
 	NoteVI              string  `json:"note_vi"`
 }
 

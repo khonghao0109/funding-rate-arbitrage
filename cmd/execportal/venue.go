@@ -334,6 +334,14 @@ func (c *ttlCache[T]) get(key string, ttl time.Duration, load func() (T, error))
 	return e.value, e.readAt, e.err
 }
 
+// forget drops one key. A load already in flight still answers the callers
+// waiting on it.
+func (c *ttlCache[T]) forget(key string) {
+	c.entriesMu.Lock()
+	delete(c.entries, key)
+	c.entriesMu.Unlock()
+}
+
 // invalidate forgets everything, so the next read after an order goes to the
 // venue. A load already in flight still answers the callers waiting on it.
 func (c *ttlCache[T]) invalidate() {

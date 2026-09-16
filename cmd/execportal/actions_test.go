@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -50,11 +51,18 @@ type fakeVenue struct {
 
 	feesErr      error
 	fundingRates []binancebroker.FundingRate
+	// fundingBySymbol, when it names a symbol, answers that symbol's history
+	// instead of fundingRates — so a cache that served one symbol's rows for
+	// another would be seen.
+	fundingBySymbol map[string][]binancebroker.FundingRate
 	// fundingPageRows, when set, answers at most this many of the OLDEST rows
 	// in the window, the way the venue answers a window wider than its page.
 	fundingPageRows int
 	// fundingIgnoresStart answers as if startTime had not been sent.
 	fundingIgnoresStart bool
+	// fundingCalls counts FundingRateHistory reads; the engine reads several
+	// symbols at once, so it is atomic.
+	fundingCalls atomic.Int64
 }
 
 func (f *fakeVenue) Market() broker.Market { return f.market }
@@ -83,8 +91,13 @@ func (f *fakeVenue) CommissionRates(_ context.Context, symbol string) (binancebr
 
 // FundingRateHistory answers whatever the test set, filtered to the window.
 func (f *fakeVenue) FundingRateHistory(_ context.Context, symbol string, startMs, endMs int64) ([]binancebroker.FundingRate, error) {
+	f.fundingCalls.Add(1)
 	var out []binancebroker.FundingRate
-	for _, r := range f.fundingRates {
+	rates := f.fundingRates
+	if own, ok := f.fundingBySymbol[symbol]; ok {
+		rates = own
+	}
+	for _, r := range rates {
 		if (startMs == 0 || f.fundingIgnoresStart || r.SettledAtMs >= startMs) && (endMs == 0 || r.SettledAtMs <= endMs) {
 			r.Symbol = symbol
 			out = append(out, r)
@@ -100,14 +113,23 @@ var _ perpVenue = (*fakeVenue)(nil)
 
 const fakeMidQuote = 77_000.0
 
-func fakeBook() exchanges.DepthBook {
+// fakePerpMidQuote is the PERP book, trading above the spot by the basis the
+// auto-trader's shipped Config.MinEntryBasisBps asks for: a fixture standing
+// for a normal market has to clear that floor or the bot never enters (PLAN
+// "Công cụ vận hành 4.5f"). The manual path does not read it and is unmoved.
+const fakePerpBasisBps = 6.0
+const fakePerpMidQuote = fakeMidQuote * (1 + fakePerpBasisBps/10_000)
+
+func fakeBookAt(midQuote float64) exchanges.DepthBook {
 	b := exchanges.DepthBook{Symbol: "BTCUSDT", Source: "test"}
 	for i := 0; i < 30; i++ {
-		b.Bids = append(b.Bids, exchanges.DepthLevel{PriceQuote: fakeMidQuote - 0.05 - float64(i)*5, QtyNative: 5})
-		b.Asks = append(b.Asks, exchanges.DepthLevel{PriceQuote: fakeMidQuote + 0.05 + float64(i)*5, QtyNative: 5})
+		b.Bids = append(b.Bids, exchanges.DepthLevel{PriceQuote: midQuote - 0.05 - float64(i)*5, QtyNative: 5})
+		b.Asks = append(b.Asks, exchanges.DepthLevel{PriceQuote: midQuote + 0.05 + float64(i)*5, QtyNative: 5})
 	}
 	return b
 }
+
+func fakeBook() exchanges.DepthBook { return fakeBookAt(fakeMidQuote) }
 
 func newFakeVenue(t *testing.T, market broker.Market, rules exchanges.Instrument) *fakeVenue {
 	t.Helper()
@@ -135,7 +157,8 @@ func fakePortal(t *testing.T) (*portal, *fakeVenue, *fakeVenue) {
 	spot.SetBalance(broker.MarketSpot, broker.Balance{Market: broker.MarketSpot, Asset: "BTC", FreeQtyCoin: 1},
 		broker.Balance{Market: broker.MarketSpot, Asset: "USDT", FreeQtyCoin: 10_000})
 	perp := newFakeVenue(t, broker.MarketFuturesUSDM, perpRulesBTC)
-	perp.SetMarkPrice(broker.MarkPrice{MarkPriceQuote: fakeMidQuote, NextFundingTimeMs: time.Now().Add(time.Hour).UnixMilli()})
+	perp.book = fakeBookAt(fakePerpMidQuote)
+	perp.SetMarkPrice(broker.MarkPrice{MarkPriceQuote: fakePerpMidQuote, NextFundingTimeMs: time.Now().Add(time.Hour).UnixMilli()})
 
 	p := newPortal(markets{spot: spot, perp: perp, spotSourceVI: "test", perpSourceVI: "test"},
 		[]string{"BTCUSDT"}, "127.0.0.1", "8087", execSettings{
@@ -429,5 +452,63 @@ func TestActions_CloseOfANakedSpotLegPointsToReconcile(t *testing.T) {
 	code, c := postJSON[closeView](t, p, "close", "/api/close", closeRequest{Symbol: "BTCUSDT", IntentID: v.IntentID})
 	if code != http.StatusConflict || !strings.Contains(c.ErrorVI, "LÀM PHẲNG") {
 		t.Errorf("close of a naked spot leg = %d %q", code, c.ErrorVI)
+	}
+}
+
+// Trụ cột 5: every close writes WHY into the intent file, and the result page
+// reads it back. The reason is the bot's own sentence when the bot closed, the
+// operator's when a person did, and the file is the only record of it — a
+// closed pair is gone from the venue.
+func TestActions_ACloseRecordsItsReasonAndThePageReadsItBack(t *testing.T) {
+	p, _, _ := fakePortal(t)
+
+	// The page's own close, with no reason given: a person pressed the button.
+	v := openOK(t, p)
+	code, c := postJSON[closeView](t, p, "close", "/api/close", closeRequest{Symbol: "BTCUSDT", IntentID: v.IntentID})
+	if code != http.StatusOK || !c.Flat {
+		t.Fatalf("close = %d %+v", code, c)
+	}
+	st, err := loadState(p.stateDir, v.IntentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.CloseReasonVI != "Đóng thủ công bởi người vận hành" {
+		t.Errorf("a close with no reason = %q", st.CloseReasonVI)
+	}
+
+	// A close that names its reason keeps that one, verbatim: the bot's
+	// take-profit sentence travels from assessExit to this file unchanged.
+	const botReason = "Chốt lời hội tụ Basis: Net PnL +0.62% trên vốn ≥ ngưỡng +0.50%"
+	v = openOK(t, p)
+	code, c = postJSON[closeView](t, p, "close", "/api/close", closeRequest{Symbol: "BTCUSDT", IntentID: v.IntentID, ReasonVI: botReason})
+	if code != http.StatusOK || !c.Flat {
+		t.Fatalf("close = %d %+v", code, c)
+	}
+	if st, _ = loadState(p.stateDir, v.IntentID); st.CloseReasonVI != botReason {
+		t.Errorf("reason = %q, want %q", st.CloseReasonVI, botReason)
+	}
+
+	// And the result page carries it to the history table. That page lists the
+	// BOT's intents, so the record is one of those.
+	const botIntent = "abtcusdt-20260916-000000-001"
+	opened := time.Now().Add(-24 * time.Hour)
+	if err := saveState(p.stateDir, intentState{
+		IntentID: botIntent, Symbol: "BTCUSDT", Outcome: "both_open", NotionalQuote: 65,
+		OpenedAtMs: opened.UnixMilli(), ClosedAtMs: opened.Add(12 * time.Hour).UnixMilli(),
+		PerpFilledQtyCoin: 0.0008, ClosedQtyCoin: 0.0008, CloseReasonVI: botReason,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	status := p.autotrade.Status()
+	status.Portfolio.TotalCapitalCapQuote = 1000
+	pnl := p.buildPnL(context.Background(), status, false)
+	found, listed := "", false
+	for _, tr := range pnl.Trades {
+		if tr.IntentID == botIntent {
+			found, listed = tr.CloseReasonVI, true
+		}
+	}
+	if !listed || found != botReason {
+		t.Errorf("the page shows %q for %s (listed %v), want %q · trades %+v", found, botIntent, listed, botReason, pnl.Trades)
 	}
 }

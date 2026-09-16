@@ -322,10 +322,14 @@ func TestUI_HasNothingTheCSPWouldRefuse(t *testing.T) {
 func TestUI_OnlyTheExecutionTabWrites(t *testing.T) {
 	scripts := uiSources(t, ".js")
 	forbidden := map[string]*regexp.Regexp{
-		"a POST":             regexp.MustCompile(`["'` + "`" + `]POST["'` + "`" + `]|method\s*:`),
-		"the post helper":    regexp.MustCompile(`\bpost\b`),
-		"an order endpoint":  regexp.MustCompile(`/api/(?:open|close|reconcile)|["'` + "`" + `](?:open|close|reconcile)["'` + "`" + `]`),
-		"a raw request":      regexp.MustCompile(`\bfetch\s*\(|XMLHttpRequest|sendBeacon|\bimport\s*\(`),
+		"a POST":          regexp.MustCompile(`["'` + "`" + `]POST["'` + "`" + `]|method\s*:`),
+		"the post helper": regexp.MustCompile(`\bpost\b`),
+		"an order endpoint": regexp.MustCompile(`/api/(?:open|close|reconcile)|["'` + "`" + `](?:open|close|reconcile)["'` + "`" + `]` +
+			`|/api/autotrade/(?:start|stop|kill|close-pair|pair)|autotrade-(?:start|stop|kill|close-pair|pair)`),
+		"a raw request": regexp.MustCompile(`\bfetch\s*\(|XMLHttpRequest|sendBeacon|\bimport\s*\(`),
+		// A name assembled at run time reaches what the patterns above look for
+		// by spelling: window["fe"+"tch"], a namespace import, Reflect.
+		"a dynamic lookup":   regexp.MustCompile(`window\s*\[|\bglobalThis\b|\bimport\s*\*|\bReflect\.|\[\s*["'` + "`" + `](?:api|post|fetch|method)`),
 		"api() with options": regexp.MustCompile(`\bapi\s*\([^()]*,`),
 		"a synthetic press":  regexp.MustCompile(`\.click\s*\(|dispatchEvent\s*\(|requestSubmit|\.submit\s*\(`),
 	}
@@ -333,6 +337,9 @@ func TestUI_OnlyTheExecutionTabWrites(t *testing.T) {
 		"execution.js": {"a POST": true, "the post helper": true, "an order endpoint": true},
 		"core.js":      {"a POST": true, "the post helper": true, "a raw request": true, "api() with options": true},
 	}
+	// The auto-trader's view draws and reads nothing: it may not even hold the
+	// api helper, so a write cannot be assembled in it from pieces.
+	viewOnly := map[string]*regexp.Regexp{"autotrade.js": regexp.MustCompile(`\bapi\b`)}
 	sockets := regexp.MustCompile(`new\s+WebSocket\b`)
 	seenExecution := false
 	for path, js := range scripts {
@@ -348,12 +355,66 @@ func TestUI_OnlyTheExecutionTabWrites(t *testing.T) {
 				t.Errorf("%s contains %s near %q — only the Execution tab may write, and no page code presses a button", path, name, js[loc[0]:min(loc[1]+30, len(js))])
 			}
 		}
+		if re, ok := viewOnly[base]; ok {
+			if loc := re.FindStringIndex(js); loc != nil {
+				t.Errorf("%s names the api helper near %q — the auto-trader's view reads and sends nothing", path, js[loc[0]:min(loc[1]+30, len(js))])
+			}
+		}
 		if base != "scanner.js" && sockets.MatchString(js) {
 			t.Errorf("%s opens a WebSocket — only the Scanner tab's relay may", path)
 		}
 	}
 	if !seenExecution {
 		t.Error("execution.js names no order endpoint — the test is not reading the real file")
+	}
+}
+
+// Every write that sends an order — or lets the bot send one — goes out only
+// after the operator confirmed its dialog in the same function: a POST placed
+// before confirmDialog, or in a function that has none, is a click that trades
+// without the second look. The reconcile dry run (apply: false) sends no order
+// and fills that dialog; a stop that keeps the positions and a pair's pause send
+// none and lead to none.
+func TestUI_EveryOrderLeadingWriteFollowsItsDialog(t *testing.T) {
+	blob, err := os.ReadFile(filepath.Join(staticDir, "js", "execution.js"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(blob)
+	leading := map[string]bool{"open": true, "close": true, "reconcile": true, "autotrade-start": true, "autotrade-stop-close": true,
+		"autotrade-kill": true, "autotrade-close-pair": true, "autotrade-pair-resume": true, "autotrade-pair-ack": true}
+	noOrder := map[string]bool{"autotrade-stop": true, "autotrade-pair-pause": true}
+	fnStart := regexp.MustCompile(`(?m)^(?:export\s+)?(?:async\s+)?function\s+\w+`)
+	postCall := regexp.MustCompile(`\bpost\(\s*"([a-z-]+)"\s*,[^;]*`)
+	starts := fnStart.FindAllStringIndex(js, -1)
+	seen := 0
+	for i, st := range starts {
+		end := len(js)
+		if i+1 < len(starts) {
+			end = starts[i+1][0]
+		}
+		body := js[st[0]:end]
+		name := js[st[0]:st[1]]
+		for _, m := range postCall.FindAllStringSubmatchIndex(body, -1) {
+			action := body[m[2]:m[3]]
+			call := body[m[0]:m[1]]
+			switch {
+			case noOrder[action]:
+				continue
+			case !leading[action]:
+				t.Errorf("%s sends %q, which this test does not classify — add it to one list or the other", name, action)
+				continue
+			case action == "reconcile" && strings.Contains(call, "apply: false"):
+				continue
+			}
+			seen++
+			if dialog := strings.Index(body, "confirmDialog("); dialog < 0 || dialog > m[0] {
+				t.Errorf("%s sends %q without a confirmDialog before it in the same function", name, action)
+			}
+		}
+	}
+	if seen < 8 {
+		t.Fatalf("found %d order-leading writes in execution.js — the test is not reading the real file", seen)
 	}
 }
 
@@ -632,5 +693,41 @@ func TestReadEndpoints_WithoutCredentialsStillAnswer(t *testing.T) {
 	rec = do(t, p, http.MethodGet, "/api/intents", "")
 	if rec.Code != http.StatusOK {
 		t.Errorf("intents = %d", rec.Code)
+	}
+}
+
+// Every id the page's scripts look up exists in the markup. $ is
+// getElementById, so a script naming an element the page does not have throws a
+// TypeError on the line that reads it — silently, half-way through a render,
+// and only on the tab that reaches it. A form field added to one file and not
+// the other is exactly that bug (PLAN "Công cụ vận hành 4.5f").
+func TestUI_EveryIdTheScriptsLookUpIsInTheMarkup(t *testing.T) {
+	blob, err := os.ReadFile(filepath.Join(staticDir, "index.html"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, m := range regexp.MustCompile(`\sid="([^"]+)"`).FindAllStringSubmatch(string(blob), -1) {
+		have[m[1]] = true
+	}
+	if len(have) < 50 {
+		t.Fatalf("read %d ids from index.html — the test is not seeing the page", len(have))
+	}
+	lookup := regexp.MustCompile(`\$\("([^"]+)"\)`)
+	scripts := uiSources(t, ".js")
+	if len(scripts) < 6 {
+		t.Fatalf("found %d scripts under static/ — the test is not seeing the page", len(scripts))
+	}
+	found := 0
+	for path, js := range scripts {
+		for _, m := range lookup.FindAllStringSubmatch(js, -1) {
+			found++
+			if !have[m[1]] {
+				t.Errorf("%s reads $(%q); index.html has no element with that id", path, m[1])
+			}
+		}
+	}
+	if found < 50 {
+		t.Fatalf("matched %d lookups across the scripts — the test is not seeing them", found)
 	}
 }

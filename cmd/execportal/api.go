@@ -102,6 +102,9 @@ type portal struct {
 	// pingsMs is each market's last clock round trip, in milliseconds.
 	pingsMu sync.Mutex
 	pingsMs map[broker.Market]int64
+	// clockSyncs shares one clock measurement per market between the callers
+	// that find the clock stale at the same moment.
+	clockSyncs *ttlCache[struct{}]
 
 	// feeds are the read-only scanner and paper-ledger feeds (package feeds,
 	// PLAN Q17). All the portal can do with them is register their handlers,
@@ -114,8 +117,13 @@ type portal struct {
 	autotrade    *autotrade.Engine
 	fundingRates *ttlCache[[]binancebroker.FundingRate]
 	commissions  *ttlCache[commissionPair]
+	// fundingKeys is each symbol's newest settled-history cache key: a symbol's
+	// key moving drops that symbol's older entry and no other symbol's.
 	fundingKeyMu sync.Mutex
-	fundingKey   string
+	fundingKeys  map[string]string
+
+	// pnl keeps the auto-trader's equity samples (pnl.go).
+	pnl *pnlTracker
 }
 
 func newPortal(m markets, symbols []string, bindIP, port string, settings execSettings, now func() time.Time) *portal {
@@ -139,10 +147,13 @@ func newPortal(m markets, symbols []string, bindIP, port string, settings execSe
 		rules:      newTTLCache[rulesPair](now),
 		memo:       newDoneOrders(),
 		pingsMs:    map[broker.Market]int64{},
+		clockSyncs: newTTLCache[struct{}](now),
 		feeds:      feeds.New("", "", now),
 
 		fundingRates: newTTLCache[[]binancebroker.FundingRate](now),
 		commissions:  newTTLCache[commissionPair](now),
+		fundingKeys:  map[string]string{},
+		pnl:          newPnLTracker(),
 	}
 	p.autotrade = newAutotrade(p)
 	return p
@@ -454,26 +465,8 @@ func (p *portal) readMarketAccount(ctx context.Context, c venue, dialErr error, 
 	if budgetErr != nil {
 		problems = append(problems, budgetErr.Error())
 	} else {
-		// The ping IS the clock read: one weight-1 public call, timed around
-		// the round trip. It is taken every clockEvery, not on every poll:
-		// SyncClock REPLACES the skew every signed request is corrected by,
-		// and one lopsided round trip measured under an order being signed is
-		// how a -1021 happens. Between measurements the last one is shown,
-		// with its age.
-		p.pingsMu.Lock()
-		_, pinged := p.pingsMs[market]
-		p.pingsMu.Unlock()
-		// A signed call elsewhere may already have measured the clock, which
-		// leaves no ping to show; the first account read measures its own.
-		if at := h.ClockMeasuredAt(); at.IsZero() || time.Since(at) >= clockEvery || !pinged {
-			sentAt := time.Now()
-			if _, err := h.SyncClock(ctx); err != nil {
-				problems = append(problems, "đồng hồ sàn: "+err.Error())
-			} else {
-				p.pingsMu.Lock()
-				p.pingsMs[market] = time.Since(sentAt).Milliseconds()
-				p.pingsMu.Unlock()
-			}
+		if err := p.syncClockIfStale(ctx, market, h); err != nil {
+			problems = append(problems, "đồng hồ sàn: "+err.Error())
 		}
 		if !h.ClockMeasuredAt().IsZero() {
 			skewMs := h.ClockSkewMs()
@@ -506,6 +499,76 @@ func (p *portal) readMarketAccount(ctx context.Context, c venue, dialErr error, 
 	v.ErrorVI = strings.Join(problems, " · ")
 	return v
 }
+
+// syncClockIfStale measures one market's clock when it was never measured, or
+// not for clockEvery.
+//
+// The ping IS the clock read: one weight-1 public call, timed around the round
+// trip. It is taken every clockEvery, not on every poll: SyncClock REPLACES the
+// skew every signed request is corrected by, and one lopsided round trip
+// measured under an order being signed is how a -1021 happens. Between
+// measurements the last one stands, with its age. The account tiles and the
+// auto-trader's market read share this one cadence, so the bot's clock check
+// reads a recent measurement whether or not a page is open — and together they
+// sync no more often than either alone.
+func (p *portal) syncClockIfStale(ctx context.Context, market broker.Market, h *broker.Client) error {
+	fresh := func() bool {
+		p.pingsMu.Lock()
+		_, pinged := p.pingsMs[market]
+		p.pingsMu.Unlock()
+		// A signed call elsewhere may already have measured the clock, which
+		// leaves no ping to show; the first read measures its own.
+		at := h.ClockMeasuredAt()
+		return !at.IsZero() && time.Since(at) < clockEvery && pinged
+	}
+	if fresh() {
+		return nil
+	}
+	// One sync per market at a time: the scans read several pairs at once, and
+	// each would otherwise find the clock stale and measure it again. The
+	// cache shares an in-flight measurement with every caller waiting on it
+	// and holds no lock across the round trip.
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := p.clockSyncs.get(string(market), clockSyncShare, func() (struct{}, error) {
+			if fresh() {
+				return struct{}{}, nil
+			}
+			// The measurement is shared, so it runs on its own deadline: a page
+			// request that is cancelled half-way must not hand "context
+			// canceled" to the bot's reads waiting on the same sync.
+			syncCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), clockSyncTimeout)
+			defer cancel()
+			sentAt := time.Now()
+			if _, err := h.SyncClock(syncCtx); err != nil {
+				return struct{}{}, err
+			}
+			p.pingsMu.Lock()
+			p.pingsMs[market] = time.Since(sentAt).Milliseconds()
+			p.pingsMu.Unlock()
+			return struct{}{}, nil
+		})
+		done <- err
+	}()
+	// ...and each caller waits on it only as long as its own context allows: a
+	// stop or a kill cancels the scan, and must not wait out a hung ping.
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// clockSyncTimeout bounds one shared clock measurement. A ping is one weight-1
+// public call; one that has not answered in this long is not a measurement
+// worth signing on.
+const clockSyncTimeout = 5 * time.Second
+
+// clockSyncShare is how long one clock measurement answers every caller that
+// asks for it — long enough to cover a scan's parallel reads, short enough that
+// a failed sync is retried at the next poll.
+const clockSyncShare = 2 * time.Second
 
 // pickBalances keeps the named assets, in the order named. An asset the venue
 // did not list is left out rather than shown as zero: absent is not empty.
@@ -604,9 +667,18 @@ func (p *portal) handlePositions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, v)
 }
 
-// readPositions has a NAMED result on purpose: the deferred stamp below must
-// write into the value being returned, not into a copy of it.
-func (p *portal) readPositions(ctx context.Context, symbol string) (v positionsView) {
+// readPositions is the banner's reading, with the spot wallet's balance of the
+// base asset beside it as context.
+func (p *portal) readPositions(ctx context.Context, symbol string) positionsView {
+	return p.readHedge(ctx, symbol, true)
+}
+
+// readHedge has a NAMED result on purpose: the deferred stamp below must write
+// into the value being returned, not into a copy of it. walletContext reads the
+// spot account for the base-asset balance the banner shows beside the legs —
+// weight 20 that the verdict does not use, and that the auto-trader, reading
+// every pair every few seconds, does not spend.
+func (p *portal) readHedge(ctx context.Context, symbol string, walletContext bool) (v positionsView) {
 	v = positionsView{Symbol: symbol, Status: statusUnknown}
 	defer func() {
 		v.ReadAtMs = p.now().UnixMilli()
@@ -641,7 +713,7 @@ func (p *portal) readPositions(ctx context.Context, symbol string) (v positionsV
 		v.PerpUpdatedAtMs = pos.UpdatedAtMs
 	}
 
-	if v.BaseAsset != "" {
+	if walletContext && v.BaseAsset != "" {
 		for _, b := range p.accountFor(ctx, symbol).Spot.Balances {
 			if b.Asset == v.BaseAsset {
 				total := b.TotalQtyInAsset
@@ -823,7 +895,10 @@ type intentFundingView struct {
 }
 
 type fundingView struct {
-	Symbol                      string              `json:"symbol"`
+	Symbol string `json:"symbol"`
+	// QuoteAsset is the perp's declared quote asset: the only asset a row is
+	// summed in. Empty when the rules could not be read, and then nothing is.
+	QuoteAsset                  string              `json:"quote_asset"`
 	ReadAtMs                    int64               `json:"read_at_ms"`
 	WindowStartMs               int64               `json:"window_start_ms"`
 	WindowEndMs                 int64               `json:"window_end_ms"`
@@ -848,6 +923,13 @@ func (p *portal) handleFunding(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := readContext(r)
 	defer cancel()
+	writeJSON(w, http.StatusOK, p.fundingFor(ctx, symbol))
+}
+
+// fundingFor is one symbol's settled funding rows for the last week, attributed
+// to the intents held across them, shared for fundingTTL by the Execution tab
+// and the auto-trader's PnL page. The caller has checked the credentials.
+func (p *portal) fundingFor(ctx context.Context, symbol string) fundingView {
 	v, _, _ := p.funding.get(symbol, fundingTTL, func() (fundingView, error) {
 		now := p.now()
 		out := fundingView{
@@ -870,16 +952,15 @@ func (p *portal) handleFunding(w http.ResponseWriter, r *http.Request) {
 			out.LastFundingRatePerPeriodBps = bpsPtr(mp.LastFundingRateFrac*10_000, true)
 			out.NextFundingTimeMs = mp.NextFundingTimeMs
 		}
-		quoteAsset := ""
 		if rules, err := p.rulesFor(ctx, symbol); err == nil {
-			quoteAsset = rules.Perp.QuoteAsset
+			out.QuoteAsset = rules.Perp.QuoteAsset
 		}
 		states, _, _ := listStates(p.stateDir, symbol)
-		out.Rows, out.TotalsByAsset, out.Intents = attributeFunding(rows, states, quoteAsset, out.WindowStartMs, out.WindowEndMs, now.UnixMilli())
+		out.Rows, out.TotalsByAsset, out.Intents = attributeFunding(rows, states, out.QuoteAsset, out.WindowStartMs, out.WindowEndMs, now.UnixMilli())
 		out.ReadAtMs = p.now().UnixMilli()
 		return out, nil
 	})
-	writeJSON(w, http.StatusOK, v)
+	return v
 }
 
 // attributeFunding matches the venue's settlement rows to the intents whose

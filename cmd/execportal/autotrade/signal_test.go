@@ -75,7 +75,7 @@ func TestHoldPlan_CountsExactlyTheSettlementsPlanned(t *testing.T) {
 }
 
 func goodInput(now time.Time) entryInput {
-	return entryInput{Cfg: DefaultConfig(testSymbol), Snap: goodMarket(now).snap, Now: now, MarginFrac: 0.5, Flat: true}
+	return entryInput{Cfg: DefaultConfig(testSymbol), Snap: *goodSnapshot(now, 0.0001), Now: now, MarginFrac: 0.5, Flat: true}
 }
 
 func check(t *testing.T, checks []CheckView, prefix string) CheckView {
@@ -92,7 +92,7 @@ func check(t *testing.T, checks []CheckView, prefix string) CheckView {
 func TestAssessEntry_AGoodReadingPassesEveryCheck(t *testing.T) {
 	now := time.Now()
 	sig := assessEntry(goodInput(now))
-	if !sig.EntryEligible || sig.VerdictVI != "ĐỦ ĐIỀU KIỆN VÀO" || len(sig.EntryChecks) != 7 {
+	if !sig.EntryEligible || sig.VerdictVI != "ĐỦ ĐIỀU KIỆN VÀO" || len(sig.EntryChecks) != 8 {
 		t.Fatalf("verdict %q, %d checks: %+v", sig.VerdictVI, len(sig.EntryChecks), sig.EntryChecks)
 	}
 	// 90 settlements of 1 bps over 30 days, a round trip of 8 bps of fees plus
@@ -229,48 +229,63 @@ func TestDepthCheck_ADefiniteFailureIsEvaluated(t *testing.T) {
 	}
 }
 
+// heldPosition is a pair opened on goodSnapshot's own reading: the two legs
+// filled at the two mids, so its drift against an unchanged market is zero and
+// only funding, the entry commission and the priced exit move its result.
+func heldPosition(now time.Time) PositionView {
+	const qty = 0.0008
+	return PositionView{IntentID: "a", OpenedAtMs: now.Add(-time.Hour).UnixMilli(), EntryBasisBps: 1,
+		QtyCoin: qty, NotionalQuote: qty * testMid, CapitalQuote: qty * testMid * 1.5,
+		SpotEntryAvgQuote: testMid, PerpEntryAvgQuote: testPerpMid}
+}
+
 func TestAssessExit(t *testing.T) {
 	now := time.Now()
-	pos := PositionView{IntentID: "a", OpenedAtMs: now.Add(-time.Hour).UnixMilli(), EntryBasisBps: 1}
-	base := goodMarket(now).snap
+	pos := heldPosition(now)
+	base := *goodSnapshot(now, 0.0001)
 	cfg := DefaultConfig(testSymbol)
 
-	ex := assessExit(cfg, base, pos)
-	if ex.Due || ex.SettlementsSinceOpen != 0 || len(ex.Checks) != 3 {
+	ex := assessExit(cfg, base, pos, now)
+	if ex.Due || ex.SettlementsSinceOpen != 0 || len(ex.Checks) != 4 {
 		t.Fatalf("a fresh hold = %+v", ex)
 	}
 
 	paid := base
 	paid.Settled = append(append([]SettledRate(nil), base.Settled...), SettledRate{SettledAtMs: now.UnixMilli(), RatePerIntervalFrac: 0.0001})
-	if ex := assessExit(cfg, paid, pos); ex.Due || ex.SettlementsSinceOpen != 1 {
+	if ex := assessExit(cfg, paid, pos, now); ex.Due || ex.SettlementsSinceOpen != 1 {
 		t.Errorf("a paid settlement = %+v", ex)
 	}
 	charged := base
 	charged.Settled = append(append([]SettledRate(nil), base.Settled...), SettledRate{SettledAtMs: now.UnixMilli(), RatePerIntervalFrac: -0.00001})
-	if ex := assessExit(cfg, charged, pos); !ex.Due || !strings.Contains(strings.Join(ex.ReasonsVI, " "), "≤ 0") {
-		t.Errorf("a charged settlement = %+v", ex)
+	if ex := assessExit(cfg, charged, pos, now); ex.Due {
+		t.Errorf("a charged settlement inside min hold floor exited: %+v", ex)
+	}
+	legacy := cfg
+	legacy.MinHoldEpochs = 0
+	if ex := assessExit(legacy, charged, pos, now); !ex.Due || !strings.Contains(strings.Join(ex.ReasonsVI, " "), "≤ 0") {
+		t.Errorf("a charged settlement with no min hold = %+v", ex)
 	}
 	// A negative rate from BEFORE the open was somebody else's settlement.
 	before := base
 	before.Settled = append([]SettledRate(nil), base.Settled...)
 	before.Settled[len(before.Settled)-1].RatePerIntervalFrac = -0.001
-	if ex := assessExit(cfg, before, pos); ex.Due {
+	if ex := assessExit(cfg, before, pos, now); ex.Due {
 		t.Errorf("a pre-open negative rate closed the pair: %+v", ex)
 	}
 
 	epochs := cfg
 	epochs.MaxHoldEpochs = 2
-	if ex := assessExit(epochs, paid, pos); ex.Due {
+	if ex := assessExit(epochs, paid, pos, now); ex.Due {
 		t.Errorf("1 of 2 epochs closed: %+v", ex)
 	}
 	epochs.MaxHoldEpochs = 1
-	if ex := assessExit(epochs, paid, pos); !ex.Due {
+	if ex := assessExit(epochs, paid, pos, now); !ex.Due {
 		t.Errorf("1 of 1 epochs held: %+v", ex)
 	}
 
 	wide := base
-	wide.PerpBook.MidPriceQuote = testMid * 1.0032 // +32 bps against an entry basis of +1
-	if ex := assessExit(cfg, wide, pos); !ex.Due || ex.BasisWidenBps == nil || math.Abs(*ex.BasisWidenBps-31) > 1e-6 {
+	wide.PerpBook.MidPriceQuote = testMid * 1.0102 // +102 bps against an entry basis of +1 = +101 bps > 100
+	if ex := assessExit(cfg, wide, pos, now); !ex.Due || ex.BasisWidenBps == nil || math.Abs(*ex.BasisWidenBps-101) > 1e-6 {
 		t.Errorf("a widened basis = %+v (%v)", ex, ex.BasisWidenBps)
 	}
 
@@ -278,23 +293,23 @@ func TestAssessExit(t *testing.T) {
 	blind := wide
 	blind.SettledErrVI = "timeout"
 	blind.PerpBook.MidPriceQuote = 0
-	if ex := assessExit(epochs, blind, pos); ex.Due {
+	if ex := assessExit(epochs, blind, pos, now); ex.Due {
 		t.Errorf("missing data closed the pair: %+v", ex)
 	}
-	for _, c := range assessExit(epochs, blind, pos).Checks {
+	for _, c := range assessExit(epochs, blind, pos, now).Checks {
 		if c.Evaluated || !c.Passed {
 			t.Errorf("an unreadable exit check = %+v", c)
 		}
 	}
 }
 
-func TestRingLog_KeepsTheNewestTwentyNewestFirst(t *testing.T) {
+func TestRingLog_KeepsTheNewestNewestFirst(t *testing.T) {
 	var r ringLog
-	for i := 0; i < 27; i++ {
+	for i := 0; i < logCapacity+7; i++ {
 		r.add(LogEntry{AtMs: int64(i), MessageVI: fmt.Sprint(i)})
 	}
 	got := r.newestFirst()
-	if len(got) != logCapacity || got[0].AtMs != 26 || got[logCapacity-1].AtMs != 7 {
+	if len(got) != logCapacity || got[0].AtMs != int64(logCapacity+6) || got[logCapacity-1].AtMs != 7 {
 		t.Errorf("ring = %d entries, %d … %d", len(got), got[0].AtMs, got[len(got)-1].AtMs)
 	}
 	var small ringLog
@@ -302,5 +317,376 @@ func TestRingLog_KeepsTheNewestTwentyNewestFirst(t *testing.T) {
 	small.add(LogEntry{AtMs: 2})
 	if got := small.newestFirst(); len(got) != 2 || got[0].AtMs != 2 {
 		t.Errorf("small ring = %+v", got)
+	}
+}
+
+// Every check carries the stable key the page reads, and no two share one: the
+// radar's four badges must not depend on the wording of a Vietnamese name.
+func TestChecks_EveryConditionHasItsOwnKey(t *testing.T) {
+	now := time.Now()
+	entry := assessEntry(goodInput(now))
+	want := []CheckKey{CheckFlat, CheckFormingPositive, CheckLastSettledPositive, CheckEntryBasis, CheckNetAPR, CheckDepth, CheckClock, CheckTimeToSettle}
+	if len(entry.EntryChecks) != len(want) {
+		t.Fatalf("%d entry checks, want %d", len(entry.EntryChecks), len(want))
+	}
+	for i, c := range entry.EntryChecks {
+		if c.Key != want[i] {
+			t.Errorf("entry check %d (%s) key = %q, want %q", i, c.NameVI, c.Key, want[i])
+		}
+	}
+	ex := assessExit(DefaultConfig(testSymbol), *goodSnapshot(now, 0.0001), heldPosition(now), now)
+	wantExit := []CheckKey{CheckExitFunding, CheckExitEpochs, CheckExitBasis, CheckExitTakeProfit}
+	if len(ex.Checks) != len(wantExit) {
+		t.Fatalf("%d exit checks", len(ex.Checks))
+	}
+	for i, c := range ex.Checks {
+		if c.Key != wantExit[i] {
+			t.Errorf("exit check %d (%s) key = %q, want %q", i, c.NameVI, c.Key, wantExit[i])
+		}
+	}
+}
+
+// ------------------------- the convergence-and-amortization set (4.5f)
+//
+// The four pillars of docs/AUTOTRADE-CONVERGENCE-HOLDING-STRATEGY.md, each
+// tested where it is decided: assessEntry for the basis floor, assessExit for
+// the amortization floor, the hysteresis and the take-profit.
+
+// Trụ cột 1: a pair whose perp is not trading above its spot is refused, and
+// the refusal is the basis check alone — every other condition still passes, so
+// the console names the real reason.
+func TestAssessEntry_RefusesAnEntryBelowTheBasisFloor(t *testing.T) {
+	now := time.Now()
+	for _, tc := range []struct {
+		nameVI     string
+		perpMid    float64
+		floorBps   float64
+		wantPassed bool
+	}{
+		{"perp cao hơn spot đúng ngưỡng", testMid * 1.0005, 5, true},
+		{"perp cao hơn spot dưới ngưỡng", testMid * 1.0004, 5, false},
+		{"basis phẳng", testMid, 5, false},
+		{"basis lõm", testMid * 0.9962, 5, false}, // -38 bps, the NEAR trap the doc names
+		{"basis lõm nhưng ngưỡng tắt", testMid * 0.9962, -100, true},
+	} {
+		in := goodInput(now)
+		in.Cfg.MinEntryBasisBps = tc.floorBps
+		in.Snap.PerpBook = book("binance_futures", tc.perpMid, now)
+		sig := assessEntry(in)
+		c := check(t, sig.EntryChecks, "Basis lúc vào")
+		if !c.Evaluated || c.Passed != tc.wantPassed {
+			t.Errorf("%s: basis check = %+v, want passed=%v", tc.nameVI, c, tc.wantPassed)
+		}
+		if sig.EntryEligible != tc.wantPassed {
+			t.Errorf("%s: eligible = %v (verdict %q)", tc.nameVI, sig.EntryEligible, sig.VerdictVI)
+		}
+	}
+	// No mids: the floor is not evaluated, and an entry check that could not be
+	// read never passes.
+	in := goodInput(now)
+	in.Snap.PerpBook.MidPriceQuote = 0
+	if c := check(t, assessEntry(in).EntryChecks, "Basis lúc vào"); c.Evaluated || c.Passed {
+		t.Errorf("an unmeasurable basis = %+v", c)
+	}
+}
+
+// Trụ cột 2: inside the amortization floor the funding exit is forbidden
+// whatever a settlement did — and the take-profit and the basis stop are not.
+func TestAssessExit_TheAmortizationFloorHoldsThroughNegativeSettlements(t *testing.T) {
+	now := time.Now()
+	pos := heldPosition(now)
+	cfg := DefaultConfig(testSymbol) // MinHoldEpochs 6
+	base := *goodSnapshot(now, 0.0001)
+
+	// Five settlements after the open, every one of them a deep charge: still
+	// inside the floor, so nothing closes.
+	charged := base
+	for i := 0; i < 5; i++ {
+		charged.Settled = append(charged.Settled, SettledRate{
+			SettledAtMs: now.Add(time.Duration(i) * time.Minute).UnixMilli(), RatePerIntervalFrac: -0.001, // -10 bps
+		})
+	}
+	ex := assessExit(cfg, charged, pos, now)
+	if ex.Due || ex.SettlementsSinceOpen != 5 {
+		t.Fatalf("the floor let a pair go at 5 of 6 settlements: %+v", ex)
+	}
+	if c := check(t, ex.Checks, "Mốc settle sau khi vào"); !c.Evaluated || !c.Passed || !strings.Contains(c.DetailVI, "sàn giữ tối thiểu 6 mốc") {
+		t.Errorf("funding check inside the floor = %+v", c)
+	}
+	// The sixth settlement reaches the floor, and the run of charges is past
+	// the hysteresis, so now it closes.
+	charged.Settled = append(charged.Settled, SettledRate{SettledAtMs: now.Add(6 * time.Minute).UnixMilli(), RatePerIntervalFrac: -0.001})
+	if ex := assessExit(cfg, charged, pos, now); !ex.Due {
+		t.Errorf("the 6th settlement did not release the funding exit: %+v", ex)
+	}
+
+	// Inside the floor a BASIS break still closes the pair: the floor buys time
+	// for funding to amortize a cost, it is not a promise to hold through a
+	// broken hedge.
+	broken := base
+	broken.Settled = append(broken.Settled, SettledRate{SettledAtMs: now.UnixMilli(), RatePerIntervalFrac: 0.0001})
+	broken.PerpBook = book("binance_futures", testMid*1.0102, now) // +102 bps against an entry basis of +1
+	if ex := assessExit(cfg, broken, pos, now); !ex.Due || !strings.Contains(strings.Join(ex.ReasonsVI, " "), "Cắt lỗ basis nổ") {
+		t.Errorf("a basis break inside the floor did not close: %+v", ex)
+	}
+}
+
+// Trụ cột 4: past the floor, one charge is not a reason to pay a round trip.
+func TestAssessExit_NegativeFundingNeedsARunPastTheFloor(t *testing.T) {
+	now := time.Now()
+	pos := heldPosition(now)
+	cfg := DefaultConfig(testSymbol)
+	cfg.MinHoldEpochs = 1 // past the floor from the first settlement on
+
+	after := func(rates ...float64) Snapshot {
+		s := *goodSnapshot(now, 0.0001)
+		for i, r := range rates {
+			s.Settled = append(s.Settled, SettledRate{SettledAtMs: now.Add(time.Duration(i) * time.Minute).UnixMilli(), RatePerIntervalFrac: r})
+		}
+		return s
+	}
+	const deep, shallow, paid = -0.0003, -0.00001, 0.0001 // -3 bps, -0.1 bps, +1 bps
+
+	for _, tc := range []struct {
+		nameVI  string
+		rates   []float64
+		wantDue bool
+	}{
+		{"một mốc âm sâu", []float64{deep}, false},
+		{"hai mốc âm sâu liên tiếp", []float64{deep, deep}, true},
+		{"hai mốc âm sâu bị cắt quãng", []float64{deep, paid, deep}, false},
+		{"ba mốc âm li ti", []float64{shallow, shallow, shallow}, false},
+		{"âm li ti rồi hai mốc sâu", []float64{shallow, deep, deep}, true},
+	} {
+		ex := assessExit(cfg, after(tc.rates...), pos, now)
+		if ex.Due != tc.wantDue {
+			t.Errorf("%s: due = %v, want %v · %v", tc.nameVI, ex.Due, tc.wantDue, ex.ReasonsVI)
+		}
+	}
+
+	// The two thresholds are parameters, not constants: one print at the
+	// configured rate closes a pair configured to accept one.
+	prompt := cfg
+	prompt.ExitNegativeConsecutiveEpochs = 1
+	if ex := assessExit(prompt, after(deep), pos, now); !ex.Due {
+		t.Errorf("a one-epoch gate held through a charge: %+v", ex)
+	}
+	// And a deeper threshold ignores the same run.
+	patient := cfg
+	patient.ExitNegativeFundingRateBps = -50
+	if ex := assessExit(patient, after(deep, deep), pos, now); ex.Due {
+		t.Errorf("a -50 bps gate closed on -3 bps: %+v", ex)
+	}
+	// MinHoldEpochs 0 is the step-3.2 rule exactly: ANY settlement at or below
+	// zero, no run required. Pinned so a run configured the old way is not
+	// quietly moved by this change.
+	legacy := cfg
+	legacy.MinHoldEpochs = 0
+	if ex := assessExit(legacy, after(shallow), pos, now); !ex.Due || !strings.Contains(strings.Join(ex.ReasonsVI, " "), "≤ 0") {
+		t.Errorf("the legacy single-print rule = %+v", ex)
+	}
+}
+
+// Trụ cột 3: a basis that converges pays the round trip, and the pair leaves
+// before its funding ever could.
+func TestAssessExit_TakesProfitWhenTheBasisConverges(t *testing.T) {
+	now := time.Now()
+	pos := heldPosition(now)
+	cfg := DefaultConfig(testSymbol)
+	base := *goodSnapshot(now, 0.0001)
+
+	// Unchanged market: the pair is under water by its own entry commission and
+	// the exit it has not paid yet, and holds.
+	if ex := assessExit(cfg, base, pos, now); ex.Due || !ex.Result.OK || ex.Result.ReturnOnCapitalPct >= 0 {
+		t.Fatalf("a pair that has earned nothing = %+v", ex)
+	}
+
+	// The perp falls 1% towards (and past) the spot: the SHORT leg gains it.
+	converged := base
+	converged.PerpBook = book("binance_futures", testMid*0.99, now)
+	ex := assessExit(cfg, converged, pos, now)
+	if !ex.Due {
+		t.Fatalf("a converged basis did not take profit: %+v", ex)
+	}
+	r := ex.Result
+	if !r.OK || r.ReturnOnCapitalPct < cfg.TargetTakeProfitNetPct {
+		t.Fatalf("running result = %+v", r)
+	}
+	// The reason is the sentence the intent file keeps and the history table
+	// prints, to the wording.
+	want := fmt.Sprintf("Chốt lời hội tụ Basis: Net PnL %+.2f%% trên vốn ≥ ngưỡng %+.2f%%", r.ReturnOnCapitalPct, cfg.TargetTakeProfitNetPct)
+	if got := strings.Join(ex.ReasonsVI, "; "); got != want {
+		t.Errorf("close reason = %q, want %q", got, want)
+	}
+	// It fires INSIDE the amortization floor — that is the point of holding a
+	// convergence trade rather than a funding trade.
+	if ex.SettlementsSinceOpen >= cfg.MinHoldEpochs {
+		t.Errorf("the fixture left the floor: %d settlements", ex.SettlementsSinceOpen)
+	}
+
+	// 0 disables it: the same reading holds.
+	off := cfg
+	off.TargetTakeProfitNetPct = 0
+	if ex := assessExit(off, converged, pos, now); ex.Due {
+		t.Errorf("a disabled take-profit still closed: %+v", ex)
+	}
+	// A book old enough to describe a market that has moved prices nothing: the
+	// take-profit is the only exit that closes a position for a GAIN, and a
+	// phantom drift would pay a real round trip for it.
+	stale := converged
+	stale.PerpBook.SampledAtMs = now.Add(-2 * maxBookAge).UnixMilli()
+	if ex := assessExit(cfg, stale, pos, now); ex.Due || ex.Result.OK || !strings.Contains(ex.Result.ReasonVI, "không định giá chốt lời trên giá cũ") {
+		t.Errorf("a stale book took profit: %+v", ex.Result)
+	}
+	// A book stamped in the FUTURE is the same fault seen from the other side —
+	// a clock that disagrees is not a book that is fresh.
+	ahead := converged
+	ahead.SpotBook.SampledAtMs = now.Add(2 * maxBookAge).UnixMilli()
+	if ex := assessExit(cfg, ahead, pos, now); ex.Due || ex.Result.OK {
+		t.Errorf("a book from the future took profit: %+v", ex.Result)
+	}
+	// The BASIS STOP keeps working on that same reading: a stop that goes quiet
+	// when a book ages is worse than one acting on a stale price.
+	brokenStale := stale
+	brokenStale.PerpBook = book("binance_futures", testMid*1.0102, now)
+	brokenStale.PerpBook.SampledAtMs = now.Add(-2 * maxBookAge).UnixMilli()
+	if ex := assessExit(cfg, brokenStale, pos, now); !ex.Due || !strings.Contains(strings.Join(ex.ReasonsVI, " "), "Cắt lỗ basis nổ") {
+		t.Errorf("the basis stop went quiet on a stale book: %+v", ex)
+	}
+
+	// A reading that cannot be priced never closes anything.
+	blind := converged
+	blind.FeesErrVI = "timeout"
+	if ex := assessExit(cfg, blind, pos, now); ex.Due || ex.Result.OK {
+		t.Errorf("an unpriced reading closed the pair: %+v", ex)
+	}
+	if c := check(t, assessExit(cfg, blind, pos, now).Checks, "Chốt lời"); c.Evaluated || !c.Passed {
+		t.Errorf("an unpriced take-profit check = %+v", c)
+	}
+}
+
+// The arithmetic behind the take-profit, term by term. The trap it pins is the
+// double count: the drift is measured from the FILL price, so the entry's
+// slippage is already inside it and must not be subtracted again.
+func TestPriceHolding_CountsEachTermOnceAndEntrySlippageOnlyThroughTheDrift(t *testing.T) {
+	now := time.Now()
+	const qty = 0.001
+	snap := *goodSnapshot(now, 0.0001)
+	snap.SpotTakerFeeBps, snap.PerpTakerFeeBps = 10, 4
+	snap.SpotBook = book("binance_spot", 100_000, now)
+	snap.PerpBook = book("binance_futures", 100_000, now)
+
+	// Both legs filled 50 quote WORSE than the mids they were decided on: the
+	// spot bought high, the perp sold low. That is 100 quote of entry slippage
+	// on a 1-coin position, and it shows up once — as drift.
+	pos := PositionView{IntentID: "a", OpenedAtMs: now.Add(-time.Hour).UnixMilli(), QtyCoin: qty,
+		NotionalQuote: qty * 100_000, CapitalQuote: qty * 100_000 * 1.5,
+		SpotEntryAvgQuote: 100_050, PerpEntryAvgQuote: 99_950}
+
+	settled := []SettledRate{
+		{SettledAtMs: now.Add(-30 * time.Minute).UnixMilli(), RatePerIntervalFrac: 0.0002},
+		{SettledAtMs: now.Add(-10 * time.Minute).UnixMilli(), RatePerIntervalFrac: 0.0001},
+	}
+	got := priceHolding(snap, pos, settled, now)
+	if !got.OK {
+		t.Fatalf("refused: %s", got.ReasonVI)
+	}
+	// Funding: the two rates on the PERP leg's notional at entry.
+	wantFunding := 0.0003 * qty * 99_950
+	// Drift: (spot mid − spot fill) + (perp fill − perp mid), times the qty.
+	wantDrift := (100_000-100_050)*qty + (99_950-100_000)*qty
+	// Entry commission: each leg's own bps on its own entry notional.
+	wantEntryFee := qty*100_050*10/10_000 + qty*99_950*4/10_000
+	for _, tc := range []struct {
+		nameVI    string
+		got, want float64
+	}{
+		{"funding", got.FundingQuote, wantFunding},
+		{"trôi giá", got.DriftQuote, wantDrift},
+		{"phí vào", got.EntryFeeQuote, wantEntryFee},
+	} {
+		if math.Abs(tc.got-tc.want) > 1e-9 {
+			t.Errorf("%s = %v, want %v", tc.nameVI, tc.got, tc.want)
+		}
+	}
+	// The exit is priced at the legs' CURRENT value on the sides it would take,
+	// and it is a cost — never a credit.
+	if got.ExitCostQuote <= 0 {
+		t.Errorf("exit cost = %v, want a positive charge", got.ExitCostQuote)
+	}
+	wantCash := wantFunding + wantDrift - wantEntryFee - got.ExitCostQuote
+	if math.Abs(got.CashResultQuote-wantCash) > 1e-9 {
+		t.Errorf("cash result = %v, want %v — the four terms and nothing else", got.CashResultQuote, wantCash)
+	}
+	if math.Abs(got.ReturnOnCapitalPct-wantCash/pos.CapitalQuote*100) > 1e-9 || got.CapitalQuote != pos.CapitalQuote {
+		t.Errorf("on capital = %v%% of %v", got.ReturnOnCapitalPct, got.CapitalQuote)
+	}
+	// Only settlements handed in count: rule 6 is counted crossings, and the
+	// caller has already filtered to those after the open.
+	if none := priceHolding(snap, pos, nil, now); none.FundingQuote != 0 {
+		t.Errorf("funding with no settlement = %v", none.FundingQuote)
+	}
+
+	// Every missing input refuses rather than pricing it as zero.
+	for _, tc := range []struct {
+		nameVI string
+		break_ func(*Snapshot, *PositionView)
+	}{
+		{"phí chưa đọc", func(s *Snapshot, _ *PositionView) { s.FeesErrVI = "timeout" }},
+		{"lịch sử funding chưa đọc", func(s *Snapshot, _ *PositionView) { s.SettledErrVI = "timeout" }},
+		{"không có khối lượng", func(_ *Snapshot, p *PositionView) { p.QtyCoin = 0 }},
+		{"không có giá khớp vào", func(_ *Snapshot, p *PositionView) { p.PerpEntryAvgQuote = 0 }},
+		{"không có giá giữa", func(s *Snapshot, _ *PositionView) { s.SpotBook.MidPriceQuote = 0 }},
+		{"không biết vốn", func(_ *Snapshot, p *PositionView) { p.CapitalQuote = 0 }},
+		{"sổ lệnh không hấp thụ nổi", func(s *Snapshot, _ *PositionView) {
+			s.SpotBook.BidDepthWithinTightQuote, s.SpotBook.BidDepthWithinWideQuote = 0, 0
+			s.SpotBook.BidLevels, s.SpotBook.BidSpanPct = 0, 0
+		}},
+	} {
+		brokenSnap, brokenPos := snap, pos
+		tc.break_(&brokenSnap, &brokenPos)
+		r := priceHolding(brokenSnap, brokenPos, settled, now)
+		if r.OK || r.ReasonVI == "" {
+			t.Errorf("%s: priced anyway = %+v", tc.nameVI, r)
+		}
+	}
+}
+
+// A configuration no run may start with. Each of the four new knobs is refused
+// for the reason a person would get it wrong.
+func TestConfig_RefusesTheWaysTheNewThresholdsGoWrong(t *testing.T) {
+	for _, tc := range []struct {
+		nameVI   string
+		mutate   func(*Config)
+		fragment string
+	}{
+		{"ngưỡng basis vô hạn", func(c *Config) { c.MinEntryBasisBps = math.Inf(1) }, "min_entry_basis_bps"},
+		{"ngưỡng basis vô lý", func(c *Config) { c.MinEntryBasisBps = 20_000 }, "min_entry_basis_bps"},
+		{"sàn giữ âm", func(c *Config) { c.MinHoldEpochs = -1 }, "min_hold_epochs"},
+		{"sàn giữ ≥ trần giữ", func(c *Config) { c.MaxHoldEpochs, c.MinHoldEpochs = 6, 6 }, "lối thoát funding không bao giờ chạy được"},
+		{"chốt lời âm", func(c *Config) { c.TargetTakeProfitNetPct = -1 }, "target_take_profit_net_pct"},
+		{"chốt lời không bao giờ tới", func(c *Config) { c.TargetTakeProfitNetPct = 500 }, "target_take_profit_net_pct"},
+		{"ngưỡng thoát âm lại dương", func(c *Config) { c.ExitNegativeFundingRateBps = 2 }, "exit_negative_funding_rate_bps"},
+		{"số mốc âm liên tiếp bằng 0", func(c *Config) { c.ExitNegativeConsecutiveEpochs = 0 }, "exit_negative_consecutive_epochs"},
+	} {
+		c := DefaultConfig(testSymbol)
+		tc.mutate(&c)
+		err := c.Validate(50_000)
+		if err == nil {
+			t.Errorf("%s: accepted", tc.nameVI)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.fragment) {
+			t.Errorf("%s: %v does not name %q", tc.nameVI, err, tc.fragment)
+		}
+	}
+	// A floor BELOW the ceiling is fine, and so is the shipped set.
+	ok := DefaultConfig(testSymbol)
+	ok.MaxHoldEpochs, ok.MinHoldEpochs = 12, 6
+	if err := ok.Validate(50_000); err != nil {
+		t.Errorf("a floor under a ceiling was refused: %v", err)
+	}
+	if err := DefaultConfig(testSymbol).Validate(50_000); err != nil {
+		t.Errorf("the shipped set was refused: %v", err)
 	}
 }
