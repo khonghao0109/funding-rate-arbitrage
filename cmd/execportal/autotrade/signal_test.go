@@ -1139,3 +1139,45 @@ func pos2(p PositionView, now time.Time) PositionView {
 	p.OpenedAtMs = now.Add(-30 * 24 * time.Hour).UnixMilli()
 	return p
 }
+
+// A Unified Trading Account (Bybit, PLAN 4.5j) is ONE wallet. The plan must
+// size from it once: reading both markets and adding them doubles the equity,
+// and bounding a "futures wallet" of 0 sizes every slot to nothing.
+func TestPlanNotional_UnifiedWalletIsOnePool(t *testing.T) {
+	in := notionalPlanInput{
+		Account: Account{QuoteAsset: "USDT", SpotQuoteTotal: 15_000, UnifiedWallet: true},
+		Slots:   6, MarginFrac: 0.5, BufferPct: 0.30, CapQuote: 1_000_000, MaxNotionalQuote: 50_000,
+	}
+	got := planNotional(in)
+	if !got.OK {
+		t.Fatalf("refused: %s", got.ReasonVI)
+	}
+	// 15,000 × 0.70 ÷ 6 ÷ 1.5 — the same slot two balanced Binance wallets
+	// holding the same 15,000 IN TOTAL would get, never the 30,000 a double
+	// count would see.
+	if want := 15_000 * 0.7 / 6 / 1.5; math.Abs(got.NotionalQuote-want) > 1e-9 || got.TotalEquityQuote != 15_000 {
+		t.Errorf("notional %v (want %v), equity %v (want 15000)", got.NotionalQuote, want, got.TotalEquityQuote)
+	}
+	if strings.Contains(got.BoundByVI, "ví futures") || strings.Contains(got.BoundByVI, "ví spot") {
+		t.Errorf("a per-wallet bound was applied to one wallet: %q", got.BoundByVI)
+	}
+	// The whole plan fits the ONE wallet: spot legs plus margin.
+	if used := got.NotionalQuote * float64(in.Slots) * got.CapitalPerNotional; used > 15_000*(1-in.BufferPct)+1e-9 {
+		t.Errorf("%d slots tie up %.2f of a 15000 wallet with a 30%% buffer", in.Slots, used)
+	}
+	if line := got.logLineVI(in.Slots); !strings.Contains(line, "MỘT ví hợp nhất") {
+		t.Errorf("console line does not say one wallet: %s", line)
+	}
+	// Coin the bot's positions hold is still equity, exactly as on two wallets.
+	deployed := in
+	deployed.Account.SpotQuoteTotal, deployed.OpenSpotValueQuote = 8_000, 7_000
+	if same := planNotional(deployed); !same.OK || math.Abs(same.NotionalQuote-got.NotionalQuote) > 1e-9 {
+		t.Errorf("deployed %v, want %v", same.NotionalQuote, got.NotionalQuote)
+	}
+	// A futures figure BESIDE a unified wallet is a double count by the reader.
+	double := in
+	double.Account.FuturesQuoteTotal = 15_000
+	if got := planNotional(double); got.OK || !strings.Contains(got.ReasonVI, "hai lần") {
+		t.Errorf("a unified wallet read twice was sized: %+v", got)
+	}
+}

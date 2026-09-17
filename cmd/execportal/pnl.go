@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -232,6 +233,18 @@ const (
 		"sau đó mỗi phút một mẫu Tổng khi bot chạy hoặc đang giữ, lưu trong bộ nhớ — portal khởi động lại thì chuỗi mẫu bắt đầu lại."
 )
 
+// pnlBaseCoinFeeNoteVI names the cost a Bybit page leaves out. A taker spot BUY
+// there pays its fee in the BASE coin, which execution reports beside the
+// commission and never converts (rule 2), so the closed figure omits the
+// largest single fee of the round trip. Converting it would need a price
+// nobody measured at that instant; saying so is what rule 2 asks for.
+func pnlBaseCoinFeeNoteVI(profile venueProfile) string {
+	if profile.Kind != venueBybit {
+		return ""
+	}
+	return " TRÊN BYBIT: phí MUA spot bị thu bằng COIN GỐC (10 bps trên testnet) và KHÔNG nằm trong phí đã trừ — nó được ghi riêng, chưa quy đổi, nên con số này cao hơn thực tế đúng khoản đó."
+}
+
 // buildPnL assembles the page from the cache, the engine's status and — with
 // withFunding — the venue's funding rows of every symbol the bot holds or
 // closed inside the funding window.
@@ -244,9 +257,10 @@ func (p *portal) buildPnL(ctx context.Context, st autotrade.StatusView, withFund
 	v := pnlView{
 		ReadAtMs: now.UnixMilli(), CapitalPerNotional: cpn, TotalCapitalCapQuote: st.Portfolio.TotalCapitalCapQuote,
 		CapitalDeployedQuote: st.CapitalDeployedQuote, OpenPositions: len(st.Positions),
-		ClosedLabelVI: pnlClosedLabelVI, OpenLabelVI: pnlOpenLabelVI, TotalLabelVI: pnlTotalLabelVI,
-		BarsLabelVI: pnlBarsLabelVI, PointsLabelVI: pnlPointsLabelVI,
-		Trades: []pnlTradeView{}, Bars: []pnlBar{}, Points: []pnlPoint{}, ProblemsVI: []string{},
+		ClosedLabelVI: pnlClosedLabelVI + pnlBaseCoinFeeNoteVI(p.markets.profile), OpenLabelVI: pnlOpenLabelVI, TotalLabelVI: pnlTotalLabelVI,
+		BarsLabelVI:   strings.Replace(pnlBarsLabelVI, "/fapi/v1/income", p.markets.profile.FundingIncomeEndpoint, 1),
+		PointsLabelVI: pnlPointsLabelVI,
+		Trades:        []pnlTradeView{}, Bars: []pnlBar{}, Points: []pnlPoint{}, ProblemsVI: []string{},
 	}
 
 	states, unreadable, err := listStates(p.stateDir, "")

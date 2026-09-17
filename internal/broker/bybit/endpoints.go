@@ -52,13 +52,37 @@ var (
 	epInstruments = broker.Endpoint{Path: "/v5/market/instruments-info", WeightIP: 1,
 		DocURL: "https://bybit-exchange.github.io/docs/v5/market/instrument"}
 
-	// GET /v5/market/orderbook — public; linear limit [1, 1000], default 25.
+	// GET /v5/market/orderbook — public; "spot: [1, 200]", "linear & inverse:
+	// [1, 500]" (re-read 2026-09-17; an earlier note here said 1000).
 	epOrderbook = broker.Endpoint{Path: "/v5/market/orderbook", WeightIP: 1,
 		DocURL: "https://bybit-exchange.github.io/docs/v5/market/orderbook"}
 
 	// GET /v5/market/funding/history — public; limit [1, 200].
 	epFundingHistory = broker.Endpoint{Path: "/v5/market/funding/history", WeightIP: 1,
 		DocURL: "https://bybit-exchange.github.io/docs/v5/market/history-fund-rate"}
+
+	// GET /v5/execution/list — "Query users' execution records"; limit
+	// [1, 100]. The only place a fill's fee and its currency are stated.
+	epExecutionList = broker.Endpoint{Path: "/v5/execution/list", WeightIP: 1,
+		DocURL: "https://bybit-exchange.github.io/docs/v5/order/execution"}
+
+	// GET /v5/account/transaction-log — UTA; "endTime - startTime <= 7 days";
+	// limit [1, 50]. type=SETTLEMENT is "USDT Perp funding settlement".
+	epTransactionLog = broker.Endpoint{Path: "/v5/account/transaction-log", WeightIP: 1,
+		DocURL: "https://bybit-exchange.github.io/docs/v5/account/transaction-log"}
+
+	// GET /v5/account/fee-rate — this account's maker/taker rate per symbol.
+	epFeeRate = broker.Endpoint{Path: "/v5/account/fee-rate", WeightIP: 1,
+		DocURL: "https://bybit-exchange.github.io/docs/v5/account/fee-rate"}
+
+	// GET /v5/market/tickers — public; markPrice, fundingRate, nextFundingTime.
+	epTickers = broker.Endpoint{Path: "/v5/market/tickers", WeightIP: 1,
+		DocURL: "https://bybit-exchange.github.io/docs/v5/market/tickers"}
+
+	// GET /v5/market/risk-limit — public; "category=linear returns a data set
+	// of 15 symbols in each response. Please use the cursor param".
+	epRiskLimit = broker.Endpoint{Path: "/v5/market/risk-limit", WeightIP: 1,
+		DocURL: "https://bybit-exchange.github.io/docs/v5/market/risk-limit"}
 
 	// GET /v5/user/query-api — 10/s. "Any permission can access this
 	// endpoint." Not in the demo page's endpoint table, but the same page says
@@ -67,8 +91,13 @@ var (
 		DocURL: "https://bybit-exchange.github.io/docs/v5/user/apikey-info"}
 )
 
-// categoryLinear is the only category this package sends.
-const categoryLinear = "linear"
+// The two categories this package sends: "Product type. spot, linear, inverse,
+// option". inverse and option are never sent.
+const (
+	categoryLinear = "linear"
+	categorySpot   = "spot"
+)
 
-// settleCoinUSDT is the only settle coin this package trades.
+// settleCoinUSDT is the only settle coin this package trades on linear, and the
+// asset a linear fill's commission is taken in.
 const settleCoinUSDT = "USDT"

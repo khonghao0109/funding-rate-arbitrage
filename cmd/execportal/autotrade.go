@@ -157,17 +157,7 @@ func (m portalMarket) Snapshot(ctx context.Context, symbol string, settledSinceM
 		}
 	}
 
-	fees, _, err := p.commissions.get(symbol, commissionTTL, func() (commissionPair, error) {
-		spot, err := p.markets.spot.CommissionRates(ctx, symbol)
-		if err != nil {
-			return commissionPair{}, fmt.Errorf("spot: %w", err)
-		}
-		perp, err := p.markets.perp.CommissionRates(ctx, symbol)
-		if err != nil {
-			return commissionPair{}, fmt.Errorf("futures: %w", err)
-		}
-		return commissionPair{Spot: spot, Perp: perp}, nil
-	})
+	fees, err := p.commissionsFor(ctx, symbol)
 	if err != nil {
 		snap.FeesErrVI = err.Error()
 	} else {
@@ -193,6 +183,23 @@ func (m portalMarket) Snapshot(ctx context.Context, symbol string, settledSinceM
 		}
 	}
 	return snap, nil
+}
+
+// commissionsFor is this account's taker fee on both markets for one symbol,
+// shared for commissionTTL by the bot's scans and every open.
+func (p *portal) commissionsFor(ctx context.Context, symbol string) (commissionPair, error) {
+	fees, _, err := p.commissions.get(symbol, commissionTTL, func() (commissionPair, error) {
+		spot, err := p.markets.spot.CommissionRates(ctx, symbol)
+		if err != nil {
+			return commissionPair{}, fmt.Errorf("spot: %w", err)
+		}
+		perp, err := p.markets.perp.CommissionRates(ctx, symbol)
+		if err != nil {
+			return commissionPair{}, fmt.Errorf("futures: %w", err)
+		}
+		return commissionPair{Spot: spot, Perp: perp}, nil
+	})
+	return fees, err
 }
 
 // settledRates reads every settlement from sinceMs to now, oldest first.
@@ -410,6 +417,18 @@ func (t portalTrader) Account(ctx context.Context) (autotrade.Account, error) {
 			symbols[0], rules.Spot.QuoteAsset, rules.Perp.QuoteAsset)
 	}
 	out := autotrade.Account{QuoteAsset: quote}
+	if p.markets.profile.UnifiedWallet {
+		// ONE wallet: read its quote once, from the market that lists the
+		// settle coin, and carry it once. Reading both markets and adding them
+		// is the Binance arithmetic and would double every figure here.
+		total, err := p.quoteTotal(ctx, p.markets.perp, quote)
+		if err != nil {
+			return autotrade.Account{}, err
+		}
+		out.SpotQuoteTotal, out.UnifiedWallet = total, true
+		out.ReadAtMs = p.now().UnixMilli()
+		return out, nil
+	}
 	for _, m := range []struct {
 		c   venue
 		dst *float64
@@ -438,6 +457,20 @@ func (t portalTrader) Account(ctx context.Context) (autotrade.Account, error) {
 	}
 	out.ReadAtMs = p.now().UnixMilli()
 	return out, nil
+}
+
+// quoteTotal is free + locked of one asset on one market, read from the venue.
+func (p *portal) quoteTotal(ctx context.Context, c venue, quote string) (float64, error) {
+	balances, err := p.getBalances(ctx, c, c.Market())
+	if err != nil {
+		return 0, fmt.Errorf("số dư %s: %w", c.Market(), err)
+	}
+	for _, b := range balances {
+		if b.Asset == quote {
+			return b.TotalQtyCoin(), nil
+		}
+	}
+	return 0, fmt.Errorf("sàn %s không liệt kê tài sản %s — 'không liệt kê' không phải 'bằng 0'", c.Market(), quote)
 }
 
 func orUnknown(s string) string {

@@ -22,12 +22,19 @@ import (
 type MarketRules struct {
 	exchanges.Instrument
 
+	// Linear only; empty on spot.
 	ContractType string // "LinearPerpetual" — anything else is refused
 	SettleCoin   string // "USDT" — anything else is refused
 
 	// FundingIntervalSec is the venue's fundingInterval ("Funding interval
 	// (minute)") converted to seconds. Read per symbol; never assumed (rule 3).
+	// 0 on spot, which settles no funding.
 	FundingIntervalSec int64
+
+	// MinOrderAmtQuote is spot's minOrderAmt ("Minimum order amount"), also
+	// carried as Instrument.MinNotionalQuote so broker.RoundOrder refuses below
+	// it. 0 on linear, whose minimum is minNotionalValue.
+	MinOrderAmtQuote float64
 }
 
 // FetchInstrument reads one symbol's trading rules.
@@ -36,8 +43,12 @@ type MarketRules struct {
 // {minNotionalValue, maxOrderQty "for Limit and PostOnly order", maxMktOrderQty
 // "for Market order", minOrderQty, qtyStep}, priceFilter {tickSize},
 // fundingInterval (minutes). MaxQtyCoin carries the SMALLER of the two ceilings,
-// the repo's convention (exchanges.Instrument).
+// the repo's convention (exchanges.Instrument). A spot client reads spot's rules
+// (fetchSpotInstrument).
 func (c *Client) FetchInstrument(ctx context.Context, symbol string) (MarketRules, error) {
+	if c.market == broker.MarketSpot {
+		return c.fetchSpotInstrument(ctx, symbol)
+	}
 	var res struct {
 		List []struct {
 			Symbol          string `json:"symbol"`
@@ -78,7 +89,7 @@ func (c *Client) FetchInstrument(ctx context.Context, symbol string) (MarketRule
 			return MarketRules{}, fmt.Errorf("bybit: %s publishes no fundingInterval — refused rather than assumed (rule 3)", symbol)
 		}
 		inst := exchanges.Instrument{
-			Symbol: s.Symbol, NativeSymbol: s.Symbol, Source: c.mode.SourceID(), MarketType: "perp",
+			Symbol: s.Symbol, NativeSymbol: s.Symbol, Source: c.SourceID(), MarketType: "perp",
 			BaseAsset: s.BaseCoin, QuoteAsset: s.QuoteCoin,
 			Status:           normalizeInstrumentStatus(s.Status),
 			ContractSizeCoin: 1, // "Perps, Futures & Option: always order by qty" — in coin
@@ -111,6 +122,88 @@ func (c *Client) FetchInstrument(ctx context.Context, symbol string) (MarketRule
 	return MarketRules{}, fmt.Errorf("bybit: %s lists no linear symbol %q", c.http.BaseURL(), symbol)
 }
 
+// fetchSpotInstrument reads one SPOT symbol's rules.
+//
+// GET /v5/market/instruments-info?category=spot&symbol=… — lotSizeFilter
+// {basePrecision "The precision of base coin", quotePrecision, minOrderQty,
+// maxOrderQty, minOrderAmt "Minimum order amount", maxOrderAmt}, priceFilter
+// {tickSize}. Spot has no qtyStep: the quantity grid IS basePrecision, and it is
+// what the venue checks a qty against.
+//
+// maxMarketOrderQty is NOT on the documentation page but is in every live answer
+// (measured 2026-09-17 on api-testnet and api-demo: ETHUSDT maxOrderQty 8118,
+// maxMarketOrderQty 2706). It is read when present and taken as the ceiling when
+// smaller, because every order execution sends is MARKET, and a ceiling the
+// venue enforces but the page omits is still a ceiling. When absent it is not
+// assumed.
+func (c *Client) fetchSpotInstrument(ctx context.Context, symbol string) (MarketRules, error) {
+	var res struct {
+		List []struct {
+			Symbol      string `json:"symbol"`
+			Status      string `json:"status"`
+			BaseCoin    string `json:"baseCoin"`
+			QuoteCoin   string `json:"quoteCoin"`
+			PriceFilter struct {
+				TickSize string `json:"tickSize"`
+			} `json:"priceFilter"`
+			LotSizeFilter struct {
+				BasePrecision     string `json:"basePrecision"`
+				MinOrderQty       string `json:"minOrderQty"`
+				MaxOrderQty       string `json:"maxOrderQty"`
+				MaxMarketOrderQty string `json:"maxMarketOrderQty"`
+				MinOrderAmt       string `json:"minOrderAmt"`
+			} `json:"lotSizeFilter"`
+		} `json:"list"`
+	}
+	if err := c.getPublic(ctx, epInstruments, []broker.Param{
+		{Key: "category", Value: categorySpot}, {Key: "symbol", Value: symbol},
+	}, &res); err != nil {
+		return MarketRules{}, err
+	}
+	for _, s := range res.List {
+		if s.Symbol != symbol {
+			continue
+		}
+		if s.BaseCoin == "" || s.QuoteCoin == "" {
+			return MarketRules{}, fmt.Errorf("bybit: spot %s declares no base or quote coin — refused rather than sliced from the symbol", symbol)
+		}
+		inst := exchanges.Instrument{
+			Symbol: s.Symbol, NativeSymbol: s.Symbol, Source: c.SourceID(), MarketType: "spot",
+			BaseAsset: s.BaseCoin, QuoteAsset: s.QuoteCoin,
+			Status:           normalizeInstrumentStatus(s.Status),
+			ContractSizeCoin: 1,
+		}
+		var maxMarket float64
+		for _, f := range []struct {
+			name, raw string
+			into      *float64
+		}{
+			{"tickSize", s.PriceFilter.TickSize, &inst.TickSizeQuote},
+			{"basePrecision", s.LotSizeFilter.BasePrecision, &inst.StepSizeCoin},
+			{"minOrderQty", s.LotSizeFilter.MinOrderQty, &inst.MinQtyCoin},
+			{"minOrderAmt", s.LotSizeFilter.MinOrderAmt, &inst.MinNotionalQuote},
+			{"maxOrderQty", s.LotSizeFilter.MaxOrderQty, &inst.MaxQtyCoin},
+			{"maxMarketOrderQty", s.LotSizeFilter.MaxMarketOrderQty, &maxMarket},
+		} {
+			v, err := parseNumber(f.name, f.raw)
+			if err != nil {
+				return MarketRules{}, err
+			}
+			*f.into = v
+		}
+		// A grid of 0 would let broker.RoundOrder pass any quantity through
+		// unrounded; the venue would refuse it, but only after it was sent.
+		if inst.StepSizeCoin <= 0 || inst.TickSizeQuote <= 0 {
+			return MarketRules{}, fmt.Errorf("bybit: spot %s publishes no basePrecision or tickSize — refused rather than trading off-grid", symbol)
+		}
+		if maxMarket > 0 && (inst.MaxQtyCoin == 0 || maxMarket < inst.MaxQtyCoin) {
+			inst.MaxQtyCoin = maxMarket
+		}
+		return MarketRules{Instrument: inst, MinOrderAmtQuote: inst.MinNotionalQuote}, nil
+	}
+	return MarketRules{}, fmt.Errorf("bybit: %s lists no spot symbol %q", c.http.BaseURL(), symbol)
+}
+
 func normalizeInstrumentStatus(s string) string {
 	if s == "Trading" {
 		return exchanges.StatusTrading
@@ -118,17 +211,23 @@ func normalizeInstrumentStatus(s string) string {
 	return s
 }
 
-// depthLevels asked for per side. The ceiling is 1000; 500 is asked because
-// 100 levels did not reach 0.1% of mid on 7 of 9 venues (CLAUDE.md's depth
-// trap), and every request costs the same single unit of the IP limit whatever
-// its size. It is a REST snapshot, per rule 10.
-const depthLevels = 500
+// depthLevels asked for per side, each the category's documented ceiling —
+// "spot: [1, 200]", "linear & inverse: [1, 500]" — because 100 levels did not
+// reach 0.1% of mid on 7 of 9 venues (CLAUDE.md's depth trap), and every request
+// costs the same single unit of the IP limit whatever its size. A REST snapshot,
+// per rule 10. The spot endpoint answered limit=500 without an error on
+// 2026-09-17, which is exactly why the documented ceiling is sent and not a
+// number the venue happens to tolerate today.
+const (
+	depthLevelsLinear = 500
+	depthLevelsSpot   = 200
+)
 
 // FetchDepthBook reads one symbol's book in the repo's normalized shape.
 //
 // GET /v5/market/orderbook — b "Bid, buyer. Sorted by price in descending
 // order", a "Ask, seller. Sorted by price in ascending order", each [price,
-// size] strings in COIN for linear; ts "The timestamp (ms) that the system
+// size] strings in COIN for linear and spot; ts "The timestamp (ms) that the system
 // generates the data". Levels are sorted again anyway: exchanges.FinishDepthBook
 // does not trust a documented order (the Kraken lesson).
 func (c *Client) FetchDepthBook(ctx context.Context, symbol string) (exchanges.DepthBook, error) {
@@ -138,9 +237,13 @@ func (c *Client) FetchDepthBook(ctx context.Context, symbol string) (exchanges.D
 		Asks   [][2]string `json:"a"`
 		TsMs   json.Number `json:"ts"`
 	}
+	levelsAsked := depthLevelsLinear
+	if c.market == broker.MarketSpot {
+		levelsAsked = depthLevelsSpot
+	}
 	if err := c.getPublic(ctx, epOrderbook, []broker.Param{
-		{Key: "category", Value: categoryLinear}, {Key: "symbol", Value: symbol},
-		{Key: "limit", Value: strconv.Itoa(depthLevels)},
+		{Key: "category", Value: c.category()}, {Key: "symbol", Value: symbol},
+		{Key: "limit", Value: strconv.Itoa(levelsAsked)},
 	}, &res); err != nil {
 		return exchanges.DepthBook{}, err
 	}
@@ -149,12 +252,12 @@ func (c *Client) FetchDepthBook(ctx context.Context, symbol string) (exchanges.D
 	}
 	ts, _ := res.TsMs.Int64()
 	book := exchanges.DepthBook{
-		Symbol: symbol, Source: c.mode.SourceID(), VenueTimeMs: ts,
+		Symbol: symbol, Source: c.SourceID(), VenueTimeMs: ts,
 		Bids: levels(res.Bids), Asks: levels(res.Asks), IsContractBook: false,
 	}
 	finished, err := exchanges.FinishDepthBook(book)
 	if err != nil {
-		return exchanges.DepthBook{}, fmt.Errorf("bybit %s: %w", c.mode.SourceID(), err)
+		return exchanges.DepthBook{}, fmt.Errorf("bybit %s: %w", c.SourceID(), err)
 	}
 	return finished, nil
 }
@@ -189,6 +292,9 @@ type FundingRate struct {
 // records up till endTime"; "Passing only startTime returns an error", so it is
 // never sent alone; limit [1, 200].
 func (c *Client) FundingRateHistory(ctx context.Context, symbol string, endMs int64, limit int) ([]FundingRate, error) {
+	if c.market != broker.MarketFuturesUSDM {
+		return nil, fmt.Errorf("%w: %q settles no funding", broker.ErrNotSupported, c.market)
+	}
 	if limit <= 0 || limit > 200 {
 		return nil, fmt.Errorf("bybit: funding history limit %d is outside the documented [1, 200]", limit)
 	}

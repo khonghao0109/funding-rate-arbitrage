@@ -140,9 +140,14 @@ func newPortal(m markets, symbols []string, bindIP, port string, settings execSe
 	if now == nil {
 		now = time.Now
 	}
+	// A markets value built by hand (the tests) names no venue; it is the
+	// Binance portal, as it was before -broker existed.
+	if m.profile.Kind == "" {
+		m.profile = profileFor(venueBinance)
+	}
 	p := &portal{
 		markets:     m,
-		stateDir:    stateDir,
+		stateDir:    m.profile.StateDir,
 		symbols:     symbols,
 		hosts:       allowedHosts(bindIP, port),
 		listen:      bindIP + ":" + port,
@@ -328,12 +333,17 @@ type marketStatus struct {
 }
 
 type statusView struct {
-	Mode             string       `json:"mode"`
-	NowMs            int64        `json:"now_ms"`
-	StartedAtMs      int64        `json:"started_at_ms"`
-	UptimeSec        int64        `json:"uptime_sec"`
-	Listen           string       `json:"listen"`
-	TestnetHosts     []string     `json:"testnet_hosts"`
+	Mode         string   `json:"mode"`
+	NowMs        int64    `json:"now_ms"`
+	StartedAtMs  int64    `json:"started_at_ms"`
+	UptimeSec    int64    `json:"uptime_sec"`
+	Listen       string   `json:"listen"`
+	TestnetHosts []string `json:"testnet_hosts"`
+	// Venue is "binance" or "bybit" (-broker); VenueLabelVI names it for the
+	// page; UnifiedWallet says both market tiles read ONE wallet.
+	Venue            string       `json:"venue"`
+	VenueLabelVI     string       `json:"venue_label_vi"`
+	UnifiedWallet    bool         `json:"unified_wallet"`
 	Symbols          []string     `json:"symbols"`
 	Spot             marketStatus `json:"spot"`
 	Futures          marketStatus `json:"futures"`
@@ -360,10 +370,13 @@ func (p *portal) handleStatus(w http.ResponseWriter, r *http.Request) {
 		NowMs: now.UnixMilli(), StartedAtMs: p.startedAt.UnixMilli(),
 		UptimeSec:        int64(now.Sub(p.startedAt).Seconds()),
 		Listen:           p.listen,
-		TestnetHosts:     broker.TestnetHosts(),
+		TestnetHosts:     p.markets.profile.AllowedHosts,
+		Venue:            string(p.markets.profile.Kind),
+		VenueLabelVI:     p.markets.profile.LabelVI,
+		UnifiedWallet:    p.markets.profile.UnifiedWallet,
 		Symbols:          p.symbols,
-		Spot:             p.marketStatus(p.markets.spot, p.markets.spotErr, p.markets.spotSourceVI, broker.BinanceSpotTestnetBaseURL),
-		Futures:          p.marketStatus(p.markets.perp, p.markets.perpErr, p.markets.perpSourceVI, broker.BinanceFuturesTestnetBaseURL),
+		Spot:             p.marketStatus(p.markets.spot, p.markets.spotErr, p.markets.spotSourceVI, p.markets.profile.SpotFallbackBaseURL),
+		Futures:          p.marketStatus(p.markets.perp, p.markets.perpErr, p.markets.perpSourceVI, p.markets.profile.PerpFallbackBaseURL),
 		Busy:             busyAction != "",
 		BusyAction:       busyAction,
 		BusySinceMs:      busySince,
@@ -374,9 +387,18 @@ func (p *portal) handleStatus(w http.ResponseWriter, r *http.Request) {
 		LegTimeoutMs:     p.exec.LegTimeout.Milliseconds(),
 		LegOrders:        []string{string(execution.LegOrderSequentialSpotFirst), string(execution.LegOrderParallel)},
 		Feeds:            p.feeds.View(),
-		NoticeVI: "CHỈ TESTNET — không tiền thật. Vị thế do người vận hành bấm, hoặc do Auto-Trader khi người vận hành BẬT nó (PLAN Q18); " +
+		NoticeVI: readOnlyPrefixVI(p.markets.profile) + "CHỈ " + p.markets.profile.LabelVI + " — không tiền thật. Vị thế do người vận hành bấm, hoặc do Auto-Trader khi người vận hành BẬT nó (PLAN Q18); " +
 			"không tín hiệu nào từ scanner hay nhật ký cổng 3.5 tới được lệnh.",
 	})
+}
+
+// readOnlyPrefixVI puts a read-only venue's reason at the head of the notice, so
+// the page says it before a button is pressed rather than after.
+func readOnlyPrefixVI(profile venueProfile) string {
+	if profile.OrdersBlockedVI == "" {
+		return ""
+	}
+	return profile.OrdersBlockedVI + ". "
 }
 
 func (p *portal) marketStatus(c venue, err error, sourceVI, fallbackBaseURL string) marketStatus {
@@ -463,11 +485,11 @@ func (p *portal) accountFor(ctx context.Context, symbol string) accountView {
 		wg.Add(2)
 		go func() {
 			defer wg.Done()
-			out.Spot = p.readMarketAccount(ctx, p.markets.spot, p.markets.spotErr, broker.MarketSpot, broker.BinanceSpotTestnetBaseURL, assets, budgetErr)
+			out.Spot = p.readMarketAccount(ctx, p.markets.spot, p.markets.spotErr, broker.MarketSpot, p.markets.profile.SpotFallbackBaseURL, assets, budgetErr)
 		}()
 		go func() {
 			defer wg.Done()
-			out.Futures = p.readMarketAccount(ctx, p.markets.perp, p.markets.perpErr, broker.MarketFuturesUSDM, broker.BinanceFuturesTestnetBaseURL, assets, budgetErr)
+			out.Futures = p.readMarketAccount(ctx, p.markets.perp, p.markets.perpErr, broker.MarketFuturesUSDM, p.markets.profile.PerpFallbackBaseURL, assets, budgetErr)
 		}()
 		wg.Wait()
 		out.ReadAtMs = p.now().UnixMilli()
@@ -971,7 +993,7 @@ func (p *portal) fundingFor(ctx context.Context, symbol string) fundingView {
 		now := p.now()
 		out := fundingView{
 			Symbol: symbol, WindowStartMs: now.Add(-fundingLookback).UnixMilli(), WindowEndMs: now.UnixMilli(),
-			NoteVI: "Mỗi dòng là MỘT mốc settle sàn đã thực trả/thu (quy tắc 6), đọc từ /fapi/v1/income. " +
+			NoteVI: "Mỗi dòng là MỘT mốc settle sàn đã thực trả/thu (quy tắc 6), đọc từ " + p.markets.profile.FundingIncomeEndpoint + ". " +
 				"Sàn trả cho vị thế của TÀI KHOẢN; một dòng chỉ gán được cho ý định khi đúng một ý định đang giữ qua mốc đó.",
 		}
 		if err := p.markets.readBudgetError(); err != nil {

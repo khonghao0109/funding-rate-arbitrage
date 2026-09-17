@@ -15,6 +15,8 @@ const BALANCE_STALE_MS = 30000;
 // Other tabs read positions every 15 s; three missed reads is stale.
 const HEDGE_STALE_MS = 45000;
 const balances = { readAtMs: 0, failedVI: "" };
+// unifiedWallet is set from /api/status: spot and futures share ONE wallet.
+let unifiedWallet = false;
 
 // The age under the balances is redrawn every second from the read stamp, so a
 // figure that stopped refreshing says so instead of reading "vừa đọc" forever.
@@ -152,6 +154,27 @@ export const shell = {
 
   renderStatus(s) {
     setText("footer-hosts", (s.testnet_hosts || []).join(", "));
+    // The venue both legs trade on (-broker). An older portal sends no venue
+    // field; the page then keeps the Binance labels it was written with.
+    // One wallet (Bybit UTA): the spot and futures tiles are two views of the
+    // SAME USDT, so the total must not add them.
+    unifiedWallet = s.unified_wallet === true;
+    if (unifiedWallet) {
+      setText("bal-spot-usdt-k", "USDT · ví hợp nhất (góc spot)");
+      setText("bal-futures-usdt-k", "USDT · ví hợp nhất (góc futures)");
+      setText("bal-total-usdt-k", "USDT · MỘT ví hợp nhất");
+    }
+    if (s.venue === "bybit") {
+      const label = s.venue_label_vi || "Bybit";
+      setText("venue-badge", `[${label.toUpperCase()}]`);
+      setText("conn-spot-name", "Bybit Spot");
+      setText("conn-futures-name", s.unified_wallet ? "Bybit USDT Perp · CHUNG VÍ UTA" : "Bybit USDT Perp");
+      setText("confirm-venue-line", `LỆNH THẬT trên ${label.toUpperCase()} — không tiền thật`);
+      for (const id of ["chip-spot", "chip-futures"]) {
+        const chip = $(id);
+        if (chip) chip.title = `API ${label} ${id === "chip-spot" ? "Spot" : "USDT Perp"}`;
+      }
+    }
     for (const [id, m] of [["chip-spot", s.spot], ["chip-futures", s.futures]]) {
       if (!m.configured) {
         this.setChip(id, "bad", "CHƯA CẤU HÌNH", m.credential_vi || "thiếu credential");
@@ -190,7 +213,13 @@ export const shell = {
     const base = find(a.spot.balances, baseAsset);
     setText("bal-spot-usdt", spotUSDT ? fmt.quote(spotUSDT.total_qty_in_asset, 2) : "—");
     setText("bal-futures-usdt", futUSDT ? fmt.quote(futUSDT.total_qty_in_asset, 2) : "—");
-    setText("bal-total-usdt", spotUSDT && futUSDT ? fmt.quote(spotUSDT.total_qty_in_asset + futUSDT.total_qty_in_asset, 2) : "—");
+    if (unifiedWallet) {
+      // The futures view names USDT even at zero; the spot view lists only
+      // non-zero coins, so it is not the one to read the wallet from.
+      setText("bal-total-usdt", futUSDT ? fmt.quote(futUSDT.total_qty_in_asset, 2) : "—");
+    } else {
+      setText("bal-total-usdt", spotUSDT && futUSDT ? fmt.quote(spotUSDT.total_qty_in_asset + futUSDT.total_qty_in_asset, 2) : "—");
+    }
     setText("bal-base-asset", baseAsset || "—");
     setText("bal-spot-base", base ? fmt.quote(base.total_qty_in_asset, 8) : "—");
     balances.readAtMs = a.read_at_ms;

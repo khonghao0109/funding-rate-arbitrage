@@ -172,6 +172,22 @@ func planEntry(intent Intent, cfg Config) (entryPlan, error) {
 	if err := out.invariant(intent).check(spotOrder.QtyCoin, perpOrder.QtyCoin); err != nil {
 		return out, fmt.Errorf("%w: %s — mở thế này là không phòng hộ", ErrSizeBelowMinimum, err.Error())
 	}
+
+	// The same invariant on what the spot WALLET will hold. A fee taken in the
+	// base coin makes the wallet Q × (1 − fee) beside a perp of Q: inside the
+	// tolerance that is the grid's own slack, past it the pair Open would call
+	// hedged is not — and a close could not later tell that gap from a coin
+	// somebody moved, so it is refused here, where refusing costs nothing.
+	if f := intent.SpotBuyFeeInBaseFrac; f > 0 {
+		if f > cfg.MaxSpotBaseFeeFrac {
+			return out, fmt.Errorf("%w: phí mua spot thu bằng coin %.4f%% vượt mức cho phép %.4f%% (Config.MaxSpotBaseFeeFrac)",
+				ErrSpotFeeUnhedged, f*100, cfg.MaxSpotBaseFeeFrac*100)
+		}
+		if gap := spotOrder.QtyCoin * f; gap > out.ResidualToleranceQtyCoin+gridEpsilon {
+			return out, fmt.Errorf("%w: mua %.10g coin thì ví chỉ nhận %.10g (phí %.4f%% thu bằng coin), lệch %.10g so với perp %.10g — quá dung sai %.10g; giảm cỡ",
+				ErrSpotFeeUnhedged, spotOrder.QtyCoin, spotOrder.QtyCoin*(1-f), f*100, gap, perpOrder.QtyCoin, out.ResidualToleranceQtyCoin)
+		}
+	}
 	return out, nil
 }
 
@@ -231,6 +247,8 @@ func validateIntent(i Intent) error {
 		return fmt.Errorf("%w: giá spot %v không phải số dương hữu hạn", ErrIntentInvalid, i.SpotPriceQuote)
 	case !positiveFinite(i.PerpPriceQuote):
 		return fmt.Errorf("%w: giá perp %v không phải số dương hữu hạn", ErrIntentInvalid, i.PerpPriceQuote)
+	case math.IsNaN(i.SpotBuyFeeInBaseFrac) || i.SpotBuyFeeInBaseFrac < 0 || i.SpotBuyFeeInBaseFrac >= 1:
+		return fmt.Errorf("%w: phí mua spot thu bằng coin %v không phải tỷ lệ trong [0, 1)", ErrIntentInvalid, i.SpotBuyFeeInBaseFrac)
 	case !positiveFinite(i.PerpMarginFrac):
 		// risk.Evaluate would refuse this too, but saying it here names the
 		// field the caller left out instead of describing a liquidation price

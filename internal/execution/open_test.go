@@ -469,3 +469,93 @@ func TestOpen_AGatewayErrorIsAmbiguousWhileAClientErrorIsDefinite(t *testing.T) 
 		})
 	}
 }
+
+// Review 2026-09-17, M2: a known fee taken in the base coin whose gap exceeds the
+// hedge tolerance is refused BEFORE anything is sent — Open must never call a
+// pair hedged that the wallet does not hold.
+func TestOpen_RefusesASizeWhoseBaseCoinFeeUnbalancesThePair(t *testing.T) {
+	h := newHarness(t, nil)
+	h.intent.SpotBuyFeeInBaseFrac = 0.001 // 0.3333 BTC × 0.1% = 0.000333 > 0.0001
+	res, err := h.opener.Open(context.Background(), h.intent)
+	if !errors.Is(err, ErrSpotFeeUnhedged) || res.Outcome != OutcomeBothFlat {
+		t.Fatalf("err %v outcome %q", err, res.Outcome)
+	}
+	if n := len(h.spot.Orders()) + len(h.perp.Orders()); n != 0 {
+		t.Errorf("%d orders sent by a refused open", n)
+	}
+	h.intent.SpotBuyFeeInBaseFrac = 0.003 // above Config.MaxSpotBaseFeeFrac
+	h.intent.NotionalQuote = 3_000
+	if _, err := h.opener.Open(context.Background(), h.intent); !errors.Is(err, ErrSpotFeeUnhedged) {
+		t.Errorf("a fee above the configured ceiling was accepted: %v", err)
+	}
+}
+
+// The unwind after a failed perp leg sells what the spot WALLET received, not
+// what the order filled; otherwise the venue refuses and the long stays naked.
+func TestOpen_UnwindSellsWhatTheWalletReceivedAfterABaseCoinFee(t *testing.T) {
+	h := newHarness(t, nil)
+	h.intent.NotionalQuote = 3_000 // 0.05 BTC: the 0.00005 fee gap is inside the 0.0001 tolerance
+	h.intent.SpotBuyFeeInBaseFrac = 0.001
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: 0.001, RefuseSpotSellBeyondBalance: true})
+	h.perp.SetBehaviour(brokertest.Behaviour{RejectWith: fmt.Errorf("%w: perp refused", broker.ErrInvalidOrder)})
+	res, err := h.opener.Open(context.Background(), h.intent)
+	if err == nil || errors.Is(err, ErrUnwindIncomplete) || errors.Is(err, ErrFlatEvidenceConflict) {
+		t.Fatalf("want a clean unwind, got %v%s", err, h.rec.Dump())
+	}
+	if res.Outcome != OutcomeBothFlat {
+		t.Errorf("outcome %q", res.Outcome)
+	}
+	balances, _ := h.spot.GetBalance(context.Background(), broker.MarketSpot)
+	for _, b := range balances {
+		if b.Asset == "BTC" && b.TotalQtyCoin() > h.intent.SpotInstrument.StepSizeCoin+1e-12 {
+			t.Errorf("the wallet still holds %v BTC after the unwind", b.TotalQtyCoin())
+		}
+	}
+}
+
+// With the wallet unreadable the unwind still subtracts the account's published
+// base-coin fee, so the sell is one the venue can fill.
+func TestOpen_UnwindUsesThePublishedFeeWhenTheWalletCannotBeRead(t *testing.T) {
+	h := newHarness(t, nil)
+	h.intent.NotionalQuote = 3_000
+	h.intent.SpotBuyFeeInBaseFrac = 0.001
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: 0.001, RefuseSpotSellBeyondBalance: true})
+	h.perp.SetBehaviour(brokertest.Behaviour{RejectWith: fmt.Errorf("%w: perp refused", broker.ErrInvalidOrder)})
+	h.spot.SetBalanceError(errors.New("wallet unreadable"))
+	_, err := h.opener.Open(context.Background(), h.intent)
+	for _, o := range h.spot.Orders() {
+		if o.Side == broker.SideSell && o.FilledQtyCoin <= 0 {
+			t.Errorf("the unwind sell filled nothing (%v asked): %v%s", o.QtyCoin, err, h.rec.Dump())
+		}
+	}
+	sold := false
+	for _, o := range h.spot.Orders() {
+		sold = sold || (o.Side == broker.SideSell && o.FilledQtyCoin > 0)
+	}
+	if !sold {
+		t.Fatalf("no spot unwind sell filled: %v%s", err, h.rec.Dump())
+	}
+}
+
+// The configured fee ceiling refuses on its own, even for a size whose gap would
+// fit the tolerance; and a fee outside [0, 1) is not an intent at all.
+func TestOpen_FeeCeilingAndRangeAreRefusedOnTheirOwn(t *testing.T) {
+	h := newHarness(t, nil)
+	h.intent.NotionalQuote = 600 // 0.01 BTC: even 0.3% is a 0.00003 gap, inside 0.0001
+	h.intent.SpotBuyFeeInBaseFrac = 0.003
+	if _, err := h.opener.Open(context.Background(), h.intent); !errors.Is(err, ErrSpotFeeUnhedged) {
+		t.Errorf("a fee above MaxSpotBaseFeeFrac: %v", err)
+	}
+	for _, bad := range []float64{-0.001, 1, math.NaN()} {
+		h.intent.SpotBuyFeeInBaseFrac = bad
+		if _, err := h.opener.Open(context.Background(), h.intent); !errors.Is(err, ErrIntentInvalid) {
+			t.Errorf("fee %v: %v", bad, err)
+		}
+	}
+	if n := len(h.spot.Orders()) + len(h.perp.Orders()); n != 0 {
+		t.Errorf("%d orders sent", n)
+	}
+	if _, err := NewOpener(h.spot, h.perp, Config{MaxSpotBaseFeeFrac: 0.01}, nil); err == nil {
+		t.Error("a 1% fee allowance was accepted")
+	}
+}

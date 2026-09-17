@@ -96,6 +96,18 @@ type Intent struct {
 	// maintenance schedule; an unverified one is refused, never assumed zero.
 	PerpMarginFrac float64
 	PerpBracket    risk.Bracket
+
+	// SpotBuyFeeInBaseFrac is the share of a spot BUY the venue keeps as its fee
+	// IN THE BASE COIN, read from this account's own fee schedule — Bybit always
+	// charges a taker spot buy that way, Binance unless the account pays in BNB
+	// (PLAN 4.5j). 0 means the wallet receives what the order filled, which is
+	// what Binance's spot testnet measures (fee 0).
+	//
+	// It is what makes the spot WALLET, not the spot ORDER, the leg: buying Q
+	// leaves Q × (1 − fee). Open refuses a size whose gap exceeds the hedge
+	// tolerance (a pair it would call hedged but is not), and the unwind sells
+	// what the wallet received rather than what the order filled.
+	SpotBuyFeeInBaseFrac float64
 }
 
 // Config is the parameters, each with its unit in the name where the type does
@@ -168,9 +180,29 @@ type Config struct {
 	// this is not evidence about the current market.
 	MaxBookAge time.Duration
 
+	// MaxSpotBaseFeeFrac is the largest share of a spot leg a close accepts as
+	// missing from the wallet because the venue took the buy's fee in the BASE
+	// coin, as a FRACTION of the leg. Bybit always charges a taker spot buy that
+	// way ("Side = Buy -> base currency", V5 enum) and Binance does unless the
+	// account pays in BNB. Measured: Bybit testnet spot taker 10 bps
+	// (2026-09-17); Binance spot testnet 0 (2026-09-15), whose mainnet default
+	// is 10 bps.
+	//
+	// Close sells what the wallet HOLDS when it is short of the orders' figure
+	// by at most this share plus the coarser step, and refuses before sending
+	// anything when it is short by more — that is somebody else's coin
+	// movement, not a fee. 0 is a real setting (a step's shortfall only), so
+	// NewOpener does not fill it; negative or ≥ 1% is refused.
+	MaxSpotBaseFeeFrac float64
+
 	// Now is the clock, injectable so the unwind deadline is testable.
 	Now func() time.Time
 }
+
+// DefaultMaxSpotBaseFeeFrac is twice the highest spot taker fee measured (Bybit
+// testnet, 10 bps), so a fee is never mistaken for a missing coin and a real
+// shortfall of a few tenths of a percent still is.
+const DefaultMaxSpotBaseFeeFrac = 0.002
 
 // DefaultLegTimeout is the shipped leg deadline, and it is UNMEASURED — see
 // Config.LegTimeout. It is a named constant so that the one place a test can
@@ -198,6 +230,7 @@ func DefaultConfig() Config {
 		PollEvery:            200 * time.Millisecond,
 		MaxResendPerLeg:      1,
 		MaxBookAge:           60 * time.Second,
+		MaxSpotBaseFeeFrac:   DefaultMaxSpotBaseFeeFrac,
 		Now:                  time.Now,
 	}
 }
@@ -319,6 +352,9 @@ var (
 	ErrBookStale        = fmt.Errorf("%w: the authorising book is too old to be evidence", ErrRefusedBeforePlacing)
 	ErrMarginUnverified = fmt.Errorf("%w: the perp venue's maintenance bracket is unverified", ErrRefusedBeforePlacing)
 	ErrIntentInvalid    = fmt.Errorf("%w: the intent does not describe a position", ErrRefusedBeforePlacing)
+	// ErrSpotFeeUnhedged: the spot buy's fee, taken in the base coin, would
+	// leave the wallet short of the perp by more than the hedge tolerance.
+	ErrSpotFeeUnhedged = fmt.Errorf("%w: the spot fee taken in the base coin would unbalance the pair", ErrRefusedBeforePlacing)
 
 	// ErrNoBestPrice is the book not publishing a best price on the side being
 	// taken. There is no fallback to the mid: the mid is not a price anything

@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.5i client Bybit V5 + `cmd/bybitcheck` 🟡 (2026-09-17: đọc được đồng hồ/ví/vị thế/quyền trên testnet, ví chưa có USDT; chưa có lệnh chéo sàn — không tính vào 5/6) + radar chéo sàn CHỈ ĐỌC 🟡 (2026-09-17, chưa triển khai lên 8085/8087) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.5i client Bybit V5 + `cmd/bybitcheck` 🟡 (2026-09-17: đọc được đồng hồ/ví/vị thế/quyền trên testnet, ví chưa có USDT; chưa có lệnh chéo sàn — không tính vào 5/6) + radar chéo sàn CHỈ ĐỌC 🟡 (2026-09-17, chưa triển khai lên 8085/8087) · 4.5j Chiến lược 1 trên Bybit UTA (spot + linear, `execportal -broker=bybit`) 🟡 (2026-09-17 — Q19; đọc thật 18/19; portal Bybit CHỈ ĐỌC cho tới khi chân spot được xét theo ví) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -5265,6 +5265,48 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   - Một binary build trước thay đổi này từ chối file v6.
 
 
+#### Bước 4.5j — Chiến lược 1 trên MỘT tài khoản Bybit V5 UTA (spot + linear) — 🟡 PHẦN ĐỌC ĐÃ LÀM, PORTAL BYBIT CHỈ ĐỌC (2026-09-17, Q19)
+
+> Báo cáo: [`docs/reports/walkthrough-bybit-spot.md`](reports/walkthrough-bybit-spot.md).
+>
+> - **Code:**
+>   - `internal/broker/bybit` phục vụ thêm `spot`. Mỗi client một thị trường; `WithMarket` dùng chung
+>     transport có ký. Lệnh MARKET spot luôn có `marketUnit=baseCoin` và `isLeverage=0`.
+>   - `realized.go` có danh sách khớp, funding tài khoản, mark, phí, bậc rủi ro.
+>   - `cmd/bybitcheck` đọc cả hai thị trường.
+>   - `cmd/execportal -broker=bybit`: adapter `venue_bybit.go`, ví hợp nhất đọc MỘT lần, file ý định
+>     `.paper/exec-bybit`.
+> - **Hai bẫy chỉ có trên Bybit, tìm ra trước khi chạy:**
+>   1. Ví hợp nhất bị đếm hai lần: bộ chia vốn của bot và ô "Tổng USDT" trên trang đều cộng góc spot
+>      với góc futures.
+>   2. Phí MUA spot thu bằng COIN GỐC. Ví giữ Q × (1 − phí) trong khi lệnh báo Q, nên lệnh ĐÓNG (và
+>      lệnh GỠ khi mở) bán số coin ví không có, sau khi perp đã phẳng: chân long bị để trần.
+>   - `internal/execution` nay:
+>     - từ chối cỡ có khoảng hụt vượt dung sai (`ErrSpotFeeUnhedged`);
+>     - GỠ theo số ví thực nhận;
+>     - ĐÓNG theo số dư sàn trong `MaxSpotBaseFeeFrac` (0,2%) của lần mua gốc.
+> - **Đo trên testnet (chỉ GET):** `bybitcheck` 18/19 mục đạt; mục hỏng duy nhất là ví chưa có USDT.
+>   - Phí taker spot **10 bps** và linear **5,5 bps**, nên vòng khứ hồi **31 bps**.
+>   - Chênh chạm 0,03–0,07 bps; bậc rủi ro 1: duy trì 0,33%, 150×.
+>   - Portal trên cổng phụ 8088: 7 endpoint đọc đều HTTP 200.
+>   - Trong lúc chạy thật, rào đơn vị của `maintenanceMargin` từ chối chính bậc cuối (0,6 / 1 / 1×) của
+>     sàn; nay kiểm bằng đẳng thức `initialMargin × maxLeverage ≈ 1`.
+> - **Review:**
+>   - Vòng 1: 0 chặn, 3 lớn, 5 nhỏ, cộng 1 lớn tự tìm. Đã sửa hết, mỗi bản sửa kiểm bằng đột biến.
+>   - Vòng 2: 3 lớn, cùng gốc "chân spot vẫn bị xét theo lượng LỆNH ở vài đường". M2 đã sửa; M1 (mở
+>     song song hoặc phí thực thu cao hơn công bố) và M3 (giới hạn cỡ sẽ dừng bảo vệ bot) chưa sửa.
+>   - **Do đó portal `-broker=bybit` CHỈ ĐỌC:** mọi lệnh ghi trả 403 `venue_read_only`, `-autotrade`
+>     bị từ chối.
+> - **Còn mở:**
+>   1. **Thiết kế lại chân spot** (điều kiện để bỏ cổng):
+>      - mua `ceil(Q / (1 − phí))`;
+>      - xét bất biến, lệnh gỡ và lệnh đóng theo số dư ví;
+>      - id riêng cho `reduceToMatch`.
+>      Đây là thay đổi máy trạng thái 4.4/4.5, cần người vận hành đồng ý phạm vi.
+>   2. Nghiệm thu bằng lệnh sau khi nhận Faucet.
+>   3. `definiteRejection` với retCode của Bybit (nợ 4.5i).
+>   4. Portal Bybit mặc định `-autotrade=true` như bản Binance.
+
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
 - Chạy tối thiểu 4 tuần, đối chiếu từng chu kỳ funding với sổ sách bot.
@@ -5690,6 +5732,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q16** | **Cổng web vận hành `cmd/execportal` được đặt lệnh TRÊN TESTNET**, mở rộng Q15 từ "lệnh do người vận hành gõ qua `cmd/execcheck`" sang "lệnh do người vận hành bấm và XÁC NHẬN trên trang loopback". Năm giới hạn của Q15 giữ nguyên, thêm ba: (1) **chỉ bind loopback** (`-bind` nhận IP loopback, không nhận `0.0.0.0` hay tên máy); (2) **mọi lệnh ghi qua hộp xác nhận + header `X-Execportal-Action`**, Host/Origin/Sec-Fetch-Site phải là chính portal; (3) **MỘT vị thế mỗi symbol**. `execportal` được thêm vào danh sách `allowed` của `boundary_test.go` — nhị phân giữ cổng 3.5 vẫn không link `internal/broker` lẫn `internal/execution`. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
 | **Q17** | **Cổng vận hành hợp nhất: `cmd/execportal` (binary giữ credential testnet) RELAY CHỈ ĐỌC dữ liệu của `cmd/scanner` và `cmd/paperledger`** vào cùng trang bốn tab. Giới hạn của Q15/Q16 giữ nguyên, thêm bốn: (1) **relay nguyên văn, không giải mã** — code nằm trong package `cmd/execportal/feeds` chỉ export handler, sức khoẻ và tắt; test ghim bề mặt export, cấm import `internal/` và giải mã JSON, cấm package main đọc feed; (2) **relay không bao giờ làm scanner chờ** — đọc upstream không chặn, trình duyệt chậm thì ngắt relay; chỉ nối khi tab Scanner đang mở, tối đa 3 phiên và 20 phiên/phút; (3) **upstream chỉ là IP loopback, đường cố định**, không theo redirect; (4) **chỉ tab Execution gửi lệnh ghi**, kiểm bằng test đọc JS. Tab Crowding **không có nguồn live** (6.2 vẫn sau 3.5 và 3.4) — vẽ snapshot fixture nghiên cứu. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
 | **Q18** | **Auto-Trader TESTNET trong `cmd/execportal`: bot tự mở và đóng cặp Chiến lược 1 không cần cú bấm cho từng lệnh**, đảo giới hạn 5 của Q15 CHỈ trên testnet và CHỈ trong package `cmd/execportal/autotrade`. Giữ nguyên mọi giới hạn khác của Q15/Q16/Q17, thêm năm: (1) **quyết mà không thực thi** — package không import `internal/broker`/`internal/execution`, lệnh chỉ qua `openAs`/`close` của portal dưới cùng khoá ghi; test ghim người gọi của mọi hàm gửi lệnh trong package main và cấm transport có ký; (2) **tín hiệu là của testnet** (sổ lệnh, funding đã settle, phí của tài khoản) — không scanner, không nhật ký, không `EvaluateEntry`; từ `strategy` chỉ `RoundTripCost`/`NetAPR`; (3) **không bao giờ tự làm phẳng** — lệch, bằng chứng không khớp, lỗi liên tiếp → DỪNG BẢO VỆ, bật lại cần người vận hành xác nhận; (4) **KILL chỉ đóng cặp của bot và không huỷ lệnh đã gửi**; (5) **bật cần hộp xác nhận hoặc cờ `-autotrade`**. Tín hiệu của cổng 3.5 → lệnh, và vốn thật, vẫn sau 3.5 VÀ 3.4 VÀ 4.6. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-15 |
+| **Q19** | **Chiến lược 1 (long spot + short perp) được chạy trên MỘT tài khoản Bybit V5 Unified Trading Account qua `cmd/execportal -broker=bybit`** — yêu cầu của người vận hành ngày 2026-09-17 (bước 4.5j). Mọi giới hạn của Q15–Q18 giữ nguyên trên sàn mới, thêm bốn: (1) **chỉ `api-testnet.bybit.com` và `api-demo.bybit.com`** — allow-list theo scheme của `broker.NewClient`, không cờ mainnet; (2) **hai chân cùng một sàn**, không có chân mỗi sàn một nơi — lệnh chéo sàn (4.5i giai đoạn 3) vẫn chưa làm; (3) **ví hợp nhất đọc MỘT lần** — portal và bot không bao giờ cộng góc spot với góc futures; (4) **file ý định riêng `.paper/exec-bybit`**, `cmd/execcheck` không đọc; (5) **portal Bybit CHỈ ĐỌC** (403 `venue_read_only`) cho tới khi `internal/execution` xét chân spot theo số dư ví ở mọi đường — review 4.5j vòng 2. Bộ phân bổ vốn và auto-trader là CÙNG code với Binance. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-17 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -6202,7 +6245,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.5i Bybit V5 🟡 2026-09-17 (client `internal/broker/bybit` + `cmd/bybitcheck`; testnet: lệch giờ 64–136 ms, 4/5 mục đạt, ví USDT = 0 chưa Faucet; chưa lệnh chéo sàn; đo lệch funding Binance–Bybit trung vị 3,2% APR, 4,8% ngày ≥ 15%; radar chéo sàn chỉ đọc + nhật ký đợt, schema v6, chưa triển khai lên 8085/8087) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.5i Bybit V5 🟡 2026-09-17 (client `internal/broker/bybit` + `cmd/bybitcheck`; testnet: lệch giờ 64–136 ms, 4/5 mục đạt, ví USDT = 0 chưa Faucet; chưa lệnh chéo sàn; đo lệch funding Binance–Bybit trung vị 3,2% APR, 4,8% ngày ≥ 15%; radar chéo sàn chỉ đọc + nhật ký đợt, schema v6, chưa triển khai lên 8085/8087) · 4.5j Bybit spot + portal `-broker=bybit` 🟡 2026-09-17 (Q19; `bybitcheck` 18/19, phí spot 10 bps thu bằng coin gốc, vòng khứ hồi 31 bps; execution sửa đóng/gỡ theo số dư ví; review vòng 2 còn 2 lớn nên portal Bybit CHỈ ĐỌC; chưa lệnh) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

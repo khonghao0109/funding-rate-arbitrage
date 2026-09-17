@@ -15,7 +15,7 @@
 <body>
   <a class="skip-link" href="#main">Bỏ qua tới nội dung</a>
   <div class="backdrop" aria-hidden="true"></div>
-  <div class="demo-badge" role="note">[BINANCE TESTNET DEMO]</div>
+  <div class="demo-badge" role="note" id="venue-badge">[BINANCE TESTNET DEMO]</div>
 
   <header class="shell-header" id="shell-header">
     <div class="header-row">
@@ -55,9 +55,9 @@
     </div>
 
     <div class="header-row balances" aria-label="Số dư ví testnet">
-      <div class="bal"><div class="bal-k"><span>Ví Spot · USDT</span><span id="bal-spot-age"></span></div><div class="bal-v" id="bal-spot-usdt">—</div></div>
-      <div class="bal"><div class="bal-k"><span>Ví Futures · USDT</span></div><div class="bal-v" id="bal-futures-usdt">—</div></div>
-      <div class="bal total"><div class="bal-k"><span>Tổng USDT · Spot + Futures</span><span>không quy đổi coin</span></div><div class="bal-v" id="bal-total-usdt">—</div></div>
+      <div class="bal"><div class="bal-k"><span id="bal-spot-usdt-k">Ví Spot · USDT</span><span id="bal-spot-age"></span></div><div class="bal-v" id="bal-spot-usdt">—</div></div>
+      <div class="bal"><div class="bal-k"><span id="bal-futures-usdt-k">Ví Futures · USDT</span></div><div class="bal-v" id="bal-futures-usdt">—</div></div>
+      <div class="bal total"><div class="bal-k"><span id="bal-total-usdt-k">Tổng USDT · Spot + Futures</span><span>không quy đổi coin</span></div><div class="bal-v" id="bal-total-usdt">—</div></div>
       <div class="bal"><div class="bal-k"><span>Ví Spot · <span id="bal-base-asset">BTC</span></span><span>gồm số dư cấp sẵn</span></div><div class="bal-v" id="bal-spot-base">—</div></div>
     </div>
 
@@ -295,7 +295,7 @@
     </section>
 
     <section class="tab-panel" id="panel-autotrade" role="tabpanel" aria-labelledby="tab-autotrade" hidden>
-      <p class="note at-notice" id="at-notice">CHỈ TESTNET — bot tự mở và đóng lệnh thật trên Binance testnet qua đúng đường MỞ/ĐÓNG của portal, mỗi lúc một lệnh (PLAN Q18). Mọi con số là của tài khoản testnet.</p>
+      <p class="note at-notice" id="at-notice">CHỈ TESTNET — bot tự mở và đóng lệnh thật trên sàn testnet của portal qua đúng đường MỞ/ĐÓNG của portal, mỗi lúc một lệnh (PLAN Q18). Mọi con số là của tài khoản testnet.</p>
       <div class="callout bad mt8" id="at-halt" role="alert" hidden></div>
 
       <!-- KHỐI 1: KPI DANH MỤC -->
@@ -577,7 +577,7 @@
         </div>
         <div class="conn-grid">
           <div class="conn" id="conn-spot">
-            <div class="label"><span>Binance Spot</span><span class="pill" data-role="pill">—</span></div>
+            <div class="label"><span id="conn-spot-name">Binance Spot</span><span class="pill" data-role="pill">—</span></div>
             <div class="meta" data-role="host">—</div>
             <dl class="kv">
               <dt>Ping</dt><dd data-role="ping">—</dd>
@@ -588,7 +588,7 @@
             <div class="err" data-role="err" hidden></div>
           </div>
           <div class="conn" id="conn-futures">
-            <div class="label"><span>Binance USDⓈ-M Futures</span><span class="pill" data-role="pill">—</span></div>
+            <div class="label"><span id="conn-futures-name">Binance USDⓈ-M Futures</span><span class="pill" data-role="pill">—</span></div>
             <div class="meta" data-role="host">—</div>
             <dl class="kv">
               <dt>Ping</dt><dd data-role="ping">—</dd>
@@ -1012,7 +1012,7 @@
   <dialog id="confirm" aria-labelledby="confirm-title">
     <form method="dialog" id="confirm-form">
       <h2 id="confirm-title">Xác nhận</h2>
-      <div class="testnet-line">LỆNH THẬT trên BINANCE TESTNET — không tiền thật</div>
+      <div class="testnet-line" id="confirm-venue-line">LỆNH THẬT trên BINANCE TESTNET — không tiền thật</div>
       <div class="body" id="confirm-body"></div>
       <div class="actions">
         <button type="button" class="btn ghost" id="confirm-cancel">Huỷ</button>

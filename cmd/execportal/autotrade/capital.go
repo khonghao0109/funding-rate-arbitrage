@@ -38,6 +38,14 @@ type Account struct {
 	// what a slot's share must be measured against.
 	FuturesQuoteTotal float64
 
+	// UnifiedWallet is true when spot and futures are ONE wallet — Bybit's
+	// Unified Trading Account (PLAN 4.5j). Both markets then report the SAME
+	// quote balance, so the reader carries it ONCE, in SpotQuoteTotal, and
+	// FuturesQuoteTotal must be 0: the Binance arithmetic above adds the two,
+	// which here would count every quote twice and size every slot on money the
+	// account does not have.
+	UnifiedWallet bool
+
 	ReadAtMs int64
 }
 
@@ -138,6 +146,11 @@ type notionalPlan struct {
 	FuturesPoolQuote float64
 	TotalEquityQuote float64
 
+	// UnifiedWallet and OpenSpotValueQuote restate the input for the console
+	// line: on one wallet SpotPoolQuote IS the whole pool.
+	UnifiedWallet      bool
+	OpenSpotValueQuote float64
+
 	BufferQuote   float64
 	TradableQuote float64
 
@@ -170,6 +183,12 @@ type notionalPlan struct {
 // The buffer is charged against the FUTURES wallet in that second line and not
 // against the spot one, because the spot leg is fully paid for and cannot be
 // liquidated: the buffer is margin headroom, and margin lives on one side.
+//
+// On a UNIFIED wallet there are no two wallets to bound separately: one pool
+// pays for the spot leg and posts the perp margin, which is exactly what the
+// first line already divides by (1 + marginFrac). The two per-wallet lines are
+// therefore not applied — the second would read a futures wallet of 0 and size
+// every slot to nothing.
 func planNotional(in notionalPlanInput) notionalPlan {
 	var out notionalPlan
 	switch {
@@ -187,6 +206,9 @@ func planNotional(in notionalPlanInput) notionalPlan {
 		out.ReasonVI = fmt.Sprintf("số dư đọc được không phải số không âm hữu hạn (spot %v, futures %v)",
 			in.Account.SpotQuoteTotal, in.Account.FuturesQuoteTotal)
 		return out
+	case in.Account.UnifiedWallet && in.Account.FuturesQuoteTotal != 0:
+		out.ReasonVI = fmt.Sprintf("ví hợp nhất nhưng có số futures riêng %v — một ví không được cộng hai lần", in.Account.FuturesQuoteTotal)
+		return out
 	case !finite(in.OpenSpotValueQuote) || in.OpenSpotValueQuote < 0:
 		out.ReasonVI = fmt.Sprintf("giá trị chân spot đang giữ %v không phải số không âm hữu hạn", in.OpenSpotValueQuote)
 		return out
@@ -196,6 +218,7 @@ func planNotional(in notionalPlanInput) notionalPlan {
 	}
 
 	out.CapitalPerNotional = 1 + in.MarginFrac
+	out.UnifiedWallet, out.OpenSpotValueQuote = in.Account.UnifiedWallet, in.OpenSpotValueQuote
 	out.SpotPoolQuote = in.Account.SpotQuoteTotal + in.OpenSpotValueQuote
 	out.FuturesPoolQuote = in.Account.FuturesQuoteTotal
 	out.TotalEquityQuote = out.SpotPoolQuote + out.FuturesPoolQuote
@@ -206,17 +229,23 @@ func planNotional(in notionalPlanInput) notionalPlan {
 
 	// Every ceiling on one leg's notional, named. The smallest wins, and which
 	// one it was is the whole diagnosis when a size surprises somebody.
-	limits := []struct {
+	type limit struct {
 		nameVI string
 		quote  float64
-	}{
-		{fmt.Sprintf("phần vốn mỗi chỗ (%.2f quote ÷ %.2f)", out.CapitalPerSlotQuote, out.CapitalPerNotional), out.CapitalPerSlotQuote / out.CapitalPerNotional},
-		{fmt.Sprintf("ví spot (%.2f quote ÷ %d chỗ)", out.SpotPoolQuote, in.Slots), out.SpotPoolQuote / slots},
-		{fmt.Sprintf("ví futures (%.2f quote × %.0f%% ÷ %d chỗ ÷ ký quỹ %.2f)", out.FuturesPoolQuote, (1-in.BufferPct)*100, in.Slots, in.MarginFrac),
-			out.FuturesPoolQuote * (1 - in.BufferPct) / (slots * in.MarginFrac)},
-		{fmt.Sprintf("hạn mức vốn %.2f quote", in.CapQuote), in.CapQuote / (slots * out.CapitalPerNotional)},
-		{fmt.Sprintf("trần notional mỗi chân của portal %.0f quote", in.MaxNotionalQuote), in.MaxNotionalQuote},
 	}
+	limits := []limit{
+		{fmt.Sprintf("phần vốn mỗi chỗ (%.2f quote ÷ %.2f)", out.CapitalPerSlotQuote, out.CapitalPerNotional), out.CapitalPerSlotQuote / out.CapitalPerNotional},
+	}
+	if !in.Account.UnifiedWallet {
+		limits = append(limits,
+			limit{fmt.Sprintf("ví spot (%.2f quote ÷ %d chỗ)", out.SpotPoolQuote, in.Slots), out.SpotPoolQuote / slots},
+			limit{fmt.Sprintf("ví futures (%.2f quote × %.0f%% ÷ %d chỗ ÷ ký quỹ %.2f)", out.FuturesPoolQuote, (1-in.BufferPct)*100, in.Slots, in.MarginFrac),
+				out.FuturesPoolQuote * (1 - in.BufferPct) / (slots * in.MarginFrac)})
+	}
+	limits = append(limits,
+		limit{fmt.Sprintf("hạn mức vốn %.2f quote", in.CapQuote), in.CapQuote / (slots * out.CapitalPerNotional)},
+		limit{fmt.Sprintf("trần notional mỗi chân của portal %.0f quote", in.MaxNotionalQuote), in.MaxNotionalQuote},
+	)
 	out.NotionalQuote, out.BoundByVI = math.Inf(1), ""
 	for _, l := range limits {
 		if l.quote < out.NotionalQuote {
@@ -238,6 +267,12 @@ func planNotional(in notionalPlanInput) notionalPlan {
 func (p notionalPlan) logLineVI(slots int) string {
 	if !p.OK {
 		return "KHÔNG cân bằng được: " + p.ReasonVI
+	}
+	if p.UnifiedWallet {
+		return fmt.Sprintf("tổng vốn %.2f quote (MỘT ví hợp nhất, gồm %.2f đang nằm ở coin của vị thế bot), đệm %.0f%% = %.2f quote, còn %.2f quote chia %d chỗ ⇒ %.2f quote mỗi chỗ ⇒ %.2f quote notional mỗi chân (chặn bởi %s). Vị thế ĐANG MỞ giữ nguyên quy mô cũ.",
+			p.TotalEquityQuote, p.OpenSpotValueQuote,
+			p.BufferQuote/nonZero(p.TotalEquityQuote)*100, p.BufferQuote, p.TradableQuote, slots,
+			p.CapitalPerSlotQuote, p.NotionalQuote, p.BoundByVI)
 	}
 	return fmt.Sprintf("tổng vốn %.2f quote (ví spot %.2f + ví futures %.2f), đệm %.0f%% = %.2f quote, còn %.2f quote chia %d chỗ ⇒ %.2f quote mỗi chỗ ⇒ %.2f quote notional mỗi chân (chặn bởi %s). Vị thế ĐANG MỞ giữ nguyên quy mô cũ.",
 		p.TotalEquityQuote, p.SpotPoolQuote, p.FuturesPoolQuote,

@@ -28,15 +28,27 @@ func checkOrderLinkID(id string) error {
 	return nil
 }
 
+// checkMarket refuses a request for a market this client does not serve. The
+// other market is a sibling client (WithMarket), never a silent re-route: a
+// request naming spot must not become a linear order because of who received it.
 func (c *Client) checkMarket(m broker.Market) error {
-	if m != broker.MarketFuturesUSDM {
-		return fmt.Errorf("%w: this Bybit client trades USDT linear perpetuals only, not %q", broker.ErrNotSupported, m)
+	if err := checkMarketKind(m); err != nil {
+		return err
+	}
+	if m != c.market {
+		return fmt.Errorf("%w: this Bybit client serves %q, the request names %q", broker.ErrInvalidOrder, c.market, m)
 	}
 	return nil
 }
 
 // createOrderBody is POST /v5/order/create. A STRUCT, not a map, so the JSON
 // that is signed has one fixed field order and the same bytes every time.
+//
+// The per-category fields are POINTERS with omitempty, so each is either sent
+// with a deliberate value or not sent at all — never a Go zero value that
+// happens to serialize: a spot order carries no reduceOnly or positionIdx
+// ("Valid for linear, inverse & option"), a linear order no isLeverage or
+// marketUnit ("Valid for Unified spot only").
 type createOrderBody struct {
 	Category    string `json:"category"`
 	Symbol      string `json:"symbol"`
@@ -46,11 +58,21 @@ type createOrderBody struct {
 	Price       string `json:"price,omitempty"`
 	TimeInForce string `json:"timeInForce"`
 	OrderLinkID string `json:"orderLinkId"`
-	ReduceOnly  bool   `json:"reduceOnly"`
+	ReduceOnly  *bool  `json:"reduceOnly,omitempty"`
 	// "0: one-way mode". The package refuses to read a hedge-mode position
 	// (GetPosition), so it never sends 1 or 2 either.
-	PositionIdx int `json:"positionIdx"`
+	PositionIdx *int `json:"positionIdx,omitempty"`
+	// Spot only. isLeverage "0(default): false then spot trading, 1: true then
+	// margin trading" — 0 is sent explicitly, so a changed default can never
+	// turn Strategy 1's spot leg into a borrow.
+	IsLeverage *int `json:"isLeverage,omitempty"`
+	// Spot MARKET only: "baseCoin: for example, buy BTCUSDT, then "qty" unit is
+	// BTC". Without it a market BUY's qty is an amount of USDT.
+	MarketUnit string `json:"marketUnit,omitempty"`
 }
+
+// marketUnitBaseCoin is sent on every spot MARKET order, buy and sell.
+const marketUnitBaseCoin = "baseCoin"
 
 func venueSide(s broker.Side) string {
 	if s == broker.SideBuy {
@@ -60,6 +82,9 @@ func venueSide(s broker.Side) string {
 }
 
 // PlaceOrder implements broker.Broker.
+//
+// On spot, qty is always in COIN: a MARKET order carries marketUnit=baseCoin and
+// every order isLeverage=0 (see the package comment).
 //
 // MARKET is sent with timeInForce IOC — "Market order will always use IOC" —
 // and the venue "will convert the market order into an IOC limit order for
@@ -78,17 +103,25 @@ func (c *Client) PlaceOrder(ctx context.Context, req broker.PlaceOrderRequest) (
 		return broker.Order{}, err
 	}
 	body := createOrderBody{
-		Category:    categoryLinear,
+		Category:    c.category(),
 		Symbol:      req.Symbol,
 		Side:        venueSide(req.Side),
 		Qty:         formatNumber(req.QtyCoin),
 		OrderLinkID: req.ClientOrderID,
-		ReduceOnly:  req.ReduceOnly,
-		PositionIdx: 0,
+	}
+	if c.market == broker.MarketSpot {
+		spotTrading := 0
+		body.IsLeverage = &spotTrading
+	} else {
+		reduceOnly, oneWay := req.ReduceOnly, 0
+		body.ReduceOnly, body.PositionIdx = &reduceOnly, &oneWay
 	}
 	switch req.Type {
 	case broker.OrderTypeMarket:
 		body.OrderType, body.TimeInForce = "Market", "IOC"
+		if c.market == broker.MarketSpot {
+			body.MarketUnit = marketUnitBaseCoin
+		}
 	case broker.OrderTypeLimitGTC:
 		body.OrderType, body.TimeInForce = "Limit", "GTC"
 		body.Price = formatNumber(req.PriceQuote)
@@ -173,7 +206,7 @@ func (c *Client) CancelOrder(ctx context.Context, q broker.OrderQuery) (broker.O
 	if err := c.checkQuery(q); err != nil {
 		return broker.Order{}, err
 	}
-	body := cancelOrderBody{Category: categoryLinear, Symbol: q.Symbol}
+	body := cancelOrderBody{Category: c.category(), Symbol: q.Symbol}
 	if q.ClientOrderID != "" {
 		body.OrderLinkID = q.ClientOrderID
 	} else {
@@ -253,8 +286,8 @@ func (c *Client) checkQuery(q broker.OrderQuery) error {
 	return nil
 }
 
-func identify(q broker.OrderQuery) []broker.Param {
-	params := []broker.Param{{Key: "category", Value: categoryLinear}, {Key: "symbol", Value: q.Symbol}}
+func (c *Client) identify(q broker.OrderQuery) []broker.Param {
+	params := []broker.Param{{Key: "category", Value: c.category()}, {Key: "symbol", Value: q.Symbol}}
 	if q.ClientOrderID != "" {
 		return append(params, broker.Param{Key: "orderLinkId", Value: q.ClientOrderID})
 	}
@@ -283,7 +316,7 @@ func (c *Client) GetOrder(ctx context.Context, q broker.OrderQuery) (broker.Orde
 		return broker.Order{}, err
 	}
 	for _, ep := range []broker.Endpoint{epOrderRealtime, epOrderHistory} {
-		orders, _, err := c.listOrders(ctx, ep, identify(q))
+		orders, _, err := c.listOrders(ctx, ep, c.identify(q))
 		if err != nil {
 			return broker.Order{}, err
 		}
@@ -301,15 +334,17 @@ func (c *Client) GetOrder(ctx context.Context, q broker.OrderQuery) (broker.Orde
 }
 
 // OpenOrders implements broker.Broker. An empty symbol lists every USDT-settled
-// linear order: "For linear, either symbol, baseCoin, settleCoin is required".
+// linear order — "For linear, either symbol, baseCoin, settleCoin is required" —
+// or every spot order, where settleCoin is "spot: not supported" and symbol is
+// optional.
 func (c *Client) OpenOrders(ctx context.Context, market broker.Market, symbol string) ([]broker.Order, error) {
 	if err := c.checkMarket(market); err != nil {
 		return nil, err
 	}
-	params := []broker.Param{{Key: "category", Value: categoryLinear}}
+	params := []broker.Param{{Key: "category", Value: c.category()}}
 	if symbol != "" {
 		params = append(params, broker.Param{Key: "symbol", Value: symbol})
-	} else {
+	} else if c.market == broker.MarketFuturesUSDM {
 		params = append(params, broker.Param{Key: "settleCoin", Value: settleCoinUSDT})
 	}
 	// "0(default): query open status orders (e.g., New, PartiallyFilled) only";
@@ -367,7 +402,7 @@ func (c *Client) listOrders(ctx context.Context, ep broker.Endpoint, params []br
 	}
 	out := make([]broker.Order, 0, len(res.List))
 	for _, v := range res.List {
-		o, err := v.normalize()
+		o, err := v.normalize(c.market)
 		if err != nil {
 			return nil, "", err
 		}
@@ -376,9 +411,9 @@ func (c *Client) listOrders(ctx context.Context, ep broker.Endpoint, params []br
 	return out, res.NextPageCursor, nil
 }
 
-func (v venueOrder) normalize() (broker.Order, error) {
+func (v venueOrder) normalize(market broker.Market) (broker.Order, error) {
 	o := broker.Order{
-		Market: broker.MarketFuturesUSDM, Symbol: v.Symbol,
+		Market: market, Symbol: v.Symbol,
 		ClientOrderID: v.OrderLinkID, VenueOrderID: v.OrderID,
 		Status: normalizeStatus(v.OrderStatus), ReduceOnly: v.ReduceOnly,
 	}
@@ -425,7 +460,9 @@ func (v venueOrder) normalize() (broker.Order, error) {
 // normalizeStatus maps orderStatus (https://bybit-exchange.github.io/docs/v5/enum).
 //
 // "Cancelled — In derivatives, orders with this status may have an executed
-// qty", so CANCELED here does NOT mean nothing filled: read FilledQtyCoin.
+// qty", so CANCELED here does NOT mean nothing filled: read FilledQtyCoin. On
+// spot the same case is its own status — "PartiallyFilledCanceled  Only spot has
+// this order status" — mapped to CANCELED with its fill kept.
 // Deactivated ("cancelled before they are triggered") is CANCELED as well.
 // Untriggered and Triggered belong to conditional orders this package never
 // sends, and are UNKNOWN rather than a guessed equivalent.

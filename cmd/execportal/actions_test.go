@@ -51,8 +51,10 @@ type fakeVenue struct {
 	rules  binancebroker.MarketRules
 	book   exchanges.DepthBook
 
-	feesErr      error
-	fundingRates []binancebroker.FundingRate
+	feesErr error
+	// spotTakerFrac overrides the spot market's fee (0 = Binance spot testnet).
+	spotTakerFrac float64
+	fundingRates  []binancebroker.FundingRate
 	// fundingBySymbol, when it names a symbol, answers that symbol's history
 	// instead of fundingRates — so a cache that served one symbol's rows for
 	// another would be seen.
@@ -128,7 +130,7 @@ func (f *fakeVenue) CommissionRates(_ context.Context, symbol string) (binancebr
 	if f.feesErr != nil {
 		return binancebroker.CommissionRates{}, f.feesErr
 	}
-	rate := 0.0
+	rate := f.spotTakerFrac
 	if f.market == broker.MarketFuturesUSDM {
 		rate = 0.0004
 	}
@@ -638,4 +640,17 @@ func TestCloseGuard_AnUnmeasurableTouchDefersAndATightOneSends(t *testing.T) {
 	if why := (closeGuard{}).deferVI(depth.Summary{}, depth.Summary{}); why != "" {
 		t.Errorf("no guard deferred on %q", why)
 	}
+}
+
+// PLAN 4.5j: the account's spot fee reaches execution, which refuses a size whose
+// fee taken in the base coin would leave the wallet short of the perp past the
+// hedge tolerance — and lets a small one through.
+func TestActions_OpenRefusesASizeTheSpotBaseFeeWouldUnhedge(t *testing.T) {
+	p, spot, perp := fakePortal(t)
+	spot.spotTakerFrac = 0.001 // Bybit's measured spot taker, charged in BTC on a buy
+	code, v := postJSON[openView](t, p, "open", "/api/open", openRequest{Symbol: "BTCUSDT", NotionalQuote: 20_000})
+	if v.Hedged || v.Outcome != "both_flat" || !strings.Contains(v.ErrorVI, "thu bằng coin") || orderCount(spot, perp) != 0 {
+		t.Fatalf("a 20k open with a 0.1%% base-coin fee = %d %q, %d orders", code, v.ErrorVI, orderCount(spot, perp))
+	}
+	openOK(t, p) // 65 quote: a 0.0000008 BTC gap, inside the 0.0001 tolerance
 }

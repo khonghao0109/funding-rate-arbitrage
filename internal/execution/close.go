@@ -90,6 +90,13 @@ type CloseRequest struct {
 	EntryPerpAvgPriceQuote float64
 	EntrySpotRefMidQuote   float64
 	EntryPerpRefMidQuote   float64
+
+	// EntrySpotFilledQtyCoin is what the OPENING spot order filled. It anchors
+	// the fee-in-base-coin allowance: the wallet's gap is a share of the
+	// ORIGINAL buy and does not shrink when a partial close has made the
+	// remaining leg smaller. 0 means unknown, and the allowance is then taken
+	// on the quantity being closed.
+	EntrySpotFilledQtyCoin float64
 }
 
 // CloseResult is what closing did, GROSS except where a name says otherwise.
@@ -150,6 +157,12 @@ type CloseResult struct {
 	SpotBaseBalanceAfterQtyCoin  float64
 	SpotBaseBalanceRead          bool
 	SpotFlatEvidenceVI           string
+
+	// SpotSellCappedByBalance is true when the spot leg sold what the VENUE
+	// says the wallet holds rather than what the orders filled, because the
+	// wallet held less by no more than the coarser step — a fee taken in the
+	// base coin (PLAN 4.5j). ReasonVI states both figures.
+	SpotSellCappedByBalance bool
 
 	ReasonVI string
 }
@@ -262,6 +275,50 @@ func (o *Trader) Close(ctx context.Context, req CloseRequest) (CloseResult, erro
 	if err != nil {
 		return res, fmt.Errorf("%w: chân perp: %s", ErrCloseRefused, err.Error())
 	}
+	// The spot WALLET, not our orders, says what can be sold (rule 7). A venue
+	// that takes a spot buy's fee in the base coin — Bybit always, Binance
+	// unless paid in BNB — leaves the wallet short of what the buy order filled.
+	// Sized from the orders, the spot sell is then refused AFTER the perp has
+	// been bought back, which is a naked long. So, before anything is sent:
+	//
+	//   - short by more than Config.MaxSpotBaseFeeFrac of the ORIGINAL spot buy
+	//     plus one SPOT step: that is not a fee, somebody moved the coin, and
+	//     the close is refused whole;
+	//   - short by up to that: the spot leg sells what the wallet holds, floored
+	//     onto its grid, and says so.
+	//
+	// A wallet that could not be read keeps the old sizing; the venue then
+	// refuses or fills, and the invariant check below reports which.
+	spotSellCapQtyCoin := math.Inf(1)
+	if res.SpotBaseBalanceRead && res.SpotBaseBalanceBeforeQtyCoin < spotRounded.QtyCoin-gridEpsilon {
+		heldQtyCoin := res.SpotBaseBalanceBeforeQtyCoin
+		shortQtyCoin := spotRounded.QtyCoin - heldQtyCoin
+		// Anchored to the ORIGINAL buy (review 2026-09-17): the gap is a share
+		// of what was bought and stays that size after a partial close, while a
+		// share of the remaining leg shrinks until a real fee reads as theft.
+		// One SPOT step, not the coarser one: at a minimum-size leg the perp
+		// step can be the whole leg, and "short by a fee" would accept a wallet
+		// holding a tenth of it.
+		anchorQtyCoin := math.Max(spotRounded.QtyCoin, req.EntrySpotFilledQtyCoin)
+		allowedQtyCoin := intent.SpotInstrument.StepSizeCoin + o.cfg.MaxSpotBaseFeeFrac*anchorQtyCoin
+		if shortQtyCoin > allowedQtyCoin+gridEpsilon {
+			return res, fmt.Errorf("%w: ví spot giữ %.10g %s, đóng cần bán %.10g — thiếu %.10g, quá mức phí thu bằng coin cho phép %.10g (%.2f%% lần mua gốc + một bước spot); chưa gửi lệnh nào",
+				ErrPositionDisagrees, heldQtyCoin, intent.SpotInstrument.BaseAsset, spotRounded.QtyCoin, shortQtyCoin, allowedQtyCoin, o.cfg.MaxSpotBaseFeeFrac*100)
+		}
+		capped, err := broker.RoundOrder(broker.RoundRequest{
+			Rules: intent.SpotInstrument, Side: broker.SideSell, Type: broker.OrderTypeMarket,
+			QtyCoin: heldQtyCoin, PriceQuote: intent.SpotPriceQuote,
+		})
+		if err != nil {
+			return res, fmt.Errorf("%w: chân spot: ví chỉ giữ %.10g coin và lượng đó không bán được: %s", ErrCloseRefused, heldQtyCoin, err.Error())
+		}
+		spotSellCapQtyCoin = capped.QtyCoin
+		res.SpotSellCappedByBalance = true
+		res.ReasonVI = joinVI([]string{res.ReasonVI, fmt.Sprintf(
+			"chân spot bán %.10g coin theo SỐ DƯ SÀN thay vì %.10g theo lệnh: ví thiếu %.10g (≤ %.10g cho phép) — phí mua spot thu bằng coin",
+			spotSellCapQtyCoin, spotRounded.QtyCoin, shortQtyCoin, allowedQtyCoin)})
+	}
+
 	if dust := qtyCoin - math.Min(spotRounded.QtyCoin, perpRounded.QtyCoin); dust > gridEpsilon*tolerance {
 		// Not fatal — the closeable part is still closed below — but it is
 		// stated here, before sending, so nobody discovers it afterwards.
@@ -290,10 +347,7 @@ func (o *Trader) Close(ctx context.Context, req CloseRequest) (CloseResult, erro
 	// The spot leg closes BY WHAT THE PERP LEG REALLY CLOSED. Closing the
 	// requested quantity when the perp only managed part of it is exactly how
 	// a close unbalances a hedged pair.
-	spotTargetQtyCoin := perpClosed
-	if spotTargetQtyCoin > spotRounded.QtyCoin {
-		spotTargetQtyCoin = spotRounded.QtyCoin
-	}
+	spotTargetQtyCoin := math.Min(perpClosed, math.Min(spotRounded.QtyCoin, spotSellCapQtyCoin))
 	spotRounded, err = broker.RoundOrder(broker.RoundRequest{
 		Rules: intent.SpotInstrument, Side: broker.SideSell, Type: broker.OrderTypeMarket,
 		QtyCoin: spotTargetQtyCoin, PriceQuote: intent.SpotPriceQuote,
@@ -312,10 +366,32 @@ func (o *Trader) Close(ctx context.Context, req CloseRequest) (CloseResult, erro
 
 	res.ClosedQtyCoin = math.Min(spotClosed, perpClosed)
 	res.RemainingQtyCoin = math.Max(0, qtyCoin-res.ClosedQtyCoin)
+	// feeGapQtyCoin is the part of the perp close the spot wallet could not
+	// match because the venue already took it as the buy's fee — non-zero only
+	// when the spot leg sold everything the wallet held of this position.
+	feeGapQtyCoin := 0.0
+	walletSoldOut := false
+	if res.SpotSellCappedByBalance && spotClosed >= spotTargetQtyCoin-gridEpsilon && spotTargetQtyCoin >= spotSellCapQtyCoin-gridEpsilon {
+		// ANY perp remainder beside a sold-out wallet is one leg — not only a
+		// remainder past the tolerance (review round 2: a partial perp close
+		// landing exactly on the cap left a naked step reported as a hedge).
+		walletSoldOut = true
+		// What the orders call "remaining" on spot is coin nobody holds, so
+		// only the perp's remainder is still open.
+		feeGapQtyCoin = math.Max(0, perpClosed-spotClosed)
+		res.RemainingQtyCoin = math.Max(0, qtyCoin-perpClosed)
+	}
 
 	var outErr error
 	switch {
-	case math.Abs(spotClosed-perpClosed) > tolerance+gridEpsilon:
+	case walletSoldOut && res.RemainingQtyCoin > gridEpsilon:
+		// The wallet sold everything it held of this position, yet the perp is
+		// still short. That is ONE leg, not a smaller hedge (review 2026-09-17):
+		// calling it "incomplete" would send the next close to sell spot the
+		// wallet no longer has.
+		outErr = fmt.Errorf("%w: ví spot đã bán hết phần của vị thế (%.10g coin) mà perp còn short %.10g coin — chỉ còn MỘT chân",
+			ErrUnwindIncomplete, spotClosed, res.RemainingQtyCoin)
+	case math.Abs(spotClosed-perpClosed) > tolerance+feeGapQtyCoin+gridEpsilon:
 		// The one state this must never reach quietly.
 		outErr = fmt.Errorf("%w: chân spot đóng %.10g coin, chân perp đóng %.10g coin — lệch quá một bước %.10g",
 			ErrUnwindIncomplete, spotClosed, perpClosed, tolerance)

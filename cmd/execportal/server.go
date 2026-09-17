@@ -225,6 +225,10 @@ func (p *portal) socketGuard(next http.Handler) http.Handler {
 // bounded size. A cross-site form can post neither without a preflight.
 func (p *portal) writeGuard(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if why := p.markets.profile.OrdersBlockedVI; why != "" {
+			writeError(w, http.StatusForbidden, "venue_read_only", why)
+			return
+		}
 		if ct := r.Header.Get("Content-Type"); !strings.HasPrefix(strings.ToLower(strings.TrimSpace(ct)), "application/json") {
 			writeError(w, http.StatusUnsupportedMediaType, "json_required",
 				"thân yêu cầu phải là application/json")

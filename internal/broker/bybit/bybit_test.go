@@ -115,12 +115,17 @@ func (t handlerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 
 func newTestClient(t *testing.T, m *mockV5) *Client {
 	t.Helper()
+	return newTestClientFor(t, m, broker.MarketFuturesUSDM)
+}
+
+func newTestClientFor(t *testing.T, m *mockV5, market broker.Market) *Client {
+	t.Helper()
 	cfg, err := DefaultConfig(ModeTestnet, broker.Credentials{APIKey: broker.NewSecret(testKey), APISecret: broker.NewSecret(testSecret)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	cfg.TestTransport = handlerTransport{m}
-	c, err := New(ModeTestnet, cfg)
+	c, err := New(ModeTestnet, market, cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -629,6 +634,17 @@ func TestAPIKeyInfo(t *testing.T) {
 	if (APIKeyInfo{ReadOnly: true, Permissions: map[string][]string{"ContractTrade": {"Order", "Position"}}}).CanTradeContracts() {
 		t.Error("a read-only key cannot trade")
 	}
+	if info.CanTradeSpot() {
+		t.Error("a key with no Spot permission reported spot trading")
+	}
+	spotKey := APIKeyInfo{Permissions: map[string][]string{"Spot": {"SpotTrade"}}}
+	if !spotKey.CanTradeSpot() {
+		t.Error("Spot: [SpotTrade] must read as able to trade spot")
+	}
+	spotKey.ReadOnly = true
+	if spotKey.CanTradeSpot() {
+		t.Error("a read-only key cannot trade spot")
+	}
 }
 
 func TestErrors_MappedAndNeverCarryTheSecret(t *testing.T) {
@@ -676,7 +692,30 @@ func TestModeAndConfig(t *testing.T) {
 	}
 	binanceCfg := cfg
 	binanceCfg.Scheme = broker.SchemeBinanceQuery
-	if _, err := New(ModeDemo, binanceCfg); err == nil {
+	if _, err := New(ModeDemo, broker.MarketFuturesUSDM, binanceCfg); err == nil {
 		t.Error("a config without the Bybit scheme was accepted")
+	}
+}
+
+func TestResolveMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode, testnet string
+		want          Mode
+		ok            bool
+	}{
+		{"testnet", "", ModeTestnet, true},
+		{"demo", "false", ModeDemo, true},
+		{"", "true", ModeTestnet, true},
+		{"", "", "", false},      // nothing set: no host is chosen for the key
+		{"", "false", "", false}, // not testnet, and demo is never inferred
+		{"testnet", "0", "", false},
+		{"demo", "1", "", false},
+		{"testnet", "yes", "", false},
+		{"mainnet", "", "", false},
+	} {
+		got, err := ResolveMode(tc.mode, tc.testnet)
+		if (err == nil) != tc.ok || got != tc.want {
+			t.Errorf("ResolveMode(%q, %q) = %q, %v", tc.mode, tc.testnet, got, err)
+		}
 	}
 }

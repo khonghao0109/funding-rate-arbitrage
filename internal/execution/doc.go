@@ -46,6 +46,14 @@
 //	            we wanted to.
 //	BOTH FLAT   neither leg holds anything this call opened.
 //
+// "Holds" means what the account holds, not what the orders filled. A venue
+// that keeps a spot BUY's fee in the base coin (Bybit always; Binance unless
+// fees are paid in BNB) puts Q × (1 − fee) in the wallet beside a perp of Q, so
+// Open refuses a size whose Q × fee exceeds the tolerance above
+// (ErrSpotFeeUnhedged, from Intent.SpotBuyFeeInBaseFrac), the unwind sells what
+// the wallet received, and Close sells what the wallet holds within
+// Config.MaxSpotBaseFeeFrac of the original buy (PLAN 4.5j, review 2026-09-17).
+//
 // There is no third state. In particular there is no "one leg open, will fix
 // it on the next tick": an unhedged leg is a directional bet the strategy
 // never authorised, and the time between ticks is exactly when the price

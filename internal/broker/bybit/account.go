@@ -18,7 +18,14 @@ import (
 // Only one-way mode is accepted (positionIdx 0, the "System default"). A
 // hedge-mode account lists a Buy side and a Sell side separately, and summing
 // them into one signed quantity would hide a real long beside a real short.
+//
+// Spot holds no position — what a spot leg holds is a coin BALANCE — so a spot
+// request is ErrNotSupported, exactly as binance.Client answers it, and never a
+// zero Position that would read as "flat".
 func (c *Client) GetPosition(ctx context.Context, market broker.Market, symbol string) (broker.Position, error) {
+	if market == broker.MarketSpot {
+		return broker.Position{}, fmt.Errorf("%w: %q holds no position; read the coin balance", broker.ErrNotSupported, market)
+	}
 	if err := c.checkMarket(market); err != nil {
 		return broker.Position{}, err
 	}
@@ -237,6 +244,19 @@ func (c *Client) FetchWallet(ctx context.Context, coins ...string) (Wallet, erro
 
 // GetBalance implements broker.Broker from the unified wallet.
 //
+// # One wallet, two views
+//
+// A Unified Trading Account has ONE wallet for spot and derivatives, so both
+// markets read the same rows and the two answers are NOT two pools of money.
+// Adding the spot client's USDT to the linear client's USDT counts the same
+// coin twice. What differs is only which rows each market lists:
+//
+//   - MarketSpot lists every coin the wallet holds — the base coin a spot leg
+//     bought is here, which is how internal/execution reads a spot leg back;
+//   - MarketFuturesUSDM lists the settle coin, USDT, only: the linear market
+//     is margined and settled in it, and a BTC row under "futures" would read
+//     as a futures asset it is not.
+//
 // broker.Balance has two halves and a unified coin row has no field named
 // either — "free" is Deprecated. So they are DERIVED, and the derivation is
 // stated here rather than hidden:
@@ -254,12 +274,21 @@ func (c *Client) GetBalance(ctx context.Context, market broker.Market) ([]broker
 	if err := c.checkMarket(market); err != nil {
 		return nil, err
 	}
-	w, err := c.FetchWallet(ctx)
+	var coins []string
+	if market == broker.MarketFuturesUSDM {
+		// Named, so a wallet holding no USDT answers a zero row rather than an
+		// absent one — "not listed" is not "zero" (FetchWallet).
+		coins = []string{settleCoinUSDT}
+	}
+	w, err := c.FetchWallet(ctx, coins...)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]broker.Balance, 0, len(w.Coins))
 	for _, coin := range w.Coins {
+		if market == broker.MarketFuturesUSDM && coin.Coin != settleCoinUSDT {
+			continue
+		}
 		locked := coin.LockedCoin + coin.TotalOrderIMCoin + coin.TotalPositionIMCoin
 		out = append(out, broker.Balance{
 			Market: market, Asset: coin.Coin,
@@ -291,6 +320,20 @@ func (k APIKeyInfo) CanTradeContracts() bool {
 		has[p] = true
 	}
 	return has["Order"] && has["Position"]
+}
+
+// CanTradeSpot reports whether the key may place spot orders: read-write, with
+// Spot holding SpotTrade — "Spot: Permission of spot SpotTrade".
+func (k APIKeyInfo) CanTradeSpot() bool {
+	if k.ReadOnly {
+		return false
+	}
+	for _, p := range k.Permissions["Spot"] {
+		if p == "SpotTrade" {
+			return true
+		}
+	}
+	return false
 }
 
 // CanWithdraw reports "Withdraw" inside the Wallet permission array — "Permission

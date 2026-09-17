@@ -31,6 +31,10 @@ import (
 // stateDir is execcheck's directory, under the gitignored .paper/.
 const stateDir = ".paper/exec"
 
+// stateDirBybit is the Bybit portal's own directory (-broker=bybit). It is NOT
+// shared with cmd/execcheck, which trades Binance only.
+const stateDirBybit = ".paper/exec-bybit"
+
 // intentState mirrors cmd/execcheck's `state` field for field and tag for tag.
 // Do not add a field here alone: execcheck re-saves a file it closes, and a
 // field it does not know would be silently dropped on that write.

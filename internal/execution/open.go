@@ -85,6 +85,9 @@ func NewOpener(spotBroker, perpBroker broker.Broker, cfg Config, rec Recorder) (
 	if cfg.MaxSlippageBps < 0 {
 		return nil, fmt.Errorf("execution: MaxSlippageBps is %v; a negative tolerance prices a buy below the touch", cfg.MaxSlippageBps)
 	}
+	if cfg.MaxSpotBaseFeeFrac < 0 || cfg.MaxSpotBaseFeeFrac >= 0.01 {
+		return nil, fmt.Errorf("execution: MaxSpotBaseFeeFrac is %v; it must be in [0, 0.01) — a larger allowance would read a missing coin as a fee", cfg.MaxSpotBaseFeeFrac)
+	}
 	if rec == nil {
 		rec = nopRecorder{}
 	}
@@ -586,7 +589,9 @@ func (o *Trader) unwind(ctx context.Context, intent Intent, inv pairInvariant, r
 	// What the spot leg held when the unwind began. It is the second half of
 	// the flat proof — "the closing order filled exactly what the opening one
 	// did" — and it has to be taken before the loop below starts subtracting.
-	openedSpotQtyCoin := res.Spot.FilledQtyCoin
+	// With a fee taken in the base coin, what the opening order put in the
+	// WALLET is its fill less that fee, and that is what the close can match.
+	openedSpotQtyCoin := res.Spot.FilledQtyCoin * (1 - intent.SpotBuyFeeInBaseFrac)
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventUnwindStarted, DetailVI: reasonVI,
 		FilledQtyCoin: res.Spot.FilledQtyCoin})
 
@@ -615,7 +620,30 @@ func (o *Trader) unwind(ctx context.Context, intent Intent, inv pairInvariant, r
 			continue
 		}
 		market, side, priceQuote := leg.rules()
-		closed, err := o.closeLeg(safe, intent, leg.name, leg.b, market, side, leg.result.FilledQtyCoin, priceQuote)
+		unwindQtyCoin := leg.result.FilledQtyCoin
+		// The part of a spot fill the venue kept as its fee in the base coin
+		// was never in the wallet, so it is neither sold nor "left open".
+		feeKeptQtyCoin := 0.0
+		if leg.name == LegSpot && intent.SpotBuyFeeInBaseFrac > 0 {
+			feeKeptQtyCoin = unwindQtyCoin * intent.SpotBuyFeeInBaseFrac
+			unwindQtyCoin -= feeKeptQtyCoin
+			// And never more than the VENUE says the wallet gained, which also
+			// covers a fee the venue rounded up past the published rate.
+			if res.SpotBaseBalanceRead {
+				if after, ok := o.readSpotBaseQtyCoin(safe, intent); ok {
+					if gained := after - res.SpotBaseBalanceBeforeQtyCoin; gained >= 0 && gained < unwindQtyCoin {
+						feeKeptQtyCoin += unwindQtyCoin - gained
+						unwindQtyCoin = gained
+					}
+				}
+			}
+		}
+		if leg.name == LegSpot && feeKeptQtyCoin > 0 {
+			// The flat proof compares the close with what the wallet RECEIVED,
+			// which the wallet read may have lowered below the published rate.
+			openedSpotQtyCoin = unwindQtyCoin
+		}
+		closed, err := o.closeLeg(safe, intent, leg.name, leg.b, market, side, unwindQtyCoin, priceQuote)
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %s", leg.name, err.Error()))
 			continue
@@ -623,6 +651,11 @@ func (o *Trader) unwind(ctx context.Context, intent Intent, inv pairInvariant, r
 		leg.result.UnwoundQtyCoin = closed
 		// The leg is flat by exactly as much as it was open.
 		leg.result.FilledQtyCoin -= closed
+		if feeKeptQtyCoin > 0 && leg.result.FilledQtyCoin <= feeKeptQtyCoin+intent.SpotInstrument.StepSizeCoin+gridEpsilon {
+			// What is left is the venue's fee plus less than one grid step of
+			// rounding: coin the wallet never held.
+			leg.result.FilledQtyCoin = 0
+		}
 		if leg.result.FilledQtyCoin < 0 {
 			leg.result.FilledQtyCoin = 0
 		}

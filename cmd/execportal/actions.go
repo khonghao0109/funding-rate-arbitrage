@@ -230,12 +230,23 @@ func (p *portal) openAs(ctx context.Context, req openRequest, intentPrefix strin
 		v.ErrorVI = whyVI + " — chưa gửi lệnh nào"
 		return v, http.StatusConflict
 	}
-	bracket, err := perpBracket(ctx, p.markets.perp, req.Symbol, req.NotionalQuote)
+	bracket, err := perpBracket(ctx, p.markets.perp, p.markets.profile, req.Symbol, req.NotionalQuote)
 	if err != nil {
 		v.ErrorVI = "không đọc được biểu ký quỹ duy trì: " + err.Error() + " — chưa gửi lệnh nào"
 		return v, http.StatusBadGateway
 	}
 	v.BracketVI = bracket.NoteVI
+
+	// The spot buy's fee, which a venue may keep IN THE BASE COIN — Bybit always
+	// does on a taker buy (PLAN 4.5j). execution refuses a size whose wallet
+	// would be short of the perp past the hedge tolerance, and sizes its unwind
+	// on what the wallet received; an unread fee is an unknown gap, so nothing
+	// is sent. The rate is this account's own (Binance spot testnet reads 0).
+	fees, err := p.commissionsFor(ctx, req.Symbol)
+	if err != nil {
+		v.ErrorVI = "không đọc được phí của tài khoản (phí mua spot có thể bị thu bằng coin): " + err.Error() + " — chưa gửi lệnh nào"
+		return v, http.StatusBadGateway
+	}
 
 	intentID, err := p.mintIntentIDWith(intentPrefix, req.Symbol)
 	if err != nil {
@@ -254,9 +265,10 @@ func (p *portal) openAs(ctx context.Context, req openRequest, intentPrefix strin
 		// and no widening check applies. The auto-trader's signal priced an
 		// entry on the scan's books a moment ago, and execution refuses when
 		// this book has widened past that by more than its default tolerance.
-		SignalEntryCostPct: 0,
-		PerpMarginFrac:     p.exec.MarginFrac,
-		PerpBracket:        bracket,
+		SignalEntryCostPct:   0,
+		PerpMarginFrac:       p.exec.MarginFrac,
+		PerpBracket:          bracket,
+		SpotBuyFeeInBaseFrac: fees.Spot.TakerBuyFrac,
 	}
 	cfg := execution.DefaultConfig()
 	cfg.MaxEntryCostWidenBps = math.Inf(1)
@@ -689,6 +701,7 @@ func (p *portal) close(ctx context.Context, st intentState, reasonVI string, gua
 		EntryPerpAvgPriceQuote: st.PerpAvgPriceQuote,
 		EntrySpotRefMidQuote:   st.SpotRefMidQuote,
 		EntryPerpRefMidQuote:   st.PerpRefMidQuote,
+		EntrySpotFilledQtyCoin: st.SpotFilledQtyCoin,
 	})
 	v.ElapsedMs = time.Since(startedAt).Milliseconds()
 	v.EventsVI = eventLines(rec)

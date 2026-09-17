@@ -5,17 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
+	"strings"
 	"sync"
 	"time"
 
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/broker"
 	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
+	bybitbroker "futures-arbitrage-scanner/internal/broker/bybit"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/risk"
 )
 
-// The two testnet markets, and the reads the portal makes of them.
+// The two testnet markets, and the reads the portal makes of them — on Binance
+// (the default) or on Bybit (-broker=bybit, PLAN 4.5j).
 //
 // The shape of every read here is cmd/execcheck's, which is what the 4.4b/4.5
 // acceptance exercised on the venue: rules and books from the market being sent
@@ -34,9 +38,16 @@ var (
 
 // venue is what the portal needs from ONE market: the order interface, the
 // rules and book reads every order path makes first, and the transport whose
-// clock and weight budget the page reports. *binancebroker.Client is the only
-// implementation that talks to an exchange; the tests drive the same code
-// through brokertest's in-memory venue.
+// clock and weight budget the page reports. *binancebroker.Client and
+// bybitVenue (venue_bybit.go) are the implementations that talk to an exchange;
+// the tests drive the same code through brokertest's in-memory venue.
+//
+// The DATA types in these signatures — MarketRules, CommissionRates,
+// FundingRate, MaintenanceBracket — are binancebroker's because the portal was
+// built on that venue first. They are plain values with no Binance behaviour:
+// bybitVenue fills them from Bybit's own answers, and a field Bybit does not
+// publish (BuyPriceFloorFrac, a settlement's RateType) is left at its zero value,
+// which each field's own comment defines as "not published".
 type venue interface {
 	broker.Broker
 	Market() broker.Market
@@ -65,9 +76,107 @@ var (
 	_ perpVenue = (*binancebroker.Client)(nil)
 )
 
+// venueKind is the exchange both legs trade on. Strategy 1 is spot and perp on
+// ONE venue, so there is one kind per portal, never a leg on each.
+type venueKind string
+
+const (
+	venueBinance venueKind = "binance"
+	venueBybit   venueKind = "bybit"
+)
+
+func parseVenueKind(raw string) (venueKind, error) {
+	switch k := venueKind(strings.ToLower(strings.TrimSpace(raw))); k {
+	case venueBinance, venueBybit:
+		return k, nil
+	}
+	return "", fmt.Errorf("-broker %q is neither %q nor %q", raw, venueBinance, venueBybit)
+}
+
+// venueProfile is everything about the venue the portal SAYS rather than
+// computes: hosts, names, the endpoints a note cites, and whether the two
+// markets share one wallet.
+type venueProfile struct {
+	Kind    venueKind
+	LabelVI string
+
+	// SpotFallbackBaseURL and PerpFallbackBaseURL are shown for a market that
+	// has no client, so the page still names the host it WOULD use.
+	SpotFallbackBaseURL string
+	PerpFallbackBaseURL string
+	AllowedHosts        []string
+
+	// BracketSource and BracketEndpoint name where perpBracket read the
+	// maintenance tier; FundingIncomeEndpoint where the settled rows come from.
+	BracketSource         string
+	BracketEndpoint       string
+	FundingIncomeEndpoint string
+
+	// UnifiedWallet is true when spot and perp draw on ONE wallet (Bybit's
+	// Unified Trading Account). Both markets then report the same quote
+	// balance, and adding the two counts it twice.
+	UnifiedWallet bool
+
+	// OrdersBlockedVI, when set, refuses EVERY write on this portal — open,
+	// close, reconcile and the bot — with this reason. The venue is then shown
+	// read-only.
+	OrdersBlockedVI string
+
+	// StateDir is where this venue's intent files live. Separate per venue:
+	// an intent's derived ClientOrderIDs mean something only on the venue that
+	// received them, and a Binance intent read back from Bybit is "not found",
+	// which the portal would take for a position that never existed.
+	StateDir string
+}
+
+func profileFor(kind venueKind) venueProfile {
+	if kind == venueBybit {
+		mode, _ := bybitbroker.ResolveMode(os.Getenv("BYBIT_MODE"), os.Getenv("BYBIT_TESTNET"))
+		base := broker.BybitTestnetBaseURL
+		if mode == bybitbroker.ModeDemo {
+			base = broker.BybitDemoBaseURL
+		}
+		return venueProfile{
+			Kind: venueBybit, LabelVI: "Bybit " + strings.ToUpper(string(orDefaultMode(mode))),
+			SpotFallbackBaseURL: base, PerpFallbackBaseURL: base,
+			AllowedHosts:          broker.TestnetHostsFor(broker.SchemeBybitV5Header),
+			BracketSource:         "bybit_linear_" + string(orDefaultMode(mode)),
+			BracketEndpoint:       "/v5/market/risk-limit",
+			FundingIncomeEndpoint: "/v5/account/transaction-log (type=SETTLEMENT)",
+			UnifiedWallet:         true,
+			StateDir:              stateDirBybit,
+			// Review of 4.5j, round 2 (2026-09-17): a spot BUY's fee is kept in
+			// the base coin, and internal/execution still judges the spot leg by
+			// what its ORDERS filled in three places (a parallel partial fill,
+			// a fee charged above the published rate, a coarse-step size limit
+			// that would halt the bot). Until the spot leg is bought grossed up
+			// and judged by the wallet, no order leaves this portal on Bybit.
+			OrdersBlockedVI: "portal Bybit đang CHỈ ĐỌC: phí mua spot bị thu bằng coin gốc và execution chưa xét chân spot theo số dư ví ở mọi đường (review 4.5j vòng 2) — chưa gửi lệnh nào",
+		}
+	}
+	return venueProfile{
+		Kind: venueBinance, LabelVI: "Binance TESTNET",
+		SpotFallbackBaseURL: broker.BinanceSpotTestnetBaseURL, PerpFallbackBaseURL: broker.BinanceFuturesTestnetBaseURL,
+		AllowedHosts:          broker.TestnetHosts(),
+		BracketSource:         "binance_futures_testnet",
+		BracketEndpoint:       "/fapi/v1/leverageBracket",
+		FundingIncomeEndpoint: "/fapi/v1/income",
+		StateDir:              stateDir,
+	}
+}
+
+func orDefaultMode(m bybitbroker.Mode) bybitbroker.Mode {
+	if m == "" {
+		return "chưa-đặt-BYBIT_MODE"
+	}
+	return m
+}
+
 // markets holds one client per market. A nil client is a market with no
 // credential, and its error says which variables to set — never their values.
 type markets struct {
+	profile venueProfile
+
 	spot    venue
 	perp    perpVenue
 	spotErr error
@@ -79,12 +188,18 @@ type markets struct {
 	perpSourceVI string
 }
 
-// dialMarkets builds whichever clients the environment allows. Unlike
+// dialMarkets builds the Binance markets; dialMarketsFor is what main calls.
+func dialMarkets() markets { return dialMarketsFor(venueBinance) }
+
+// dialMarketsFor builds whichever clients the environment allows. Unlike
 // execcheck it does not stop at the first missing credential: the portal must
 // come up and SAY what is missing, so an operator with half a .env sees a page
 // rather than a crash.
-func dialMarkets() markets {
-	var m markets
+func dialMarketsFor(kind venueKind) markets {
+	if kind == venueBybit {
+		return dialBybitMarkets()
+	}
+	m := markets{profile: profileFor(venueBinance)}
 	// Assigned only on success: a nil *Client stored in an interface is a
 	// non-nil interface, and "configured" would read true for a market that
 	// has no client at all.
@@ -173,8 +288,8 @@ func readBook(ctx context.Context, c venue, symbol string) (depth.Summary, error
 // sameAsset refuses a pair whose two legs are not the same coin in the same
 // quote, as each VENUE declares it.
 //
-// On Binance the two markets share a symbol string, and execcheck relies on
-// that. The portal checks it anyway: the base and quote must come from what
+// On Binance and on Bybit the two markets share a symbol string, and execcheck
+// relies on that. The portal checks it anyway: the base and quote must come from what
 // the venue declares, never from the symbol string (CLAUDE.md's assets trap),
 // and a symbol that meant different things on the two markets would open a
 // "hedge" in two different coins.
@@ -192,19 +307,19 @@ func sameAsset(spot, perp binancebroker.MarketRules) error {
 // perpBracket reads the maintenance tier that covers this notional, with the
 // key. An unverified schedule is REFUSED by risk.Evaluate inside execution, so
 // this read is the difference between a position and a refusal.
-func perpBracket(ctx context.Context, c perpVenue, symbol string, notionalQuote float64) (risk.Bracket, error) {
+func perpBracket(ctx context.Context, c perpVenue, profile venueProfile, symbol string, notionalQuote float64) (risk.Bracket, error) {
 	mb, err := c.FetchMaintenanceBracket(ctx, symbol, notionalQuote)
 	if err != nil {
 		return risk.Bracket{}, err
 	}
 	return risk.Bracket{
-		Source:                "binance_futures_testnet",
+		Source:                profile.BracketSource,
 		MaintenanceMarginFrac: mb.MaintMarginFrac,
 		TierCeilingQuote:      mb.NotionalCapQuote,
 		MaxLeverage:           mb.MaxLeverage,
 		Verified:              true,
-		NoteVI: fmt.Sprintf("đọc từ /fapi/v1/leverageBracket của testnet ngày %s: bậc %d, sàn %.0f → trần %.0f, tỷ lệ duy trì %.4f%%, đòn bẩy tối đa %.0fx",
-			time.Now().Format("2006-01-02"), mb.Tier, mb.NotionalFloorQuote, mb.NotionalCapQuote, mb.MaintMarginFrac*100, mb.MaxLeverage),
+		NoteVI: fmt.Sprintf("đọc từ %s của %s ngày %s: bậc %d, sàn %.0f → trần %.0f, tỷ lệ duy trì %.4f%%, đòn bẩy tối đa %.0fx",
+			profile.BracketEndpoint, profile.LabelVI, time.Now().Format("2006-01-02"), mb.Tier, mb.NotionalFloorQuote, mb.NotionalCapQuote, mb.MaintMarginFrac*100, mb.MaxLeverage),
 	}, nil
 }
 

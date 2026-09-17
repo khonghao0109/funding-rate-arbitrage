@@ -419,3 +419,161 @@ func TestClose_RecordsTheExitPricesSoAllFourFillsCanBePriced(t *testing.T) {
 		t.Errorf("a closing fill is still reported as unpriceable: %s", res.PriceDriftPricedVI)
 	}
 }
+
+// A venue that takes a spot BUY's fee in the base coin leaves the wallet holding
+// less than the order filled (Bybit, PLAN 4.5j). Sized from the orders, the close
+// then asks spot to sell coin the wallet does not have — and since the perp is
+// closed FIRST, the refusal comes after the hedge is gone: a naked spot long.
+// The close must sell what the VENUE says it holds, and call that flat.
+func TestClose_SpotFeeTakenInTheBaseCoinDoesNotStrandTheSpotLeg(t *testing.T) {
+	h := newHarness(t, nil)
+	// Bybit's measured spot taker fee on testnet, 2026-09-17: 10 bps.
+	const feeFrac = 0.001
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: feeFrac, RefuseSpotSellBeyondBalance: true})
+	open, err := h.opener.Open(context.Background(), h.intent)
+	if err != nil || open.Outcome != OutcomeBothOpen {
+		t.Fatalf("open: %v %q%s", err, open.Outcome, h.rec.Dump())
+	}
+	res, err := h.opener.Close(context.Background(), CloseRequest{Intent: h.intent,
+		OpenedAtMs: time.Now().UnixMilli() - time.Hour.Milliseconds()})
+	if err != nil {
+		t.Fatalf("Close: %v%s", err, h.rec.Dump())
+	}
+	if res.Outcome != OutcomeBothFlat {
+		t.Fatalf("outcome %q, want both_flat%s", res.Outcome, h.rec.Dump())
+	}
+	if pos, _ := h.perp.GetPosition(context.Background(), broker.MarketFuturesUSDM, "BTCUSDT"); !pos.Flat() {
+		t.Errorf("the perp venue still holds %v", pos.QtyCoin)
+	}
+	held := spotHeldQtyCoin(t, h.spot)
+	if held > h.intent.SpotInstrument.StepSizeCoin+1e-12 {
+		t.Errorf("the spot WALLET still holds %v coin after a close reported flat — a naked long", held)
+	}
+	if res.SpotSellCappedByBalance == false || !strings.Contains(res.ReasonVI, "phí") {
+		t.Errorf("the capped sell must be stated, not silent: capped %v, reason %q", res.SpotSellCappedByBalance, res.ReasonVI)
+	}
+}
+
+// A wallet short by more than a fee can explain — MaxSpotBaseFeeFrac of the leg
+// plus the coarser step — is somebody else's coin movement. That is refused
+// before either leg is sent.
+func TestClose_SpotWalletShortByMoreThanAFeeIsRefusedBeforeSending(t *testing.T) {
+	h := newCloseHarness(t, nil)
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, RefuseSpotSellBeyondBalance: true})
+	legQtyCoin := h.open.Spot.FilledQtyCoin
+	allowed := h.intent.SpotInstrument.StepSizeCoin + DefaultMaxSpotBaseFeeFrac*legQtyCoin
+	h.spot.SetBalance(broker.MarketSpot, broker.Balance{Market: broker.MarketSpot, Asset: "BTC",
+		FreeQtyCoin: legQtyCoin - allowed - h.intent.SpotInstrument.StepSizeCoin})
+	sentBefore := len(h.perp.Orders()) + len(h.spot.Orders())
+	_, err := h.opener.Close(context.Background(), h.req)
+	if !errors.Is(err, ErrPositionDisagrees) {
+		t.Fatalf("err = %v, want ErrPositionDisagrees%s", err, h.rec.Dump())
+	}
+	if sent := len(h.perp.Orders()) + len(h.spot.Orders()); sent != sentBefore {
+		t.Errorf("%d orders were sent by a close that had to refuse", sent-sentBefore)
+	}
+}
+
+func spotHeldQtyCoin(t *testing.T, f *brokertest.Fake) float64 {
+	t.Helper()
+	balances, err := f.GetBalance(context.Background(), broker.MarketSpot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range balances {
+		if b.Asset == "BTC" {
+			return b.TotalQtyCoin()
+		}
+	}
+	return 0
+}
+
+// Review 2026-09-17, M3: a capped spot sell that only HALF fills must not count
+// the unsold spot as "the fee". That is a naked long, not both_flat.
+func TestClose_CappedSpotSellThatHalfFillsIsOneLegNotFlat(t *testing.T) {
+	h := newHarness(t, nil)
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: 0.001, RefuseSpotSellBeyondBalance: true})
+	if open, err := h.opener.Open(context.Background(), h.intent); err != nil || open.Outcome != OutcomeBothOpen {
+		t.Fatalf("open: %v%s", err, h.rec.Dump())
+	}
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, RefuseSpotSellBeyondBalance: true, MarketFillFraction: 0.5})
+	res, err := h.opener.Close(context.Background(), CloseRequest{Intent: h.intent, OpenedAtMs: time.Now().UnixMilli() - 3_600_000})
+	if !errors.Is(err, ErrUnwindIncomplete) || res.Outcome == OutcomeBothFlat {
+		t.Fatalf("err %v outcome %q — the wallet still holds %v coin%s", err, res.Outcome, spotHeldQtyCoin(t, h.spot), h.rec.Dump())
+	}
+}
+
+// Review 2026-09-17, M1: the perp closes PART of the leg after the spot wallet
+// sold everything it held. What is left is a naked perp short — one leg — and it
+// must be reported as such, not as a smaller hedge that a later close then
+// cannot close.
+func TestClose_PartialPerpAfterTheWalletSoldOutIsOneLeg(t *testing.T) {
+	h := newHarness(t, nil)
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: 0.001, RefuseSpotSellBeyondBalance: true})
+	if open, err := h.opener.Open(context.Background(), h.intent); err != nil || open.Outcome != OutcomeBothOpen {
+		t.Fatalf("open: %v%s", err, h.rec.Dump())
+	}
+	h.perp.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, MarketFillFraction: 0.9995})
+	res, err := h.opener.Close(context.Background(), CloseRequest{Intent: h.intent, OpenedAtMs: time.Now().UnixMilli() - 3_600_000})
+	if !errors.Is(err, ErrUnwindIncomplete) || errors.Is(err, ErrCloseIncomplete) {
+		t.Fatalf("err %v (outcome %q, remaining %v) — want ErrUnwindIncomplete: the perp is short with no spot beside it%s",
+			err, res.Outcome, res.RemainingQtyCoin, h.rec.Dump())
+	}
+}
+
+// Review 2026-09-17, M1: the fee gap is a share of the ORIGINAL buy. After a
+// clean partial close has made the leg smaller, the same gap must still read as
+// a fee, not as a coin somebody moved.
+func TestClose_FeeAllowanceIsAnchoredToTheOriginalBuy(t *testing.T) {
+	h := newHarness(t, nil)
+	const fee = 0.001
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: fee, RefuseSpotSellBeyondBalance: true})
+	open, err := h.opener.Open(context.Background(), h.intent)
+	if err != nil || open.Outcome != OutcomeBothOpen {
+		t.Fatalf("open: %v%s", err, h.rec.Dump())
+	}
+	// A thin book: the perp buys back only 90% of the leg, and the spot leg
+	// matches it — the pair is smaller and still hedged.
+	h.perp.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, MarketFillFraction: 0.9})
+	if _, err := h.opener.Close(context.Background(), CloseRequest{Intent: h.intent,
+		OpenedAtMs: time.Now().UnixMilli() - 3_600_000, EntrySpotFilledQtyCoin: open.Spot.FilledQtyCoin}); !errors.Is(err, ErrCloseIncomplete) {
+		t.Fatalf("first close: %v%s", err, h.rec.Dump())
+	}
+	h.perp.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1})
+	// ~0.0334 BTC left on the perp; the wallet is short of it by the whole
+	// original fee (0.000333), which is far more than 0.2% of 0.0334. A close
+	// id is spent once per intent, so the remainder is closed under a fresh one
+	// (the portal routes it through reconcile the same way).
+	rest := h.intent
+	rest.ID = "intent-test-0002"
+	res, err := h.opener.Close(context.Background(), CloseRequest{Intent: rest,
+		OpenedAtMs: time.Now().UnixMilli() - 3_600_000, EntrySpotFilledQtyCoin: open.Spot.FilledQtyCoin})
+	if err != nil || res.Outcome != OutcomeBothFlat {
+		t.Fatalf("second close: %v outcome %q%s", err, res.Outcome, h.rec.Dump())
+	}
+	if held := spotHeldQtyCoin(t, h.spot); held > h.intent.SpotInstrument.StepSizeCoin+1e-12 {
+		t.Errorf("the wallet still holds %v", held)
+	}
+	if pos, _ := h.perp.GetPosition(context.Background(), broker.MarketFuturesUSDM, "BTCUSDT"); !pos.Flat() {
+		t.Errorf("perp still %v", pos.QtyCoin)
+	}
+}
+
+// Review round 2: the perp's partial close lands EXACTLY on the wallet cap, so no
+// fee gap is granted — yet the wallet is empty and a perp step is still short.
+// That is one leg, never a nil error.
+func TestClose_PerpRemainderOnTheCapBesideAnEmptyWalletIsOneLeg(t *testing.T) {
+	h := newHarness(t, nil)
+	h.intent.NotionalQuote = 6_000 // 0.1 BTC: fee gap 0.0001 = the tolerance
+	h.intent.SpotBuyFeeInBaseFrac = 0.001
+	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: 0.001, RefuseSpotSellBeyondBalance: true})
+	if open, err := h.opener.Open(context.Background(), h.intent); err != nil || open.Outcome != OutcomeBothOpen {
+		t.Fatalf("open: %v%s", err, h.rec.Dump())
+	}
+	h.perp.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, MarketFillFraction: 0.999})
+	res, err := h.opener.Close(context.Background(), CloseRequest{Intent: h.intent, OpenedAtMs: time.Now().UnixMilli() - 3_600_000})
+	if !errors.Is(err, ErrUnwindIncomplete) {
+		t.Fatalf("err %v outcome %q remaining %v, wallet %v — a naked perp step must be one leg%s",
+			err, res.Outcome, res.RemainingQtyCoin, spotHeldQtyCoin(t, h.spot), h.rec.Dump())
+	}
+}

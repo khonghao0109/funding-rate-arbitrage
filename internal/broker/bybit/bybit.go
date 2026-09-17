@@ -7,14 +7,38 @@
 // pinned to its own host, the Secret that no fmt verb prints, the clock refusal,
 // and the scrubbed error text. Nothing here opens its own HTTP client.
 //
-// # One market: USDT-settled linear perpetuals
+// # Two markets on one unified account
 //
 // broker.MarketFuturesUSDM is read here as "category=linear, settled in USDT" —
 // Bybit's name for the same instrument class. USDC-settled perps and dated
 // futures are refused when their rules are read (FetchInstrument, market.go);
 // PlaceOrder does not re-check the settle coin, so a caller must size from
-// FetchInstrument's rules, as internal/execution does. Spot is refused
-// outright: the pillar this serves is perp against perp.
+// FetchInstrument's rules, as internal/execution does.
+//
+// broker.MarketSpot is "category=spot" (PLAN 4.5j, Strategy 1 on Bybit). A
+// Client serves ONE market, like binance.Client, so an order for the other
+// market is refused rather than quietly re-routed; WithMarket returns the
+// sibling for the other market over the SAME signed transport. That matters on
+// this venue more than on Binance: spot and linear are one host, one IP limit,
+// one clock and one Unified Trading Account, so two independent transports
+// would each believe they own the whole request budget.
+//
+// Three spot facts that differ from linear and are enforced here:
+//
+//   - A spot MARKET order's qty unit is chosen by marketUnit — "quoteCoin for
+//     market buy by default, baseCoin for market sell by default" (create-order).
+//     Every spot MARKET order sends marketUnit=baseCoin explicitly, buy AND sell,
+//     so a quantity in coin is never read as an amount of USDT.
+//   - isLeverage=0 is sent explicitly: "1: true then margin trading", i.e. a
+//     BORROW, which Strategy 1's spot leg must never do.
+//   - reduceOnly and positionIdx are not sent: "Valid for linear, inverse &
+//     option" and "USDT perps & Inverse contracts have hedge mode".
+//
+// And one that this package REPORTS but cannot fix: a taker spot BUY pays its
+// fee in the BASE coin ("Side = Buy -> base currency (BTC)", enum.md "Spot Fee
+// Currency Instruction"), so buying Q leaves slightly less than Q in the wallet.
+// OrderTrades states the fee and its asset; sizing the close against what the
+// wallet really holds is internal/execution's job.
 //
 // # What a Bybit answer does NOT say, and what that costs
 //
@@ -47,6 +71,7 @@ package bybit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -77,6 +102,42 @@ func ParseMode(s string) (Mode, error) {
 	return "", fmt.Errorf("bybit: mode %q is neither %q nor %q", s, ModeTestnet, ModeDemo)
 }
 
+// ResolveMode is shared by every command that dials Bybit (cmd/bybitcheck,
+// cmd/execportal -broker=bybit), so the two cannot disagree about which host a
+// key belongs to.
+//
+// ResolveMode reads BYBIT_MODE and refuses a BYBIT_TESTNET that contradicts
+// it. Neither set is an error rather than a default: sending a demo key to the
+// testnet host answers 10003, which names neither variable.
+func ResolveMode(modeVar, testnetVar string) (Mode, error) {
+	testnetVar = strings.ToLower(strings.TrimSpace(testnetVar))
+	switch testnetVar {
+	case "", "true", "false", "1", "0":
+	default:
+		return "", fmt.Errorf("BYBIT_TESTNET=%q không phải true/false/1/0 — không đoán", testnetVar)
+	}
+	if strings.TrimSpace(modeVar) == "" {
+		switch testnetVar {
+		case "true", "1":
+			return ModeTestnet, nil
+		case "":
+			return "", errors.New("BYBIT_MODE chưa đặt (testnet | demo)")
+		}
+		return "", fmt.Errorf("BYBIT_MODE chưa đặt và BYBIT_TESTNET=%q không chỉ ra testnet — không tự chọn host", testnetVar)
+	}
+	mode, err := ParseMode(modeVar)
+	if err != nil {
+		return "", err
+	}
+	switch {
+	case mode == ModeTestnet && (testnetVar == "false" || testnetVar == "0"):
+		return "", errors.New("BYBIT_MODE=testnet nhưng BYBIT_TESTNET=false — hai biến mâu thuẫn, sửa .env")
+	case mode == ModeDemo && (testnetVar == "true" || testnetVar == "1"):
+		return "", errors.New("BYBIT_MODE=demo nhưng BYBIT_TESTNET=true — key demo không dùng được trên testnet, sửa .env")
+	}
+	return mode, nil
+}
+
 // BaseURL is the mode's host.
 func (m Mode) BaseURL() string {
 	if m == ModeDemo {
@@ -85,11 +146,17 @@ func (m Mode) BaseURL() string {
 	return broker.BybitTestnetBaseURL
 }
 
-// SourceID names this client's books and rules. Distinct from the scanner's
-// "bybit_futures", which is PUBLIC MAINNET data: a testnet book is another
-// matching engine, and a demo book is the venue's simulation of mainnet, so
-// neither may be joined with the corpus under the mainnet id.
-func (m Mode) SourceID() string { return "bybit_linear_" + string(m) }
+// SourceID names a market's books and rules on this mode. Distinct from the
+// scanner's "bybit_futures" and "bybit_spot", which are PUBLIC MAINNET data: a
+// testnet book is another matching engine, and a demo book is the venue's
+// simulation of mainnet, so neither may be joined with the corpus under the
+// mainnet id.
+func (m Mode) SourceID(market broker.Market) string {
+	if market == broker.MarketSpot {
+		return "bybit_spot_" + string(m)
+	}
+	return "bybit_linear_" + string(m)
+}
 
 // DefaultConfig fills in host, scheme, clock path and request budget, so a
 // caller supplies only the mode and the credential.
@@ -106,18 +173,22 @@ func DefaultConfig(mode Mode, creds broker.Credentials) (broker.Config, error) {
 	}, nil
 }
 
-// Client is broker.Broker for Bybit V5 linear perpetuals.
+// Client is broker.Broker for ONE Bybit V5 market — linear perpetuals or spot.
 type Client struct {
-	http *broker.Client
-	mode Mode
+	http   *broker.Client
+	mode   Mode
+	market broker.Market
 }
 
 var _ broker.Broker = (*Client)(nil)
 
-// New builds a Client. cfg must carry the Bybit scheme; broker.NewClient
-// refuses any host outside that scheme's allow-list.
-func New(mode Mode, cfg broker.Config) (*Client, error) {
+// New builds a Client for one market. cfg must carry the Bybit scheme;
+// broker.NewClient refuses any host outside that scheme's allow-list.
+func New(mode Mode, market broker.Market, cfg broker.Config) (*Client, error) {
 	if _, err := ParseMode(string(mode)); err != nil {
+		return nil, err
+	}
+	if err := checkMarketKind(market); err != nil {
 		return nil, err
 	}
 	if cfg.Scheme != broker.SchemeBybitV5Header {
@@ -127,11 +198,42 @@ func New(mode Mode, cfg broker.Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Client{http: c, mode: mode}, nil
+	return &Client{http: c, mode: mode, market: market}, nil
+}
+
+func checkMarketKind(m broker.Market) error {
+	if m != broker.MarketFuturesUSDM && m != broker.MarketSpot {
+		return fmt.Errorf("%w: Bybit market %q is neither %q nor %q", broker.ErrNotSupported, m, broker.MarketFuturesUSDM, broker.MarketSpot)
+	}
+	return nil
+}
+
+// WithMarket returns the client for another market of the SAME account, over
+// the same signed transport — one request budget, one clock, one cool-down —
+// because on Bybit both markets are one host and one IP limit.
+func (c *Client) WithMarket(market broker.Market) (*Client, error) {
+	if err := checkMarketKind(market); err != nil {
+		return nil, err
+	}
+	return &Client{http: c.http, mode: c.mode, market: market}, nil
 }
 
 // Mode is the service this client talks to.
 func (c *Client) Mode() Mode { return c.mode }
+
+// Market is the one market this client trades.
+func (c *Client) Market() broker.Market { return c.market }
+
+// SourceID names this client's books and rules.
+func (c *Client) SourceID() string { return c.mode.SourceID(c.market) }
+
+// category is the V5 "category" of this client's market.
+func (c *Client) category() string {
+	if c.market == broker.MarketSpot {
+		return categorySpot
+	}
+	return categoryLinear
+}
 
 // HTTP exposes the signed client, for the clock and budget a diagnostic prints.
 func (c *Client) HTTP() *broker.Client { return c.http }

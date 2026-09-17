@@ -26,7 +26,7 @@ import (
 // clearCredentialEnv makes the test independent of whatever the shell exports.
 func clearCredentialEnv(t *testing.T) {
 	t.Helper()
-	for _, pairs := range [][]broker.EnvPair{futuresEnv, spotEnv} {
+	for _, pairs := range [][]broker.EnvPair{futuresEnv, spotEnv, bybitCredentialEnv} {
 		for _, p := range pairs {
 			t.Setenv(p.KeyVar, "")
 			t.Setenv(p.SecretVar, "")
@@ -68,6 +68,59 @@ func TestExecportal_BothMarketsResolveToATestnetHost(t *testing.T) {
 	}
 	if !strings.Contains(m.perpSourceVI, "BINANCE_FUTURES_TESTNET_API_KEY") || strings.Contains(m.perpSourceVI+m.spotSourceVI, "\"k\"") {
 		t.Errorf("credential source should name the variables and never the values: %q / %q", m.perpSourceVI, m.spotSourceVI)
+	}
+}
+
+// -broker=bybit (PLAN 4.5j): both markets on the Bybit scheme's own allow-list,
+// over ONE signed transport, into their own intent directory — for both
+// non-production services, and never for a mode nobody set.
+func TestExecportal_BybitMarketsResolveToANonProductionHost(t *testing.T) {
+	allowed := map[string]bool{}
+	for _, h := range broker.TestnetHostsFor(broker.SchemeBybitV5Header) {
+		allowed[h] = true
+	}
+	if len(allowed) == 0 || allowed["api.bybit.com"] {
+		t.Fatalf("the Bybit allow-list is empty or holds mainnet: %v", allowed)
+	}
+	for mode, wantHost := range map[string]string{"testnet": "api-testnet.bybit.com", "demo": "api-demo.bybit.com"} {
+		clearCredentialEnv(t)
+		t.Setenv("BYBIT_TESTNET", "")
+		t.Setenv("BYBIT_API_KEY", "k")
+		t.Setenv("BYBIT_API_SECRET", "s")
+		t.Setenv("BYBIT_MODE", mode)
+		m := dialMarketsFor(venueBybit)
+		if err := m.both(); err != nil {
+			t.Fatalf("%s: %v", mode, err)
+		}
+		for name, c := range map[string]venue{"spot": m.spot, "perp": m.perp} {
+			u, err := url.Parse(c.HTTP().BaseURL())
+			if err != nil || u.Scheme != "https" || u.Hostname() != wantHost || !allowed[u.Hostname()] {
+				t.Errorf("%s %s resolves to %v (%v)", mode, name, u, err)
+			}
+		}
+		if m.spot.HTTP() != m.perp.HTTP() {
+			t.Errorf("%s: two transports — each would believe it owns the venue's whole request budget", mode)
+		}
+		if m.spot.Market() != broker.MarketSpot || m.perp.Market() != broker.MarketFuturesUSDM {
+			t.Errorf("%s: markets %s / %s", mode, m.spot.Market(), m.perp.Market())
+		}
+		if !m.profile.UnifiedWallet || m.profile.StateDir == stateDir || strings.Contains(m.perpSourceVI, "\"k\"") {
+			t.Errorf("%s: profile %+v, source %q", mode, m.profile, m.perpSourceVI)
+		}
+	}
+	clearCredentialEnv(t)
+	t.Setenv("BYBIT_API_KEY", "k")
+	t.Setenv("BYBIT_API_SECRET", "s")
+	t.Setenv("BYBIT_MODE", "")
+	t.Setenv("BYBIT_TESTNET", "")
+	if m := dialMarketsFor(venueBybit); m.both() == nil {
+		t.Error("no BYBIT_MODE, and a host was chosen for the key anyway")
+	}
+	if _, err := parseVenueKind("okx"); err == nil {
+		t.Error("-broker okx was accepted")
+	}
+	if k, err := parseVenueKind(" Bybit "); err != nil || k != venueBybit {
+		t.Errorf("%q %v", k, err)
 	}
 }
 

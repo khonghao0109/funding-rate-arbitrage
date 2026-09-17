@@ -86,7 +86,24 @@ type Behaviour struct {
 	// A close that half-fills is exactly the case where a pair can be left
 	// unbalanced, so it has to be reachable on demand.
 	MarketFillFraction float64
+
+	// SpotBuyFeeInBaseFrac makes a SPOT buy credit the wallet with the filled
+	// quantity LESS this fraction of it, while the order still reports the whole
+	// fill — what Bybit does to a taker spot buy: "Side = Buy -> base currency
+	// (BTC)" (V5 enum, "Spot Fee Currency Instruction"). Binance does the same
+	// unless the account pays in BNB. Needs SetBaseAsset.
+	SpotBuyFeeInBaseFrac float64
+
+	// RefuseSpotSellBeyondBalance makes a SPOT sell for more of the base asset
+	// than the wallet holds a DEFINITE refusal with nothing filled, as a venue
+	// does ("insufficient balance"). Needs SetBaseAsset.
+	RefuseSpotSellBeyondBalance bool
 }
+
+// ErrInsufficientBalance is the fake venue's refusal of a sell it cannot fund.
+// It wraps broker.ErrInvalidOrder because a venue answering it has definitely
+// not taken the order.
+var ErrInsufficientBalance = fmt.Errorf("%w: brokertest: insufficient balance for this sell", broker.ErrInvalidOrder)
 
 // ErrTimeout is what an ambiguous failure looks like to a caller. It is
 // deliberately NOT broker.ErrOrderNotFound: a timeout says nothing about
@@ -129,6 +146,9 @@ type Fake struct {
 	// the grid, so a fake without this produces a stuck remainder that no
 	// venue would ever create, and the code under test gets blamed for it.
 	stepSizeCoin float64
+
+	// balanceErr, when set, is what GetBalance answers.
+	balanceErr error
 }
 
 // New returns an empty fake with a well-behaved venue.
@@ -151,6 +171,9 @@ var (
 func (f *Fake) SetBehaviour(b Behaviour) {
 	if b.FillFractionOnPlace < 0 || b.FillFractionOnPlace > 1 {
 		panic(fmt.Sprintf("brokertest: FillFractionOnPlace must be in [0,1], got %v", b.FillFractionOnPlace))
+	}
+	if b.SpotBuyFeeInBaseFrac < 0 || b.SpotBuyFeeInBaseFrac >= 1 {
+		panic(fmt.Sprintf("brokertest: SpotBuyFeeInBaseFrac must be in [0,1), got %v", b.SpotBuyFeeInBaseFrac))
 	}
 	if b.MarketFillFraction < 0 || b.MarketFillFraction > 1 {
 		panic(fmt.Sprintf("brokertest: MarketFillFraction must be in [0,1], got %v", b.MarketFillFraction))
@@ -211,6 +234,9 @@ func (f *Fake) settle(o broker.Order, qtyCoin float64) {
 	case broker.MarketSpot:
 		if f.baseAsset == "" {
 			return
+		}
+		if o.Side == broker.SideBuy && f.behaviour.SpotBuyFeeInBaseFrac > 0 {
+			signed = qtyCoin * (1 - f.behaviour.SpotBuyFeeInBaseFrac)
 		}
 		list := f.balances[broker.MarketSpot]
 		for i := range list {
@@ -328,6 +354,14 @@ func (f *Fake) MarkPrice(ctx context.Context, market broker.Market, symbol strin
 	return m, nil
 }
 
+// SetBalanceError makes GetBalance fail with err (nil restores it) — a wallet
+// the caller cannot read, which is not the same as an empty one.
+func (f *Fake) SetBalanceError(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.balanceErr = err
+}
+
 // SetBalance replaces one market's balances.
 func (f *Fake) SetBalance(m broker.Market, balances ...broker.Balance) {
 	f.mu.Lock()
@@ -411,6 +445,17 @@ func (f *Fake) PlaceOrder(ctx context.Context, req broker.PlaceOrderRequest) (br
 	for _, o := range f.orders {
 		if o.ClientOrderID == req.ClientOrderID {
 			return broker.Order{}, fmt.Errorf("%w: duplicate ClientOrderID %q", broker.ErrInvalidOrder, req.ClientOrderID)
+		}
+	}
+	if f.behaviour.RefuseSpotSellBeyondBalance && req.Market == broker.MarketSpot && req.Side == broker.SideSell && f.baseAsset != "" {
+		held := 0.0
+		for _, b := range f.balances[broker.MarketSpot] {
+			if b.Asset == f.baseAsset {
+				held = b.FreeQtyCoin
+			}
+		}
+		if req.QtyCoin > held+1e-12 {
+			return broker.Order{}, fmt.Errorf("%w (asked %v, held %v)", ErrInsufficientBalance, req.QtyCoin, held)
 		}
 	}
 
@@ -563,6 +608,9 @@ func (f *Fake) GetBalance(ctx context.Context, market broker.Market) ([]broker.B
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.balanceErr != nil {
+		return nil, f.balanceErr
+	}
 	return append([]broker.Balance(nil), f.balances[market]...), nil
 }
 

@@ -1,8 +1,14 @@
 // Command execportal is a web page for opening, watching and closing ONE kind of
-// position — Strategy 1's spot long + perp short — on Binance TESTNET.
+// position — Strategy 1's spot long + perp short — on Binance TESTNET, or on
+// Bybit's testnet or demo service with -broker=bybit (PLAN 4.5j).
 //
 //	go run ./cmd/execportal                 # http://127.0.0.1:8087
 //	go run ./cmd/execportal -port 8088 -symbols BTCUSDT
+//	go run ./cmd/execportal -broker bybit -port 8088   # BYBIT_API_KEY/SECRET + BYBIT_MODE
+//
+// On Bybit both legs trade on ONE Unified Trading Account: one key, one host,
+// one request budget, one wallet. Its intent files live in .paper/exec-bybit,
+// apart from Binance's, and cmd/execcheck does not read them.
 //
 // It is cmd/execcheck with a page in front of it: the same execution machine,
 // the same derived ClientOrderIDs, the same intent files under .paper/exec, so
@@ -46,7 +52,6 @@ import (
 
 	"futures-arbitrage-scanner/cmd/execportal/autotrade"
 	"futures-arbitrage-scanner/cmd/execportal/feeds"
-	"futures-arbitrage-scanner/internal/broker"
 	"futures-arbitrage-scanner/internal/execution"
 
 	"github.com/joho/godotenv"
@@ -91,6 +96,7 @@ func main() {
 		scanAddr = flag.String("scanner-addr", "127.0.0.1:8085", "loopback host:port of the running cmd/scanner whose /ws and funding history the Scanner tab relays READ-ONLY; empty turns the tab off")
 		papAddr  = flag.String("paper-addr", "127.0.0.1:8086", "loopback host:port of cmd/paperledger whose /api/ledger the Paper tab relays READ-ONLY; empty turns the tab off")
 		autoOn   = flag.Bool("autotrade", true, "switch the TESTNET auto-trader on at launch, with its shipped parameters on every -symbols entry (PLAN Q18); on by default — pass -autotrade=false to launch in paused state")
+		brokerFl = flag.String("broker", string(venueBinance), "the venue BOTH legs trade on: binance (testnet) or bybit (testnet or demo, chosen by BYBIT_MODE) — never a leg on each")
 		btJSON   = flag.String("backtest-json", "docs/reports/backtest-3y-latest.json", "the three-year backtest report the Backtest tab draws, built OUTSIDE this process by tools/report/bt3y.py; it is read from disk and cached by modification time, and the tab says so when the file is absent")
 	)
 	flag.Parse()
@@ -101,6 +107,10 @@ func main() {
 		log.Fatalf("execportal: %v", err)
 	}
 	if err := checkPort(*port); err != nil {
+		log.Fatalf("execportal: %v", err)
+	}
+	kind, err := parseVenueKind(*brokerFl)
+	if err != nil {
 		log.Fatalf("execportal: %v", err)
 	}
 	symbolList, err := parseSymbols(*symbols)
@@ -126,20 +136,27 @@ func main() {
 		log.Fatalf("execportal: %v", err)
 	}
 
-	m := dialMarkets()
+	m := dialMarketsFor(kind)
 	p := newPortal(m, symbolList, bindIP, *port, execSettings{
 		MarginFrac: *marginFr, MaxSlippageBps: *slipBps, LegTimeout: *legTmo, ActionTimeout: *actTmo,
 		BacktestJSONPath: *btJSON,
 	}, time.Now)
 	p.feeds = feeds.New(scannerAddr, paperAddr, time.Now)
 
-	log.Printf("execportal: CHỈ TESTNET — host cho phép: %s", strings.Join(broker.TestnetHosts(), ", "))
+	log.Printf("execportal: sàn %s — CHỈ host phi-mainnet: %s", m.profile.LabelVI, strings.Join(m.profile.AllowedHosts, ", "))
+	if m.profile.UnifiedWallet {
+		log.Printf("execportal: spot và perp dùng CHUNG MỘT ví (Unified Trading Account) — số dư hai ô là MỘT khoản, không cộng")
+	}
 	logMarket("spot", m.spot != nil, m.spotSourceVI, m.spotErr)
 	logMarket("futures", m.perp != nil, m.perpSourceVI, m.perpErr)
 	log.Printf("execportal: nguồn CHỈ ĐỌC — scanner %s (relay /ws, chỉ khi tab Scanner mở, tối đa %d phiên) · sổ giấy %s",
 		orOff(scannerAddr), feeds.MaxScannerRelays, orOff(paperAddr))
 	if abs, err := filepath.Abs(p.stateDir); err == nil {
-		log.Printf("execportal: file ý định (CACHE, chung với cmd/execcheck): %s", abs)
+		shared := "chung với cmd/execcheck"
+		if m.profile.Kind != venueBinance {
+			shared = "RIÊNG của " + m.profile.LabelVI + ", cmd/execcheck không đọc"
+		}
+		log.Printf("execportal: file ý định (CACHE, %s): %s", shared, abs)
 	}
 	// .env and the intent cache are both resolved from the working directory,
 	// exactly as cmd/execcheck resolves them. Started anywhere else, the portal
@@ -147,7 +164,7 @@ func main() {
 	// position opened from the repo root would not be tracked.
 	if _, err := os.Stat("go.mod"); err != nil {
 		wd, _ := os.Getwd()
-		log.Printf("execportal: CẢNH BÁO — %s không phải gốc repo (không thấy go.mod): .env và %s được đọc từ ĐÂY; hãy chạy từ gốc repo", wd, stateDir)
+		log.Printf("execportal: CẢNH BÁO — %s không phải gốc repo (không thấy go.mod): .env và %s được đọc từ ĐÂY; hãy chạy từ gốc repo", wd, p.stateDir)
 	}
 
 	unlock, err := lockStateDir(p.stateDir)
@@ -205,12 +222,14 @@ func main() {
 		}
 	}()
 	if *autoOn {
-		if err := m.both(); err != nil {
+		if why := p.markets.profile.OrdersBlockedVI; why != "" {
+			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — %s", why)
+		} else if err := m.both(); err != nil {
 			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — thiếu credential: %v", err)
 		} else if _, err := p.autotrade.Start(autotrade.DefaultPortfolioConfig(symbolList)); err != nil {
 			log.Printf("execportal: -autotrade BỊ TỪ CHỐI: %v", err)
 		} else {
-			log.Printf("execportal: AUTO-TRADER BẬT từ lúc khởi động (-autotrade) trên %s — TESTNET, tự đặt lệnh (PLAN Q18)", strings.Join(symbolList, ", "))
+			log.Printf("execportal: AUTO-TRADER BẬT từ lúc khởi động (-autotrade) trên %s — %s, tự đặt lệnh (PLAN Q18)", strings.Join(symbolList, ", "), m.profile.LabelVI)
 		}
 	}
 	go func() {

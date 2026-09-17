@@ -1180,6 +1180,32 @@ migrated it; the archived `.paper/run*` copies are v5. Measured at build, 13
 pairs live, the widest spread SUI 11.2% gross and no pair positive after cost.
 Not yet deployed to 8085/8087: the portal there runs the testnet auto-trader.
 
+**Step 4.5j — Strategy 1 on ONE Bybit V5 Unified account — was built 2026-09-17
+(decision Q19) and is NOT accepted with an order** (report
+`docs/reports/walkthrough-bybit-spot.md`). `internal/broker/bybit` now trades
+spot as well as linear, `cmd/bybitcheck` reads both, and `cmd/execportal
+-broker=bybit` runs the same page, execution machine and bot on it, with its
+intent files in `.paper/exec-bybit`. Measured on the testnet with GETs only:
+18/19 checks (the wallet holds no USDT yet), spot taker **10 bps** and linear
+5.5 bps, so a round trip is **31 bps**. Two Bybit-only faults were found in code
+that had worked on Binance, and both are the kind that report success: the
+Unified wallet was **counted twice** (the bot's slot sizing and the page's USDT
+total added the spot and futures views of ONE wallet), and a spot BUY's fee is
+kept **in the base coin**, so the wallet holds Q × (1 − fee) while the order says
+Q — the close and the open's unwind then sold coin the wallet did not have,
+after the perp was already flat. `internal/execution` now refuses a size whose
+fee gap exceeds the hedge tolerance (`Intent.SpotBuyFeeInBaseFrac`,
+`ErrSpotFeeUnhedged`), unwinds what the wallet received, and closes what the
+wallet holds within `Config.MaxSpotBaseFeeFrac` of the ORIGINAL buy. **A second
+review still found the spot leg judged by its ORDERS on two paths** (a parallel
+partial fill or a fee charged above the published rate reports `both_open` on an
+unhedged wallet; the size refusal would halt the bot on coarse-step pairs), so
+**the Bybit portal is READ-ONLY** — every write answers 403 `venue_read_only`
+and `-autotrade` is refused — until the spot leg is bought grossed up
+(`ceil(Q/(1−fee))`) and judged by the wallet everywhere, which is a change to the
+accepted 4.4/4.5 state machine and the operator's to scope. The Bybit trap rows
+in the table below carry the details.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1347,6 +1373,9 @@ re-research these; do verify before writing the integration.
 | **OKX** | `fundingTime` is the NEXT settlement; `nextFundingTime` is the one AFTER that. Mapping it like Binance's `T` is off by one period. |
 | **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). Its WS `next_funding_rate_time` is an **absolute epoch-ms stamp** even though the doc prose says "time until" — probed live twice; see §3.3⑥. And its WS `relative_funding_rate` is the **already-settled** figure of the last completed hour (the forming estimate lives in `relative_funding_rate_prediction`), so `IsEstimated=false` there and the rate does NOT forecast the next stamp. |
 | **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite — and publish only when a FUNDING field actually changed, or the ~100ms delta stream refreshes `RecvAt` ten times a second and a dead subscription looks permanently fresh. Its `fundingIntervalHour` is the string `"8"`, not a number: declared as `int64` the whole frame fails to decode and the venue silently produces no funding at all. It publishes `fundingCap` and **no floor**, so cap and floor need separate flags. |
+| **Bybit** | A **spot MARKET BUY's `qty` is USDT by default**: "`quoteCoin` for market buy by default, `baseCoin` for market sell by default" (V5 create-order, UTA). Sent as coin, 0.001 BTC becomes an order for 0.001 USDT. Send `marketUnit: "baseCoin"` on EVERY spot market order, buy and sell, and `isLeverage: 0` — `1` is a spot margin BORROW. `reduceOnly`/`positionIdx` are linear-only and are not sent on spot. |
+| **Bybit** | A taker **spot BUY pays its fee in the BASE coin** ("Side = Buy -> base currency (BTC)", V5 enum "Spot Fee Currency Instruction"; testnet taker 10 bps measured 2026-09-17). The order reports `cumExecQty` Q while the wallet holds Q × (1 − fee), so a close sized from the orders asks spot to sell coin the wallet lacks — refused AFTER the perp was bought back, a naked long. `execution.Close` now sells what the VENUE says the wallet holds when the shortfall fits `MaxSpotBaseFeeFrac` (0.2%) + one step, and refuses before sending when it does not. Binance does the same unless fees are paid in BNB. |
+| **Bybit** | `/v5/market/risk-limit`'s only doc example is an INVERSE contract answering `maintenanceMargin` "0.5" beside 100× — a percent. **Linear answers FRACTIONS** (all 35 BTCUSDT tiers, 2026-09-17: "0.0033"/"0.0066"/150× down to "0.6"/"1"/1×). A guessed "< 0.5" ceiling refused the venue's own last tier live; the unit is checked by `initialMargin × maxLeverage ≈ 1` on every tier instead. Spot has no `qtyStep` — the grid is `lotSizeFilter.basePrecision`, the minimum notional `minOrderAmt`, and `maxMarketOrderQty` (live, not on the page) is smaller than `maxOrderQty`. The spot book's documented ceiling is 200 levels; it silently accepts 500. |
 | **Bybit** | The public **SPOT** WebSocket takes at most **10 `args` per subscribe request** ("Spot can input up to 10 args for each subscription request sent to one connection"; "No args limit for Futures and Spread for now"). Over the limit it REFUSES THE WHOLE REQUEST — `{"success":false,"ret_msg":"args size >10"}` — and then delivers nothing, rather than truncating. Measured live 2026-09-12: 26 args → 0 data frames in 12s, 8 args → 99. This is what silenced `bybit_spot` for 19 hours of step-3.5 run 2 when the pair list grew from 4 to 13. Batch the topics, and READ the reply: the venue says exactly what is wrong. |
 | **Binance** | `fundingInfo` documents itself as returning ONLY symbols whose config differs from default — as of 2026-09-03 it happens to cover every TRADING perpetual (777 symbols, BTCUSDT included via its adjusted ±0.3% cap), but the docs promise no such coverage. Default to 8h and override; do not read it as the source of truth for all symbols. Intervals seen: 4h (majority), 8h, and 1h. Also filter `rateType: "Special"` in backtests. |
 | **Hyperliquid** | Funding is hourly, not 8-hourly. Annualizing as 8h is wrong by 8x. Its `predictedFundings` also lists BinPerp and BybitPerp beside its own **HlPerp** row — read the wrong row and an 8h cadence lands on an hourly venue. And `nextFundingTime` there is the settlement of the period ALREADY RUNNING (measured across an hour boundary 2026-09-04: 02:47→02:00, 03:01→03:00), so the upcoming one is that stamp plus one interval. |
@@ -1410,11 +1439,14 @@ cmd/brokercheck/     step-4.1/4.2 diagnostic against Binance TESTNET. Default:
                      allowed to link internal/broker (with execcheck,
                      execportal and bybitcheck); a test asserts every other
                      one does not
-cmd/bybitcheck/      step-4.5i diagnostic against Bybit V5 TESTNET or DEMO
+cmd/bybitcheck/      step-4.5i/4.5j diagnostic against Bybit V5 TESTNET or DEMO
                      (BYBIT_MODE): clock, unified wallet (coin=USDT so a zero
                      reads as zero), one position, the key's permissions
-                     (fails on Wallet: Withdraw). GETs only, no order, no
-                     amount printed
+                     (fails on Wallet: Withdraw; needs ContractTrade AND
+                     SpotTrade), and for BOTH spot and linear the rules, book,
+                     touch spread and this account's taker fee, plus the perp's
+                     mark, settled funding, risk tier and settlement rows. GETs
+                     only, no order, no amount printed
 cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      delta-neutral position, reads it back, closes it — every
                      position typed by a person, no path from a live signal to
@@ -1426,7 +1458,11 @@ cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      ClientOrderID from the intent id and read the orders,
                      position and balances back from the venue, printing both
                      when they disagree (rule 7). No database, no schema
-cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17):
+cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17),
+                     or on Bybit testnet/demo with -broker=bybit (Q19: spot and
+                     linear on ONE Unified account, adapter venue_bybit.go,
+                     intent files in .paper/exec-bybit, the wallet read ONCE;
+                     READ-ONLY for now — every write 403 venue_read_only):
                      six tabs on LOOPBACK 127.0.0.1:8087 (Market Scanner,
                      Auto-Trader, Manual Execution, Paper Ledger,
                      Backtest 3 Năm, Crowding Reversal). Backtest tab renders
@@ -1527,14 +1563,20 @@ internal/
                      testnets are separate registrations. testdata/ holds the
                      venue's REAL answers, sanitized, replayed by golden tests
                      that open no socket
-    bybit/           Broker for Bybit V5 USDT LINEAR perps on api-testnet or
-                     api-demo only (step 4.5i, 🟡). Built on broker.Client with
-                     SchemeBybitV5Header — header signature, per-scheme host
-                     allow-list, same walls. Order create/cancel answers are
-                     ACKS (status NEW, read back); GetOrder falls back
-                     realtime → history; refusals are HTTP 200 + retCode, which
-                     execution's definiteRejection still reads as AMBIGUOUS
-                     (named debt). Balance is DERIVED (UTA has no `free`)
+    bybit/           Broker for Bybit V5 on api-testnet or api-demo only: USDT
+                     LINEAR perps (step 4.5i) and SPOT (4.5j, Q19). A Client
+                     serves ONE market; WithMarket gives the sibling over the
+                     SAME signed transport (one host, one IP limit, one clock).
+                     Built on broker.Client with SchemeBybitV5Header — header
+                     signature, per-scheme host allow-list, same walls. Order
+                     create/cancel answers are ACKS (status NEW, read back);
+                     GetOrder falls back realtime → history; refusals are HTTP
+                     200 + retCode, which execution's definiteRejection still
+                     reads as AMBIGUOUS (named debt). Spot MARKET orders always
+                     send marketUnit=baseCoin and isLeverage=0. Balance is
+                     DERIVED (UTA has no `free`) and both markets read ONE
+                     wallet. realized.go carries the fills, funding rows, mark,
+                     fee rate and risk-limit tier the portal and execution need
     brokertest/      in-memory Broker + the contract suite every implementation
                      must pass, with knobs for the states a real venue will not
                      produce on demand: a place that timed out AFTER the venue
