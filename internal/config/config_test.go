@@ -601,3 +601,30 @@ func TestRepoConfig_DepthIsSaneAndWithinPlanGuidance(t *testing.T) {
 		t.Errorf("depth.levels = %d; below 20 no venue reaches the 0.5%% window", depth.Levels)
 	}
 }
+
+// The radar compares two same-quote PERPS that exist, and its capital
+// denominator needs a real leverage.
+func TestCrossRadar_Validation(t *testing.T) {
+	cfg := repoConfig(t)
+	if !cfg.CrossRadar.Enabled || cfg.CrossRadar.SourceA != "binance_futures" || cfg.CrossRadar.SourceB != "bybit_futures" {
+		t.Fatalf("shipped radar: %+v", cfg.CrossRadar)
+	}
+	bad := map[string]func(*Config){
+		"same source":          func(c *Config) { c.CrossRadar.SourceB = c.CrossRadar.SourceA },
+		"unknown source":       func(c *Config) { c.CrossRadar.SourceB = "nope_futures" },
+		"spot source":          func(c *Config) { c.CrossRadar.SourceB = "binance_spot" },
+		"usd against usdt":     func(c *Config) { c.CrossRadar.SourceB = "hyperliquid_futures" },
+		"leverage below 1":     func(c *Config) { c.CrossRadar.LeverageXPerLeg = 0.5 },
+		"negative hold":        func(c *Config) { c.CrossRadar.PlannedHoldDays = -1 },
+		"negative grace":       func(c *Config) { c.CrossRadar.EventEndBelowSec = -5 },
+		"negative breakeven":   func(c *Config) { c.CrossRadar.GoodMaxBreakevenDays = -1 },
+		"duplicate thresholds": func(c *Config) { c.CrossRadar.EventThresholdsGrossAPRPct = []float64{15, 15} },
+	}
+	for name, mutate := range bad {
+		c := repoConfig(t)
+		mutate(&c)
+		if err := c.Validate(); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+}

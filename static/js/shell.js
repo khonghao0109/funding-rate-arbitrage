@@ -5,7 +5,7 @@
 
 import { $, setText, fmt, isNum } from "./core.js";
 
-const TABS = ["scanner", "autotrade", "manual", "paper", "backtest", "crowding"];
+const TABS = ["scanner", "radar", "autotrade", "manual", "paper", "backtest", "crowding"];
 const TAB_ALIASES = {
   execution: "manual",
 };

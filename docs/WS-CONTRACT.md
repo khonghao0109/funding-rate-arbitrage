@@ -753,3 +753,70 @@ chữ "ròng" ([PLAN §7.4](PLAN.md#74-chiến-lược-độ-sâu-sổ-lệnh)).
 ⚠️ Cột đáng nhìn nhất là **phía BID của chân SPOT**: vị thế funding thoát bằng
 cách BÁN chân spot, và lúc thoát là lúc funding đảo chiều — tương quan với thị
 trường căng và sổ mỏng đi. Độ sâu lúc vào không dự báo được độ sâu lúc ra.
+
+## 12. HTTP API — radar chéo sàn (Bước 4.5i, Hướng 1, thêm 2026-09-17)
+
+Hai route **GET** của `cmd/scanner`, cùng kiểu với §10: không phải message WebSocket, không đổi
+`v`. Portal (`cmd/execportal`) relay nguyên văn qua `/api/scanner/cross-radar` và
+`/api/scanner/cross-radar/events` (đường cố định, không giải mã). Chỉ đọc — không route nào đặt lệnh.
+Cấu hình: khối `cross_radar:` trong `config.yaml`.
+
+### 12.1. `GET /api/cross-radar`
+
+Radar tại thời điểm hỏi, tính từ funding và top-of-book scanner đang giữ.
+
+| Trường | Đơn vị / nghĩa |
+|---|---|
+| `enabled`, `updated_at_ms`, `source_a`, `source_b` | radar bật chưa; lúc tính; hai nguồn perp (chênh = A − B) |
+| `rate_model` | luôn `forming_gross`: funding ĐANG HÌNH THÀNH, chưa trừ gì |
+| `costs_applied_vi[]`, `costs_excluded_vi[]` | cái đã trừ và cái chưa trừ trong `after_cost_*`, bằng chữ |
+| `leverage_x_per_leg`, `capital_per_notional` | K mỗi chân; vốn/notional = 2/K |
+| `planned_hold_days` | số ngày GIẢ ĐỊNH để rải chi phí vòng ra APR |
+| `good_min_after_cost_apr_capital_pct`, `good_max_breakeven_days`, `max_touch_spread_bps`, `normal_below_gross_apr_pct` | ngưỡng trạng thái |
+| `event_thresholds_gross_apr_pct[]` | ngưỡng ghi đợt, tăng dần; trang lọc theo ngưỡng thấp nhất, cảnh báo theo ngưỡng cao nhất |
+| `pairs[]` | xếp: có `after_cost_apr_capital_pct` giảm dần → chỉ có chênh gộp → `unavailable` |
+
+`pairs[i]`:
+
+| Trường | Đơn vị / nghĩa |
+|---|---|
+| `symbol`, `direction` | `direction` = lệnh THU chênh, ví dụ `LONG_BYBIT_SHORT_BINANCE`; `""` khi chênh = 0 hoặc thiếu sàn |
+| `short_source`, `long_source` | sàn trả cao hơn thì SHORT |
+| `a`, `b` | từng chân: `rate_per_8h_bps`, `interval_sec`, `is_estimated`, `next_funding_at_ms`, `funding_status` (`live`/`stale`/`unknown`/`missing`), `funding_age_ms`, `funding_publish_mode` (`periodic`/`on_change` — với `on_change`, `live` chỉ nghĩa là "chưa chứng minh là chết"), `best_bid_quote`, `best_ask_quote`, `best_bid_qty_coin`, `best_ask_qty_coin`, `mid_quote`, `price_status`, `touch_spread_bps` (null khi sổ không live), `depth_within_0_1pct_min_quote` + `depth_sampled_at_ms` (lượt quét REST, 0 = chưa có) |
+| `spread_per_8h_bps` | A − B, có dấu |
+| `gross_apr_pct` | \|chênh\| × 1095 / 100, %/năm trên notional, KHÔNG trừ gì |
+| `fees_round_trip_bps` | phí taker 4 lệnh; null khi một biểu phí chưa xác minh |
+| `touch_round_trip_bps` | spread chạm sàn A + sàn B |
+| `cost_round_trip_bps` | tổng hai dòng trên; null khi thiếu một |
+| `breakeven_hold_days` | chi phí vòng ÷ (\|chênh/8h\| × 3): số ngày chênh HIỆN TẠI cần giữ để trả hết chi phí; null khi chưa biết chi phí hoặc chênh = 0 |
+| `after_cost_apr_notional_pct` | gộp − chi phí vòng × 365 / `planned_hold_days` |
+| `after_cost_apr_capital_pct` | dòng trên × K/2 |
+| `cross_basis_bps` | (mid A − mid B) / mid trung bình; độ phân giải là một tick |
+| `status`, `feasible` | `good` (APR sau chi phí ≥ ngưỡng, spread chạm hai sàn ≤ ngưỡng, hoà vốn ≤ `good_max_breakeven_days`) \| `wait_liquidity` \| `watch` (gồm cả APR cao mà hoà vốn quá lâu) \| `normal` \| `unavailable`; `feasible` chỉ true khi `good` |
+| `notes_vi[]` | lý do bằng chữ (chu kỳ khác nhau, thiếu độ sâu, dữ liệu cũ…) |
+
+**Không trường nào tên `net_*` hay `profit_*`** (CLAUDE.md quy tắc 2, 12). `after_cost_*` chỉ trừ phí và
+spread chạm. Con số giả định chênh giữ nguyên `planned_hold_days` ngày — trên corpus 3 năm, một đợt
+chênh ≥ 15% kéo dài trung vị 1 ngày.
+
+### 12.2. `GET /api/cross-radar/events?days=N`
+
+`days` 1–90, mặc định 7 (portal chỉ nhận 1, 7, 30). 503 khi tắt lưu trữ.
+
+- **Đầu trang:** `from_ms`, `to_ms`, `rate_model` (`forming_gross`), `note_vi` và `truncated` (quá 5.000 đợt).
+- **`summary[]`**, mỗi ngưỡng một phần tử:
+  - `threshold_apr_pct`, `episodes`, `open`;
+  - `by_reason` (`below` / `flip` / `stale` / `restart`);
+  - `measured_count`, `median_duration_sec`, `mean_duration_sec`, `p90_duration_sec`, `max_duration_sec`. Thời lượng chỉ tính đợt kết thúc vì CHÊNH hết (`below`, `flip`); null khi chưa có đợt nào;
+  - `censored_count`, `censored_median_lower_bound_sec`: đợt bị cắt vì `stale` hoặc `restart`. Thời lượng của chúng là CẬN DƯỚI, báo cạnh chứ không bỏ đi (bỏ đi làm thời lượng ngắn hơn thật);
+  - summary gồm mọi ngưỡng trong config VÀ mọi ngưỡng có dòng trong cửa sổ;
+  - `episodes_by_symbol`.
+- **`events[]`**, mới nhất trước:
+  - `symbol`, `threshold_apr_pct`, `direction`, `short_source`, `long_source`;
+  - `started_at_ms`, `ended_at_ms` (0 = đang mở), `duration_sec`;
+  - `end_reason` (`""` khi đang mở), `peak_gross_apr_pct`, `sample_every_sec`.
+
+Một đợt đóng khi chênh ở dưới ngưỡng liên tục `event_end_below_sec`. Thời điểm kết thúc được đóng dấu ở
+lần đọc ĐẦU TIÊN dưới ngưỡng. Funding mất `live` ngắn hơn khoảng đó không cắt đợt. Bảng lưu:
+`cross_spread_events` (schema v6), khoá theo `writer` = `scanner:<port>`. Route chỉ trả đợt do chính
+tiến trình đó ghi, và lần khởi động chỉ đóng đợt dở của chính nó.

@@ -389,6 +389,38 @@ strategy:
   # có nhóm chuỗi lỗ có hệ thống.
   trailing_mean_min_cost_frac: 0
 
+# Radar chéo sàn (PLAN 4.5i, Hướng 1) — CHỈ ĐỌC, không đặt lệnh. So funding
+# ĐANG HÌNH THÀNH (chưa settle) của cùng một perp trên hai sàn và ghi lại mỗi
+# đợt chênh rộng kéo dài bao lâu. Mọi con số dưới đây là QUYẾT ĐỊNH cách đọc
+# thị trường, không phải sự thật của sàn. Bối cảnh đã đo trên corpus 3 năm
+# (docs/reports/walkthrough-pillar-2-bybit.md §5): chênh Binance–Bybit trung vị
+# 3,2% APR, ≥ 15% chỉ 4,8% số coin-ngày, một đợt ≥ 15% kéo dài trung vị 1 ngày.
+cross_radar:
+  enabled: true
+  source_a: binance_futures        # chênh = A − B; dương ⇒ SHORT A + LONG B
+  source_b: bybit_futures
+  # Đòn bẩy MỖI chân. Ký quỹ nằm ở hai sàn không bù nhau ⇒ vốn = 2N/K, lợi suất
+  # trên vốn = K/2 × lợi suất trên notional (KHÔNG phải K).
+  leverage_x_per_leg: 2
+  # Giả định để quy chi phí vòng (phí 4 lệnh taker + spread chạm hai sàn) ra
+  # APR. Lịch sử nói chênh ≥ 15% hiếm khi giữ quá 1 ngày — con số APR sau phí
+  # vì thế là "nếu chênh giữ nguyên chừng này ngày", không phải dự báo.
+  planned_hold_days: 7
+  good_min_after_cost_apr_capital_pct: 20   # 🟢 khi APR sau chi phí trên vốn ≥ ngưỡng này
+  max_touch_spread_bps: 5                   # … và spread chạm CẢ HAI sàn ≤ ngưỡng này
+  # … và chênh HIỆN TẠI trả hết chi phí vòng trong ≤ ngần này ngày. Corpus 3 năm:
+  # đợt ≥ 15% kéo dài trung vị 1 ngày, P90 2–3 ngày — một chênh cần cả tuần mới
+  # hoà vốn thì không xanh, dù APR "7 ngày" của nó cao.
+  good_max_breakeven_days: 3
+  normal_below_gross_apr_pct: 10            # ⚪ khi chênh gộp dưới ngưỡng này
+  # Ngưỡng ghi nhật ký đợt chênh (theo chênh GỘP, %/năm). Một đợt chỉ đóng khi
+  # chênh nằm dưới ngưỡng liên tục event_end_below_sec; thời điểm kết thúc vẫn
+  # là lần đọc ĐẦU TIÊN dưới ngưỡng, nên khoảng chờ không làm đợt dài ra.
+  # Mọi số ở khối này: 0 hoặc bỏ trống ⇒ lấy mặc định; số âm bị từ chối.
+  event_thresholds_gross_apr_pct: [15, 25]
+  event_end_below_sec: 60
+  sample_every_sec: 5
+
 symbols:
   - { symbol: BTCUSDT, base: BTC, quote: USDT }
   - { symbol: ETHUSDT, base: ETH, quote: USDT }

@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.5i client Bybit V5 + `cmd/bybitcheck` 🟡 (2026-09-17: đọc được đồng hồ/ví/vị thế/quyền trên testnet, ví chưa có USDT; chưa có lệnh chéo sàn — không tính vào 5/6) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.5i client Bybit V5 + `cmd/bybitcheck` 🟡 (2026-09-17: đọc được đồng hồ/ví/vị thế/quyền trên testnet, ví chưa có USDT; chưa có lệnh chéo sàn — không tính vào 5/6) + radar chéo sàn CHỈ ĐỌC 🟡 (2026-09-17, chưa triển khai lên 8085/8087) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -3780,7 +3780,8 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > "≤ evaluated_at_ms" lọc ở độ phân giải lượt quét chứ không phải từng lượt
 > tải — quyết định 07:18:48 dùng lượt 07:17:18 nằm đúng trong khoảng đó. Nợ
 > ghi cho SAU cổng 3.5 (không đổi schema trong khi tiến trình đang ghi): cột
-> `fetched_at_ms` cho `depth_snapshots` (schema v6).
+> `fetched_at_ms` cho `depth_snapshots` (phiên bản schema kế tiếp — v6 đã dùng cho bảng
+> `cross_spread_events` của radar chéo sàn, 2026-09-17).
 >
 > **Chưa làm, và vì sao:** (a) hai message `paper_positions` / `paper_ledger`
 > và `meta.execution_mode` trên wire của `cmd/scanner` — theo chỉ thị của
@@ -5236,6 +5237,32 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > một lệnh CHƯA kết thúc là lần khớp cuối — đúng với huỷ đồng bộ của Binance, sai với Bybit —
 > phải đòi `Status.Done()` hoặc coi chân là mơ hồ; một lần gỡ gặp `ErrIPCoolingDown` phải dừng bảo
 > vệ và báo, không thử lại 10 phút.
+>
+> **Hướng 1 — Radar chéo sàn, xây 2026-09-17, CHỈ ĐỌC** (báo cáo
+> [`docs/reports/walkthrough-cross-radar.md`](reports/walkthrough-cross-radar.md), hợp đồng WS-CONTRACT §12).
+>
+> - **Code:** `internal/scanner/cross_radar.go` (hàm thuần, từ funding và giá chạm scanner đang giữ) và
+>   `cross_events.go` (đợt chênh), `GET /api/cross-radar` + `/api/cross-radar/events` trên
+>   `cmd/scanner`, proxy đường cố định trong `cmd/execportal/feeds`, tab "Radar Chéo Sàn", khối
+>   `cross_radar:` trong `config.yaml`, bảng `cross_spread_events` (**schema v6**).
+> - **Bốn chỗ lệch khỏi đặc tả của người vận hành:**
+>   1. Không có trường `net_*`: con số là `after_cost_apr_*` (quy tắc 2).
+>   2. Độ sâu lấy từ lượt quét REST có sẵn, không poll top-10 mỗi 5 s (quy tắc 10).
+>   3. Rate là rate ĐANG HÌNH THÀNH, ghi rõ `rate_model: forming_gross`.
+>   4. Đo trên cổng phụ; 8085/8087 chưa khởi động lại vì auto-trader testnet đang chạy trên 8087.
+> - **Đo lúc xây:** 13/13 cặp live ở hai sàn. Chênh rộng nhất SUI 11,2%/năm gộp; **không cặp nào
+>   dương sau chi phí** (phí 21 bps rải 7 ngày đã tốn 10,95%/năm).
+> - **Hai vòng review ngữ cảnh sạch, 0 chặn, đã sửa hết kèm test.** Vòng 2 tìm thêm 1 lớn (số 0 trong
+>   config không bị từ chối như chú thích hứa, vì mặc định được áp trước khi kiểm) và 6 nhỏ.
+>   Vòng 1 (3 lớn, 9 nhỏ):
+>   1. Một nhịp funding mất `live` cắt đợt dài nhất, và đợt bị cắt bị bỏ khỏi thống kê → nay có grace
+>      và báo CẬN DƯỚI.
+>   2. Nhiều scanner ghi cùng một file làm đếm đôi và đóng đợt của nhau → nay khoá theo `writer`.
+>   3. Nhãn xanh dựa trên 7 ngày giữ giả định mâu thuẫn với trung vị 1 ngày đã đo → nay thêm
+>      `breakeven_hold_days` và chỉ xanh khi hoà vốn ≤ 3 ngày.
+> - **Còn mở:**
+>   - Thời lượng đợt thật cần radar chạy nhiều ngày trên 8085.
+>   - Một binary build trước thay đổi này từ chối file v6.
 
 
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
@@ -6175,7 +6202,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.5i Bybit V5 🟡 2026-09-17 (client `internal/broker/bybit` + `cmd/bybitcheck`; testnet: lệch giờ 64–136 ms, 4/5 mục đạt, ví USDT = 0 chưa Faucet; chưa lệnh chéo sàn; đo lệch funding Binance–Bybit trung vị 3,2% APR, 4,8% ngày ≥ 15%) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.5i Bybit V5 🟡 2026-09-17 (client `internal/broker/bybit` + `cmd/bybitcheck`; testnet: lệch giờ 64–136 ms, 4/5 mục đạt, ví USDT = 0 chưa Faucet; chưa lệnh chéo sàn; đo lệch funding Binance–Bybit trung vị 3,2% APR, 4,8% ngày ≥ 15%; radar chéo sàn chỉ đọc + nhật ký đợt, schema v6, chưa triển khai lên 8085/8087) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

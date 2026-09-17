@@ -55,6 +55,10 @@ const (
 	scannerSocketPath  = "/ws"
 	scannerHistoryPath = "/api/funding/history"
 	paperLedgerPath    = "/api/ledger"
+	// The cross-venue funding radar (PLAN 4.5i): public market data the scanner
+	// already holds, and its episode log.
+	scannerCrossRadarPath  = "/api/cross-radar"
+	scannerCrossEventsPath = "/api/cross-radar/events"
 
 	// MaxScannerRelays bounds how many scanner clients the portal can add to
 	// the gate process, whatever a page or a reload loop does. Every one of
@@ -85,6 +89,10 @@ const (
 	// The history lives in the gate's SQLite file; a chart re-drawn by several
 	// tabs asks it once a minute, not once per tab.
 	historyTTL = time.Minute
+	// The radar page polls every five seconds; several tabs share one answer.
+	crossRadarTTL = 3 * time.Second
+	// The episode log changes when an episode opens or closes.
+	crossEventsTTL = 30 * time.Second
 	// cmd/paperledger rebuilds every five minutes by default.
 	paperTTL = 30 * time.Second
 	// A failed or 5xx answer is shared only briefly, so a recovered upstream is
@@ -95,6 +103,9 @@ const (
 // historyDays are the windows the page offers. Anything else is refused, so
 // the cache — and the gate's database — sees at most this many keys a symbol.
 var historyDays = map[string]bool{"7": true, "30": true, "90": true, "180": true, "365": true}
+
+// crossEventDays are the event-log windows the page offers.
+var crossEventDays = map[string]bool{"1": true, "7": true, "30": true}
 
 var symbolPattern = regexp.MustCompile(`^[A-Z0-9]{5,20}$`)
 
@@ -117,8 +128,10 @@ type Feeds struct {
 	scanner health
 	paper   health
 
-	history *cache
-	ledger  *cache
+	history     *cache
+	ledger      *cache
+	crossRadar  *cache
+	crossEvents *cache
 }
 
 type health struct {
@@ -170,6 +183,8 @@ func New(scannerAddr, paperAddr string, now func() time.Time) *Feeds {
 		relays:      map[*relaySession]struct{}{},
 		history:     newCache(now),
 		ledger:      newCache(now),
+		crossRadar:  newCache(now),
+		crossEvents: newCache(now),
 	}
 }
 
@@ -561,6 +576,55 @@ func (f *Feeds) ScannerHistory(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		msg := "không đọc được lịch sử funding từ scanner " + f.scannerAddr + ": " + err.Error()
+		f.note(&f.scanner, msg)
+		writeError(w, http.StatusBadGateway, "feed_unreachable", msg)
+		return
+	}
+	writeFeed(w, "scanner-feed", b, readAt)
+}
+
+// ScannerCrossRadar relays cmd/scanner's cross-venue funding radar (PLAN 4.5i)
+// verbatim. It takes no parameter, so the upstream URL is fully fixed.
+func (f *Feeds) ScannerCrossRadar(w http.ResponseWriter, r *http.Request) {
+	if f.scannerAddr == "" {
+		writeError(w, http.StatusServiceUnavailable, "feed_disabled", "portal chạy với -scanner-addr rỗng — không có nguồn scanner")
+		return
+	}
+	upstream := url.URL{Scheme: "http", Host: f.scannerAddr, Path: scannerCrossRadarPath}
+	b, readAt, err := f.crossRadar.get("radar", crossRadarTTL, func() (body, error) {
+		return f.fetch(upstream.String(), false)
+	})
+	if err != nil {
+		msg := "không đọc được radar chéo sàn từ scanner " + f.scannerAddr + ": " + err.Error()
+		f.note(&f.scanner, msg)
+		writeError(w, http.StatusBadGateway, "feed_unreachable", msg)
+		return
+	}
+	writeFeed(w, "scanner-feed", b, readAt)
+}
+
+// ScannerCrossEvents relays the radar's episode log for one of the offered
+// windows; anything else is refused before the scanner is asked.
+func (f *Feeds) ScannerCrossEvents(w http.ResponseWriter, r *http.Request) {
+	if f.scannerAddr == "" {
+		writeError(w, http.StatusServiceUnavailable, "feed_disabled", "portal chạy với -scanner-addr rỗng — không có nguồn scanner")
+		return
+	}
+	days := r.URL.Query().Get("days")
+	if days == "" {
+		days = "7"
+	}
+	if !crossEventDays[days] {
+		writeError(w, http.StatusBadRequest, "bad_days", "days phải là 1, 7 hoặc 30 — nhận "+quote(days))
+		return
+	}
+	upstream := url.URL{Scheme: "http", Host: f.scannerAddr, Path: scannerCrossEventsPath,
+		RawQuery: url.Values{"days": {days}}.Encode()}
+	b, readAt, err := f.crossEvents.get(days, crossEventsTTL, func() (body, error) {
+		return f.fetch(upstream.String(), false)
+	})
+	if err != nil {
+		msg := "không đọc được nhật ký đợt chênh từ scanner " + f.scannerAddr + ": " + err.Error()
 		f.note(&f.scanner, msg)
 		writeError(w, http.StatusBadGateway, "feed_unreachable", msg)
 		return

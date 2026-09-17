@@ -166,6 +166,7 @@ func Configure(cfg config.Config) {
 	sourceRegistry = registry
 	sourceOrder = indexRegistry(registry)
 	alertMinSpreadPct = cfg.Scanner.AlertMinSpreadPct
+	crossRadarCfg = cfg.CrossRadar
 	if sec := cfg.Depth.RefreshEveryMin * 60; sec > 0 {
 		depthRefreshEverySec = sec
 	}

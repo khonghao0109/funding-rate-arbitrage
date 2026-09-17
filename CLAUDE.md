@@ -1156,6 +1156,30 @@ and 15 are open.
 2. **R8 Part 2 (Ack All):** `POST /api/autotrade/ack-all` (header `X-Execportal-Action: autotrade-ack-all`) and UI button `⚡ XÁC NHẬN TẤT CẢ (N CẶP)` atomically release all displayed halted pairs to paused state with zero orders sent, requiring exact `halt_seq` verification to avoid clearing unread halts. Whole-bot halts (e.g., after KILL) remain separate.
 3. **R6 (Pre-flight spread guard on take-profit):** `portal.close` re-reads touch spreads on both books immediately before sending MARKET orders. If spot or perp spread exceeds `MaxSpreadBps` (default 10.0 bps) or is unmeasurable, a take-profit close is deferred (`Deferred=true`), retried next scan without counting as a trade failure (`tradeFailures`). Basis stops, funding exits, and manual closes bypass the spread guard to prioritize position safety.
 
+**Step 4.5i direction 1 — the cross-venue funding RADAR — was built 2026-09-17
+and is READ-ONLY (report `docs/reports/walkthrough-cross-radar.md`).** It is
+`internal/scanner/cross_radar.go` (a pure `buildCrossRadar` over the funding and
+top-of-book the scanner already holds), `GET /api/cross-radar` and
+`/api/cross-radar/events` on `cmd/scanner`, fixed-path proxies in
+`cmd/execportal/feeds`, and a "Radar Chéo Sàn" tab; config is the `cross_radar:`
+block. It compares FORMING rates (`rate_model: forming_gross`), so it ranks and
+logs and decides nothing. Its one cost figure is `after_cost_apr_*` — four taker
+fills plus both touch spreads, spread over an ASSUMED `planned_hold_days`, times
+K/2 on capital — never "net"; a pair is green only if the current spread would
+also repay its round trip within `good_max_breakeven_days` (3), because on the
+three-year corpus a ≥ 15% spread lasted a median of ONE day and the seven-day
+APR reads high on spreads that never last. Depth is the hourly REST sweep (rule
+10), not a stream. Episodes of a wide spread go to `cross_spread_events`
+(**schema v6**), keyed by `writer` = `scanner:<port>` so two scanners on one
+file neither double-count nor close each other's live episodes; a stale blip
+shorter than the grace does not end an episode, and cut episodes are reported as
+LOWER BOUNDS, not dropped. **A binary built before this change refuses a v6
+file** (`OpenReadOnly`/`Open` refuse a newer version) — a `cmd/backtest` or
+`cmd/paperledger` from an older commit needs a copy taken before the scanner
+migrated it; the archived `.paper/run*` copies are v5. Measured at build, 13
+pairs live, the widest spread SUI 11.2% gross and no pair positive after cost.
+Not yet deployed to 8085/8087: the portal there runs the testnet auto-trader.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1911,8 +1935,8 @@ phase 1.
   depth nobody can recover. One more limitation the paper ledger met (PLAN 4.3):
   `sampled_at_ms` stamps the START of a whole sweep (~117 fetches, 30–90s), so
   "the book at or before a decision" resolves to a sweep, not to a fetch; the
-  `fetched_at_ms` column that would fix it is schema v6, deliberately deferred
-  until nothing is writing the file.
+  `fetched_at_ms` column that would fix it is still deferred and will take the
+  next schema version (v6 went to the cross-venue radar's event table, 2026-09-17).
 
 ---
 

@@ -286,3 +286,46 @@ CREATE TABLE IF NOT EXISTS signal_journal (
 
     PRIMARY KEY (evaluated_at_ms, symbol, perp_source)
 ) WITHOUT ROWID;
+
+-- cross_spread_events is the cross-venue radar's episode log (PLAN 4.5i): how
+-- long a wide spread between two venues' FORMING funding rates lasted.
+--
+-- FORMING, not settled: a forming spread can open and close inside one
+-- settlement period and pay nothing, so this table measures persistence of the
+-- signal, not income. The resolution is sample_every_sec. An episode is written
+-- when it opens (ended_at_ms 0), rewritten while it lasts, and closed with a
+-- reason; a process that stops leaves it open and the next start of the SAME
+-- writer closes it as 'restart' at last_seen_above_ms.
+--
+-- writer names the process that logged the row (scanner:<port>), because more
+-- than one scanner can write one file — a helper scanner on another port, a
+-- relaunch — and without it each episode is counted once per writer and one
+-- writer's start-up closes another's live episodes. The writer is the PORT: a
+-- scanner relaunched on another port neither closes nor reads the old port's
+-- rows, which stay under their own name.
+CREATE TABLE IF NOT EXISTS cross_spread_events (
+    writer              TEXT    NOT NULL,
+    symbol              TEXT    NOT NULL,
+    threshold_apr_pct   REAL    NOT NULL,  -- gross spread, percent a year on notional
+    started_at_ms       INTEGER NOT NULL,
+
+    short_source        TEXT    NOT NULL,  -- the venue paying more: short it
+    long_source         TEXT    NOT NULL,
+
+    peak_gross_apr_pct  REAL    NOT NULL,
+    peak_at_ms          INTEGER NOT NULL,
+    last_seen_above_ms  INTEGER NOT NULL,
+
+    ended_at_ms         INTEGER NOT NULL,  -- 0 while open
+    duration_sec        REAL    NOT NULL,  -- 0 while open
+    end_reason          TEXT    NOT NULL,  -- '' open | below | flip | stale | restart
+
+    sample_every_sec    INTEGER NOT NULL,
+    rate_model          TEXT    NOT NULL,  -- forming_gross
+    recorded_at_ms      INTEGER NOT NULL,
+
+    PRIMARY KEY (writer, symbol, threshold_apr_pct, started_at_ms)
+) WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS cross_spread_events_by_start
+    ON cross_spread_events (started_at_ms);

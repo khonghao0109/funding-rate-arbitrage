@@ -5,6 +5,7 @@ import { shell } from "./shell.js";
 import { initExecution, onStatus, onPortalDown } from "./execution.js";
 import { initScanner } from "./scanner.js";
 import { initPaper } from "./paper.js";
+import { initRadar } from "./radar.js";
 import { initBacktest } from "./backtest.js";
 import { initCrowding } from "./crowding.js";
 
@@ -32,6 +33,7 @@ async function boot() {
   initExecution(first.body);
   initScanner();
   initPaper();
+  initRadar();
   initBacktest();
   initCrowding();
   shell.start();

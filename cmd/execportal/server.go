@@ -113,6 +113,9 @@ func (p *portal) handler() http.Handler {
 	// relayed, never decoded, and not reachable from any order path.
 	get("/api/scanner/funding-history", p.feeds.ScannerHistory)
 	get("/api/paper/ledger", p.feeds.PaperLedger)
+	// The cross-venue funding radar (PLAN 4.5i): public data, relayed verbatim.
+	get("/api/scanner/cross-radar", p.feeds.ScannerCrossRadar)
+	get("/api/scanner/cross-radar/events", p.feeds.ScannerCrossEvents)
 	mux.Handle("/api/scanner/ws", onlyMethod(http.MethodGet, p.socketGuard(http.HandlerFunc(p.feeds.ScannerSocket))))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "không có endpoint "+quoteForMessage(r.URL.Path))

@@ -2798,3 +2798,47 @@ dialog .actions {
 .assume-list li {
   margin-bottom: var(--space-2);
 }
+
+/* ------------------------------------------------------ radar chéo sàn (4.5i) */
+#panel-radar .badge.good {
+  background: rgba(44, 245, 154, 0.12);
+  color: var(--live);
+}
+#panel-radar td .sub {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.3;
+}
+#panel-radar .strong {
+  font-weight: 700;
+}
+#panel-radar .dir {
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  white-space: nowrap;
+}
+#panel-radar .dir.long {
+  color: var(--gain);
+}
+#panel-radar .dir.short {
+  color: var(--loss);
+}
+#panel-radar tr.radar-hot td {
+  background: var(--warn-soft);
+}
+#panel-radar tr.radar-hot td:first-child {
+  box-shadow: inset 3px 0 0 var(--warn);
+}
+#panel-radar .ml4 {
+  margin-left: var(--space-1);
+}
+#panel-radar .radar-alert {
+  margin: var(--space-2) 0 0;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+}
+#panel-radar .radar-alert.on {
+  color: var(--warn);
+  font-weight: 700;
+}

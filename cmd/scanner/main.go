@@ -120,17 +120,30 @@ func main() {
 		}()
 	})
 
+	// The cross-venue radar's episode log (PLAN 4.5i), on the recorders'
+	// WaitGroup because it writes to the same store.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = cfg.Server.Port
+	}
+	startCrossEvents(ctx, cfg, s, db, crossWriter(port), func(job func()) {
+		recorders.Add(1)
+		go func() {
+			defer recorders.Done()
+			job()
+		}()
+	})
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ws", s.HandleWebSocket)
 	// Settled funding history for the chart (step 2.7). Read-only, and the only
 	// route that touches the store — the push contract stays on /ws.
 	mux.HandleFunc("/api/funding/history", newFundingHistoryHandler(db, cfg))
+	// The cross-venue radar (PLAN 4.5i): read-only, from what the scanner holds.
+	mux.HandleFunc("/api/cross-radar", newCrossRadarHandler(s))
+	mux.HandleFunc("/api/cross-radar/events", newCrossEventsHandler(db, s, crossWriter(port)))
 	mux.Handle("/", http.FileServer(http.Dir("./static/")))
 
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = cfg.Server.Port
-	}
 	server := &http.Server{Addr: ":" + port, Handler: mux}
 
 	go func() {

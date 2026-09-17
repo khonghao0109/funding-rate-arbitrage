@@ -73,6 +73,8 @@ func relayServer(t *testing.T, f *Feeds, configure func(*http.Server)) *httptest
 	mux.HandleFunc("/api/scanner/ws", f.ScannerSocket)
 	mux.HandleFunc("/api/scanner/funding-history", f.ScannerHistory)
 	mux.HandleFunc("/api/paper/ledger", f.PaperLedger)
+	mux.HandleFunc("/api/scanner/cross-radar", f.ScannerCrossRadar)
+	mux.HandleFunc("/api/scanner/cross-radar/events", f.ScannerCrossEvents)
 	srv := httptest.NewUnstartedServer(mux)
 	if configure != nil {
 		configure(srv.Config)
@@ -608,5 +610,44 @@ func TestScannerSocket_RefusalIsRecordedAndErrorsAreLabelledFeed(t *testing.T) {
 	}
 	if v := f.View(); !strings.Contains(v.Scanner.LastErrorVI, "từ chối") || v.Scanner.LastErrorAtMs == 0 {
 		t.Errorf("the refusal is not in the status: %+v", v.Scanner)
+	}
+}
+
+// The radar and its log are relayed verbatim from FIXED upstream paths: the
+// page's query reaches the scanner only as one of the offered windows.
+func TestScannerCrossRadar_FixedPathsAndWindows(t *testing.T) {
+	upstream := newFakeHTTP(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write([]byte(`{"path":"` + r.URL.Path + `"}`))
+	})
+	f := New(upstream.addr(), "", nil)
+	srv := relayServer(t, f, nil)
+
+	status, got, h := get(t, srv, "/api/scanner/cross-radar?symbol=../x&days=365")
+	if status != http.StatusOK || got != `{"path":"/api/cross-radar"}` || h.Get("X-Execution-Mode") != "scanner-feed" {
+		t.Fatalf("radar: %d %s %q", status, got, h.Get("X-Execution-Mode"))
+	}
+	if status, got, _ := get(t, srv, "/api/scanner/cross-radar/events?days=30&x=1"); status != http.StatusOK || got != `{"path":"/api/cross-radar/events"}` {
+		t.Fatalf("events: %d %s", status, got)
+	}
+	reqs := upstream.requests()
+	if len(reqs) != 2 || reqs[0] != "GET /api/cross-radar" || reqs[1] != "GET /api/cross-radar/events?days=30" {
+		t.Errorf("upstream saw %v", reqs)
+	}
+	get(t, srv, "/api/scanner/cross-radar")
+	if len(upstream.requests()) != 2 {
+		t.Error("a second radar read inside the TTL reached the scanner again")
+	}
+	for _, q := range []string{"days=2", "days=90", "days=abc"} {
+		if status, _, _ := get(t, srv, "/api/scanner/cross-radar/events?"+q); status != http.StatusBadRequest {
+			t.Errorf("%s → %d, want 400", q, status)
+		}
+	}
+	if len(upstream.requests()) != 2 {
+		t.Error("a refused window reached the scanner")
+	}
+	off := relayServer(t, New("", "", nil), nil)
+	if status, _, _ := get(t, off, "/api/scanner/cross-radar"); status != http.StatusServiceUnavailable {
+		t.Errorf("no scanner → %d", status)
 	}
 }

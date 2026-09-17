@@ -348,6 +348,7 @@ func TestExecportal_NoPathFromAFeedToAnOrder(t *testing.T) {
 		"Feeds": true, "New": true, "CheckAddr": true, "MaxScannerRelays": true,
 		"View": true, "FeedView": true, "ScannerView": true,
 		"Feeds.ScannerSocket": true, "Feeds.ScannerHistory": true, "Feeds.PaperLedger": true,
+		"Feeds.ScannerCrossRadar": true, "Feeds.ScannerCrossEvents": true,
 		"Feeds.View": true, "Feeds.CloseAll": true,
 	}
 	for name, file := range pkg.Files {
@@ -418,7 +419,7 @@ func TestExecportal_NoPathFromAFeedToAnOrder(t *testing.T) {
 	// they may do with it. Every use of p.feeds or of the package must be a
 	// selector on the allowlist — a bare "h := p.feeds" is refused too.
 	allowedUse := map[string]map[string]bool{
-		"server.go": {"ScannerSocket": true, "ScannerHistory": true, "PaperLedger": true},
+		"server.go": {"ScannerSocket": true, "ScannerHistory": true, "PaperLedger": true, "ScannerCrossRadar": true, "ScannerCrossEvents": true},
 		"api.go":    {"New": true, "View": true, "Feeds": true},
 		"main.go":   {"New": true, "CheckAddr": true, "MaxScannerRelays": true, "CloseAll": true},
 	}

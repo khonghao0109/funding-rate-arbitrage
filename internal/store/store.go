@@ -26,7 +26,7 @@ var schemaSQL string
 // at a HIGHER version than this binary knows is refused rather than migrated
 // backwards — reading a newer file with older code is how a column quietly
 // stops being written.
-const schemaVersion = 5
+const schemaVersion = 6
 
 // migrationSteps alters an EXISTING file on its way up, keyed by the version
 // the step produces. schema.sql always describes the CURRENT shape (it is what
@@ -41,6 +41,9 @@ const schemaVersion = 5
 //	    column is a phase-8 contract and carried no unit).
 //	v4: signal_journal added (step 3.5; CREATE IF NOT EXISTS covers it — no step).
 //	v5: price_history added (step 3.3b; CREATE IF NOT EXISTS covers it — no step).
+//	v6: cross_spread_events added (PLAN 4.5i radar; CREATE IF NOT EXISTS covers
+//	    it — no step). The depth_snapshots.fetched_at_ms column CLAUDE.md once
+//	    called "schema v6" is still deferred and will take the next version.
 var migrationSteps = map[int]string{
 	3: "ALTER TABLE funding_history RENAME COLUMN mark_price TO mark_price_quote",
 }

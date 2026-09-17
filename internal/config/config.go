@@ -70,8 +70,10 @@ type Config struct {
 	Depth    Depth    `yaml:"depth"`
 	Hedge    Hedge    `yaml:"hedge"`
 	Strategy Strategy `yaml:"strategy"`
-	Symbols  []Symbol `yaml:"symbols"`
-	Sources  []Source `yaml:"sources"`
+	// CrossRadar is the read-only cross-venue funding radar (PLAN 4.5i).
+	CrossRadar CrossRadar `yaml:"cross_radar"`
+	Symbols    []Symbol   `yaml:"symbols"`
+	Sources    []Source   `yaml:"sources"`
 }
 
 // Hedge is what the operator DECLARES about pairing a spot leg with a perp
@@ -466,6 +468,7 @@ func (c *Config) applyDefaults() {
 	c.Storage.applyDefaults()
 	c.Depth.applyDefaults()
 	c.Strategy.applyDefaults()
+	c.CrossRadar.applyDefaults()
 	for i := range c.Sources {
 		if c.Sources[i].StaleAfterSec <= 0 {
 			c.Sources[i].StaleAfterSec = c.Scanner.DefaultStaleAfterSec
@@ -702,7 +705,7 @@ func (c Config) Validate() error {
 		}
 		seenSource[source.Source] = true
 	}
-	return nil
+	return c.CrossRadar.validate(c.Sources)
 }
 
 func (c Config) validateSource(source Source, seen map[string]bool) error {

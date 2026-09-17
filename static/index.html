@@ -66,6 +66,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         Market Scanner
       </button>
+      <button class="tab" role="tab" id="tab-radar" data-tab="radar" aria-controls="panel-radar" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12l6-6"/><path d="M4.9 19.1a10 10 0 1 1 14.2 0"/><path d="M8.5 15.5a5 5 0 1 1 7 0"/><circle cx="12" cy="12" r="1"/></svg>
+        Radar Chéo Sàn
+        <span class="tab-count" id="tab-radar-alarm" hidden>≥25%</span>
+      </button>
       <button class="tab" role="tab" id="tab-autotrade" data-tab="autotrade" aria-controls="panel-autotrade" aria-selected="false" tabindex="-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         Auto-Trader (Funding Arb)
@@ -233,6 +238,62 @@
     </section>
 
     <!-- ======================================================== AUTO-TRADER -->
+    <!-- ========================================================= RADAR -->
+    <section class="tab-panel" id="panel-radar" role="tabpanel" aria-labelledby="tab-radar" hidden>
+      <article class="card">
+        <div class="card-head">
+          <h2>Radar chéo sàn · Binance ⟷ Bybit</h2>
+          <span class="tag gross">GỘP · ĐANG HÌNH THÀNH</span>
+          <span class="spacer"></span>
+          <span class="hint" id="rd-source">—</span>
+          <div class="seg" id="rd-filter" role="group" aria-label="Lọc cặp">
+            <button type="button" data-filter="all" aria-pressed="true">Tất cả</button>
+            <button type="button" data-filter="hot" aria-pressed="false">Chỉ ≥ 15%/năm</button>
+          </div>
+          <button type="button" class="btn ghost small" id="rd-refresh">Đọc lại</button>
+        </div>
+        <p class="note" id="rd-assumptions">Mở tab để đọc /api/cross-radar của cmd/scanner qua portal. Chỉ đọc — không có lệnh nào đi ra từ tab này.</p>
+        <p class="radar-alert" id="rd-alert" role="status" aria-atomic="true"></p>
+        <div class="table-wrap mt8">
+          <table class="radar-table">
+            <thead><tr>
+              <th>Cặp</th><th>Khuyến nghị (thu chênh)</th>
+              <th class="r" id="rd-th-a">Binance (bps/8h)</th><th class="r" id="rd-th-b">Bybit (bps/8h)</th>
+              <th class="r">Chênh Δf · APR gộp</th><th class="r" id="rd-th-after">APR sau chi phí / vốn</th>
+              <th class="r" id="rd-th-book">Spread chạm · basis</th><th>Trạng thái</th>
+            </tr></thead>
+            <tbody id="rd-rows"><tr><td class="empty" colspan="8">—</td></tr></tbody>
+          </table>
+        </div>
+        <p class="hint mt8" id="rd-count">—</p>
+        <details class="mt8">
+          <summary class="hint">Chưa trừ gì (bấm để xem)</summary>
+          <ul class="hint" id="rd-excluded"></ul>
+        </details>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <h2>Nhật ký đợt chênh</h2>
+          <span class="tag gross">ĐANG HÌNH THÀNH</span>
+          <span class="spacer"></span>
+          <div class="seg" id="rd-days" role="group" aria-label="Cửa sổ nhật ký">
+            <button type="button" data-days="1" aria-pressed="false">1 ngày</button>
+            <button type="button" data-days="7" aria-pressed="true">7 ngày</button>
+            <button type="button" data-days="30" aria-pressed="false">30 ngày</button>
+          </div>
+        </div>
+        <p class="note" id="rd-events-note">—</p>
+        <div class="stat-grid mt12" id="rd-summary"></div>
+        <div class="table-wrap mt12">
+          <table>
+            <thead><tr><th>Cặp</th><th class="r">Ngưỡng</th><th>Hướng</th><th>Bắt đầu</th><th class="r">Kéo dài</th><th class="r">Đỉnh gộp</th><th>Kết thúc vì</th></tr></thead>
+            <tbody id="rd-events"><tr><td class="empty" colspan="7">—</td></tr></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+
     <section class="tab-panel" id="panel-autotrade" role="tabpanel" aria-labelledby="tab-autotrade" hidden>
       <p class="note at-notice" id="at-notice">CHỈ TESTNET — bot tự mở và đóng lệnh thật trên Binance testnet qua đúng đường MỞ/ĐÓNG của portal, mỗi lúc một lệnh (PLAN Q18). Mọi con số là của tài khoản testnet.</p>
       <div class="callout bad mt8" id="at-halt" role="alert" hidden></div>
