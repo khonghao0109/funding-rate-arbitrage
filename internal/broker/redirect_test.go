@@ -300,7 +300,7 @@ func TestConfig_ReachesNoClientTransportDialerTLSOrRedirectPolicy(t *testing.T) 
 	for i := 0; i < cfg.NumField(); i++ {
 		fields = append(fields, cfg.Field(i).Name+" "+cfg.Field(i).Type.String())
 	}
-	const want = "BaseURL string; Credentials broker.Credentials; RecvWindowMs int64; TimePath string; ClockSyncEvery time.Duration; " +
+	const want = "BaseURL string; Scheme broker.SigningScheme; Credentials broker.Credentials; RecvWindowMs int64; TimePath string; ClockSyncEvery time.Duration; " +
 		"WeightLimitPerMin int; TestTransport http.RoundTripper; ObserveResponse func(broker.ResponseRecord); _ struct {}; Now func() time.Time; UserAgentVI string"
 	if got := strings.Join(fields, "; "); got != want {
 		t.Errorf("Config fields changed:\n got %s\nwant %s\n— check the new field reaches no transport, dialer, TLS setting or redirect policy, then update this list", got, want)

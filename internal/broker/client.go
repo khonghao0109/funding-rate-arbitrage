@@ -25,6 +25,13 @@ type Config struct {
 	// widen it at this step.
 	BaseURL string
 
+	// Scheme is how this venue authenticates a request, and it decides which
+	// hosts BaseURL may name: a Binance host under SchemeBinanceQuery, a Bybit
+	// testnet or demo host under SchemeBybitV5Header, never one under the
+	// other's scheme. The zero value is Binance, which every Config written
+	// before Bybit (PLAN 4.5i) already meant.
+	Scheme SigningScheme
+
 	Credentials Credentials
 
 	// RecvWindowMs is how long after `timestamp` the venue will still accept
@@ -99,6 +106,7 @@ const (
 // interface is 4.2, and every method here is a GET.
 type Client struct {
 	baseURL string
+	scheme  SigningScheme
 	creds   Credentials
 
 	recvWindowMs int64
@@ -107,7 +115,11 @@ type Client struct {
 	timePath     string
 	now          func() time.Time
 	budget       *WeightBudget
-	observe      func(ResponseRecord)
+	// cooldown is the IP-wide stop a venue can order (a Bybit 403). Shared by
+	// every production client; a client on a test transport has no IP of its
+	// own, so it gets a private one and one test's 403 cannot stop the next.
+	cooldown *ipCooldown
+	observe  func(ResponseRecord)
 
 	// The clock measurement, guarded because one client is shared by every
 	// caller and the skew is read on every signed request.
@@ -120,7 +132,7 @@ type Client struct {
 // NewClient validates the configuration and refuses anything it cannot make
 // safe. It opens no connection.
 func NewClient(cfg Config) (*Client, error) {
-	if err := checkTestnetBaseURL(cfg.BaseURL); err != nil {
+	if err := checkTestnetBaseURL(cfg.BaseURL, cfg.Scheme); err != nil {
 		return nil, err
 	}
 	if cfg.Credentials.APIKey.Empty() || cfg.Credentials.APISecret.Empty() {
@@ -134,8 +146,8 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, fmt.Errorf("broker: recv_window_ms %d is outside the documented range (1..%d)", recvWindowMs, MaxRecvWindowMs)
 	}
 	if cfg.WeightLimitPerMin <= 0 {
-		return nil, fmt.Errorf("broker: weight_limit_per_min must be the venue's documented REQUEST_WEIGHT budget (futures %d, spot %d) — a budget nobody looked up is not an unlimited one",
-			BinanceFuturesWeightPerMin, BinanceSpotWeightPerMin)
+		return nil, fmt.Errorf("broker: weight_limit_per_min must be the venue's documented request budget (Binance futures %d, spot %d; Bybit %d) — a budget nobody looked up is not an unlimited one",
+			BinanceFuturesWeightPerMin, BinanceSpotWeightPerMin, BybitRequestsPerMin)
 	}
 	if err := refuseTestTransport(cfg.TestTransport, testing.Testing()); err != nil {
 		return nil, err
@@ -149,6 +161,10 @@ func NewClient(cfg Config) (*Client, error) {
 		return nil, errors.New("broker: base URL does not parse — not quoted, since it may carry userinfo")
 	}
 	httpClient := guardedHTTPClient(cfg.TestTransport, base.Host)
+	cooldown := bybitIPCooldown
+	if cfg.TestTransport != nil {
+		cooldown = &ipCooldown{now: time.Now}
+	}
 	now := cfg.Now
 	if now == nil {
 		now = time.Now
@@ -159,6 +175,7 @@ func NewClient(cfg Config) (*Client, error) {
 	}
 	return &Client{
 		baseURL:        strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/"),
+		scheme:         cfg.Scheme,
 		creds:          cfg.Credentials,
 		recvWindowMs:   recvWindowMs,
 		http:           httpClient,
@@ -166,6 +183,7 @@ func NewClient(cfg Config) (*Client, error) {
 		timePath:       cfg.TimePath,
 		now:            now,
 		budget:         NewWeightBudget(cfg.WeightLimitPerMin, now),
+		cooldown:       cooldown,
 		observe:        cfg.ObserveResponse,
 		clockSyncEvery: syncEvery,
 	}, nil
@@ -228,8 +246,11 @@ func (c *Client) Budget() *WeightBudget { return c.budget }
 // API key header — because an endpoint that does not need identifying should
 // not be handed an identity.
 func (c *Client) GetPublic(ctx context.Context, ep Endpoint, params []Param, into any) error {
-	return c.do(ctx, http.MethodGet, ep, QueryString(params), paramsInQuery, false, into)
+	return c.do(ctx, http.MethodGet, ep, QueryString(params), paramsInQuery, authNone, into)
 }
+
+// Scheme is how this client signs.
+func (c *Client) Scheme() SigningScheme { return c.scheme }
 
 // GetSigned calls a SIGNED (USER_DATA) endpoint.
 //
@@ -237,6 +258,9 @@ func (c *Client) GetPublic(ctx context.Context, ep Endpoint, params []Param, int
 // caller cannot forget them and cannot set them to something the client did not
 // measure.
 func (c *Client) GetSigned(ctx context.Context, ep Endpoint, params []Param, into any) error {
+	if err := c.requireScheme(SchemeBinanceQuery); err != nil {
+		return err
+	}
 	// The clock first, always: a signed request built on an unmeasured or
 	// stale skew is one the venue answers with -1021, and that answer names
 	// our clock nowhere.
@@ -249,7 +273,7 @@ func (c *Client) GetSigned(ctx context.Context, ep Endpoint, params []Param, int
 		Param{"recvWindow", fmt.Sprintf("%d", c.recvWindowMs)},
 		Param{"timestamp", fmt.Sprintf("%d", c.timestampMs())},
 	)
-	return c.do(ctx, http.MethodGet, ep, SignedQuery(c.creds.APISecret, signed), paramsInQuery, true, into)
+	return c.do(ctx, http.MethodGet, ep, SignedQuery(c.creds.APISecret, signed), paramsInQuery, authBinance, into)
 }
 
 // PostSigned and DeleteSigned are the step-4.2 write verbs.
@@ -278,6 +302,9 @@ func (c *Client) DeleteSigned(ctx context.Context, ep Endpoint, params []Param, 
 }
 
 func (c *Client) writeSigned(ctx context.Context, method string, ep Endpoint, params []Param, where paramPlacement, into any) error {
+	if err := c.requireScheme(SchemeBinanceQuery); err != nil {
+		return err
+	}
 	if err := c.ensureClock(ctx); err != nil {
 		return err
 	}
@@ -287,8 +314,63 @@ func (c *Client) writeSigned(ctx context.Context, method string, ep Endpoint, pa
 		Param{"recvWindow", fmt.Sprintf("%d", c.recvWindowMs)},
 		Param{"timestamp", fmt.Sprintf("%d", c.timestampMs())},
 	)
-	return c.do(ctx, method, ep, SignedQuery(c.creds.APISecret, signed), where, true, into)
+	return c.do(ctx, method, ep, SignedQuery(c.creds.APISecret, signed), where, authBinance, into)
 }
+
+// GetSignedV5 calls a signed Bybit V5 GET endpoint.
+//
+// Bybit signs in HEADERS, not in the query: the query string carries only the
+// caller's parameters, and X-BAPI-SIGN is the HMAC of timestamp + api key +
+// recv_window + that query string (bybit_sign.go). Nothing secret therefore
+// rides on the URL, but the URL is still redacted in every error, as for
+// Binance, because a query may one day carry something that identifies the
+// account.
+func (c *Client) GetSignedV5(ctx context.Context, ep Endpoint, params []Param, into any) error {
+	if err := c.requireScheme(SchemeBybitV5Header); err != nil {
+		return err
+	}
+	if err := c.ensureClock(ctx); err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodGet, ep, QueryString(params), paramsInQuery, authBybitV5, into)
+}
+
+// PostSignedV5JSON calls a signed Bybit V5 POST endpoint. body is the exact JSON
+// that is sent AND signed: it is marshalled once, here, so the bytes signed and
+// the bytes sent cannot drift apart (the same rule sign.go states for Binance).
+func (c *Client) PostSignedV5JSON(ctx context.Context, ep Endpoint, body any, into any) error {
+	if err := c.requireScheme(SchemeBybitV5Header); err != nil {
+		return err
+	}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		// Not quoted: json's error may repeat a value.
+		return fmt.Errorf("%s: could not encode the request body", ep.Path)
+	}
+	if err := c.ensureClock(ctx); err != nil {
+		return err
+	}
+	return c.do(ctx, http.MethodPost, ep, string(raw), paramsInBody, authBybitV5, into)
+}
+
+// requireScheme refuses a verb built for the other venue's signature. Sending a
+// Binance-signed query to Bybit would be refused by the venue, but it would
+// also put a signature= parameter on a URL for nothing.
+func (c *Client) requireScheme(want SigningScheme) error {
+	if c.scheme != want {
+		return fmt.Errorf("broker: this client signs as %q; the call needs %q", c.scheme.name(), want.name())
+	}
+	return nil
+}
+
+// authKind is how one request is authenticated.
+type authKind int
+
+const (
+	authNone authKind = iota
+	authBinance
+	authBybitV5
+)
 
 // paramPlacement is which half of the request carries the parameters — and so
 // which half carries the signature.
@@ -313,11 +395,26 @@ const (
 	maxErrorBodyBytes = 4096
 )
 
-func (c *Client) do(ctx context.Context, method string, ep Endpoint, query string, where paramPlacement, signed bool, into any) error {
+func (c *Client) do(ctx context.Context, method string, ep Endpoint, query string, where paramPlacement, auth authKind, into any) error {
 	// Reserved BEFORE the request. A limiter that notices afterwards has
 	// already earned the 429 it exists to avoid.
+	if c.scheme == SchemeBybitV5Header {
+		// The 403 cool-down is per IP, so it is shared by every Bybit client in
+		// the process: a second client (testnet beside demo) must not keep
+		// sending and extend the block.
+		if err := c.cooldown.Refused(); err != nil {
+			return fmt.Errorf("%s: %w", ep.Path, err)
+		}
+	}
 	if err := c.budget.Reserve(ctx, ep.WeightIP); err != nil {
 		return fmt.Errorf("%s: %w", ep.Path, err)
+	}
+	if c.scheme == SchemeBybitV5Header {
+		// Again after the budget wait, which can last the rest of a minute: a
+		// 403 another client met meanwhile must stop this request too.
+		if err := c.cooldown.Refused(); err != nil {
+			return fmt.Errorf("%s: %w", ep.Path, err)
+		}
 	}
 	full := c.baseURL + ep.Path
 	var reqBody io.Reader
@@ -334,14 +431,22 @@ func (c *Client) do(ctx context.Context, method string, ep Endpoint, query strin
 		// NewRequest embeds the URL in its error; redact before it escapes.
 		return fmt.Errorf("%s: build request: %s", redactURL(full), c.scrub(err.Error()))
 	}
-	if where == paramsInBody {
-		// The content type Binance documents for body parameters.
-		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	}
-	if signed {
+	switch auth {
+	case authBinance:
+		if where == paramsInBody {
+			// The content type Binance documents for body parameters.
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		}
 		// "API-keys are passed into the Rest API via the X-MBX-APIKEY header."
 		// https://developers.binance.com/docs/binance-spot-api-docs/rest-api/endpoint-security-type
 		req.Header.Set("X-MBX-APIKEY", c.creds.APIKey.Expose())
+	case authBybitV5:
+		// Stamped HERE, after the budget wait, so time spent queueing for the
+		// budget is not time eaten out of recv_window.
+		if where == paramsInBody {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		setBybitV5Headers(req.Header, c.creds, c.timestampMs(), c.recvWindowMs, query)
 	}
 	if c.userAgent != "" {
 		req.Header.Set("User-Agent", c.userAgent)
@@ -382,6 +487,9 @@ func (c *Client) do(ctx context.Context, method string, ep Endpoint, query strin
 	if resp.StatusCode != http.StatusOK {
 		retryAfter := parseRetryAfterSeconds(resp.Header.Get("Retry-After"))
 		c.budget.NoteStatus(resp.StatusCode, retryAfter)
+		if c.scheme == SchemeBybitV5Header && resp.StatusCode == http.StatusForbidden {
+			c.cooldown.NoteForbidden(BybitForbiddenCooldown)
+		}
 		if resp.StatusCode >= 300 && resp.StatusCode < 400 {
 			// Every 3xx arrives here: hostPinTransport took its Location away,
 			// so http.Client had nothing to follow. It is not the API's answer,
@@ -418,6 +526,13 @@ func (c *Client) do(ctx context.Context, method string, ep Endpoint, query strin
 		return fmt.Errorf("%s: decode: %s", redactURL(full), c.scrub(err.Error()))
 	}
 	return nil
+}
+
+// ScrubVenueText is scrub for venue text that arrived OUTSIDE an error body —
+// a Bybit retMsg on an HTTP 200 answer — cut to the error-body ceiling. It is
+// the same scrub every HTTPError body already gets.
+func (c *Client) ScrubVenueText(s string) string {
+	return c.scrubTo(s, maxErrorBodyBytes)
 }
 
 // scrub removes anything that must never appear in a message, whatever produced

@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.5i client Bybit V5 + `cmd/bybitcheck` 🟡 (2026-09-17: đọc được đồng hồ/ví/vị thế/quyền trên testnet, ví chưa có USDT; chưa có lệnh chéo sàn — không tính vào 5/6) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -5111,7 +5111,7 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > Cập nhật 2026-09-16: Mở rộng Replay ĐA SÀN (6 sàn: Binance, Bybit, Hyperliquid, Kraken, Gate, OKX) với Van chặn Spread $\le 10\text{ bps}$ và Take Profit 1.50%. Kết quả: Net Profit +201,797.26 USDT (+3.74% trên vốn), Max Drawdown 0.0442%, Win Rate 94.58% qua 203 lệnh.
 
 
-#### Bước 4.5i — Mở rộng chân kết nối Broker sang sàn thứ 2 (Bybit V5) cho Cross-Exchange Arbitrage — 🟡 (Lên kế hoạch)
+#### Bước 4.5i — Mở rộng chân kết nối Broker sang sàn thứ 2 (Bybit V5) cho Cross-Exchange Arbitrage — 🟡 CLIENT + `cmd/bybitcheck` ĐÃ LÀM, CHƯA NGHIỆM THU (2026-09-17)
 > **Tài liệu đặc tả chi tiết:** [`docs/BYBIT-BROKER-PLAN.md`](BYBIT-BROKER-PLAN.md) — Thiết kế kiến trúc Broker Bybit V5, xác thực HMAC, quản trị cấu hình và quy trình nghiệm thu.
 
 - **Bối cảnh & Mục tiêu:** Hiện tại Auto-Trader và hệ sinh thái thực thi mới chỉ có chân broker cho Binance (`internal/broker/binance`). Nhằm khai thác chênh lệch Funding Rate và Basis giữa hai sàn có thanh khoản phái sinh lớn nhất thị trường (ví dụ: Long Spot Binance + Short Perp Bybit, hoặc Spot Bybit + Perp Binance), cần xây dựng adapter broker chuẩn hóa cho **Bybit V5 Unified Trading Account (UTA)**.
@@ -5155,6 +5155,87 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
   - `go run ./cmd/bybitcheck` trả về HTTP 200 cho clock và balance trên Bybit Testnet thật.
   - Thử nghiệm mở và đóng vị thế chéo sàn delta-neutral 10/10 lần trong `cmd/execcheck` trên Testnet với sai số delta = 0.
   - Tuân thủ nguyên tắc an toàn: Không chạm Mainnet cho tới khi hoàn thành Bước 4.6.
+
+> **Đã làm 2026-09-17 — Giai đoạn 1 (client Bybit V5) và Giai đoạn 2 (`cmd/bybitcheck`) của
+> yêu cầu "Trụ cột 2: chéo 2 sàn perp–perp".** Giai đoạn 3 (máy thực thi chéo sàn) và 4
+> (radar chênh funding trong scanner) **CHƯA làm** — lý do và các chỗ đặc tả phải sửa ở
+> cuối khối này. Báo cáo: [`docs/reports/walkthrough-pillar-2-bybit.md`](reports/walkthrough-pillar-2-bybit.md).
+>
+> **Kiến trúc: không có HTTP client thứ hai.** `broker.Config` thêm `Scheme`
+> (`SchemeBinanceQuery` = giá trị 0, mọi Config cũ giữ nghĩa; `SchemeBybitV5Header`).
+> Danh sách host tách **theo scheme** — host Bybit không mở được dưới scheme Binance và ngược
+> lại; Bybit chỉ có `api-testnet.bybit.com` và `api-demo.bybit.com`, production
+> (`api.bybit.com`, `api.bytick.com`) bị từ chối và có tên trong test. Chữ ký Bybit nằm ở
+> header (`X-BAPI-SIGN` = HMAC-SHA256 hex của timestamp + key + recv_window + query/JSON body),
+> ký đúng những byte gửi đi (body marshal MỘT lần), đóng dấu thời gian SAU khi chờ ngân sách.
+> Mọi bức tường cũ giữ nguyên: https, không redirect, ghim host từng request, `Secret`, từ chối
+> ký khi |lệch| ≥ recv_window, và `retMsg` trên HTTP 200 (đi vòng qua bộ lọc thân lỗi) được
+> lọc key/secret bằng `Client.ScrubVenueText`. `internal/broker/bybit` hiện thực `broker.Broker`
+> cho perp tuyến tính **thanh toán USDT**, chế độ một chiều.
+>
+> **Những gì Bybit KHÔNG nói, đã đọc từ tài liệu (nhánh `master` của repo tài liệu, 2026-09-17;
+> nhánh `main` đã cũ và sai ở nhiều chỗ):** trả lời đặt lệnh và huỷ lệnh là **xác nhận bất
+> đồng bộ** (chỉ `orderId`/`orderLinkId`) → `PlaceOrder` trả NEW, khớp 0, phải đọc lại;
+> `CancelOrder` **chờ tới khi lệnh đọc lại ở trạng thái kết thúc** (≤ 3 s), gửi huỷ lại tối đa
+> 2 lần cho lệnh còn thấy đang sống, nếu không thì `ErrCancelNotConfirmed` (mơ hồ).
+> `/v5/order/realtime` giữ 500 lệnh đóng gần nhất và **mất sau khi Bybit khởi động lại** →
+> `GetOrder` rơi về `/v5/order/history`; cả hai rỗng là **`ErrOrderNotVisible` — MƠ HỒ, không
+> bao giờ `ErrOrderNotFound`** (execution đọc cái sau là "chưa khớp gì" và "gửi lại an toàn").
+> 110072 (trùng `orderLinkId`) là bằng chứng lệnh ĐÃ tồn tại → `PlaceOrder` đọc lại và trả lệnh
+> đó. 110001/110008/110010 là "không còn" CHỈ với lệnh huỷ và chỉ sau khi đọc lại thấy kết thúc.
+> HTTP 403 → mọi client Bybit trong tiến trình **ngừng gửi 10 phút** (chặn theo IP).
+> `Cancelled` ở phái sinh **có thể đã khớp một phần**. Vị thế: danh sách rỗng khi có symbol là
+> lỗi, không phải phẳng; chế độ hedge bị từ chối. Ví UTA không còn trường `free` →
+> `broker.Balance` là **suy ra** (Locked = locked + totalOrderIM + totalPositionIM, Free =
+> walletBalance − Locked, không chặn âm) và nói rõ; `accountMMRate` "" → `RatesPublished=false`.
+> Demo phục vụ toàn bộ `/v5/market/*` nên quy tắc, sổ lệnh, đồng hồ đều đọc từ chính host
+> giao dịch — không request nào cần production.
+>
+> **Đo:** `go test -race ./...` **38/38 package đạt**; **15 đột biến** có chủ đích đều làm test đỏ
+> (một cái sống ở lần đầu — chế độ hedge — và đã thêm ca). Máy chủ V5 giả kiểm chữ ký mọi request
+> riêng tư. **Ba vòng review ngữ cảnh sạch, vòng 3 ĐẠT.** Vòng 1: 1 lỗi chặn — hai danh sách rỗng
+> trả `ErrOrderNotFound`, nên execution có thể coi chân đã khớp là chưa khớp hoặc gửi lại — và 5
+> lỗi lớn (huỷ bất đồng bộ trả như cuối cùng; chuỗi rỗng đọc thành 0 ở `size`/`cumExecQty`; 403
+> không được thực thi; `TestnetHosts()` thành hợp của hai sàn làm yếu guard Binance; 110001 khi
+> huỷ trước khi tạo xong). Vòng 2: 2 lỗi lớn, một do chính bản sửa (lỗi đọc lại sau 110072 bọc
+> `%w` → một 4xx khi đọc lại làm execution tin lệnh bị từ chối chắc chắn; huỷ không gửi lại cho
+> lệnh còn sống). Vòng 3: 3 lỗi nhỏ. Tất cả đã sửa kèm test.
+> Chạy thật `go run ./cmd/bybitcheck` trên **testnet**: đồng hồ HTTP 200, vòng 168–278 ms,
+> lệch 64–136 ms; ví, vị thế BTCUSDT (một chiều, 0 coin) và quyền key đều HTTP 200 retCode 0 —
+> key giao dịch hợp đồng được, **không có quyền rút tiền**, UTA. **Một mục HỎNG và là lý do chưa
+> ✅: ví testnet có dòng USDT nhưng equity = 0** — tài khoản chưa nhận Faucet. Việc của người
+> vận hành: bấm Faucet ở testnet.bybit.com rồi chạy lại. Không lệnh nào được đặt.
+>
+> **Đo trước khi xây Giai đoạn 3–4 — tiền đề kinh tế không đứng.** `BYBIT-BROKER-PLAN.md §1.1`
+> viết "lệch funding Binance–Bybit thường xuyên 15–45% APR". Đo trên bản sao 3 năm (chỉ đọc):
+> cùng coin, tổng funding theo ngày UTC chỉ lấy ngày đủ mốc của cả hai sàn, 36 coin, 21.728
+> coin-ngày — |chênh| × 365 **trung vị 3,2%, trung bình 5,0%, P95 14,9% APR trên notional**;
+> **4,8%** coin-ngày ≥ 15% và **0,2%** ≥ 45%. Chuỗi ≥ 15% kéo dài **trung vị 1 ngày** (P90 2);
+> sau một ngày ≥ 15% (trung bình 26%), 30 ngày sau trả **3,5% APR** cùng chiều, và 21,7% trường
+> hợp âm. Một vòng 4 lệnh taker = 21 bps (phí đã xác minh 5,0 + 5,5) → hoà vốn trung vị ~22
+> ngày ở mức 30 ngày sau, trước trượt giá. Năm 2025-26 trên 12 coin phủ 3 năm: ngày ≥ 15% còn
+> 0,8%, capture 30 ngày 0,6% APR. Câu 15–45% **không đúng cho bất kỳ coin nào**; chỉ gần đúng
+> ở dạng "có một coin nào đó hôm nay" (70% số ngày trên 36 coin), mà không coin nào giữ được
+> hai ngày liền. Tài liệu đó cần sửa trước khi nó được trích.
+>
+> **Đặc tả Trụ cột 2 phải sửa trước Giai đoạn 3** (người vận hành quyết, chưa áp dụng):
+> (1) hiệu quả vốn của perp–perp đòn bẩy K là **K/2** lần notional, không phải K — ký quỹ
+> nằm trên HAI sàn, 2N/K; (2) "không chịu rủi ro biến động giá" sai: hai tài khoản riêng
+> không bù lãi/lỗ cho nhau, một biến động 1/K thanh lý chân đang lỗ trong khi chân lãi nằm ở
+> sàn kia; (3) Binance V3 `/fapi/v3/account` **không có** `totalMarginRatio` (luật 5) — tỷ lệ
+> phải tính từ `totalMaintMargin`/`totalMarginBalance` và ghi rõ là suy ra; Bybit có
+> `accountMMRate` nhưng "không áp dụng cho isolated margin"; (4) quyền key Bybit không có
+> `canTrade`/`canWithdraw` — là `readOnly` và mảng `permissions` (`Wallet` chứa `Withdraw`);
+> (5) "Chân 1 khớp một phần → dừng, không mở Chân 2" **vi phạm bất biến của
+> `internal/execution`** (hai chân cùng mở hoặc cùng phẳng) — phần đã khớp phải được phòng hộ
+> hoặc gỡ; (6) `< 300 ms` gỡ chéo sàn là con số cần ĐO (cùng sàn Binance đo được 225–284 ms),
+> không phải hứa; (7) `definiteRejection` chỉ coi 4xx là từ chối chắc chắn — mọi từ chối
+> Bybit (HTTP 200 + retCode) hiện đọc thành MƠ HỒ, an toàn nhưng tốn hạn chót; (8) giới hạn
+> theo UID/endpoint của Bybit chưa được đo đếm; (9) **nợ của `internal/execution` phải trả trước
+> khi nối Bybit** (review vòng 2): đọc lại sau huỷ (`open.go`) và `settleOrder` (`close.go`) coi
+> một lệnh CHƯA kết thúc là lần khớp cuối — đúng với huỷ đồng bộ của Binance, sai với Bybit —
+> phải đòi `Status.Done()` hoặc coi chân là mơ hồ; một lần gỡ gặp `ErrIPCoolingDown` phải dừng bảo
+> vệ và báo, không thử lại 10 phút.
 
 
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
@@ -6094,7 +6175,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.5i Bybit V5 🟡 2026-09-17 (client `internal/broker/bybit` + `cmd/bybitcheck`; testnet: lệch giờ 64–136 ms, 4/5 mục đạt, ví USDT = 0 chưa Faucet; chưa lệnh chéo sàn; đo lệch funding Binance–Bybit trung vị 3,2% APR, 4,8% ngày ≥ 15%) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

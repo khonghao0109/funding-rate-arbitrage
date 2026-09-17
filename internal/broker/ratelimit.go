@@ -91,8 +91,9 @@ type WeightBudget struct {
 
 	// blockedUntil is a 429's backoff; bannedAt/bannedUntil is a 418.
 	blockedUntil time.Time
-	banned       bool
-	bannedUntil  time.Time
+
+	banned      bool
+	bannedUntil time.Time
 
 	// lastUsedHeader and lastOrderCountHeader are for the diagnostic report:
 	// the venue's own words about what this IP has spent.
@@ -234,6 +235,43 @@ func (b *WeightBudget) NoteStatus(statusCode int, retryAfter time.Duration) {
 			b.blockedUntil = until
 		}
 	}
+}
+
+// ErrIPCoolingDown is a venue's instruction to stop sending from this IP for a
+// stated time, enforced locally: Reserve refuses rather than waits.
+var ErrIPCoolingDown = errors.New("broker: this IP is in a venue-ordered cool-down; nothing is sent until it ends")
+
+// ipCooldown is a venue-ordered stop for the whole IP: calls are REFUSED until
+// it ends, not queued, because every call made inside it extends the block.
+type ipCooldown struct {
+	mu    sync.Mutex
+	now   func() time.Time
+	until time.Time
+}
+
+// bybitIPCooldown is shared by every Bybit client in the process.
+//
+// Bybit: HTTP 403 "access too frequent" means "terminate all HTTP sessions and
+// wait for at least 10 minutes" (https://bybit-exchange.github.io/docs/v5/rate-limit).
+// A resolve loop polling an order inside that window extends the block, and the
+// unwind that follows it runs into the same wall.
+var bybitIPCooldown = &ipCooldown{now: time.Now}
+
+func (c *ipCooldown) NoteForbidden(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if until := c.now().Add(d); until.After(c.until) {
+		c.until = until
+	}
+}
+
+func (c *ipCooldown) Refused() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.now().Before(c.until) {
+		return fmt.Errorf("%w until %s", ErrIPCoolingDown, stampOrUnknown(c.until))
+	}
+	return nil
 }
 
 // UsedThisWindow is the current tally, venue header included.

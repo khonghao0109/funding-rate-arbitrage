@@ -1382,9 +1382,15 @@ cmd/brokercheck/     step-4.1/4.2 diagnostic against Binance TESTNET. Default:
                      exchangeInfo, a resting LIMIT GTC BUY far below the market,
                      looked up by the caller's id, cancelled, re-read, and the
                      position/balance read back from the VENUE. Prints no key,
-                     no signature and no amount. One of the three commands
-                     allowed to link internal/broker (with execcheck and
-                     execportal); a test asserts every other one does not
+                     no signature and no amount. One of the four commands
+                     allowed to link internal/broker (with execcheck,
+                     execportal and bybitcheck); a test asserts every other
+                     one does not
+cmd/bybitcheck/      step-4.5i diagnostic against Bybit V5 TESTNET or DEMO
+                     (BYBIT_MODE): clock, unified wallet (coin=USDT so a zero
+                     reads as zero), one position, the key's permissions
+                     (fails on Wallet: Withdraw). GETs only, no order, no
+                     amount printed
 cmd/execcheck/       step 4.4b/4.5 acceptance on Binance TESTNET: opens ONE
                      delta-neutral position, reads it back, closes it — every
                      position typed by a person, no path from a live signal to
@@ -1497,6 +1503,14 @@ internal/
                      testnets are separate registrations. testdata/ holds the
                      venue's REAL answers, sanitized, replayed by golden tests
                      that open no socket
+    bybit/           Broker for Bybit V5 USDT LINEAR perps on api-testnet or
+                     api-demo only (step 4.5i, 🟡). Built on broker.Client with
+                     SchemeBybitV5Header — header signature, per-scheme host
+                     allow-list, same walls. Order create/cancel answers are
+                     ACKS (status NEW, read back); GetOrder falls back
+                     realtime → history; refusals are HTTP 200 + retCode, which
+                     execution's definiteRejection still reads as AMBIGUOUS
+                     (named debt). Balance is DERIVED (UTA has no `free`)
     brokertest/      in-memory Broker + the contract suite every implementation
                      must pass, with knobs for the states a real venue will not
                      produce on demand: a place that timed out AFTER the venue

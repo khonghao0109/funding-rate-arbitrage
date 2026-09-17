@@ -88,6 +88,7 @@ func TestNoCommandBinaryLinksTheBroker(t *testing.T) {
 		"brokercheck": "step 4.1/4.2 diagnostic — the one command that reads a balance and places a test order",
 		"execcheck":   "step 4.4b/4.5 diagnostic — opens and closes a position from the terminal (PLAN Q15)",
 		"execportal":  "strategy 1 execution portal — web portal for testnet demo execution (PLAN Q16)",
+		"bybitcheck":  "step 4.5i diagnostic — reads clock, wallet, one position and key permissions on Bybit testnet/demo; places no order",
 	}
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {

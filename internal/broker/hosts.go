@@ -36,20 +36,61 @@ const (
 	BinanceSpotTestnetBaseURL    = "https://" + BinanceSpotTestnetHost
 )
 
-// testnetHosts is the allow-list. A map so the check is exact: a host is in the
-// set or it is not, with no prefix, suffix or "contains" matching — those are
-// how `demo-fapi.binance.com.attacker.example` or `nottestnet.binance.vision`
-// get through a guard that looked right.
-var testnetHosts = map[string]bool{
-	BinanceFuturesTestnetHost: true,
-	BinanceSpotTestnetHost:    true,
+// SigningScheme is how a venue authenticates a signed request. It is part of
+// the host guard: each scheme has its own allow-list, so a Bybit client cannot
+// be pointed at a Binance host or the reverse, and a host added for one venue
+// widens nothing for the other.
+type SigningScheme string
+
+const (
+	// SchemeBinanceQuery signs the query string (or form body) and appends a
+	// `signature` parameter; the key rides in X-MBX-APIKEY. The zero value.
+	SchemeBinanceQuery SigningScheme = ""
+	// SchemeBybitV5Header signs timestamp + key + recv_window + payload and
+	// sends everything in X-BAPI-* headers (bybit_sign.go).
+	SchemeBybitV5Header SigningScheme = "bybit_v5_header"
+)
+
+func (s SigningScheme) name() string {
+	if s == SchemeBinanceQuery {
+		return "binance_query"
+	}
+	return string(s)
 }
 
-// TestnetHosts lists the allowed hosts, sorted, for an error message and for
-// the diagnostic command's banner.
-func TestnetHosts() []string {
-	out := make([]string, 0, len(testnetHosts))
-	for h := range testnetHosts {
+// Bybit's non-production hosts (PLAN 4.5i). Quoted in bybit_hosts.go with the
+// documentation that names them.
+//
+// The production hosts — api.bybit.com, api.bytick.com and the regional ones —
+// are absent by construction, and a test names them in the refusal list.
+
+// testnetHosts is the allow-list, per scheme. A map so the check is exact: a
+// host is in the set or it is not, with no prefix, suffix or "contains"
+// matching — those are how `demo-fapi.binance.com.attacker.example` or
+// `nottestnet.binance.vision` get through a guard that looked right.
+var testnetHosts = map[SigningScheme]map[string]bool{
+	SchemeBinanceQuery: {
+		BinanceFuturesTestnetHost: true,
+		BinanceSpotTestnetHost:    true,
+	},
+	SchemeBybitV5Header: {
+		BybitTestnetHost: true,
+		BybitDemoHost:    true,
+	},
+}
+
+// TestnetHosts lists the BINANCE allowed hosts, sorted — what it meant before
+// Bybit arrived, and what every existing caller (the Binance binaries' banners,
+// the portal's status, and the guard tests asserting a Binance market resolves
+// to an allowed host) still means. A union of both venues would let those guards
+// pass for a Binance market wired to a Bybit host. Use TestnetHostsFor for any
+// other scheme.
+func TestnetHosts() []string { return TestnetHostsFor(SchemeBinanceQuery) }
+
+// TestnetHostsFor lists one scheme's allowed hosts, sorted.
+func TestnetHostsFor(scheme SigningScheme) []string {
+	out := make([]string, 0, len(testnetHosts[scheme]))
+	for h := range testnetHosts[scheme] {
 		out = append(out, h)
 	}
 	sort.Strings(out)
@@ -60,7 +101,7 @@ func TestnetHosts() []string {
 //
 // It requires HTTPS: a credential that signs over plaintext is a credential
 // posted publicly, and every host here serves HTTPS.
-func checkTestnetBaseURL(raw string) error {
+func checkTestnetBaseURL(raw string, scheme SigningScheme) error {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil {
 		// Not quoted, and neither is url.Parse's error, which repeats the URL:
@@ -83,10 +124,14 @@ func checkTestnetBaseURL(raw string) error {
 	if u.Scheme != "https" {
 		return fmt.Errorf("broker: base URL %q must be https (got scheme %q) — a signed request over plaintext publishes the credential", raw, u.Scheme)
 	}
-	if !testnetHosts[u.Hostname()] {
+	allowed, known := testnetHosts[scheme]
+	if !known {
+		return fmt.Errorf("broker: signing scheme %q is not one this package knows", scheme.name())
+	}
+	if !allowed[u.Hostname()] {
 		return fmt.Errorf(
-			"broker: base URL host %q is not a Binance TESTNET host; step 4.1 talks to testnet only and there is no flag to change that (allowed: %s). A mainnet host arrives at step 4.6",
-			u.Hostname(), strings.Join(TestnetHosts(), ", "))
+			"broker: base URL host %q is not a TESTNET or DEMO host for scheme %s; this package talks to non-production hosts only and there is no flag to change that (allowed: %s). A mainnet host arrives at step 4.6",
+			u.Hostname(), scheme.name(), strings.Join(TestnetHostsFor(scheme), ", "))
 	}
 	return nil
 }

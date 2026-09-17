@@ -10,7 +10,7 @@
 
 ### 1.1. Vì sao chọn Bybit làm sàn thứ 2?
 1. **Thanh khoản phái sinh Top 2 toàn cầu:** Khối lượng giao dịch và độ sâu sổ lệnh USDT-Perpetual của Bybit bám sát Binance, đảm bảo khớp lệnh quy mô lớn mà trượt giá (slippage) cực thấp.
-2. **Độ lệch Funding Rate hấp dẫn:** Thống kê từ dữ liệu 3 năm (`scanner.db`) cho thấy tỷ lệ lệch Funding Rate giữa Binance và Bybit thường xuyên đạt từ **15% đến 45% APR**, tạo ra các cơ hội Arbitrage chéo sàn có tỷ suất sinh lời vượt trội so với chỉ đánh nội bộ một sàn.
+2. **Độ lệch Funding Rate — ĐÃ ĐO, và câu cũ ở đây SAI (sửa 2026-09-17).** Bản trước viết "thống kê 3 năm cho thấy lệch Funding Rate Binance–Bybit thường xuyên đạt 15–45% APR". Đo trên bản sao chỉ đọc của corpus 3 năm (36 coin, 21.728 coin-ngày, tổng funding theo ngày UTC, chỉ ngày đủ mốc của cả hai sàn): |chênh| × 365 **trung vị 3,2%, trung bình 5,0%, P95 14,9% APR trên notional**; chỉ **4,8%** coin-ngày ≥ 15% và **0,2%** ≥ 45%; chuỗi ≥ 15% kéo dài trung vị **1 ngày**; 30 ngày sau một ngày ≥ 15% chỉ trả **3,5% APR** cùng chiều (21,7% trường hợp âm), trong khi một vòng 4 lệnh taker tốn 21 bps. Năm 2025-26 trên 12 coin phủ đủ 3 năm: 0,8% ngày ≥ 15%. Chi tiết và cách tính: PLAN 4.5i và `docs/reports/walkthrough-pillar-2-bybit.md`. Lý do còn lại để kết nối Bybit là hạ tầng (sàn thứ hai, dự phòng đối tác), không phải một biên lợi nhuận đã chứng minh.
 3. **Kiến trúc Bybit V5 hiện đại:** API V5 hợp nhất cả Spot, Linear Perpetual (USDT/USDC) và Inverse vào chung một cơ chế quản lý vốn Unified Trading Account (UTA).
 
 ### 1.2. Hai môi trường thử nghiệm của Bybit

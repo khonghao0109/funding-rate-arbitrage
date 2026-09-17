@@ -63,15 +63,31 @@ func (c *Client) SyncClock(ctx context.Context) (int64, error) {
 		return 0, errors.New("broker: no server-time endpoint configured — set Config.TimePath")
 	}
 	ep := Endpoint{Path: c.timePath, WeightIP: BinanceTimeWeight}
-	var resp serverTimeResponse
+	var serverTimeMs int64
 	sentAt := c.now()
-	if err := c.GetPublic(ctx, ep, nil, &resp); err != nil {
-		return 0, fmt.Errorf("broker: could not read the venue clock at %s: %w", c.timePath, err)
+	switch c.scheme {
+	case SchemeBybitV5Header:
+		var resp bybitServerTimeResponse
+		if err := c.GetPublic(ctx, ep, nil, &resp); err != nil {
+			return 0, fmt.Errorf("broker: could not read the venue clock at %s: %w", c.timePath, err)
+		}
+		ms, err := resp.serverTimeMs()
+		if err != nil {
+			return 0, fmt.Errorf("broker: %s: %w", c.timePath, err)
+		}
+		serverTimeMs = ms
+	default:
+		var resp serverTimeResponse
+		if err := c.GetPublic(ctx, ep, nil, &resp); err != nil {
+			return 0, fmt.Errorf("broker: could not read the venue clock at %s: %w", c.timePath, err)
+		}
+		serverTimeMs = resp.ServerTimeMs
 	}
 	answeredAt := c.now()
-	if resp.ServerTimeMs <= 0 {
-		return 0, fmt.Errorf("broker: %s answered with no serverTime", c.timePath)
+	if serverTimeMs <= 0 {
+		return 0, fmt.Errorf("broker: %s answered with no server time", c.timePath)
 	}
+	resp := serverTimeResponse{ServerTimeMs: serverTimeMs}
 
 	midpointMs := sentAt.UnixMilli() + (answeredAt.UnixMilli()-sentAt.UnixMilli())/2
 	skewMs := resp.ServerTimeMs - midpointMs
