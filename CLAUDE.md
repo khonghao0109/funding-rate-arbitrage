@@ -1006,8 +1006,8 @@ planned hold ≥ floor, depth ±0.5% ≥ 2× notional on four sides, clock skew
 ≤ 1000 ms, > 5 min to settlement); exits are a settlement AFTER the open at
 ≤ 0, N settlements listed after the open, or basis widened > 30 bps — a check
 that cannot be evaluated never closes. It never squares anything: unhedged,
-conflicting evidence, two held intents, a close sent but unconfirmed, 3 failed
-reads or 3 failed trades → EMERGENCY_HALTED, and only a stop pressed after the
+conflicting evidence, two held intents, a close sent but unconfirmed, 5 failed
+reads or 5 failed trades (DefaultMaxFailures = 5) → EMERGENCY_HALTED, and only a stop pressed after the
 halt was shown acknowledges it. STOP drops a decision not yet sent; KILL never
 cancels an order already sent (it waits for it to return), then closes the
 BOT's pair only — `a`-prefixed intent ids, which a restart adopts. **The design
@@ -1038,7 +1038,7 @@ same-origin debt now covers start and kill too. PLAN "Công cụ vận hành 4.5
 flight at a time.** `-symbols` now defaults to BTC/ETH/SOL/BNB. Each scan reads
 every pair (four at once, 30 s each), judges them one by one, then trades one at
 a time: due exits first, then eligible entries by strategy.NetAPR, each re-checked
-at send time against `MaxConcurrentPositions` (default 3, cap 5),
+at send time against `MaxConcurrentPositions` (default 50, cap 50 — updated from initial 3/5),
 `TotalCapitalCapQuote`, the reading's age and the next settlement. **The limits
 count what the VENUE may hold, not what the engine believes**: a pair takes a
 place when it is held, trading, halted with legs possibly on the venue, or — while
@@ -1076,7 +1076,7 @@ convergence out instead of collecting it, and arms the widening stop against its
 own recovery); `MinHoldEpochs` **6** locks the FUNDING exit for the first six
 settlements — and locks neither the take-profit nor the basis stop, because the
 floor buys funding time to amortize a cost, it is not a promise to hold a broken
-hedge; `TargetTakeProfitNetPct` **+0.50%** of the pair's CAPITAL closes early when
+hedge; `TargetTakeProfitNetPct` **+1.50%** of the pair's CAPITAL (with `MaxExitSpreadBps` **10.0 bps** spread brake) closes early when
 the basis has converged enough to pay the trip, which is days rather than the
 20–80 settlements funding alone needs; and the funding exit past the floor now
 needs `ExitNegativeConsecutiveEpochs` **2** settlements in a row at or below
