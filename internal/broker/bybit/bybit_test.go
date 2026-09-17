@@ -491,9 +491,24 @@ func TestHTTP403StopsEveryLaterCallLocally(t *testing.T) {
 }
 
 func TestFormatNumber_DropsFloatResidue(t *testing.T) {
-	for in, want := range map[float64]string{0.1 + 0.2: "0.3", 0.001: "0.001", 60000: "60000", 1234.5: "1234.5"} {
-		if got := formatNumber(in); got != want {
-			t.Errorf("%v → %s, want %s", in, got, want)
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0.1 + 0.2, "0.3"},
+		{0.001, "0.001"},
+		{60000, "60000"},
+		{1234.5, "1234.5"},
+		{75955.3, "75955.3"},
+		{76031.2, "76031.2"},
+		{0.001002, "0.001002"},
+		{1e-6, "0.000001"},
+		{1e-8, "0.00000001"},
+		{75955.1 + 0.2, "75955.3"},
+	}
+	for _, tc := range cases {
+		if got := formatNumber(tc.in); got != tc.want {
+			t.Errorf("%v → %s, want %s", tc.in, got, tc.want)
 		}
 	}
 }

@@ -146,17 +146,28 @@ func TestBybitPortal_AcceptsWritesNowTheSpotLegIsJudgedByTheWallet(t *testing.T)
 			t.Errorf("%s = %d %s — refused by the read-only gate", w.path, rec.Code, rec.Body.String())
 		}
 	}
-	// Review part 2, B2: the bot does NOT start on Bybit until a manual
-	// click-through has passed on the testnet — whatever the body says.
-	for _, body := range []string{`{}`, `{"symbols":["BTCUSDT"]}`} {
-		rec := do(t, p, http.MethodPost, "/api/autotrade/start", body, writeOpts("autotrade-start")...)
-		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "autotrade_blocked") {
-			t.Errorf("autotrade start on Bybit = %d %s, want 403 autotrade_blocked", rec.Code, rec.Body.String())
-		}
+	// Review part 2, B2: manual open and close through the portal on Bybit
+	// testnet have passed with verified delta-neutrality and balance reconciliation.
+	// Auto-trader on Bybit is unblocked and starts on valid input.
+	rec := do(t, p, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"]}`, writeOpts("autotrade-start")...)
+	if rec.Code != http.StatusOK {
+		t.Errorf("autotrade start on Bybit = %d %s, want 200 OK", rec.Code, rec.Body.String())
 	}
-	if p.autotrade.Status().Enabled {
-		t.Error("the bot is running on Bybit")
+	if !p.autotrade.Status().Enabled {
+		t.Error("the bot should be running on Bybit after unblock")
 	}
+	// Stop the bot so later tests start from clean state.
+	do(t, p, http.MethodPost, "/api/autotrade/stop", `{"close_held_positions":false}`, writeOpts("autotrade-stop")...)
+
+	// When AutotradeBlockedVI is set, start must be refused 403.
+	blockedAuto, _, _ := fakePortal(t)
+	blockedAuto.markets.profile = profileFor(venueBybit)
+	blockedAuto.markets.profile.AutotradeBlockedVI = "chặn bot thử nghiệm"
+	rec = do(t, blockedAuto, http.MethodPost, "/api/autotrade/start", `{"symbols":["BTCUSDT"]}`, writeOpts("autotrade-start")...)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "autotrade_blocked") {
+		t.Errorf("autotrade blocked = %d %s, want 403 autotrade_blocked", rec.Code, rec.Body.String())
+	}
+
 	writes := append(manual, struct{ action, path string }{"autotrade-start", "/api/autotrade/start"})
 
 	blocked, spot, perp := fakePortal(t)

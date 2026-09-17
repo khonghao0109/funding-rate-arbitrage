@@ -110,11 +110,11 @@ func mapCode(code int, kind callKind) error {
 		return ErrDuplicateClientOrderID
 	case 110079:
 		return ErrOrderProcessing
-	// 110094 "Order notional value below the lower limit".
-	case 110094:
+	// 110094 "Order notional value below the lower limit", 170139 / 170213 spot notional below limit.
+	case 110094, 170139, 170213:
 		return broker.ErrBelowMinNotional
-	// 110017 "orderQty will be truncated to zero".
-	case 110017:
+	// 110017 "orderQty will be truncated to zero", 170140 spot qty below lower limit.
+	case 110017, 170140:
 		return broker.ErrBelowMinQty
 	// 110001 "Order does not exist" is mapped only on a CANCEL, and even there
 	// CancelOrder reads the order back before passing it on — on an asynchronous
@@ -130,6 +130,17 @@ func mapCode(code int, kind callKind) error {
 	case 110001, 110008, 110010:
 		if kind == callCancel {
 			return broker.ErrOrderNotFound
+		}
+	}
+	if kind == callPlace {
+		// On order placement, any 170xxx (spot trading) or 110xxx (linear trading)
+		// code from Bybit (except 110072 duplicate and 110079 processing, handled
+		// above) or 10001 (params error) is the matching engine saying NO: the order
+		// was definitively rejected and will never execute. Mapping to ErrInvalidOrder
+		// lets execution's definiteRejection surface the venue's reason immediately
+		// rather than wasting 10 seconds polling for an order that was never created.
+		if (code >= 170000 && code < 180000) || (code >= 110000 && code < 120000) || code == 10001 {
+			return broker.ErrInvalidOrder
 		}
 	}
 	return nil

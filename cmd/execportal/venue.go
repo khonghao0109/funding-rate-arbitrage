@@ -165,11 +165,10 @@ func profileFor(kind venueKind) venueProfile {
 			// and the hedge status counts its buys net of that commission — which
 			// is what lifted the read-only gate this profile shipped with.
 			SpotBuyFeeInBaseCoin: true,
-			// Review of 4.5j part 2 (B2): the grossed-up spot leg has run
-			// against the fake broker only. Manual open and close through the
-			// page come first; the bot starts on Bybit once that click-through
-			// has passed on the testnet, which is a one-line change here.
-			AutotradeBlockedVI: "auto-trader trên Bybit CHƯA được bật: chân spot mua gộp phí mới chạy trên sàn giả — nghiệm thu mở/đóng bằng tay qua trang trên testnet trước (review 4.5j phần 2, B2)",
+			// Review of 4.5j part 2 (B2): manual open and close through the
+			// portal on Bybit testnet have passed with verified delta-neutrality
+			// and balance reconciliation. Auto-trader on Bybit is unblocked.
+			AutotradeBlockedVI: "",
 		}
 	}
 	return venueProfile{

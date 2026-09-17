@@ -443,7 +443,7 @@ func classifyHedge(ev hedgeEvidence) (hedgeStatus, string) {
 	switch {
 	case math.Abs(ev.SpotLegQtyCoin) <= tol && math.Abs(ev.VenuePerpQtyCoin) <= tol:
 		return statusBothFlat, "spot và perp đều bằng 0 trong dung sai"
-	case math.Abs(residual) <= tol && ev.SpotLegQtyCoin > tol && ev.VenuePerpQtyCoin < -tol:
+	case math.Abs(residual) <= tol && ev.SpotLegQtyCoin > gridEpsilon && ev.VenuePerpQtyCoin < -gridEpsilon:
 		return statusBothOpen, fmt.Sprintf("spot LONG %.8f, perp SHORT %.8f, lệch %+.8f trong dung sai %.8f",
 			ev.SpotLegQtyCoin, -ev.VenuePerpQtyCoin, residual, ev.ToleranceQtyCoin)
 	}

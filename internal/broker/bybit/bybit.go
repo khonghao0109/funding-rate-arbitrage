@@ -339,13 +339,30 @@ func parseMs(field, s string) (int64, error) {
 }
 
 // formatNumber renders a float for the wire without exponent form. Callers
-// pass the value broker.RoundOrder produced; 12 decimals, then trimmed, so a
-// float residue such as 0.30000000000000004 goes out as 0.3 rather than as a
-// quantity off the venue's grid. No Bybit step or tick is finer than 1e-12.
+// pass the value broker.RoundOrder produced. It uses the shortest decimal
+// representation that round-trips ('f', -1), and for unquantized numbers with
+// float64 significand dust (e.g. 0.30000000000000004) clamps to reliable precision
+// so a price never exceeds the venue's decimal limits.
 func formatNumber(v float64) string {
-	s := strconv.FormatFloat(v, 'f', 12, 64)
+	s := strconv.FormatFloat(v, 'f', -1, 64)
 	if strings.Contains(s, ".") {
-		s = strings.TrimRight(strings.TrimRight(s, "0"), ".")
+		s = strings.TrimRight(s, "0")
+		s = strings.TrimSuffix(s, ".")
+	}
+	if len(s) > 15 && strings.Contains(s, ".") {
+		intLen := len(strings.Split(s, ".")[0])
+		decimals := 14 - intLen
+		if decimals > 8 {
+			decimals = 8
+		}
+		if decimals < 0 {
+			decimals = 0
+		}
+		s = strconv.FormatFloat(v, 'f', decimals, 64)
+		if strings.Contains(s, ".") {
+			s = strings.TrimRight(s, "0")
+			s = strings.TrimSuffix(s, ".")
+		}
 	}
 	return s
 }
