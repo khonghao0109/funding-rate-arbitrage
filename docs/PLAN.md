@@ -5111,21 +5111,50 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 > Cập nhật 2026-09-16: Mở rộng Replay ĐA SÀN (6 sàn: Binance, Bybit, Hyperliquid, Kraken, Gate, OKX) với Van chặn Spread $\le 10\text{ bps}$ và Take Profit 1.50%. Kết quả: Net Profit +201,797.26 USDT (+3.74% trên vốn), Max Drawdown 0.0442%, Win Rate 94.58% qua 203 lệnh.
 
 
-#### Bước 4.5i — Mở rộng chân kết nối Broker sang sàn thứ 2 (Bybit / Hyperliquid) — 🟡 (Lên kế hoạch)
-- **Bối cảnh & Mục tiêu:** Hiện tại Auto-Trader và hệ sinh thái thực thi chỉ có chân broker cho Binance (`internal/broker/binance`). Để triển khai chiến lược Arbitrage chéo sàn (Cross-Exchange Arbitrage) nhằm khai thác triệt để chênh lệch Funding Rate và Basis giữa các sàn (ví dụ: Long Spot Binance + Short Perp Bybit, hoặc Spot Bybit + Perp Hyperliquid), cần bổ sung adapter broker hoàn chỉnh cho sàn thứ 2 (ưu tiên Bybit Testnet v5 hoặc Hyperliquid Testnet).
-- **Phạm vi triển khai:**
-  1. **Tạo Broker Adapter mới (`internal/broker/bybit` hoặc `internal/broker/hyperliquid`):**
-     - Hiện thực hoá đầy đủ interface `broker.Client`: `PlaceOrder`, `GetPosition`, `GetBalance`, `CancelOrder`.
-     - Xác thực REST có ký (HMAC SHA256 cho Bybit v5 API hoặc EIP-712 signing cho Hyperliquid DEX) trong môi trường Testnet an toàn.
-  2. **Chuẩn hoá quy tắc khớp lệnh & bước nhảy (Tick/Step size):**
-     - Đồng bộ hoá metadata instrument giữa 2 sàn khác nhau để đảm bảo khối lượng hai chân sau làm tròn luôn đối ứng phòng hộ delta-neutral (sai số $\le 5\%$).
-  3. **Tích hợp Auto-Trader Cross-Exchange:**
-     - Cho phép cấu hình cặp giao dịch với `SpotSource` và `PerpSource` ở 2 sàn khác nhau.
-     - Tự động đánh giá tín hiệu Net APR, Basis và Funding Rate chéo sàn theo thời gian thực trước khi vào lệnh.
+#### Bước 4.5i — Mở rộng chân kết nối Broker sang sàn thứ 2 (Bybit V5) cho Cross-Exchange Arbitrage — 🟡 (Lên kế hoạch)
+> **Tài liệu đặc tả chi tiết:** [`docs/BYBIT-BROKER-PLAN.md`](BYBIT-BROKER-PLAN.md) — Thiết kế kiến trúc Broker Bybit V5, xác thực HMAC, quản trị cấu hình và quy trình nghiệm thu.
+
+- **Bối cảnh & Mục tiêu:** Hiện tại Auto-Trader và hệ sinh thái thực thi mới chỉ có chân broker cho Binance (`internal/broker/binance`). Nhằm khai thác chênh lệch Funding Rate và Basis giữa hai sàn có thanh khoản phái sinh lớn nhất thị trường (ví dụ: Long Spot Binance + Short Perp Bybit, hoặc Spot Bybit + Perp Binance), cần xây dựng adapter broker chuẩn hóa cho **Bybit V5 Unified Trading Account (UTA)**.
+- **Chi tiết kết nối & Cấu hình Bybit V5:**
+  1. **Hạ tầng Host & Host Pinning an toàn (`internal/broker/hosts.go`):**
+     - Bổ sung định danh host hợp lệ:
+       * `BybitFuturesTestnetHost = "api-testnet.bybit.com"` (môi trường Bybit Testnet độc lập).
+       * `BybitFuturesDemoHost = "api-demo.bybit.com"` (môi trường Demo Trading chạy trực tiếp trên orderbook và rate thật của Mainnet).
+     - Ràng buộc Host Pinning: `broker.NewClient` từ chối mọi request đi tới domain ngoài danh sách testnet/demo cho tới khi hoàn thành Bước 4.6.
+  2. **Chuẩn xác thực Bybit V5 HMAC-SHA256:**
+     - Truyền qua HTTP Headers bắt buộc:
+       * `X-BAPI-API-KEY`: API Key lấy từ Bybit Testnet hoặc Demo.
+       * `X-BAPI-TIMESTAMP`: Milliseconds Unix timestamp.
+       * `X-BAPI-RECV-WINDOW`: 5000 ms.
+       * `X-BAPI-SIGN`: `HMAC_SHA256(timestamp + apiKey + recvWindow + payload, apiSecret)`.
+     - Đồng bộ đồng hồ: Gọi `GET /v5/market/time` trước khi gửi request có ký; từ chối ký nếu độ lệch `|offset| >= recv_window_ms`.
+  3. **Biến môi trường & Cấu hình (`.env` & `config.yaml`):**
+     - Thêm biến môi trường:
+       ```bash
+       BYBIT_API_KEY=your_bybit_testnet_api_key
+       BYBIT_API_SECRET=your_bybit_testnet_api_secret
+       BYBIT_TESTNET=true
+       BYBIT_MODE=testnet # "testnet" (api-testnet) hoặc "demo" (api-demo)
+       ```
+     - Nạp qua struct an toàn `broker.Secret` (không bao giờ log, in ra `[redacted]` với mọi verb fmt).
+  4. **Các Endpoint V5 cốt lõi (`internal/broker/bybit/`):**
+     - Đọc số dư ví Unified: `GET /v5/account/wallet-balance?accountType=UNIFIED`.
+     - Đọc trạng thái vị thế phái sinh: `GET /v5/position/list?category=linear&symbol=...`.
+     - Đặt lệnh Market/IOC: `POST /v5/order/create` (`category: "linear"`, `side: "Buy"|"Sell"`, `orderType: "Market"`, `qty`, `timeInForce: "IOC"`).
+     - Huỷ lệnh: `POST /v5/order/cancel`.
+  5. **Công cụ xác minh kết nối `cmd/bybitcheck`:**
+     - Công cụ CLI độc lập (tương tự `cmd/brokercheck`):
+       * Kiểm tra kết nối mạng và độ lệch đồng hồ.
+       * Đọc số dư ví Unified thật trên Bybit Testnet/Demo, hiển thị danh sách tài sản (không in giá trị secret).
+       * Cảnh báo quyền hạn: Bật giao dịch (`canTrade`), cấm rút tiền (`canWithdraw: false`).
+  6. **Thực thi chéo sàn Delta-Neutral (Cross-Exchange Execution):**
+     - Tích hợp chuẩn hóa `stepSize` và `tickSize` giữa Binance và Bybit.
+     - Kiểm soát sai số phòng hộ $\le 5\%$. Nếu chân thứ 2 lỗi, tự động unwind chân thứ 1 trong $< 300\text{ ms}$.
 - **Tiêu chí nghiệm thu:**
-  - Unit test với mock HTTP client bao phủ 100% các kịch bản lỗi mạng, trượt giá và từ chối lệnh.
-  - Tích hợp vào `cmd/execcheck`, chạy mở và đóng vị thế delta-neutral chéo sàn 10/10 lần trên Testnet đạt sai số delta = 0.
-  - Tuân thủ nguyên tắc an toàn: Tiếp tục khóa cờ Mainnet cho tới khi hoàn thành Bước 4.6.
+  - `go test -count=1 -race ./internal/broker/bybit/...` đạt 100% test case xanh (0 data race).
+  - `go run ./cmd/bybitcheck` trả về HTTP 200 cho clock và balance trên Bybit Testnet thật.
+  - Thử nghiệm mở và đóng vị thế chéo sàn delta-neutral 10/10 lần trong `cmd/execcheck` trên Testnet với sai số delta = 0.
+  - Tuân thủ nguyên tắc an toàn: Không chạm Mainnet cho tới khi hoàn thành Bước 4.6.
 
 
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
