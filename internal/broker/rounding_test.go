@@ -350,3 +350,54 @@ func TestRoundOrder_AReduceOnlyOrderIsExemptFromTheMinimumNotional(t *testing.T)
 		t.Error("reduceOnly was read as a licence to ignore minQty and the step grid too")
 	}
 }
+
+func TestCeilToStep_RoundsUpOntoTheGridWithoutFloatDust(t *testing.T) {
+	cases := []struct {
+		name       string
+		v, step    float64
+		want       float64
+		wantString string
+	}{
+		// Bybit spot BTCUSDT basePrecision 0.000001, 10 bps base-coin fee:
+		// 0.001 / 0.999 = 0.001001001… rounds UP to 0.001002.
+		{"btc grossed up for a 10 bps fee", 0.001 / 0.999, 0.000001, 0.001002, "0.001002"},
+		// A value already on the grid stays put — including one float64 prints
+		// just above it (0.3/0.0001 is 2999.9999999999995 steps).
+		{"on the grid stays", 0.3, 0.0001, 0.3, "0.3000"},
+		{"float dust just above a grid point is not a step", 0.1 + 0.2, 0.1, 0.3, "0.3"},
+		// DOGE on a whole-coin grid: 2000 / 0.999 = 2002.002… → 2003.
+		{"whole-coin grid", 2000 / 0.999, 1, 2003, "2003"},
+		{"coarse decimal grid", 12.31, 0.1, 12.4, "12.4"},
+		{"a genuine hair above a grid point is a step", 5.0000001, 0.0001, 5.0001, "5.0001"},
+	}
+	for _, c := range cases {
+		got := CeilToStep(c.v, c.step)
+		if got != c.want {
+			t.Errorf("%s: CeilToStep(%v, %v) = %v, want %v", c.name, c.v, c.step, got, c.want)
+		}
+		if got < c.v-gridEpsilon*c.step {
+			t.Errorf("%s: %v is BELOW %v — a gross-up that rounds down leaves the wallet short", c.name, got, c.v)
+		}
+		if s := formatDecimals(got, decimalsOf(c.step)); s != c.wantString {
+			t.Errorf("%s: renders %q, want %q", c.name, s, c.wantString)
+		}
+		// RoundOrder floors; a CeilToStep result must survive it unchanged, or
+		// the grossed-up size would be silently lost on the way to the venue.
+		r, err := RoundOrder(RoundRequest{Rules: exchanges.Instrument{Symbol: "X", StepSizeCoin: c.step},
+			Side: SideBuy, Type: OrderTypeMarket, QtyCoin: got})
+		if err != nil || r.QtyCoin != got {
+			t.Errorf("%s: RoundOrder(%v) = %v, %v — want it unchanged", c.name, got, r.QtyCoin, err)
+		}
+	}
+}
+
+func TestCeilToStep_RefusesWhatIsNotAQuantityOrAGrid(t *testing.T) {
+	for _, c := range []struct{ v, step float64 }{
+		{0, 0.001}, {-1, 0.001}, {math.NaN(), 0.001}, {math.Inf(1), 0.001},
+		{1, 0}, {1, -0.1}, {1, math.NaN()}, {1, math.Inf(1)},
+	} {
+		if got := CeilToStep(c.v, c.step); got != 0 {
+			t.Errorf("CeilToStep(%v, %v) = %v, want 0 (no quantity) rather than a guessed grid", c.v, c.step, got)
+		}
+	}
+}

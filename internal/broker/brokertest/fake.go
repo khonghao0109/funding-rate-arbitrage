@@ -310,6 +310,13 @@ func (f *Fake) OrderTrades(ctx context.Context, q broker.OrderQuery) ([]broker.T
 	if f.commissionAss != "" {
 		t.CommissionQtyInAsset = f.commissionRate * o.FilledQtyCoin * o.AvgFillPriceQuote
 	}
+	// A spot buy under SpotBuyFeeInBaseFrac states the fee the venue kept IN
+	// THE BASE COIN, matching the balance the fill credited — Bybit's
+	// execution list names it in feeCurrency.
+	if o.Market == broker.MarketSpot && o.Side == broker.SideBuy && f.behaviour.SpotBuyFeeInBaseFrac > 0 && f.baseAsset != "" {
+		t.CommissionAsset = f.baseAsset
+		t.CommissionQtyInAsset = o.FilledQtyCoin * f.behaviour.SpotBuyFeeInBaseFrac
+	}
 	return []broker.Trade{t}, nil
 }
 

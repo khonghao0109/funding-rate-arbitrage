@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"sync"
+	"time"
 
 	"futures-arbitrage-scanner/exchanges"
 	"futures-arbitrage-scanner/internal/broker"
+	bybitbroker "futures-arbitrage-scanner/internal/broker/bybit"
 	"futures-arbitrage-scanner/internal/execution"
 )
 
@@ -27,6 +30,16 @@ import (
 // numbers instead of picking one: a perp position no intent explains is either
 // somebody else's or one of ours nobody is tracking, and a tool that squared it
 // would be trading a position it cannot name.
+//
+// A venue that keeps a spot BUY's fee in the BASE coin (Bybit, PLAN 4.5j) makes
+// "buys minus sells" the ORDERS, not the wallet: execution buys the spot leg
+// grossed up, Q ÷ (1 − fee), so the buy order alone reads spot-long by the fee
+// beside a perp of Q — 20 DOGE past a 1 DOGE tolerance on a 20,000 DOGE pair,
+// which the page would call UNHEDGED and LÀM PHẲNG would "square" by selling
+// coin the wallet never received. On such a venue every filled spot buy is
+// counted NET of the base-coin commission its own fills state, read from the
+// venue (broker.TradeReader); a fill whose fee cannot be read makes the leg
+// unknown, never a guess.
 
 // gridEpsilon absorbs float64 noise on quantities that ARE on the venue's grid,
 // the same allowance internal/execution uses.
@@ -57,18 +70,21 @@ var statusVI = map[hedgeStatus]string{
 
 // orderRef is one ClientOrderID an intent could have produced on one leg.
 type orderRef struct {
-	kind string // mở | đóng | gỡ | cân
+	kind string // mở | đóng | gỡ | cân | thu
 	id   string
 }
 
-// intentOrderIDs lists all four derived ids for one leg. The reconcile id is
+// intentOrderIDs lists all five derived ids for one leg. The reconcile id is
 // the one kind that matters beyond the sum: planSquare refuses to reuse it.
+// "thu" is execution's reduceToMatch cut, which has its own id since review
+// 4.5j n2 — leaving it out would read a pair Open shrank as unbalanced.
 func intentOrderIDs(intentID string, leg execution.LegName) []orderRef {
 	return []orderRef{
 		{"mở", execution.LegClientOrderID(intentID, leg)},
 		{"đóng", execution.CloseClientOrderID(intentID, leg)},
 		{"gỡ", execution.UnwindClientOrderID(intentID, leg)},
 		{"cân", execution.ReconcileClientOrderID(intentID, leg)},
+		{"thu", execution.ReduceClientOrderID(intentID, leg)},
 	}
 }
 
@@ -93,9 +109,14 @@ type legNet struct {
 type doneOrders struct {
 	ordersMu sync.Mutex
 	orders   map[string]broker.Order
+	// baseFees is the base-coin commission of a FINISHED spot buy, keyed like
+	// orders; the same argument applies — a finished order's fills are fixed.
+	baseFees map[string]float64
 }
 
-func newDoneOrders() *doneOrders { return &doneOrders{orders: map[string]broker.Order{}} }
+func newDoneOrders() *doneOrders {
+	return &doneOrders{orders: map[string]broker.Order{}, baseFees: map[string]float64{}}
+}
 
 // forget drops everything remembered. Every write calls it before and after:
 // a finished order cannot change, but an id this portal refuses to reuse could
@@ -103,6 +124,7 @@ func newDoneOrders() *doneOrders { return &doneOrders{orders: map[string]broker.
 func (d *doneOrders) forget() {
 	d.ordersMu.Lock()
 	d.orders = map[string]broker.Order{}
+	d.baseFees = map[string]float64{}
 	d.ordersMu.Unlock()
 }
 
@@ -126,13 +148,113 @@ func (d *doneOrders) read(ctx context.Context, b broker.Broker, q broker.OrderQu
 	return o, err
 }
 
-func readLegNet(ctx context.Context, b broker.Broker, memo *doneOrders, market broker.Market, symbol, intentID string, leg execution.LegName) legNet {
+// baseCommissionQtyCoin is the commission a spot buy's fills state in asset —
+// the base coin — summed over every fill the VENUE lists for the order.
+//
+// Refused rather than guessed: a venue that cannot list fills, a fill charging
+// commission in an asset it does not name, and a list whose quantities do not
+// add up to the order's own fill (a window that cut some of them) all leave the
+// wallet's share unknown.
+func (d *doneOrders) baseCommissionQtyCoin(ctx context.Context, b broker.Broker, q broker.OrderQuery, order broker.Order, asset string) (float64, error) {
+	d.ordersMu.Lock()
+	fee, ok := d.baseFees[d.key(q)]
+	d.ordersMu.Unlock()
+	if ok {
+		return fee, nil
+	}
+	reader, ok := b.(broker.TradeReader)
+	if !ok {
+		return 0, errors.New("sàn spot không cho đọc từng lần khớp, nên phí thu bằng coin là ẩn số")
+	}
+	trades, err := reader.OrderTrades(ctx, q)
+	if err != nil {
+		return 0, err
+	}
+	listedQtyCoin := 0.0
+	for _, t := range trades {
+		listedQtyCoin += t.QtyCoin
+		switch {
+		case t.CommissionQtyInAsset == 0:
+		case t.CommissionAsset == asset:
+			fee += t.CommissionQtyInAsset
+		case t.CommissionAsset == "":
+			return 0, fmt.Errorf("lần khớp %s thu phí %v mà sàn không nêu bằng đồng nào", t.TradeID, t.CommissionQtyInAsset)
+		}
+	}
+	if math.Abs(listedQtyCoin-order.FilledQtyCoin) > gridEpsilon*math.Max(1, order.FilledQtyCoin) {
+		return 0, fmt.Errorf("sàn liệt kê các lần khớp cộng lại %.10g coin, lệnh báo khớp %.10g — thiếu lần khớp thì thiếu phí", listedQtyCoin, order.FilledQtyCoin)
+	}
+	if order.Status.Done() {
+		d.ordersMu.Lock()
+		d.baseFees[d.key(q)] = fee
+		d.ordersMu.Unlock()
+	}
+	return fee, nil
+}
+
+// hedgeFees is how spot BUY fills turn into what the wallet received.
+//
+// StatedOpen holds, per intent id, the base-coin fee the opening buy's fills
+// stated when execution opened it (intentState.SpotBuyBaseFeeQtyCoin). It is
+// used whatever the venue, so an intent file is the one source for both — a
+// grossed-up buy is never counted gross because a profile flag disagreed with
+// the fee execution was given. BaseAsset, set on a venue that keeps the fee in
+// the base coin, reads the fills from the venue for a buy with no stated fee.
+// The zero value is Binance testnet's path: every buy counted as filled.
+type hedgeFees struct {
+	BaseAsset  string
+	StatedOpen map[string]float64
+
+	// NotVisibleIsAbsent marks the intents whose derived ids may be read as
+	// ABSENT when the venue lists them nowhere (bybit.ErrOrderNotVisible). On a
+	// Unified account /v5/order/history keeps every order WITH fills for 730
+	// days and an order without fills for 24 hours ("Get Order History", read
+	// 2026-09-17), so once creation's asynchronous delay has passed, an id
+	// neither list shows filled nothing: never sent, or cancelled empty. Most
+	// derived ids of a held intent (close, unwind, reconcile, reduce) are of
+	// that kind, and reading them as unknown left every Bybit position
+	// unreadable and uncloseable from the page (review 4.5j part 2, N1). An
+	// intent a write touched within notVisibleGrace — or while a write is
+	// still running — is not marked: its order may exist and not show yet.
+	// Execution keeps the adapter's reading (ambiguous); this rule is the
+	// portal's only.
+	//
+	// It NEVER covers an intent's OPENING orders ("mở"). Those filled, so an
+	// unlisted open is an anomaly, not an absence — and the adapter queries
+	// /v5/order/history with no time window, which the page says answers the
+	// last 7 days by default. Whether an orderLinkId lookup reaches past that
+	// is unmeasured, so a pair held longer reads UNKNOWN rather than flat: read
+	// as absent, a spot open alone gone from the lists would have planned a
+	// perp buy-back that strips the hedge off a real spot long (review 4.5j
+	// part 4, R1).
+	NotVisibleIsAbsent map[string]bool
+
+	// MustSee lists client order ids that are never read as absent: an order
+	// the current write itself just sent (review part 4, R2).
+	MustSee map[string]bool
+}
+
+// notVisibleGrace is how long after a write an order the venue does not list
+// still counts as possibly in flight. Creation is asynchronous and history "may
+// delay", but a write does not return before execution has read its own orders
+// back (OrderSettleTimeout, 5 s), so what the grace covers is an order that
+// write could not confirm — which it reports as an alarm anyway. Thirty seconds
+// is six times that read-back budget; during it the pair reads UNKNOWN and the
+// page refuses to close it, which is the price of never reading an order in
+// flight as absent.
+const notVisibleGrace = 30 * time.Second
+
+// readLegNet sums one leg's derived orders.
+func readLegNet(ctx context.Context, b broker.Broker, memo *doneOrders, market broker.Market, symbol, intentID string, leg execution.LegName, fees hedgeFees) legNet {
 	var out legNet
 	for _, ref := range intentOrderIDs(intentID, leg) {
 		q := broker.OrderQuery{Market: market, Symbol: symbol, ClientOrderID: ref.id}
 		order, err := memo.read(ctx, b, q)
 		switch {
 		case errors.Is(err, broker.ErrOrderNotFound):
+			continue
+		case errors.Is(err, bybitbroker.ErrOrderNotVisible) && fees.NotVisibleIsAbsent[intentID] &&
+			ref.kind != "mở" && !fees.MustSee[ref.id]:
 			continue
 		case err != nil:
 			// NOT zero: an order nobody could read has an unknown quantity,
@@ -147,12 +269,26 @@ func readLegNet(ctx context.Context, b broker.Broker, memo *doneOrders, market b
 			out.CloseOrderExists = true
 		}
 		signed := order.FilledQtyCoin
+		feeVI := ""
 		if order.Side == broker.SideSell {
 			signed = -signed
+		} else if market == broker.MarketSpot && order.FilledQtyCoin > 0 {
+			if fee, ok := fees.StatedOpen[intentID]; ok && ref.kind == "mở" {
+				signed -= fee
+				feeVI = fmt.Sprintf(" − phí coin gốc %.8f (lần khớp khai lúc mở, lưu trong file ý định) = ví nhận %.8f", fee, signed)
+			} else if fees.BaseAsset != "" {
+				fee, err := memo.baseCommissionQtyCoin(ctx, b, q, order, fees.BaseAsset)
+				if err != nil {
+					out.UnreadableVI = append(out.UnreadableVI, fmt.Sprintf("phí %s thu bằng coin của lệnh %s %s (%s)", fees.BaseAsset, ref.kind, leg, err.Error()))
+					continue
+				}
+				signed -= fee
+				feeVI = fmt.Sprintf(" − phí %.8f %s = ví nhận %.8f", fee, fees.BaseAsset, signed)
+			}
 		}
 		out.QtyCoin += signed
 		if order.FilledQtyCoin > 0 {
-			out.SeenVI = append(out.SeenVI, fmt.Sprintf("%s %s %.8f", ref.kind, order.Side, order.FilledQtyCoin))
+			out.SeenVI = append(out.SeenVI, fmt.Sprintf("%s %s %.8f%s", ref.kind, order.Side, order.FilledQtyCoin, feeVI))
 		}
 		if !order.Status.Done() {
 			out.WorkingVI = append(out.WorkingVI, fmt.Sprintf("%s %s còn %s trên sàn", ref.kind, leg, order.Status))
@@ -182,7 +318,10 @@ func (h intentHedge) working() []string {
 // is eight lookups and a sequential scan of sixteen intents is half a minute of
 // round trips; four at a time keeps it to seconds without leaning on the
 // weight budget (spot 4, futures 1 per lookup).
-func readIntentHedges(ctx context.Context, spot, perp broker.Broker, memo *doneOrders, symbol string, intentIDs []string) []intentHedge {
+//
+// fees is readLegNet's; callers inside the portal go through
+// portal.intentHedges, which fills it from the intent files and the profile.
+func readIntentHedges(ctx context.Context, spot, perp broker.Broker, memo *doneOrders, symbol string, intentIDs []string, fees hedgeFees) []intentHedge {
 	out := make([]intentHedge, len(intentIDs))
 	sem := make(chan struct{}, 4)
 	var wg sync.WaitGroup
@@ -194,13 +333,76 @@ func readIntentHedges(ctx context.Context, spot, perp broker.Broker, memo *doneO
 			defer func() { <-sem }()
 			out[i] = intentHedge{
 				IntentID: id,
-				Spot:     readLegNet(ctx, spot, memo, broker.MarketSpot, symbol, id, execution.LegSpot),
-				Perp:     readLegNet(ctx, perp, memo, broker.MarketFuturesUSDM, symbol, id, execution.LegPerp),
+				Spot:     readLegNet(ctx, spot, memo, broker.MarketSpot, symbol, id, execution.LegSpot, fees),
+				Perp:     readLegNet(ctx, perp, memo, broker.MarketFuturesUSDM, symbol, id, execution.LegPerp, hedgeFees{NotVisibleIsAbsent: fees.NotVisibleIsAbsent, MustSee: fees.MustSee}),
 			}
 		}()
 	}
 	wg.Wait()
 	return out
+}
+
+// intentHedges reads intents the way this portal's venue requires. The fee each
+// opening buy's fills stated comes from its intent file. Only a buy with none
+// stored, on a venue that keeps the fee in the base coin, reads the fills from
+// the venue — with the base asset from the venue's own instrument rules, never
+// from the symbol string; rules that cannot be read leave such an intent's spot
+// leg unknown.
+//
+// beforeSending is true only for a read made INSIDE a write, holding the write
+// lock, before that write has sent anything: the running write is then known
+// to have no order in flight, and only earlier writes and the intent files date
+// the intents. Every other read treats a running write as possibly mid-send.
+// A write that has sent orders and read them back may pass beforeSending with
+// those orders' ids as sentThisWrite: they are then required to be seen, and
+// the intent's other ids are judged as before the write.
+func (p *portal) intentHedges(ctx context.Context, symbol string, intentIDs []string, beforeSending bool, sentThisWrite ...string) []intentHedge {
+	fees := hedgeFees{StatedOpen: map[string]float64{}, NotVisibleIsAbsent: map[string]bool{}, MustSee: map[string]bool{}}
+	for _, id := range sentThisWrite {
+		fees.MustSee[id] = true
+	}
+	p.busyMu.Lock()
+	writing, lastWriteEndMs := p.busyAction != "" && !beforeSending, p.lastWriteEndMs
+	p.busyMu.Unlock()
+	nowMs := p.now().UnixMilli()
+	var unstated []string
+	for _, id := range intentIDs {
+		if st, err := loadState(p.stateDir, id); err == nil && st.SpotBuyBaseFeeStated {
+			fees.StatedOpen[id] = st.SpotBuyBaseFeeQtyCoin
+		} else {
+			unstated = append(unstated, id)
+		}
+		// The intent file is rewritten after every write that touched the
+		// intent, so its modification time bounds when its last order was sent
+		// — across a restart too, where lastWriteEndMs starts at zero.
+		touchedMs := lastWriteEndMs
+		if path, err := statePath(p.stateDir, id); err == nil {
+			if fi, err := os.Stat(path); err == nil && fi.ModTime().UnixMilli() > touchedMs {
+				touchedMs = fi.ModTime().UnixMilli()
+			} else if err != nil {
+				touchedMs = nowMs // no file to date the intent by: not settled
+			}
+		}
+		if !writing && nowMs-touchedMs >= notVisibleGrace.Milliseconds() {
+			fees.NotVisibleIsAbsent[id] = true
+		}
+	}
+	if p.markets.profile.SpotBuyFeeInBaseCoin && len(unstated) > 0 {
+		rules, err := p.rulesFor(ctx, symbol)
+		if err == nil && rules.Spot.BaseAsset == "" {
+			err = errors.New("sàn không khai báo coin gốc")
+		}
+		if err != nil {
+			out := make([]intentHedge, len(intentIDs))
+			for i, id := range intentIDs {
+				out[i] = intentHedge{IntentID: id, Spot: legNet{UnreadableVI: []string{
+					"không đọc được luật spot để biết coin gốc thu phí (" + err.Error() + ") — chân spot là ẩn số"}}}
+			}
+			return out
+		}
+		fees.BaseAsset = rules.Spot.BaseAsset
+	}
+	return readIntentHedges(ctx, p.markets.spot, p.markets.perp, p.memo, symbol, intentIDs, fees)
 }
 
 // hedgeEvidence is everything classifyHedge judges.

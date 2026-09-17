@@ -470,26 +470,6 @@ func TestOpen_AGatewayErrorIsAmbiguousWhileAClientErrorIsDefinite(t *testing.T) 
 	}
 }
 
-// Review 2026-09-17, M2: a known fee taken in the base coin whose gap exceeds the
-// hedge tolerance is refused BEFORE anything is sent — Open must never call a
-// pair hedged that the wallet does not hold.
-func TestOpen_RefusesASizeWhoseBaseCoinFeeUnbalancesThePair(t *testing.T) {
-	h := newHarness(t, nil)
-	h.intent.SpotBuyFeeInBaseFrac = 0.001 // 0.3333 BTC × 0.1% = 0.000333 > 0.0001
-	res, err := h.opener.Open(context.Background(), h.intent)
-	if !errors.Is(err, ErrSpotFeeUnhedged) || res.Outcome != OutcomeBothFlat {
-		t.Fatalf("err %v outcome %q", err, res.Outcome)
-	}
-	if n := len(h.spot.Orders()) + len(h.perp.Orders()); n != 0 {
-		t.Errorf("%d orders sent by a refused open", n)
-	}
-	h.intent.SpotBuyFeeInBaseFrac = 0.003 // above Config.MaxSpotBaseFeeFrac
-	h.intent.NotionalQuote = 3_000
-	if _, err := h.opener.Open(context.Background(), h.intent); !errors.Is(err, ErrSpotFeeUnhedged) {
-		t.Errorf("a fee above the configured ceiling was accepted: %v", err)
-	}
-}
-
 // The unwind after a failed perp leg sells what the spot WALLET received, not
 // what the order filled; otherwise the venue refuses and the long stays naked.
 func TestOpen_UnwindSellsWhatTheWalletReceivedAfterABaseCoinFee(t *testing.T) {

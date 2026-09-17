@@ -104,9 +104,11 @@ type Intent struct {
 	// what Binance's spot testnet measures (fee 0).
 	//
 	// It is what makes the spot WALLET, not the spot ORDER, the leg: buying Q
-	// leaves Q × (1 − fee). Open refuses a size whose gap exceeds the hedge
-	// tolerance (a pair it would call hedged but is not), and the unwind sells
-	// what the wallet received rather than what the order filled.
+	// leaves Q × (1 − fee). So Open buys Q ÷ (1 − fee) rounded UP onto the spot
+	// grid, judges the hedge on the wallet's measured gain (Result.
+	// SpotHeldQtyCoin), shrinks or unwinds when the wallet received less, and
+	// the unwind sells what the wallet received rather than what the order
+	// filled. A fee above Config.MaxSpotBaseFeeFrac is refused before sizing.
 	SpotBuyFeeInBaseFrac float64
 }
 
@@ -288,7 +290,9 @@ type Result struct {
 	// TargetQtyCoin is the common quantity both legs were sized to.
 	TargetQtyCoin float64
 
-	// ResidualQtyCoin is |spot filled - perp filled| after everything. On
+	// ResidualQtyCoin is |spot held - perp filled| after everything, where the
+	// spot side is SpotHeldQtyCoin — the order's fill unless the venue keeps a
+	// fee in the base coin. On
 	// OutcomeBothOpen it is within the coarser step; on OutcomeBothFlat both
 	// sides are zero and so is this.
 	ResidualQtyCoin float64
@@ -316,6 +320,24 @@ type Result struct {
 	// clean open and an unwind, so it gets its own flag rather than hiding
 	// inside both_open.
 	ReducedToMatch bool
+
+	// SpotHeldQtyCoin is what the spot WALLET holds because of this open, the
+	// quantity the invariant was judged on. Without a fee kept in the base
+	// coin it is Spot.FilledQtyCoin. With one, Spot.FilledQtyCoin is the
+	// grossed-up ORDER and this is the smaller of its fill × (1 − fee) and the
+	// wallet's measured gain; SpotHeldSourceVI states both. Set on
+	// OutcomeBothOpen.
+	SpotHeldQtyCoin  float64
+	SpotHeldSourceVI string
+
+	// SpotBuyBaseFeeQtyCoin is the fee the venue kept IN THE BASE COIN from the
+	// opening spot buy, and SpotBuyBaseFeeStated says whether that figure is the
+	// one the order's own FILLS state (broker.TradeReader) rather than the
+	// published rate × the fill. Zero and false when no fee is kept in the base
+	// coin. A caller that stores the stated figure never has to read the fills
+	// again — Bybit lists them for 7 days by default (PLAN 4.5j, review part 2).
+	SpotBuyBaseFeeQtyCoin float64
+	SpotBuyBaseFeeStated  bool
 
 	// The spot leg's base-asset balance at the venue, before anything was
 	// placed and after everything was closed. These are EVIDENCE, read from
@@ -352,8 +374,9 @@ var (
 	ErrBookStale        = fmt.Errorf("%w: the authorising book is too old to be evidence", ErrRefusedBeforePlacing)
 	ErrMarginUnverified = fmt.Errorf("%w: the perp venue's maintenance bracket is unverified", ErrRefusedBeforePlacing)
 	ErrIntentInvalid    = fmt.Errorf("%w: the intent does not describe a position", ErrRefusedBeforePlacing)
-	// ErrSpotFeeUnhedged: the spot buy's fee, taken in the base coin, would
-	// leave the wallet short of the perp by more than the hedge tolerance.
+	// ErrSpotFeeUnhedged: the spot buy's fee, taken in the base coin, is above
+	// Config.MaxSpotBaseFeeFrac, or the grossed-up buy would still leave the
+	// wallet outside the hedge tolerance of the perp.
 	ErrSpotFeeUnhedged = fmt.Errorf("%w: the spot fee taken in the base coin would unbalance the pair", ErrRefusedBeforePlacing)
 
 	// ErrNoBestPrice is the book not publishing a best price on the side being
@@ -383,6 +406,15 @@ var (
 	// evidence, and picking the venue's silently would hide a real bug in this
 	// package. Both numbers are printed and the operator decides.
 	ErrFlatEvidenceConflict = errors.New("execution: HAI BẰNG CHỨNG PHẲNG KHÔNG KHỚP — số dư sàn và số học lệnh nói khác nhau, dừng và đối chiếu bằng tay")
+
+	// ErrSpotEvidenceConflict is the OPEN's form of the same finding: what the
+	// spot buy's fills say reached the wallet and what the wallet's balance
+	// gained still differ by more than the hedge tolerance when the settle
+	// deadline passes. Both legs are open; nothing more is sent — neither a
+	// cut nor an unwind — because either would trade on one of two numbers
+	// that contradict each other. It wraps ErrFlatEvidenceConflict so every
+	// caller that alarms on that one alarms on this.
+	ErrSpotEvidenceConflict = fmt.Errorf("%w: lệnh mua spot và số dư ví nói khác nhau sau khi mở", ErrFlatEvidenceConflict)
 )
 
 // clientOrderIDPrefix versions the derivation. If the scheme ever changes, the

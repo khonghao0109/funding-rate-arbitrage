@@ -1,9 +1,15 @@
 # Walkthrough — Động cơ 1 trên Bybit V5 UTA: chân Spot + portal `-broker=bybit` (Bước 4.5j, 2026-09-17)
 
-> **Trạng thái: 🟡 ĐÃ LÀM PHẦN ĐỌC; PORTAL BYBIT ĐANG CHỈ ĐỌC.** Mọi đường đọc đã chạy thật trên
-> `api-testnet.bybit.com`. Chưa có lệnh nào được gửi: ví testnet chưa có USDT, và sau review vòng 2
-> portal `-broker=bybit` từ chối mọi lệnh ghi cho tới khi chân spot được mua gộp phí và được xét
-> theo số dư ví ở mọi đường (§6, §7).
+> **Trạng thái: 🟡 CODE XONG, LỆNH TAY ĐÃ MỞ, AUTO-TRADER BYBIT CÒN CHẶN, CHƯA NGHIỆM THU BẰNG LỆNH.**
+> Phần 1 (§1–§7) làm phần đọc và phải để portal `-broker=bybit` CHỈ ĐỌC sau review vòng 2. Phần 2
+> (§8, cùng ngày, người vận hành duyệt phạm vi):
+> - mua chân spot GỘP PHÍ;
+> - xét chân spot theo LẦN KHỚP và SỐ DƯ VÍ ở đường mở, cắt và gỡ;
+> - tách id của lệnh cắt;
+> - mở lại lệnh tay; bot trên Bybit vẫn bị chặn cho tới khi nghiệm thu bằng tay.
+>
+> `bybitcheck` thật 19/19 trên ví đã có USDT. Chưa có lệnh nào được gửi tới sàn: nghiệm thu bằng lệnh
+> là việc của người vận hành (§8.7).
 > Quyết định lộ trình: **Q19** (PLAN §7.1). Không đụng vào 8085 / 8086 / 8087.
 
 ## 1. Đã làm gì
@@ -175,3 +181,292 @@ Các lỗ hổng test được nêu tên (trần phí, khoảng giá trị hợp
    testnet (Q18 + Q19).
 5. **Góc spot của ví hợp nhất chỉ liệt kê coin khác 0**, nên khi ví trống trang hiện "chưa đọc
    được" cho spot. Với execution, "không liệt kê" nghĩa là 0; nhãn trên trang còn chưa phân biệt.
+
+## 8. Phần 2 — mua gộp phí, xét chân spot theo lần khớp và ví, mở lệnh tay (2026-09-17)
+
+Người vận hành duyệt phạm vi mục §7.0. Mục §7.2 (giới hạn cỡ) đã được thay. Mục §7.4 vẫn chưa có hiệu
+lực: trên Bybit bot bị chặn riêng (§8.1).
+
+### 8.1 Đã sửa những gì
+
+| Tệp | Thay đổi |
+|---|---|
+| `internal/broker/rounding.go` | `CeilToStep(v, step)`: làm tròn LÊN lưới, cùng dung sai theo số bước (1e-6) với `RoundOrder`, lượng tử hoá theo số chữ số của bước. Giá trị không phải số dương hữu hạn → 0, để `RoundOrder` từ chối theo tên. |
+| `internal/execution/sizing.go` | Phí vượt `MaxSpotBaseFeeFrac` bị từ chối trước khi tính cỡ. Chân spot mua `CeilToStep(Qperp ÷ (1 − phí), bước spot)`, qua `RoundOrder` (minNotional, minQty, maxQty); `entryPlan.SpotTargetQtyCoin`; sổ lệnh chân spot định giá ở cỡ gộp phí. **Bỏ** lệnh từ chối "Q × phí > dung sai" (M3 vòng 2). Bất biến kiểm trên `lệnh spot × (1 − phí)`. |
+| `internal/execution/open.go` — chân spot | Mục tiêu khớp chân spot là `SpotTargetQtyCoin` (tuần tự và song song). `spotHeldQtyCoin` — phí = 0: trả đúng số khớp, không đọc gì. Phí > 0: hai bằng chứng từ sàn. (a) **Lần khớp**: phí coin gốc do chính các lần khớp của lệnh mua khai (`spotCreditQtyCoin`, đọc lại tới khi tổng khớp đủ); chỉ khi không đọc được mới dùng phí công bố, và nói rõ. (b) **Ví**: số dư coin gốc tăng thêm, đọc lại mỗi `PollEvery` tới khi khớp (a) trong một bước spot hoặc hết `OrderSettleTimeout`. Trong dung sai của cặp → chân spot là số NHỎ hơn. Quá dung sai khi hết hạn → **`ErrSpotEvidenceConflict`** (bọc `ErrFlatEvidenceConflict`): hai chân để nguyên, không cắt, không gỡ, portal báo động, bot dừng cặp. |
+| `internal/execution/open.go` — cắt và gỡ | Ví thiếu quá dung sai so với perp → `reduceToMatch` (dù cả hai lệnh đã "đủ"), không cắt được → gỡ. Gỡ bán `số lần khớp khai ví nhận − phần đã cắt`, rồi giới hạn thêm theo ví. `ReduceClientOrderID` (`|reduce`); `closeLeg` nhận id (n2). `Result.SpotHeldQtyCoin`, `SpotHeldSourceVI`, `SpotBuyBaseFeeQtyCoin`, `SpotBuyBaseFeeStated`. |
+| `internal/execution/types.go`, `doc.go` | `ErrSpotEvidenceConflict`; tài liệu của `SpotBuyFeeInBaseFrac`, `ErrSpotFeeUnhedged`, bất biến. |
+| `cmd/execportal/actions.go`, `cache.go`, `cmd/execcheck/main.go` | Phí lần khớp khai lúc mở được LƯU vào file ý định: `spot_buy_base_fee_qty_coin`, `spot_buy_base_fee_stated`. `execcheck` giữ cùng hai trường để lưu lại không làm mất chúng (test hình dạng file). |
+| `cmd/execportal/hedge.go` | `hedgeFees`: lệnh MUA mở của một ý định trừ phí đã lưu, **không đọc lại sàn**, trên mọi sàn. Ý định không có số lưu, trên sàn thu phí bằng coin (`SpotBuyFeeInBaseCoin`), mới đọc lần khớp từ sàn (nhớ theo lệnh đã xong). Không đọc được, phí không nêu đồng tiền, tổng khớp lệch lệnh → chân spot là ẩn số. Id cắt nằm trong danh sách id của ý định; coin gốc lấy từ luật spot của sàn. |
+| `cmd/execportal/hedge.go`, `api.go` — id chưa từng gửi | `GetOrder` của Bybit trả `ErrOrderNotVisible` (cố ý KHÔNG bọc `ErrOrderNotFound`) cho id mà cả `/v5/order/realtime` lẫn `/v5/order/history` không liệt kê. Trên tài khoản UTA, lịch sử giữ lệnh CÓ khớp 730 ngày và lệnh không khớp 24 giờ ("Get Order History"). Vậy khi đã qua độ trễ tạo lệnh, id không thấy ở đâu là id không khớp gì: chưa từng gửi, hoặc huỷ rỗng. Portal (chỉ portal, execution giữ nguyên cách đọc mơ hồ) đọc nó là VẮNG cho một ý định khi không có lệnh ghi nào đang chạy và file ý định cùng lần ghi gần nhất đã cũ hơn `notVisibleGrace` (30 s); trước đó ý định là ẩn số. Lượt đọc bên trong một lệnh ghi, trước khi gửi gì (`beforeSending`), không tính chính lệnh ghi đó là đang gửi. **Không bao giờ** áp cho lệnh MỞ của ý định (đã khớp): lịch sử được hỏi không kèm khung thời gian, mặc định 7 ngày, nên lệnh mở không thấy là bất thường → ẩn số (R1). Lượt đọc lại sau lệnh cân yêu cầu thấy chính lệnh cân (R2). Chỉ lệnh ghi CÓ THỂ gửi lệnh (`afterOrderWrite`) mới đóng dấu thời điểm; chạy thử reconcile thì không. |
+| `cmd/execportal/venue.go`, `autotrade.go`, `main.go` | Bybit: `SpotBuyFeeInBaseCoin` true, `OrdersBlockedVI` trống (lệnh tay mở), **`AutotradeBlockedVI`**: `/api/autotrade/start` trả 403 `autotrade_blocked` trước khi đọc thân yêu cầu, `-autotrade` bị từ chối. Dừng, KILL và điều khiển cặp vẫn trả lời. |
+| `cmd/execcheck/reconcile.go` | Cộng thêm id cắt khi tính lệch của một ý định. |
+| `internal/broker/brokertest/fake.go` | Lệnh mua spot dưới `SpotBuyFeeInBaseFrac` khai phí bằng coin gốc trong danh sách khớp, khớp với số dư nó ghi có. |
+
+**Lệch khỏi đặc tả, và vì sao:**
+
+1. **Chân spot không phải "ví tăng thêm nếu ≥ 0".** Nó là hai bằng chứng — lần khớp và ví — và số
+   NHỎ hơn trong dung sai; lệch quá dung sai thì báo động và không giao dịch tiếp. Ví tăng nhiều hơn
+   lần khớp giải thích là coin từ nơi khác hoặc phí không khai. Ví tăng ít hơn là ví còn trễ hoặc coin
+   đã đi đâu. Cắt perp theo một số dư còn trễ, hay bán coin không ai quy được, đều là giao dịch trên
+   một trong hai con số mâu thuẫn nhau (review phần 2, M2).
+2. **Phí lấy từ lần khớp, không phải phí công bố** (review phần 2, M1). Portal truyền phí TAKER, nhưng
+   `Open` gửi LIMIT GTC. Phần nằm chờ khớp dạng maker, và phí maker có thể thấp hơn hoặc bằng 0 — khi
+   đó ví nhận thêm Q × phí mà phí công bố không thấy.
+3. **Đọc lại ví khi còn trễ** (không có trong đặc tả).
+4. **Sửa thêm trạng thái phòng hộ của portal** (bắt buộc). Portal cộng chân spot từ LỆNH. Với lệnh mua
+   gộp phí, cặp DOGE 20.000 coin sẽ hiện UNHEDGED (lệch 20 coin, dung sai 1). LÀM PHẲNG sẽ bán 20 DOGE
+   ví không nhận, và lệnh ĐÓNG của trang từ chối "cặp LỆCH".
+5. **Phí được lưu lúc mở** (review phần 2, B1). `/v5/execution/list` mặc định chỉ 7 ngày, và một cặp
+   được giữ lâu hơn thế. Nếu đọc lại mỗi lần, sau 7 ngày chân spot thành ẩn số: trang không đóng được,
+   5 lần đọc hỏng làm bot dừng cặp, và cả lệnh dừng lỗ basis lẫn thoát funding đều không chạy.
+6. **Bot trên Bybit vẫn bị chặn** (review phần 2, B2). Gỡ cổng chỉ đọc cũng bật `-autotrade`, trong khi
+   chân spot gộp phí mới chạy trên sàn giả. Nghiệm thu bằng tay trước; bỏ chặn là một dòng trong
+   `profileFor`.
+7. **`ErrSpotFeeUnhedged` vẫn còn**, cho phí vượt trần và cho trường hợp (về lý thuyết) cỡ gộp phí vẫn
+   làm hỏng bất biến.
+8. **Id không thấy ở đâu được đọc là vắng sau 30 s** (review phần 3, N1). Nếu đọc là ẩn số mãi, mọi vị
+   thế Bybit trên trang đều không đọc được và không đóng được, vì bốn trong năm id của một ý định đang
+   giữ chưa bao giờ được gửi. Hệ quả chấp nhận: 30 s sau mỗi lệnh ghi, cặp đó hiện CHƯA XÁC ĐỊNH và
+   trang từ chối đóng nó.
+9. **`reduceToMatch` KHÔNG được sửa miễn trừ reduceOnly** khi kiểm trước lệnh cắt perp. Lệnh cắt perp
+   dưới minNotional bị coi là không đặt được, nên cặp GỠ về phẳng thay vì cắt. Có từ 4.4; sửa nó đổi
+   hành vi Binance đã nghiệm thu. An toàn (phẳng), nhưng tốn một vòng khứ hồi — nợ có tên.
+
+### 8.2 Kiểm thử
+
+- `go test -count=1 -race ./...`: **38/38 package đạt, 0 data race**; `gofmt -l .` rỗng; `go vet ./...` sạch.
+- Test mới trong `internal/execution/grossup_test.go`. Mọi khẳng định đọc VÍ và VỊ THẾ PERP của sàn giả:
+
+| Test | Tình huống |
+|---|---|
+| `GrossesUpTheSpotBuySoTheWalletHoldsThePerp` (tuần tự + song song) | 0,3333 BTC — cỡ phần 1 từ chối — mở được: lệnh spot 0,33364, ví ≥ perp và dư < 1 bước. |
+| `ACoarseStepPairOpensInsteadOfBeingRefused` | DOGE 20.000 (spot bước 0,1, perp bước 1): lệnh spot 20.020,1. |
+| `AFeeChargedAboveThePublishedRateIsCaughtByTheWallet` | Công bố 10 bps, sàn thu 30 bps: cắt perp về theo ví bằng id CẮT; cỡ nhỏ không cắt được → gỡ phẳng. |
+| `AFeeLowerThanPublishedIsReadFromTheFills` | Khớp maker, phí 0: lần khớp khai 0, spot dư được cắt bằng id CẮT (M1 review). |
+| `WithoutFillsASurchargeIsAConflict` | Sàn không liệt kê lần khớp và thu cao hơn công bố: báo động, nói rõ đang dùng phí công bố. |
+| `ParallelPartialSpotFillWithABaseCoinFeeShrinksThePerpToTheWallet` | Song song, spot khớp 50%, perp 100%. |
+| `AnUnreadableWalletFallsBackToThePublishedFeeAndSaysSo` | Không đọc được ví: một bằng chứng, và nói rõ như vậy. |
+| `AWalletThatTrailsTheFillIsReadAgainBeforeJudging` | Ví trả số cũ ba lần rồi đúng. |
+| `AWalletStillBehindAtTheDeadlineIsAConflictNotACut` | Ví không bao giờ theo kịp: báo động, chỉ còn hai lệnh mở, perp nguyên (M2 review). |
+| `CoinCreditedFromElsewhereIsAConflictNotTheSpotLeg` | Ví được cộng thêm 0,05 BTC từ nơi khác: báo động, không bán spot nào. |
+| `ASmallExtraInTheWalletKeepsTheFillsFigure` | Dư thêm trong dung sai: chân spot vẫn là số lần khớp khai. |
+| `ASpotFillShortOfTheGrossedUpOrderIsAShortLegOne` | Spot khớp đúng Q, thiếu một phần phí: chân 1 thiếu, perp không được gửi. |
+| `AnUnwindAfterAMakerFillIsFlatWithoutAFalseConflict` | Khớp maker (phí 0), perp bị từ chối: gỡ về phẳng, không báo xung đột giả (M-a review phần 3). |
+| `TheUnwindAfterAPartialCutChargesTheFeeOnTheOriginalBuy` | Lệnh cắt spot khớp một nửa rồi gỡ, ví không đọc được. |
+| `InvariantHoldsOnTheWalletUnderABaseCoinFee` | Thuộc tính, 132 lần: 11 kiểu hành vi mỗi chân, hai thứ tự, phí sàn 10 và 14 bps. 0 vi phạm. |
+
+- Portal:
+  - `TestActions_BybitOpenStatusCloseWithTheSpotFeeInTheBaseCoin`, trên sàn giả trả lời id lạ như
+    adapter Bybit (`ErrOrderNotVisible`):
+    - mở 20k qua trang → phí lần khớp lưu trong file ý định;
+    - danh sách khớp của sàn thành không đọc được (cửa sổ 7 ngày);
+    - trong 30 s đầu cặp là CHƯA XÁC ĐỊNH, sau đó HEDGED;
+    - đóng → phẳng, ví dư < 1 bước.
+  - `TestHedge_ABaseCoinFeeThatCannotBeReadLeavesTheSpotLegUnknown`.
+  - `TestBybitPortal_AcceptsWritesNowTheSpotLegIsJudgedByTheWallet`: lệnh tay tới handler, bot bị 403
+    `autotrade_blocked`, cổng chỉ đọc vẫn chặn khi hồ sơ đặt nó.
+- `broker`: hai test `CeilToStep`. `execution`: `TestReduceClientOrderID_…` (khác mọi id, ≤ 36 ký tự).
+- Hai test cũ đổi vì hành vi đổi có chủ ý:
+  - `TestOpen_RefusesASizeWhoseBaseCoinFeeUnbalancesThePair` bị bỏ (chính là M3).
+  - `TestClose_PerpRemainderOnTheCapBesideAnEmptyWalletIsOneLeg` nay mở vị thế KHÔNG gộp phí, như mọi
+    vị thế mở trước phần 2.
+  - Hai số đếm lượt tra của `TestDoneOrders_ReadsAFinishedOrderOnce` tăng vì có thêm id cắt.
+
+### 8.3 Tự phản biện — năm câu hỏi
+
+**1. Bẫy bụi coin.** Lệnh mua gộp phí để lại trong ví `Qg × (1 − phí) − Q`, luôn ≥ 0 và **dưới một
+bước spot** (đo trong test: 0,3333 BTC → ví 0,33330636, dư 0,00000636 < 0,00001). Lệnh đóng bán đúng Q
+(vị thế perp), nên phần dư ở lại.
+- *Lệch delta:* không. Phần dư < bước spot ≤ dung sai, và portal tính nó vào chính ý định đó. Sau khi
+  đóng: spot +0,00000636, perp 0 → PHẲNG trong dung sai.
+- *Tích tụ làm sai kiểm tra phẳng:* không.
+  - Mọi bằng chứng phẳng và chân spot của `Open` đều so **trước/sau** trong cùng lần gọi, nên coin có
+    sẵn trong ví không vào phép so.
+  - Nhánh giới hạn theo ví của lệnh đóng chỉ bật khi ví **ít** hơn lượng bán; bụi chỉ làm ví nhiều
+    hơn.
+  - Kiểm "MỘT vị thế mỗi symbol" đọc vị thế perp và lệnh của các ý định, không đọc số dư ví.
+- *Chi phí:* tối đa một bước mỗi vòng: BTC 1e-6 ≈ 0,076 USDT, DOGE 0,1 ≈ 0,015 USDT. Không gộp về 0
+  được, vì phí lấy một lượng không nằm trên lưới và lệnh bán luôn làm tròn XUỐNG. Khoảng 66 vòng BTC
+  thì bụi vượt minNotional 5 USDT và bán tay được.
+
+**2. Mở song song, spot khớp 50%, perp khớp 100%.** Spot không đạt mục tiêu gộp phí →
+`reduceToMatch` với chân spot lấy từ lần khớp và ví.
+- Perp là chân lớn hơn → **mua lại perp** (reduceOnly) tới trong một bước của ví. Không có lệnh bán
+  spot nào, nên không thể bị từ chối vì thiếu số dư.
+- Nếu chân lớn hơn là spot, lượng bán tính từ số VÍ nên không vượt ví.
+- Không cắt được → lệnh gỡ bán `số lần khớp khai − phần đã cắt`, giới hạn thêm theo ví tăng → không
+  vượt ví.
+- Chứng minh: test song song 50%, `TheUnwindAfterAPartialCut…` (sàn giả từ chối bán quá số dư), và 132
+  lần chạy thuộc tính có `RefuseSpotSellBeyondBalance`.
+
+**3. Sàn thu phí cao hơn công bố (12 bps thay vì 10).** Lần khớp khai 12 bps nên số ví nhận là đúng
+ngay từ đầu, và ví xác nhận.
+- Khoảng hụt so với perp ≤ dung sai (BTC 0,3333 trên Bybit: 0,0000067 BTC, bước perp 0,001) →
+  `both_open`, và đó là SỰ THẬT theo bất biến.
+- Khoảng hụt > dung sai → cắt perp về theo ví, hoặc gỡ về phẳng nếu lệnh cắt không đặt được. Test 30 bps
+  đi cả hai nhánh.
+- Sàn **không** liệt kê lần khớp: dùng phí công bố; ví sẽ lệch khỏi nó → nếu quá dung sai thì
+  `ErrSpotEvidenceConflict`, không giao dịch tiếp (test `WithoutFillsASurchargeIsAConflict`).
+- Không đọc được VÍ: chỉ còn lần khớp. Với Bybit đó vẫn là phí thực thu, và kết quả nói "chỉ có một
+  bằng chứng".
+- Chiều ngược lại — phí THẤP hơn công bố (khớp maker) — cũng được bắt: lần khớp khai 0, spot dư được cắt.
+
+**4. Không hồi quy trên Binance (phí = 0).** Đo, không chỉ lập luận. Một test tạm chạy **200 lệnh mở
+(10 × 10 kiểu hành vi mỗi chân × 2 thứ tự đặt lệnh) và 104 lệnh đóng**, trên commit `522ed35` (git
+worktree riêng) và trên code cuối cùng (chạy lại SAU các sửa của review). Nó ghi mọi lệnh — thị trường,
+phía, loại, khối lượng, giá, số khớp, trạng thái, id — cùng kết quả, phần dư, mục tiêu và **số lần đọc
+số dư ví**.
+- Bỏ cột id: hai file **giống hệt từng byte**.
+- Khác biệt duy nhất: id của **51 lệnh cắt** (33 spot, 18 perp) đổi từ id GỠ sang id CẮT — đúng sửa lỗi
+  n2.
+- Vì sao:
+  - với phí 0, `x / (1 − 0)` và `x × (1 − 0)` đúng bằng x theo IEEE 754;
+  - các nhánh gộp phí, đọc lần khớp, đọc ví, báo động và `walletShort` đều có điều kiện phí > 0;
+  - `0 > MaxSpotBaseFeeFrac` luôn sai.
+- Portal Binance: file ý định không có phí lưu và `SpotBuyFeeInBaseCoin` là false, nên `readLegNet`
+  không đọc lần khớp nào. Mỗi lượt quét tra thêm 2 id (id cắt), mỗi id một lần tra đơn lệnh.
+- Test tạm và worktree đã xoá, không commit.
+
+**5. Kiểm đột biến.** 24 đột biến; mỗi lần chạy lại gói bị ảnh hưởng. Mọi đột biến đều làm ít nhất một
+test đỏ. Ba đột biến sống sót ở lượt đầu (M5, M7, M9), và M7 sống sót lần nữa sau khi thiết kế lại theo
+review. Mỗi lần như vậy được thêm một test.
+
+| # | Đột biến | Test đỏ |
+|---|---|---|
+| M1 | Bỏ gộp phí (`CeilToStep`) | 15 |
+| M2 | Không đọc ví (chỉ lần khớp) | 4 |
+| M3 | Không đọc lại ví khi còn trễ | 1 |
+| M4 | Lệnh cắt dùng lại id gỡ | 5 |
+| M5 | Mục tiêu chân spot = cỡ phòng hộ | 1 (thêm `ASpotFillShortOfTheGrossedUpOrderIsAShortLegOne`) |
+| M6 | Ví thiếu không kích hoạt cắt | 4 |
+| M7 | Trong dung sai lấy số ví, bỏ min | 1 (thêm `ASmallExtraInTheWalletKeepsTheFillsFigure`) |
+| M8 | `classify` trên số lệnh khớp, không trên ví | 9 |
+| M9 | Gỡ tính phí trên phần còn lại (công thức cũ) | 1 (thêm `TheUnwindAfterAPartialCut…`) |
+| M10 | Portal Bybit không đọc lần khớp khi thiếu phí lưu | 1 |
+| M11 | Portal quên id cắt | 1 |
+| M12 | Portal bỏ qua phí không đọc được | 1 |
+| M13 | Khôi phục cổng chỉ đọc Bybit | 2 |
+| M14 | Portal bỏ qua phí lưu trong file ý định | 1 |
+| M15 | Không chặn bật bot trên Bybit | 1 |
+| M16 | Lần khớp và ví lệch quá dung sai mà không báo động | 3 |
+| M17 | Không đọc lần khớp, chỉ dùng phí công bố | 5 |
+| M18 | Portal đọc id không thấy ở đâu là ẩn số mãi (N1) | 1 |
+| M19 | Không có khoảng chờ sau lệnh ghi | 1 |
+| M20 | Lượt đọc trước khi gửi của lệnh ghi bị tính là đang gửi | 1 |
+| M21 | Bằng chứng phẳng của lệnh gỡ theo phí công bố (M-a) | 1 |
+| M22 | Lệnh mở đã khớp mà không thấy bị đọc là vắng (R1) | 1 |
+| M23 | Lượt đọc sau lệnh cân coi chính lệnh ghi là đang gửi (R2) | 1 |
+| M24 | Lượt đọc sau lệnh cân không bắt buộc thấy lệnh cân | 0 — **tương đương**: lệnh cân không thấy mà bị đọc là vắng thì phần dư vẫn là phần chưa cân, kết quả vẫn "VẪN LỆCH", đúng chiều an toàn |
+
+Hai câu hỏi cụ thể:
+- Bỏ `CeilToStep` → **15** test đỏ.
+- Bỏ phần đọc ví của `effectiveSpotQtyCoin` → **4** test đỏ (M2); bỏ phần đọc lại khi ví trễ → **1**
+  (M3); bỏ báo động khi lệch → **3** (M16).
+
+### 8.4 Đo trên testnet thật (chỉ GET, 2026-09-17)
+
+- `bybitcheck`: **19/19 đạt**, ví UTA có USDT; lệch giờ 216 ms; quyền `SpotTrade` + `ContractTrade`,
+  không `Withdraw`.
+- Luật: spot BTCUSDT bước 1e-6, tối thiểu 5 USDT, **trần 10 BTC**; linear bước 0,001, trần 500. Phí
+  taker spot 10 bps, linear 5,5 bps.
+- Trên testnet giá spot 75.939 và perp 77.260, chênh **+174 bps** — lệch riêng của testnet, không phải
+  thị trường.
+- Portal `-broker bybit -port 8088 -autotrade=false`, chạy trước các sửa của review: `/api/status`,
+  `/api/positions`, `/api/market`, `/api/autotrade/status`, `/api/autotrade/pnl` đều HTTP 200. Thông
+  báo không còn tiền tố chỉ đọc; vị thế `both_flat`. Đã tắt sau khi đo. 8085 / 8086 / 8087 giữ nguyên
+  PID.
+
+### 8.5 Còn mở
+
+1. **Nghiệm thu bằng lệnh** qua trang (§8.7), rồi bỏ `AutotradeBlockedVI`. Đo:
+   - lệnh spot gộp phí, ví nhận so với perp;
+   - `SpotHeldSourceVI`, phí thực thu trong `/v5/execution/list` (maker hay taker);
+   - thời gian ví và danh sách khớp trễ;
+   - cửa sổ trần;
+   - sau khi đóng: bụi.
+2. Lệnh cắt perp dưới minNotional không dùng miễn trừ reduceOnly (§8.1 lệch 8).
+3. `definiteRejection` với retCode Bybit (nợ 4.5i).
+4. Binance mainnet không trả phí bằng BNB cũng thu phí bằng coin gốc. `openAs` truyền phí taker của tài
+   khoản, và execution sẽ gộp phí rồi lưu phí lần khớp khai. Hồ sơ Binance chưa bật
+   `SpotBuyFeeInBaseCoin` — cần xác nhận trước 4.6.
+5. Ý định mở TRƯỚC phần 2 không có phí lưu. Trên Bybit không có ý định nào như vậy, vì portal chỉ đọc
+   từ trước tới nay.
+6. Nếu lần khớp không được liệt kê trong 5 s lúc mở, file ý định không có phí lưu; ý định đó đọc lại
+   `/v5/execution/list` mỗi lần làm mới, và sau 7 ngày chân spot thành ẩn số (review phần 3, M-b — an
+   toàn, nhưng chặn đóng qua trang). Execution đã đọc lại tới hết hạn; bước tiếp là ghi phí vào file ở
+   lần đọc thành công đầu tiên.
+7. Lệnh gỡ đọc ví một lần, không đọc lại khi ví còn trễ (review phần 3, m1): giới hạn theo ví có thể
+   bán ít hơn số coin đang về; bằng chứng phẳng thường vẫn bắt được, nhưng không chắc.
+8. **Vị thế Bybit giữ quá 7 ngày có thể không đọc được trên trang** (R1): `GetOrder` hỏi
+   `/v5/order/history` không kèm khung thời gian. Nếu tra theo `orderLinkId` không vượt được 7 ngày mặc
+   định, lệnh MỞ biến mất khỏi danh sách và cặp thành CHƯA XÁC ĐỊNH — an toàn, nhưng khi đó phải đóng
+   bằng giao diện Bybit. Cần đo trên testnet với một lệnh cũ hơn 7 ngày, hoặc cho adapter hỏi theo
+   cửa sổ neo vào `OpenedAtMs`.
+9. Lãi/lỗ: phần coin mua thêm để gộp phí, và bụi mỗi vòng, chưa được nêu tên trên trang lãi/lỗ (review
+   m5). Trang đã nói phí coin gốc bị loại khỏi phí đã trừ.
+
+### 8.6 Review phần 2 (ngữ cảnh sạch, trước các sửa dưới đây)
+
+**2 chặn, 2 lớn, 6 nhỏ.** Chặn và lớn đã sửa, mỗi cái có test và đột biến.
+
+| # | Mức | Phát hiện | Xử lý |
+|---|---|---|---|
+| B1 | chặn | Portal đọc lần khớp của lệnh mua spot mỗi lần; `/v5/execution/list` mặc định 7 ngày, bộ nhớ đệm bị xoá mỗi lần ghi. Cặp giữ quá 7 ngày → chân spot ẩn số → không đóng được, bot dừng cặp, dừng lỗ không chạy. | Phí lần khớp khai lúc mở được lưu vào file ý định và dùng mà không đọc lại (M14, test lifecycle làm hỏng danh sách khớp). |
+| B2 | chặn | Gỡ cổng chỉ đọc bật luôn `-autotrade` và `/api/autotrade/start` trên Bybit trước khi có lệnh thật nào. | `AutotradeBlockedVI` cho Bybit; lệnh tay mở (M15). |
+| M1 | lớn | Phí truyền vào là phí TAKER công bố; khớp maker phí thấp hơn → `min(ước tính, ví)` bỏ đi phần coin thật, `Open` báo `both_open` trong khi ví dư quá dung sai, và portal lại báo UNHEDGED. | Phí lấy từ lần khớp; lệch lần khớp–ví quá dung sai là báo động (M16, M17). |
+| M2 | lớn | Ví vẫn trễ khi hết 5 s → perp bị cắt về số dư cũ; nếu ví chưa tăng gì thì gỡ có thể báo phẳng khi spot còn long. | Hết hạn mà còn lệch quá dung sai → `ErrSpotEvidenceConflict`, không cắt, không gỡ (M16). |
+| m1 | nhỏ | Phí thu bằng đồng thứ ba bị bỏ qua. | Giữ nguyên: phí trả bằng quote hay BNB thì coin về ví đủ, bỏ qua là đúng. |
+| m2 | nhỏ | Danh sách khớp có thể trễ ngay sau khi mở. | Execution đọc lại tới khi tổng khớp đủ; portal dùng phí đã lưu. |
+| m3 | nhỏ | Id cắt thêm một lần tra mỗi chân mỗi ý định. | Nợ có tên (§8.3 câu 4). |
+| m4 | nhỏ | Binance mainnet có phí: execution gộp phí nhưng portal cộng gộp. | Portal dùng phí lưu trên MỌI sàn, nên hai bên cùng một nguồn; §8.5 mục 4. |
+| m5 | nhỏ | Coin mua thêm và bụi không có trên trang lãi/lỗ. | Nợ có tên (§8.5 mục 6). |
+| m6 | nhỏ | Lệnh gỡ ghi đè `UnwoundQtyCoin` của lệnh cắt. | Giữ nguyên: bằng chứng phẳng B so với đúng số đó, và đổi nó làm lệch hành vi Binance đã nghiệm thu. |
+
+**Review phần 3 (ngữ cảnh sạch, kiểm các sửa trên): 1 chặn, 2 lớn, 3 nhỏ.** B1, B2, M2 được xác nhận đã
+đóng ở đường mở; M1 đóng ở đường mở.
+
+| # | Mức | Phát hiện | Xử lý |
+|---|---|---|---|
+| N1 | chặn | Adapter Bybit trả `ErrOrderNotVisible` cho id chưa từng gửi; portal đọc nó là ẩn số → mọi ý định Bybit đang giữ không đọc được, không đóng được. Test không bắt được vì sàn giả trả `ErrOrderNotFound`. | Quy tắc id vắng sau 30 s của portal (§8.1); sàn giả có chế độ trả `ErrOrderNotVisible`; M18–M20. |
+| M-a | lớn | Gỡ sau khớp maker (phí khai 0) báo `ErrFlatEvidenceConflict` giả. | Bằng chứng phẳng lấy đúng số gỡ bán khi phí thu bằng coin; M21. |
+| M-b | lớn | Phí không khai kịp lúc mở → đọc lại lần khớp mỗi lần → sau 7 ngày ẩn số. | Nợ có tên (§8.5 mục 6). |
+| m1 | nhỏ | Lệnh gỡ đọc ví một lần. | Nợ có tên (§8.5 mục 7). |
+| m2 | nhỏ | Phí có thể bị đánh dấu "đã khai" trên lần khớp chưa cuối ở đường báo động. | Chấp nhận: sai lệch tối đa phí × phần khớp thêm, chỉ trên đường đã báo động. |
+| m3 | nhỏ | Thời gian mở bị chặn trên nhưng có thể dài (5 s + 1–2 lệnh gọi 20 s) dưới khoá ghi; gỡ khi chân 1 thiếu có thể chờ đọc lần khớp tới 5 s trước khi bán. | Nợ có tên: cửa sổ trần của đường gỡ dài thêm tối đa `OrderSettleTimeout`. |
+
+**Review phần 4 (ngữ cảnh sạch, kiểm N1 và M-a): M-a đã đóng; N1 đóng cho ý định dưới 7 ngày; 2 lớn mới.**
+
+| # | Mức | Phát hiện | Xử lý |
+|---|---|---|---|
+| R1 | lớn | Quy tắc "vắng" áp cả cho lệnh MỞ đã khớp. `/v5/order/history` được hỏi không kèm khung thời gian — mặc định 7 ngày — nên sau 7 ngày lệnh mở có thể không thấy → chân đọc là 0 → trang báo phẳng hoặc LÀM PHẲNG mua lại perp khỏi một spot long thật. | Lệnh MỞ không bao giờ đọc là vắng: không thấy → ẩn số (M22). Việc lịch sử theo `orderLinkId` có vượt 7 ngày không vẫn phải đo trên sàn (§8.5 mục 8). |
+| R2 | lớn | Lượt đọc lại ngay sau lệnh cân chạy trong lúc giữ khoá ghi → mọi id chưa gửi là ẩn số → mọi lần cân thành công báo "VẪN LỆCH". | Lượt đọc đó coi các id khác của ý định là có trước lệnh ghi và bắt buộc thấy lệnh cân vừa gửi (M23); chạy thử reconcile không còn đóng dấu thời điểm ghi. |
+| R3 | nhỏ | Tiến trình chết giữa lúc gửi và lúc lưu file, khởi động lại trong 30 s: lệnh đang bay có thể đọc là vắng. | Chấp nhận có tên: tạo lệnh tính bằng mili giây, khởi động lại tính bằng giây. |
+
+Sau review phần 4 không chạy thêm vòng review nào; các sửa R1 và R2 được kiểm bằng test và đột biến.
+
+### 8.7 Hướng dẫn nghiệm thu cho người vận hành
+
+```bash
+# Từ gốc repo. .env có BYBIT_API_KEY / BYBIT_API_SECRET / BYBIT_MODE=testnet.
+go run ./cmd/bybitcheck                                   # phải 19/19, không lệnh nào
+go run ./cmd/execportal -broker bybit -port 8088 -autotrade=false
+# → http://127.0.0.1:8088
+# Trên Bybit bot bị chặn (-autotrade và nút bật bot đều bị từ chối); -autotrade=false chỉ để log sạch.
+```
+
+1. Tab Thực thi thủ công: mở BTCUSDT cỡ nhỏ nhất (perp tối thiểu 0,001 BTC ≈ 77 USDT).
+2. Kiểm:
+   - lệnh spot = `CeilToStep(Q ÷ 0,999)` (0,001 → 0,001002);
+   - `outcome both_open`, trạng thái HEDGED, phần dư < 0,001;
+   - không có báo động.
+3. `cat .paper/exec-bybit/<id>.json` — `spot_buy_base_fee_qty_coin` và `spot_buy_base_fee_stated: true`.
+4. `curl -s -H 'X-Execportal-Action: read' 'http://127.0.0.1:8088/api/positions?symbol=BTCUSDT'` —
+   dòng "mở BUY … − phí coin gốc … = ví nhận …".
+5. **Chờ 30 s sau khi mở** (trước đó cặp là CHƯA XÁC ĐỊNH và trang từ chối đóng — §8.1 lệch 8), rồi
+   đóng qua trang: `both_flat`; ví BTC dư < 0,000001 so với trước khi mở.
+6. Nếu có báo động `ErrSpotEvidenceConflict`: KHÔNG làm phẳng vội. Đọc `SpotHeldSourceVI` (lần khớp và
+   ví), đối chiếu trên giao diện Bybit testnet, rồi quyết định bằng tay.
+7. Dừng portal (Ctrl+C). Không chạm 8085 / 8086 / 8087.
+8. Khi các bước trên đạt: xoá `AutotradeBlockedVI` trong `profileFor` (một dòng), rồi review và commit
+   riêng.

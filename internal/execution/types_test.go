@@ -110,6 +110,7 @@ func TestReconcileClientOrderID_IsTheSchemeExeccheckShippedAndDistinct(t *testin
 			"open":   LegClientOrderID(intentID, leg),
 			"close":  CloseClientOrderID(intentID, leg),
 			"unwind": UnwindClientOrderID(intentID, leg),
+			"reduce": ReduceClientOrderID(intentID, leg),
 		} {
 			if got == other {
 				t.Errorf("%s: the reconcile id equals the %s id %q", leg, name, other)
@@ -126,4 +127,33 @@ func truncate(s string) string {
 		return s[:40] + "…"
 	}
 	return s
+}
+
+// reduceToMatch's cut has its own id (review 4.5j, n2). Under the unwind's id a
+// cut followed by an unwind on the same leg sends two orders with one id, and
+// the second is resolved by reading back the first.
+func TestReduceClientOrderID_IsDistinctFromEveryOtherOrderOfTheIntent(t *testing.T) {
+	const intentID = "abtcusdt-20260917-101500-001"
+	seen := map[string]string{}
+	for _, leg := range []LegName{LegSpot, LegPerp} {
+		for name, id := range map[string]string{
+			"open":      LegClientOrderID(intentID, leg),
+			"close":     CloseClientOrderID(intentID, leg),
+			"unwind":    UnwindClientOrderID(intentID, leg),
+			"reconcile": ReconcileClientOrderID(intentID, leg),
+			"reduce":    ReduceClientOrderID(intentID, leg),
+		} {
+			key := string(leg) + " " + name
+			if other, dup := seen[id]; dup {
+				t.Errorf("%s and %s derive the same id %q", key, other, id)
+			}
+			seen[id] = key
+			if len(id) > 36 {
+				t.Errorf("%s id %q is %d characters; Binance and Bybit both cap a client id at 36", key, id, len(id))
+			}
+		}
+	}
+	if got, want := ReduceClientOrderID(intentID, LegPerp), LegClientOrderID(intentID+"|reduce", LegPerp); got != want {
+		t.Errorf("ReduceClientOrderID = %q, want %q", got, want)
+	}
 }

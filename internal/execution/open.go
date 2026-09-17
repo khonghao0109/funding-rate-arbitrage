@@ -152,20 +152,20 @@ func (o *Trader) Open(ctx context.Context, intent Intent) (Result, error) {
 		res.Perp = mergeLeg(res.Perp, perpLeg)
 		if spotLeg.err != nil && perpLeg.err != nil {
 			return o.unwind(ctx, intent, inv, res, joinVI([]string{
-				reasonFor("chân spot", spotLeg.err, res.Spot.FilledQtyCoin, plan.QtyCoin),
+				reasonFor("chân spot", spotLeg.err, res.Spot.FilledQtyCoin, plan.SpotTargetQtyCoin),
 				reasonFor("chân perp", perpLeg.err, res.Perp.FilledQtyCoin, plan.QtyCoin)}))
 		}
 	} else {
 		// LEG 1 — spot, and the order is deliberate: if the second leg fails we
 		// hold the first naked until the unwind completes, and a naked spot long
 		// cannot be liquidated while a naked perp short can.
-		spotLeg := o.workLeg(ctx, intent, LegSpot, o.spot, spotReq, plan.QtyCoin)
+		spotLeg := o.workLeg(ctx, intent, LegSpot, o.spot, spotReq, plan.SpotTargetQtyCoin)
 		res.Spot = mergeLeg(res.Spot, spotLeg)
-		if spotLeg.err != nil || !reachedTarget(res.Spot.FilledQtyCoin, plan.QtyCoin) {
+		if spotLeg.err != nil || !reachedTarget(res.Spot.FilledQtyCoin, plan.SpotTargetQtyCoin) {
 			// Leg 1 fell short, so leg 2 is never placed and there is nothing
 			// to reduce TO. Shrinking the pair needs both legs to hold
 			// something; here only one does.
-			return o.unwind(ctx, intent, inv, res, reasonFor("chân spot", spotLeg.err, res.Spot.FilledQtyCoin, plan.QtyCoin))
+			return o.unwind(ctx, intent, inv, res, reasonFor("chân spot", spotLeg.err, res.Spot.FilledQtyCoin, plan.SpotTargetQtyCoin))
 		}
 
 		// LEG 2 — perp.
@@ -175,31 +175,186 @@ func (o *Trader) Open(ctx context.Context, intent Intent) (Result, error) {
 
 	res.UnhedgedWindow = unhedgedWindow(res.Spot.FilledAtMs, res.Perp.FilledAtMs)
 
-	shortOfTarget := !reachedTarget(res.Spot.FilledQtyCoin, plan.QtyCoin) ||
+	shortOfTarget := !reachedTarget(res.Spot.FilledQtyCoin, plan.SpotTargetQtyCoin) ||
 		!reachedTarget(res.Perp.FilledQtyCoin, plan.QtyCoin)
-	if shortOfTarget {
+
+	// What the spot WALLET holds because of these fills — the leg the hedge is
+	// judged on (PLAN 4.5j). Without a fee kept in the base coin it is the
+	// order's fill, with no read and no arithmetic, exactly as before.
+	spotHeldQtyCoin, heldErr := o.spotHeldQtyCoin(ctx, intent, inv, &res)
+	if heldErr != nil {
+		// The fills and the wallet contradict each other past the tolerance.
+		// Both legs are on the venue; trading on either number is picking one.
+		res.Outcome = OutcomeBothOpen
+		res.SpotHeldQtyCoin = spotHeldQtyCoin
+		res.ResidualQtyCoin = math.Abs(spotHeldQtyCoin - res.Perp.FilledQtyCoin)
+		res.ReasonVI = heldErr.Error()
+		o.record(ctx, Event{IntentID: intent.ID, Kind: EventResolved, Outcome: OutcomeBothOpen, Err: heldErr, DetailVI: heldErr.Error()})
+		return res, heldErr
+	}
+
+	// A wallet that received less than the plan needs — a fee charged above
+	// the published rate, or a partial fill the orders alone make look whole —
+	// is also a pair to shrink before it is one to throw away.
+	walletShort := intent.SpotBuyFeeInBaseFrac > 0 && res.Perp.FilledQtyCoin > 0 &&
+		inv.check(spotHeldQtyCoin, res.Perp.FilledQtyCoin) != nil
+	if shortOfTarget || walletShort {
 		// One leg stopped short. Before throwing a good position away, try to
 		// SHRINK the pair to what the short leg really holds — see
 		// reduceToMatch. Unwinding is the fallback, not the first answer.
 		reasonVI := joinVI([]string{
-			reasonFor("chân spot", nil, res.Spot.FilledQtyCoin, plan.QtyCoin),
+			reasonFor("chân spot", nil, res.Spot.FilledQtyCoin, plan.SpotTargetQtyCoin),
 			reasonFor("chân perp", nil, res.Perp.FilledQtyCoin, plan.QtyCoin)})
-		if whyNotVI := o.reduceToMatch(ctx, intent, inv, plan, &res); whyNotVI != "" {
+		if walletShort && !shortOfTarget {
+			reasonVI = fmt.Sprintf("ví spot chỉ nhận %.10g coin bên cạnh perp %.10g (%s)",
+				spotHeldQtyCoin, res.Perp.FilledQtyCoin, res.SpotHeldSourceVI)
+		}
+		if whyNotVI := o.reduceToMatch(ctx, intent, inv, plan, &res, &spotHeldQtyCoin); whyNotVI != "" {
 			return o.unwind(ctx, intent, inv, res, reasonVI+" | không thu nhỏ được: "+whyNotVI)
 		}
 	}
 
-	outcome, err := inv.classify(res.Spot.FilledQtyCoin, res.Perp.FilledQtyCoin)
+	outcome, err := inv.classify(spotHeldQtyCoin, res.Perp.FilledQtyCoin)
 	if err != nil {
 		// Both legs think they filled, and the pair is still not hedged. Try
 		// to close out rather than return holding it.
 		return o.unwind(ctx, intent, inv, res, err.Error())
 	}
 	res.Outcome = outcome
-	res.ResidualQtyCoin = math.Abs(res.Spot.FilledQtyCoin - res.Perp.FilledQtyCoin)
+	res.SpotHeldQtyCoin = spotHeldQtyCoin
+	res.ResidualQtyCoin = math.Abs(spotHeldQtyCoin - res.Perp.FilledQtyCoin)
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventResolved, Outcome: outcome,
 		FilledQtyCoin: res.Spot.FilledQtyCoin})
 	return res, nil
+}
+
+// spotHeldQtyCoin is what the spot wallet holds because of this intent's
+// opening fill, and res.SpotHeldSourceVI says how it was known.
+//
+// With no fee kept in the base coin it is the order's own fill: no read, no
+// arithmetic — the accepted Binance path, untouched.
+//
+// With one, TWO pieces of evidence, both from the venue (rule 7):
+//
+//   - credit: what the order's FILLS say reached the wallet — the fill less the
+//     base-coin commission the fills state (spotCreditQtyCoin). The published
+//     rate is only the fallback when the fills cannot be read: a part that
+//     rested fills as MAKER, and a maker fee can be lower or zero, so the
+//     published taker rate is not what the wallet got (review part 2, M1).
+//   - gain: the wallet's base balance now, minus the balance read before
+//     anything was sent.
+//
+// A balance can trail the fill that moved it, so the wallet is read again every
+// PollEvery until the two agree within one spot step or OrderSettleTimeout
+// passes. Then:
+//
+//   - within the pair's tolerance: the SMALLER of the two is the leg — a
+//     conservative reading that can only make the pair look shorter;
+//   - past it, either way: ErrSpotEvidenceConflict, and the caller sends
+//     nothing more. A gain above the credit is coin from somewhere else or an
+//     unstated fee; a gain below it is a wallet still behind or coin gone.
+//     Cutting the perp to a lagging balance, or selling coin nobody can
+//     attribute, is trading on one of two contradicting numbers (review part
+//     2, M2) — never reconciled here.
+//
+// With no balance to compare against, the credit stands and the source says
+// only one piece of evidence exists.
+func (o *Trader) spotHeldQtyCoin(ctx context.Context, intent Intent, inv pairInvariant, res *Result) (float64, error) {
+	f := intent.SpotBuyFeeInBaseFrac
+	if f == 0 {
+		return res.Spot.FilledQtyCoin, nil
+	}
+	if res.Spot.FilledQtyCoin <= 0 {
+		res.SpotHeldSourceVI = "chân spot không khớp gì"
+		return 0, nil
+	}
+	safe := context.WithoutCancel(ctx)
+	deadline := o.cfg.Now().Add(o.cfg.OrderSettleTimeout)
+	creditQtyCoin, creditVI := o.spotCreditQtyCoin(safe, intent, res, res.Spot.FilledQtyCoin, deadline)
+	if !res.SpotBaseBalanceRead {
+		res.SpotHeldSourceVI = creditVI + "; SỐ DƯ SÀN trước lệnh không đọc được, nên chỉ có một bằng chứng"
+		return creditQtyCoin, nil
+	}
+	step := intent.SpotInstrument.StepSizeCoin
+	for {
+		after, ok := o.readSpotBaseQtyCoin(safe, intent)
+		if !ok {
+			res.SpotHeldSourceVI = creditVI + "; SỐ DƯ SÀN sau lệnh không đọc được, nên chỉ có một bằng chứng"
+			return creditQtyCoin, nil
+		}
+		gainedQtyCoin := after - res.SpotBaseBalanceBeforeQtyCoin
+		gapQtyCoin := math.Abs(gainedQtyCoin - creditQtyCoin)
+		agreed := gapQtyCoin <= step+gridEpsilon
+		if agreed || o.cfg.Now().After(deadline) || o.sleep(safe, o.cfg.PollEvery) != nil {
+			sourceVI := fmt.Sprintf("SỐ DƯ SÀN %.10g → %.10g (nhận %.10g coin); %s",
+				res.SpotBaseBalanceBeforeQtyCoin, after, gainedQtyCoin, creditVI)
+			if !agreed && gapQtyCoin > inv.ToleranceQtyCoin+gridEpsilon {
+				res.SpotHeldSourceVI = sourceVI + fmt.Sprintf(" — LỆCH %.10g coin, quá dung sai %.10g", gapQtyCoin, inv.ToleranceQtyCoin)
+				return creditQtyCoin, fmt.Errorf("%w: %s; perp %.10g coin — không cắt, không gỡ, đối chiếu bằng tay",
+					ErrSpotEvidenceConflict, res.SpotHeldSourceVI, res.Perp.FilledQtyCoin)
+			}
+			held := math.Min(creditQtyCoin, math.Max(0, gainedQtyCoin))
+			res.SpotHeldSourceVI = sourceVI + fmt.Sprintf("; lấy số NHỎ hơn: %.10g", held)
+			return held, nil
+		}
+	}
+}
+
+// spotCreditQtyCoin is what the spot buy's fills say reached the wallet for a
+// fill of boughtQtyCoin, and the words for it. It records the fee on res once.
+//
+// The fills are read when the spot broker lists them (broker.TradeReader) and
+// retried until they add up to the fill or the deadline passes, because a
+// venue's fill list can trail the order's status. A commission in the base
+// asset is the venue keeping coin; a commission in any other asset (the quote,
+// BNB) left the coin whole. A non-zero commission in no named asset, or fills
+// that never add up, fall back to the published rate — and say so.
+func (o *Trader) spotCreditQtyCoin(ctx context.Context, intent Intent, res *Result, boughtQtyCoin float64, deadline time.Time) (float64, string) {
+	f := intent.SpotBuyFeeInBaseFrac
+	if res.SpotBuyBaseFeeStated {
+		return boughtQtyCoin - res.SpotBuyBaseFeeQtyCoin, fmt.Sprintf("LẦN KHỚP khai phí %.10g coin gốc trên %.10g khớp", res.SpotBuyBaseFeeQtyCoin, boughtQtyCoin)
+	}
+	published := func(whyVI string) (float64, string) {
+		res.SpotBuyBaseFeeQtyCoin = boughtQtyCoin * f
+		return boughtQtyCoin * (1 - f), fmt.Sprintf("SỔ CỦA TA: khớp %.10g × (1 − phí công bố %.4f%%) = %.10g (%s)",
+			boughtQtyCoin, f*100, boughtQtyCoin*(1-f), whyVI)
+	}
+	reader, ok := o.spot.(broker.TradeReader)
+	asset := intent.SpotInstrument.BaseAsset
+	if !ok || asset == "" {
+		return published("sàn không liệt kê lần khớp")
+	}
+	q := broker.OrderQuery{Market: broker.MarketSpot, Symbol: intent.Symbol, ClientOrderID: res.Spot.ClientOrderID}
+	whyVI := ""
+	for {
+		trades, err := reader.OrderTrades(ctx, q)
+		if err == nil {
+			listed, fee, unnamed := 0.0, 0.0, false
+			for _, t := range trades {
+				listed += t.QtyCoin
+				switch {
+				case t.CommissionQtyInAsset == 0:
+				case t.CommissionAsset == asset:
+					fee += t.CommissionQtyInAsset
+				case t.CommissionAsset == "":
+					unnamed = true
+				}
+			}
+			switch {
+			case unnamed:
+				return published("lần khớp thu phí mà không nêu đồng tiền")
+			case math.Abs(listed-boughtQtyCoin) <= gridEpsilon*math.Max(1, boughtQtyCoin):
+				res.SpotBuyBaseFeeQtyCoin, res.SpotBuyBaseFeeStated = fee, true
+				return boughtQtyCoin - fee, fmt.Sprintf("LẦN KHỚP khai phí %.10g %s trên %.10g khớp → ví nhận %.10g", fee, asset, boughtQtyCoin, boughtQtyCoin-fee)
+			}
+			whyVI = fmt.Sprintf("các lần khớp cộng lại %.10g, lệnh báo %.10g", listed, boughtQtyCoin)
+		} else {
+			whyVI = "không đọc được lần khớp: " + err.Error()
+		}
+		if o.cfg.Now().After(deadline) || o.sleep(ctx, o.cfg.PollEvery) != nil {
+			return published(whyVI)
+		}
+	}
 }
 
 // legOutcome is what one leg did: the venue's own account of the order, when
@@ -227,7 +382,7 @@ func (o *Trader) placeBothAtOnce(ctx context.Context, intent Intent, plan entryP
 		defer close(done)
 		perpLeg = o.workLeg(ctx, intent, LegPerp, o.perp, perpReq, plan.QtyCoin)
 	}()
-	spotLeg = o.workLeg(ctx, intent, LegSpot, o.spot, spotReq, plan.QtyCoin)
+	spotLeg = o.workLeg(ctx, intent, LegSpot, o.spot, spotReq, plan.SpotTargetQtyCoin)
 	<-done
 	return spotLeg, perpLeg
 }
@@ -269,8 +424,13 @@ func unhedgedWindow(aMs, bMs int64) time.Duration {
 //
 // It returns "" on success, and otherwise the reason it did not shrink, in the
 // operator's language.
-func (o *Trader) reduceToMatch(ctx context.Context, intent Intent, inv pairInvariant, plan entryPlan, res *Result) string {
-	spotQty, perpQty := res.Spot.FilledQtyCoin, res.Perp.FilledQtyCoin
+//
+// The spot leg is what the WALLET holds (spotHeldQtyCoin, see Open), which is
+// the order's fill unless the venue keeps a fee in the base coin; a spot cut
+// lowers it by exactly what the cut sold, since a spot SELL's fee is taken in
+// the quote asset.
+func (o *Trader) reduceToMatch(ctx context.Context, intent Intent, inv pairInvariant, plan entryPlan, res *Result, spotHeldQtyCoin *float64) string {
+	spotQty, perpQty := *spotHeldQtyCoin, res.Perp.FilledQtyCoin
 	keepQtyCoin := math.Min(spotQty, perpQty)
 	if keepQtyCoin <= 0 {
 		return "một chân không giữ gì — không có cỡ chung nào để thu về"
@@ -363,7 +523,12 @@ func (o *Trader) reduceToMatch(ctx context.Context, intent Intent, inv pairInvar
 
 	safe, cancel := context.WithTimeout(context.WithoutCancel(ctx), o.cfg.UnwindTimeout)
 	defer cancel()
-	closed, err := o.closeLeg(safe, intent, larger, legBroker, market, side, rounded.QtyCoin, priceQuote)
+	// Its OWN id (review 4.5j, n2): the unwind that may follow a failed cut
+	// sends a closing order on the same leg, and under one shared id the
+	// venue's duplicate refusal would be resolved by looking up — and
+	// believing — the cut's fill as the unwind's.
+	closed, err := o.closeLeg(safe, intent, larger, legBroker, market, side, rounded.QtyCoin, priceQuote,
+		ReduceClientOrderID(intent.ID, larger))
 	if err != nil {
 		return fmt.Sprintf("lệnh thu nhỏ chân %s hỏng: %s", larger, err.Error())
 	}
@@ -372,15 +537,21 @@ func (o *Trader) reduceToMatch(ctx context.Context, intent Intent, inv pairInvar
 	if legResult.FilledQtyCoin < 0 {
 		legResult.FilledQtyCoin = 0
 	}
+	if larger == LegSpot {
+		*spotHeldQtyCoin -= closed
+		if *spotHeldQtyCoin < 0 {
+			*spotHeldQtyCoin = 0
+		}
+	}
 
 	// The pair has to be hedged AFTER the cut, on the venues' own numbers. If
 	// it is not, say nothing was achieved and let the caller unwind: a failed
 	// shrink must not leave a worse pair than it found.
-	if _, err := inv.classify(res.Spot.FilledQtyCoin, res.Perp.FilledQtyCoin); err != nil {
+	if _, err := inv.classify(*spotHeldQtyCoin, res.Perp.FilledQtyCoin); err != nil {
 		return fmt.Sprintf("sau khi thu nhỏ cặp vẫn không phòng hộ: %s", err.Error())
 	}
 	res.ReducedToMatch = true
-	res.ResidualQtyCoin = math.Abs(res.Spot.FilledQtyCoin - res.Perp.FilledQtyCoin)
+	res.ResidualQtyCoin = math.Abs(*spotHeldQtyCoin - res.Perp.FilledQtyCoin)
 	_ = plan
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventReduced, Leg: larger,
 		FilledQtyCoin: closed, DetailVI: fmt.Sprintf("cặp còn %.10g coin mỗi chân", keepQtyCoin)})
@@ -625,8 +796,16 @@ func (o *Trader) unwind(ctx context.Context, intent Intent, inv pairInvariant, r
 		// was never in the wallet, so it is neither sold nor "left open".
 		feeKeptQtyCoin := 0.0
 		if leg.name == LegSpot && intent.SpotBuyFeeInBaseFrac > 0 {
-			feeKeptQtyCoin = unwindQtyCoin * intent.SpotBuyFeeInBaseFrac
-			unwindQtyCoin -= feeKeptQtyCoin
+			// The fee is a share of the ORIGINAL buy. A cut reduceToMatch
+			// already sold came out of the wallet whole, fee-free in the base
+			// coin, so it is subtracted after the fee and not before.
+			boughtQtyCoin := leg.result.FilledQtyCoin + leg.result.UnwoundQtyCoin
+			creditQtyCoin, _ := o.spotCreditQtyCoin(safe, intent, &res, boughtQtyCoin, o.cfg.Now().Add(o.cfg.OrderSettleTimeout))
+			unwindQtyCoin = creditQtyCoin - leg.result.UnwoundQtyCoin
+			if unwindQtyCoin < 0 {
+				unwindQtyCoin = 0
+			}
+			feeKeptQtyCoin = leg.result.FilledQtyCoin - unwindQtyCoin
 			// And never more than the VENUE says the wallet gained, which also
 			// covers a fee the venue rounded up past the published rate.
 			if res.SpotBaseBalanceRead {
@@ -638,12 +817,15 @@ func (o *Trader) unwind(ctx context.Context, intent Intent, inv pairInvariant, r
 				}
 			}
 		}
-		if leg.name == LegSpot && feeKeptQtyCoin > 0 {
-			// The flat proof compares the close with what the wallet RECEIVED,
-			// which the wallet read may have lowered below the published rate.
+		if leg.name == LegSpot && intent.SpotBuyFeeInBaseFrac > 0 {
+			// The flat proof compares the close with what the wallet RECEIVED —
+			// the fills' own fee, lowered by the wallet read — even when that fee
+			// is zero (a maker fill): the published rate is not what was kept
+			// (review part 2, M-a).
 			openedSpotQtyCoin = unwindQtyCoin
 		}
-		closed, err := o.closeLeg(safe, intent, leg.name, leg.b, market, side, unwindQtyCoin, priceQuote)
+		closed, err := o.closeLeg(safe, intent, leg.name, leg.b, market, side, unwindQtyCoin, priceQuote,
+			UnwindClientOrderID(intent.ID, leg.name))
 		if err != nil {
 			failures = append(failures, fmt.Sprintf("%s: %s", leg.name, err.Error()))
 			continue
@@ -723,7 +905,7 @@ func (o *Trader) unwind(ctx context.Context, intent Intent, inv pairInvariant, r
 // opposite position, so the quantity here is the one read back from the venue
 // and nothing else.
 func (o *Trader) closeLeg(ctx context.Context, intent Intent, leg LegName, b broker.Broker,
-	market broker.Market, side broker.Side, qtyCoin, priceQuote float64) (float64, error) {
+	market broker.Market, side broker.Side, qtyCoin, priceQuote float64, clientOrderID string) (float64, error) {
 
 	rules := intent.SpotInstrument
 	if leg == LegPerp {
@@ -746,7 +928,7 @@ func (o *Trader) closeLeg(ctx context.Context, intent Intent, leg LegName, b bro
 
 	req := broker.PlaceOrderRequest{
 		Market: market, Symbol: intent.Symbol, Side: side, Type: broker.OrderTypeMarket,
-		ClientOrderID: unwindClientOrderID(intent.ID, leg), QtyCoin: rounded.QtyCoin,
+		ClientOrderID: clientOrderID, QtyCoin: rounded.QtyCoin,
 		ReduceOnly: reduceOnly,
 	}
 	o.record(ctx, Event{IntentID: intent.ID, Kind: EventUnwindLeg, Leg: leg,
@@ -880,8 +1062,14 @@ func UnwindClientOrderID(intentID string, leg LegName) string {
 	return LegClientOrderID(intentID+"|unwind", leg)
 }
 
-func unwindClientOrderID(intentID string, leg LegName) string {
-	return UnwindClientOrderID(intentID, leg)
+// ReduceClientOrderID derives the id of the order reduceToMatch sends to cut
+// the larger leg down to the smaller one. It is the fifth order an intent can
+// produce and it must not share the unwind's id: a cut followed by an unwind
+// on the same leg would otherwise send two orders under one id, and resolving
+// the second by id reads back the first (review 4.5j, n2). Every tool that sums
+// an intent's orders from the venue must list it.
+func ReduceClientOrderID(intentID string, leg LegName) string {
+	return LegClientOrderID(intentID+"|reduce", leg)
 }
 
 // definiteRejection reports whether the order was positively refused, as

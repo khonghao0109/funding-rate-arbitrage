@@ -318,7 +318,7 @@ func (t portalTrader) Open(ctx context.Context, order autotrade.OpenOrder) autot
 		return autotrade.OpenResult{Busy: true, ErrorVI: "khoá ghi đang do " + orUnknown(heldBy) + " giữ"}
 	}
 	defer release()
-	defer p.invalidateVenueReads()
+	defer p.afterOrderWrite()
 	p.memo.forget()
 
 	v, _ := p.openAs(ctx, req, intentPrefixAutotrade)
@@ -359,7 +359,7 @@ func (t portalTrader) Close(ctx context.Context, order autotrade.CloseOrder) aut
 		return autotrade.CloseResult{IntentID: intentID, Busy: true, ErrorVI: "khoá ghi đang do " + orUnknown(heldBy) + " giữ"}
 	}
 	defer release()
-	defer p.invalidateVenueReads()
+	defer p.afterOrderWrite()
 	p.memo.forget()
 
 	st, err := loadState(p.stateDir, intentID)
@@ -610,6 +610,10 @@ func (p *portal) portfolioFromRequest(req autotradeStartRequest) (autotrade.Port
 }
 
 func (p *portal) handleAutotradeStart(w http.ResponseWriter, r *http.Request) {
+	if why := p.markets.profile.AutotradeBlockedVI; why != "" {
+		writeError(w, http.StatusForbidden, "autotrade_blocked", why+" — bot KHÔNG bật")
+		return
+	}
 	var req autotradeStartRequest
 	if !decodeBody(w, r, &req) {
 		return

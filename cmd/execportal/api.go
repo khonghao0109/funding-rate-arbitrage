@@ -95,6 +95,12 @@ type portal struct {
 	busyMu      sync.Mutex
 	busyAction  string
 	busySinceMs int64
+	// lastWriteEndMs is when the newest write that could SEND an order ended
+	// (stamped by afterOrderWrite, which only those writes run). Together
+	// with busyAction it tells a read whether an order may have been sent too
+	// recently for the venue's order lists to show it (hedge.go). A dry run
+	// takes the lock and sends nothing, so it does not reset the grace.
+	lastWriteEndMs int64
 
 	accounts    *ttlCache[accountView]
 	rawBalances *ttlCache[[]broker.Balance]
@@ -192,6 +198,15 @@ func (p *portal) acquire(action string) (release func(), heldBy string, heldSinc
 		p.busyMu.Unlock()
 		p.writeMu.Unlock()
 	}, "", 0, true
+}
+
+// afterOrderWrite ends a write that may have sent orders: it dates the write for
+// hedge.go's not-visible grace and makes the next poll ask the venue.
+func (p *portal) afterOrderWrite() {
+	p.busyMu.Lock()
+	p.lastWriteEndMs = p.now().UnixMilli()
+	p.busyMu.Unlock()
+	p.invalidateVenueReads()
 }
 
 // invalidateVenueReads makes the next poll after an order ask the venue.
@@ -798,7 +813,7 @@ func (p *portal) readHedge(ctx context.Context, symbol string, walletContext boo
 		}
 	}
 	v.TrackedIntents = len(ids)
-	for _, h := range readIntentHedges(ctx, p.markets.spot, p.markets.perp, p.memo, symbol, ids) {
+	for _, h := range p.intentHedges(ctx, symbol, ids, false) {
 		ev.SpotLegQtyCoin += h.Spot.QtyCoin
 		ev.IntentsPerpQtyCoin += h.Perp.QtyCoin
 		ev.UnreadableVI = append(ev.UnreadableVI, h.unreadable()...)

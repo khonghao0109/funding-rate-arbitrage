@@ -1197,13 +1197,39 @@ after the perp was already flat. `internal/execution` now refuses a size whose
 fee gap exceeds the hedge tolerance (`Intent.SpotBuyFeeInBaseFrac`,
 `ErrSpotFeeUnhedged`), unwinds what the wallet received, and closes what the
 wallet holds within `Config.MaxSpotBaseFeeFrac` of the ORIGINAL buy. **A second
-review still found the spot leg judged by its ORDERS on two paths** (a parallel
-partial fill or a fee charged above the published rate reports `both_open` on an
-unhedged wallet; the size refusal would halt the bot on coarse-step pairs), so
-**the Bybit portal is READ-ONLY** — every write answers 403 `venue_read_only`
-and `-autotrade` is refused — until the spot leg is bought grossed up
-(`ceil(Q/(1−fee))`) and judged by the wallet everywhere, which is a change to the
-accepted 4.4/4.5 state machine and the operator's to scope. The Bybit trap rows
+review still found the spot leg judged by its ORDERS on two paths**, so the
+Bybit portal shipped READ-ONLY; **the operator approved the redesign the same
+day and the gate is gone** (4.5j part 2, report §8). The spot leg is now BOUGHT
+GROSSED UP — `broker.CeilToStep(Q ÷ (1 − fee), spot step)`, the perp stays Q, so
+the wallet holds Q plus less than one spot step and the old size refusal (which
+refused every DOGE slot over 1,000 coins) is gone. `Open` then JUDGES the spot
+leg on two venue readings: the base-coin fee the buy's own FILLS state (a
+resting part fills as maker, so the published taker rate is only the fallback)
+and the base balance's measured gain, re-read until `OrderSettleTimeout` while
+the two differ. Within the pair tolerance the smaller is the leg, so a parallel
+partial fill or a surcharge is cut by `reduceToMatch` or unwound, never reported
+`both_open`; still apart past the tolerance at the deadline is
+`ErrSpotEvidenceConflict` (wraps `ErrFlatEvidenceConflict`) and nothing more is
+sent (`Result.SpotHeldQtyCoin`, `SpotBuyBaseFeeQtyCoin`). The cut has its own id, `ReduceClientOrderID`, and
+every tool that sums an intent's orders lists it. The portal STORES that stated
+fee in the intent file (`spot_buy_base_fee_qty_coin`) and its hedge status
+subtracts it from the opening buy without re-reading the venue, because Bybit's
+execution list answers 7 days by default and a pair is held longer; only an
+intent with no stored fee reads the fills (`venueProfile.SpotBuyFeeInBaseCoin`),
+and an unreadable fee makes the leg unknown. Bybit's `GetOrder` answers an id
+neither order list shows with `ErrOrderNotVisible` (ambiguous, never "not
+found"), so the portal ALONE reads such an id as absent — UTA history keeps
+filled orders 730 days and unfilled ones 24 h — once the intent has been quiet
+for 30 s, never for the intent's OPENING orders, and never for an order the
+current write just sent. A pair held past 7 days may still read UNKNOWN,
+because the history call sends no time window (default 7 days) and whether an
+`orderLinkId` lookup reaches past that is unmeasured. Manual writes are open on Bybit;
+**the auto-trader is still refused there** (`venueProfile.AutotradeBlockedVI`)
+until a manual click-through passes on the testnet.
+With fee 0 — Binance — no new read happens and every new product is × 1, so the
+accepted path is unchanged except the cut's id. **Not yet accepted with an
+order**: `bybitcheck` reads 19/19 on a funded wallet; the operator's acceptance
+runs `go run ./cmd/execportal -broker bybit -port 8088 -autotrade=false`. The Bybit trap rows
 in the table below carry the details.
 
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
@@ -1374,7 +1400,7 @@ re-research these; do verify before writing the integration.
 | **Kraken** | `funding_rate` is an absolute price amount, not a rate — verified live: absolute ÷ relative ≈ index price. Use `relative_funding_rate`. Settles hourly and the relative rate is **per 1h, used as-is** — ×8 for the 8h comparison, never ÷8 (correction history: DATA-REQUIREMENTS §3.2②). Its WS `next_funding_rate_time` is an **absolute epoch-ms stamp** even though the doc prose says "time until" — probed live twice; see §3.3⑥. And its WS `relative_funding_rate` is the **already-settled** figure of the last completed hour (the forming estimate lives in `relative_funding_rate_prediction`), so `IsEstimated=false` there and the rate does NOT forecast the next stamp. |
 | **Bybit** | Ticker pushes snapshot AND delta. A field absent from a message means unchanged, not zero. Merge into cached state; never overwrite — and publish only when a FUNDING field actually changed, or the ~100ms delta stream refreshes `RecvAt` ten times a second and a dead subscription looks permanently fresh. Its `fundingIntervalHour` is the string `"8"`, not a number: declared as `int64` the whole frame fails to decode and the venue silently produces no funding at all. It publishes `fundingCap` and **no floor**, so cap and floor need separate flags. |
 | **Bybit** | A **spot MARKET BUY's `qty` is USDT by default**: "`quoteCoin` for market buy by default, `baseCoin` for market sell by default" (V5 create-order, UTA). Sent as coin, 0.001 BTC becomes an order for 0.001 USDT. Send `marketUnit: "baseCoin"` on EVERY spot market order, buy and sell, and `isLeverage: 0` — `1` is a spot margin BORROW. `reduceOnly`/`positionIdx` are linear-only and are not sent on spot. |
-| **Bybit** | A taker **spot BUY pays its fee in the BASE coin** ("Side = Buy -> base currency (BTC)", V5 enum "Spot Fee Currency Instruction"; testnet taker 10 bps measured 2026-09-17). The order reports `cumExecQty` Q while the wallet holds Q × (1 − fee), so a close sized from the orders asks spot to sell coin the wallet lacks — refused AFTER the perp was bought back, a naked long. `execution.Close` now sells what the VENUE says the wallet holds when the shortfall fits `MaxSpotBaseFeeFrac` (0.2%) + one step, and refuses before sending when it does not. Binance does the same unless fees are paid in BNB. |
+| **Bybit** | A taker **spot BUY pays its fee in the BASE coin** ("Side = Buy -> base currency (BTC)", V5 enum "Spot Fee Currency Instruction"; testnet taker 10 bps measured 2026-09-17). The order reports `cumExecQty` Q while the wallet holds Q × (1 − fee), so a close sized from the orders asks spot to sell coin the wallet lacks — refused AFTER the perp was bought back, a naked long. `execution.Open` buys the spot leg GROSSED UP (`CeilToStep(Q ÷ (1 − fee))`) and judges it by the wallet's measured gain; `execution.Close` sells what the VENUE says the wallet holds when the shortfall fits `MaxSpotBaseFeeFrac` (0.2%) + one step, and refuses before sending when it does not; the portal counts a spot buy net of the fee its fills state. Binance does the same unless fees are paid in BNB. |
 | **Bybit** | `/v5/market/risk-limit`'s only doc example is an INVERSE contract answering `maintenanceMargin` "0.5" beside 100× — a percent. **Linear answers FRACTIONS** (all 35 BTCUSDT tiers, 2026-09-17: "0.0033"/"0.0066"/150× down to "0.6"/"1"/1×). A guessed "< 0.5" ceiling refused the venue's own last tier live; the unit is checked by `initialMargin × maxLeverage ≈ 1` on every tier instead. Spot has no `qtyStep` — the grid is `lotSizeFilter.basePrecision`, the minimum notional `minOrderAmt`, and `maxMarketOrderQty` (live, not on the page) is smaller than `maxOrderQty`. The spot book's documented ceiling is 200 levels; it silently accepts 500. |
 | **Bybit** | The public **SPOT** WebSocket takes at most **10 `args` per subscribe request** ("Spot can input up to 10 args for each subscription request sent to one connection"; "No args limit for Futures and Spread for now"). Over the limit it REFUSES THE WHOLE REQUEST — `{"success":false,"ret_msg":"args size >10"}` — and then delivers nothing, rather than truncating. Measured live 2026-09-12: 26 args → 0 data frames in 12s, 8 args → 99. This is what silenced `bybit_spot` for 19 hours of step-3.5 run 2 when the pair list grew from 4 to 13. Batch the topics, and READ the reply: the venue says exactly what is wrong. |
 | **Binance** | `fundingInfo` documents itself as returning ONLY symbols whose config differs from default — as of 2026-09-03 it happens to cover every TRADING perpetual (777 symbols, BTCUSDT included via its adjusted ±0.3% cap), but the docs promise no such coverage. Default to 8h and override; do not read it as the source of truth for all symbols. Intervals seen: 4h (majority), 8h, and 1h. Also filter `rateType: "Special"` in backtests. |
@@ -1462,7 +1488,9 @@ cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17
                      or on Bybit testnet/demo with -broker=bybit (Q19: spot and
                      linear on ONE Unified account, adapter venue_bybit.go,
                      intent files in .paper/exec-bybit, the wallet read ONCE;
-                     READ-ONLY for now — every write 403 venue_read_only):
+                     spot buys counted net of the base-coin fee their fills
+                     stated at open, stored in the intent file; manual writes
+                     open, the auto-trader refused on Bybit until accepted):
                      six tabs on LOOPBACK 127.0.0.1:8087 (Market Scanner,
                      Auto-Trader, Manual Execution, Paper Ledger,
                      Backtest 3 Năm, Crowding Reversal). Backtest tab renders

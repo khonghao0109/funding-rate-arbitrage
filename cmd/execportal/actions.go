@@ -185,7 +185,7 @@ func (p *portal) handleOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	defer p.invalidateVenueReads()
+	defer p.afterOrderWrite()
 	p.memo.forget()
 
 	ctx, cancel := p.actionContext(r)
@@ -238,10 +238,10 @@ func (p *portal) openAs(ctx context.Context, req openRequest, intentPrefix strin
 	v.BracketVI = bracket.NoteVI
 
 	// The spot buy's fee, which a venue may keep IN THE BASE COIN — Bybit always
-	// does on a taker buy (PLAN 4.5j). execution refuses a size whose wallet
-	// would be short of the perp past the hedge tolerance, and sizes its unwind
-	// on what the wallet received; an unread fee is an unknown gap, so nothing
-	// is sent. The rate is this account's own (Binance spot testnet reads 0).
+	// does on a taker buy (PLAN 4.5j). execution buys the spot leg grossed up by
+	// it and judges the leg on the fills and the wallet; an unread fee is an
+	// unknown size, so nothing is sent. The rate is this account's own (Binance
+	// spot testnet reads 0, which leaves execution's accepted path untouched).
 	fees, err := p.commissionsFor(ctx, req.Symbol)
 	if err != nil {
 		v.ErrorVI = "không đọc được phí của tài khoản (phí mua spot có thể bị thu bằng coin): " + err.Error() + " — chưa gửi lệnh nào"
@@ -317,6 +317,7 @@ func (p *portal) openAs(ctx context.Context, req openRequest, intentPrefix strin
 		SpotBestAskQuote: spotMkt.Book.BestAskQuote, PerpBestBidQuote: perpMkt.Book.BestBidQuote,
 		BookSampledAtMs: spotMkt.Book.SampledAtMs, UnhedgedWindowMs: res.UnhedgedWindow.Milliseconds(),
 		ReducedToMatch: res.ReducedToMatch, Outcome: string(res.Outcome),
+		SpotBuyBaseFeeQtyCoin: res.SpotBuyBaseFeeQtyCoin, SpotBuyBaseFeeStated: res.SpotBuyBaseFeeStated,
 	}
 	if v.Alarm {
 		// Written into the cache so the intent stays TRACKED: the page reads
@@ -367,7 +368,7 @@ func (p *portal) openBlockedVI(ctx context.Context, symbol string, toleranceQtyC
 			ids = append(ids, s.IntentID)
 		}
 	}
-	for _, h := range readIntentHedges(ctx, p.markets.spot, p.markets.perp, p.memo, symbol, ids) {
+	for _, h := range p.intentHedges(ctx, symbol, ids, true) {
 		switch {
 		case len(h.unreadable()) > 0 || len(h.working()) > 0:
 			return fmt.Sprintf("ý định %s có lệnh không đọc được hoặc còn chạy trên sàn — không biết symbol còn trống hay không", h.IntentID)
@@ -502,7 +503,7 @@ func (p *portal) handleClose(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
-	defer p.invalidateVenueReads()
+	defer p.afterOrderWrite()
 	p.memo.forget()
 
 	st, err := loadState(p.stateDir, req.IntentID)
@@ -615,7 +616,7 @@ func (p *portal) close(ctx context.Context, st intentState, reasonVI string, gua
 	}
 	tolerance := math.Max(spotMkt.Rules.StepSizeCoin, perpMkt.Rules.StepSizeCoin)
 
-	h := readIntentHedges(ctx, p.markets.spot, p.markets.perp, p.memo, st.Symbol, []string{st.IntentID})[0]
+	h := p.intentHedges(ctx, st.Symbol, []string{st.IntentID}, true)[0]
 	spotQtyCoin, perpShortQtyCoin := h.Spot.QtyCoin, -h.Perp.QtyCoin
 	switch {
 	case len(h.unreadable()) > 0:
@@ -864,7 +865,7 @@ func (p *portal) handleReconcile(w http.ResponseWriter, r *http.Request) {
 	defer release()
 	p.memo.forget()
 	if req.Apply {
-		defer p.invalidateVenueReads()
+		defer p.afterOrderWrite()
 	}
 
 	ctx, cancel := p.actionContext(r)
@@ -921,7 +922,7 @@ func (p *portal) reconcile(ctx context.Context, req reconcileRequest) (v reconci
 		ids = append(ids, s.IntentID)
 	}
 	v.IntentsScanned = len(ids)
-	hedges := readIntentHedges(ctx, p.markets.spot, p.markets.perp, p.memo, req.Symbol, ids)
+	hedges := p.intentHedges(ctx, req.Symbol, ids, true)
 
 	incomplete := len(unreadableFiles) > 0
 	for _, h := range hedges {
@@ -1012,7 +1013,10 @@ func (p *portal) sendSquare(ctx context.Context, symbol string, plan squarePlan,
 	out.VenueOrderID, out.Status = order.VenueOrderID, string(order.Status)
 	out.FilledQtyCoin, out.AvgFillPriceQuote = order.FilledQtyCoin, order.AvgFillPriceQuote
 
-	h := readIntentHedges(ctx, p.markets.spot, p.markets.perp, p.memo, symbol, []string{plan.IntentID})[0]
+	// Inside the write, after THIS intent's one squaring order was sent and read
+	// back: that order must be seen, every other id of the intent predates the
+	// write (review 4.5j part 4, R2).
+	h := p.intentHedges(ctx, symbol, []string{plan.IntentID}, true, plan.ClientOrderID)[0]
 	out.ResidualAfterCoin = h.residualCoin()
 	tolerance := math.Max(spotMkt.Rules.StepSizeCoin, perpMkt.Rules.StepSizeCoin)
 	out.Balanced = len(h.unreadable()) == 0 && len(h.working()) == 0 && math.Abs(out.ResidualAfterCoin) <= tolerance+gridEpsilon

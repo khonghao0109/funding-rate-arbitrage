@@ -179,7 +179,7 @@ func (v *venueTrader) orders() int {
 func legNet(ctx context.Context, b broker.Broker, market broker.Market, symbol, id string, leg execution.LegName) (float64, error) {
 	net := 0.0
 	for _, cid := range []string{execution.LegClientOrderID(id, leg), execution.CloseClientOrderID(id, leg),
-		execution.UnwindClientOrderID(id, leg), execution.ReconcileClientOrderID(id, leg)} {
+		execution.UnwindClientOrderID(id, leg), execution.ReconcileClientOrderID(id, leg), execution.ReduceClientOrderID(id, leg)} {
 		o, err := b.GetOrder(ctx, broker.OrderQuery{Market: market, Symbol: symbol, ClientOrderID: cid})
 		if errors.Is(err, broker.ErrOrderNotFound) {
 			continue

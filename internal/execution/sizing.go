@@ -26,6 +26,13 @@ type entryPlan struct {
 	SpotOrder broker.RoundedOrder
 	PerpOrder broker.RoundedOrder
 
+	// SpotTargetQtyCoin is what the spot ORDER must fill. It equals QtyCoin
+	// unless the venue keeps the spot buy's fee in the base coin, in which case
+	// it is QtyCoin ÷ (1 − fee) rounded UP onto the spot grid, so the WALLET
+	// ends up holding QtyCoin (plus less than one spot step) beside a perp of
+	// QtyCoin.
+	SpotTargetQtyCoin float64
+
 	// ResidualToleranceQtyCoin is the coarser of the two step sizes — the
 	// closest the two legs can possibly be, and therefore the invariant's
 	// tolerance. It is computed here, once, so no later comparison invents its
@@ -81,6 +88,15 @@ func planEntry(intent Intent, cfg Config) (entryPlan, error) {
 		return out, fmt.Errorf("%w: sổ cũ %d ms, quá hạn %d ms", ErrBookStale, out.BookAgeMs, cfg.MaxBookAge.Milliseconds())
 	}
 
+	// A fee kept in the base coin above the configured ceiling is not a fee
+	// this package will gross up for: past it a missing coin and a fee can no
+	// longer be told apart on the close. Refused before anything is sized.
+	f := intent.SpotBuyFeeInBaseFrac
+	if f > cfg.MaxSpotBaseFeeFrac {
+		return out, fmt.Errorf("%w: phí mua spot thu bằng coin %.4f%% vượt mức cho phép %.4f%% (Config.MaxSpotBaseFeeFrac)",
+			ErrSpotFeeUnhedged, f*100, cfg.MaxSpotBaseFeeFrac*100)
+	}
+
 	// Step 2.3's rules, called rather than re-grown.
 	size, err := instruments.SizeDeltaNeutral(intent.SpotInstrument, intent.PerpInstrument, instruments.SizingRequest{
 		SpotPriceQuote: intent.SpotPriceQuote,
@@ -93,7 +109,9 @@ func planEntry(intent Intent, cfg Config) (entryPlan, error) {
 
 	// Price the two fills at the size that will actually be sent, and derive
 	// the marketable limit from what the book says this size reaches.
-	out.SpotFill = strategy.EstimateFill(intent.SpotBook, strategy.SideBuy, size.QtyCoin*intent.SpotPriceQuote)
+	// The spot leg is priced at the GROSSED-UP size it will really buy. With no
+	// base-coin fee x / (1 − 0) is x exactly, so Binance's figure is unchanged.
+	out.SpotFill = strategy.EstimateFill(intent.SpotBook, strategy.SideBuy, size.QtyCoin/(1-f)*intent.SpotPriceQuote)
 	out.PerpFill = strategy.EstimateFill(intent.PerpBook, strategy.SideSell, size.QtyCoin*intent.PerpPriceQuote)
 	if !out.SpotFill.Fillable {
 		return out, fmt.Errorf("%w: chân spot không định giá được: %s", ErrBookWidened, out.SpotFill.ReasonVI)
@@ -161,32 +179,47 @@ func planEntry(intent Intent, cfg Config) (entryPlan, error) {
 		}
 	}
 
-	out.SpotOrder, out.PerpOrder = spotOrder, perpOrder
 	out.QtyCoin = math.Min(spotOrder.QtyCoin, perpOrder.QtyCoin)
+	out.SpotTargetQtyCoin = out.QtyCoin
 	out.ResidualToleranceQtyCoin = math.Max(intent.SpotInstrument.StepSizeCoin, intent.PerpInstrument.StepSizeCoin)
+
+	// GROSS-UP for a fee kept in the base coin (PLAN 4.5j). Buying Q leaves the
+	// wallet Q × (1 − fee), so the spot ORDER buys Q ÷ (1 − fee) rounded UP onto
+	// the spot grid and the WALLET holds Q plus less than one spot step. The
+	// perp leg stays at Q. This replaces the refusal 4.5j first shipped — "fee
+	// gap > tolerance" — which refused every ordinary slot on a coarse-step pair
+	// (DOGE's whole-coin perp grid refuses anything over 1,000 coins) and would
+	// have halted the bot after five of them.
+	//
+	// The grossed-up order still goes through RoundOrder, so minNotional,
+	// minQty and maxQty (Bybit spot: the smaller of maxOrderQty and
+	// maxMarketOrderQty) refuse it by name like any other size.
+	if f > 0 {
+		grossQtyCoin := broker.CeilToStep(perpOrder.QtyCoin/(1-f), intent.SpotInstrument.StepSizeCoin)
+		if spotOrder, err = broker.RoundOrder(broker.RoundRequest{
+			Rules: intent.SpotInstrument, Side: broker.SideBuy, Type: broker.OrderTypeLimitGTC,
+			QtyCoin: grossQtyCoin, PriceQuote: spotCap, Price: broker.PriceRoundPassive,
+		}); err != nil {
+			return out, fmt.Errorf("%w: chân spot gộp phí (mua %.10g để ví nhận %.10g sau phí %.4f%% thu bằng coin): %s",
+				ErrSizeBelowMinimum, grossQtyCoin, perpOrder.QtyCoin, f*100, err.Error())
+		}
+		out.SpotTargetQtyCoin = spotOrder.QtyCoin
+	}
+	out.SpotOrder, out.PerpOrder = spotOrder, perpOrder
 
 	// The invariant, checked here — where the only cost of failing it is not
 	// trading — rather than discovered after two orders are live. Same
 	// function Open and the property test use, so there is one invariant and
-	// not three.
-	if err := out.invariant(intent).check(spotOrder.QtyCoin, perpOrder.QtyCoin); err != nil {
+	// not three. It is asked about what the spot WALLET will hold: the order's
+	// fill less the fee kept in the base coin. With no such fee the product is
+	// the order's own quantity, bit for bit (x × 1 is x in IEEE 754).
+	walletQtyCoin := spotOrder.QtyCoin * (1 - f)
+	if err := out.invariant(intent).check(walletQtyCoin, perpOrder.QtyCoin); err != nil {
+		if f > 0 {
+			return out, fmt.Errorf("%w: mua %.10g coin thì ví nhận %.10g (phí %.4f%% thu bằng coin) bên cạnh perp %.10g: %s",
+				ErrSpotFeeUnhedged, spotOrder.QtyCoin, walletQtyCoin, f*100, perpOrder.QtyCoin, err.Error())
+		}
 		return out, fmt.Errorf("%w: %s — mở thế này là không phòng hộ", ErrSizeBelowMinimum, err.Error())
-	}
-
-	// The same invariant on what the spot WALLET will hold. A fee taken in the
-	// base coin makes the wallet Q × (1 − fee) beside a perp of Q: inside the
-	// tolerance that is the grid's own slack, past it the pair Open would call
-	// hedged is not — and a close could not later tell that gap from a coin
-	// somebody moved, so it is refused here, where refusing costs nothing.
-	if f := intent.SpotBuyFeeInBaseFrac; f > 0 {
-		if f > cfg.MaxSpotBaseFeeFrac {
-			return out, fmt.Errorf("%w: phí mua spot thu bằng coin %.4f%% vượt mức cho phép %.4f%% (Config.MaxSpotBaseFeeFrac)",
-				ErrSpotFeeUnhedged, f*100, cfg.MaxSpotBaseFeeFrac*100)
-		}
-		if gap := spotOrder.QtyCoin * f; gap > out.ResidualToleranceQtyCoin+gridEpsilon {
-			return out, fmt.Errorf("%w: mua %.10g coin thì ví chỉ nhận %.10g (phí %.4f%% thu bằng coin), lệch %.10g so với perp %.10g — quá dung sai %.10g; giảm cỡ",
-				ErrSpotFeeUnhedged, spotOrder.QtyCoin, spotOrder.QtyCoin*(1-f), f*100, gap, perpOrder.QtyCoin, out.ResidualToleranceQtyCoin)
-		}
 	}
 	return out, nil
 }

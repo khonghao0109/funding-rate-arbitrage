@@ -123,27 +123,52 @@ func TestPortalTrader_UnifiedWalletIsReadOnce(t *testing.T) {
 	var _ autotrade.Account = acct
 }
 
-// Round 2 of the 4.5j review left the spot leg judged by its orders in three
-// places, so the Bybit portal is READ-ONLY: every write is refused before any
-// handler runs, reads still answer, and nothing reaches a venue.
-func TestBybitPortal_IsReadOnlyUntilTheSpotLegIsJudgedByTheWallet(t *testing.T) {
-	p, spot, perp := fakePortal(t)
+// The Bybit portal shipped READ-ONLY while the spot leg was judged by its
+// orders. With the gross-up and the wallet checks in internal/execution, and the
+// hedge status counting spot buys net of the base-coin fee, the profile no
+// longer blocks: the write routes reach their handlers. The gate itself is kept
+// and still refuses every write when a profile sets it.
+func TestBybitPortal_AcceptsWritesNowTheSpotLegIsJudgedByTheWallet(t *testing.T) {
+	p, _, _ := fakePortal(t)
 	p.markets.profile = profileFor(venueBybit)
-	if p.markets.profile.OrdersBlockedVI == "" {
-		t.Fatal("the Bybit profile does not block orders")
+	if why := p.markets.profile.OrdersBlockedVI; why != "" {
+		t.Fatalf("the Bybit profile still blocks orders: %q", why)
 	}
-	for _, w := range []struct{ action, path string }{
-		{"open", "/api/open"}, {"close", "/api/close"}, {"reconcile", "/api/reconcile"}, {"autotrade-start", "/api/autotrade/start"},
-	} {
+	if !p.markets.profile.SpotBuyFeeInBaseCoin {
+		t.Fatal("the Bybit profile does not count spot buys net of the base-coin fee")
+	}
+	manual := []struct{ action, path string }{
+		{"open", "/api/open"}, {"close", "/api/close"}, {"reconcile", "/api/reconcile"},
+	}
+	for _, w := range manual {
 		rec := do(t, p, http.MethodPost, w.path, `{"symbol":"BTCUSDT","notional_quote":65}`, writeOpts(w.action)...)
+		if rec.Code == http.StatusForbidden || strings.Contains(rec.Body.String(), "venue_read_only") {
+			t.Errorf("%s = %d %s — refused by the read-only gate", w.path, rec.Code, rec.Body.String())
+		}
+	}
+	// Review part 2, B2: the bot does NOT start on Bybit until a manual
+	// click-through has passed on the testnet — whatever the body says.
+	for _, body := range []string{`{}`, `{"symbols":["BTCUSDT"]}`} {
+		rec := do(t, p, http.MethodPost, "/api/autotrade/start", body, writeOpts("autotrade-start")...)
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "autotrade_blocked") {
+			t.Errorf("autotrade start on Bybit = %d %s, want 403 autotrade_blocked", rec.Code, rec.Body.String())
+		}
+	}
+	if p.autotrade.Status().Enabled {
+		t.Error("the bot is running on Bybit")
+	}
+	writes := append(manual, struct{ action, path string }{"autotrade-start", "/api/autotrade/start"})
+
+	blocked, spot, perp := fakePortal(t)
+	blocked.markets.profile = profileFor(venueBybit)
+	blocked.markets.profile.OrdersBlockedVI = "chặn thử"
+	for _, w := range writes {
+		rec := do(t, blocked, http.MethodPost, w.path, `{"symbol":"BTCUSDT","notional_quote":65}`, writeOpts(w.action)...)
 		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), "venue_read_only") {
-			t.Errorf("%s = %d %s", w.path, rec.Code, rec.Body.String())
+			t.Errorf("gate set: %s = %d %s", w.path, rec.Code, rec.Body.String())
 		}
 	}
 	if n := len(spot.Orders()) + len(perp.Orders()); n != 0 {
-		t.Errorf("%d orders reached the venue", n)
-	}
-	if rec := do(t, p, http.MethodGet, "/api/status", "", withHeader(actionHeader, "read")); rec.Code != http.StatusOK {
-		t.Errorf("status on a read-only portal = %d", rec.Code)
+		t.Errorf("%d orders reached the venue through a blocked portal", n)
 	}
 }

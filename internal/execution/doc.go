@@ -48,11 +48,16 @@
 //
 // "Holds" means what the account holds, not what the orders filled. A venue
 // that keeps a spot BUY's fee in the base coin (Bybit always; Binance unless
-// fees are paid in BNB) puts Q × (1 − fee) in the wallet beside a perp of Q, so
-// Open refuses a size whose Q × fee exceeds the tolerance above
-// (ErrSpotFeeUnhedged, from Intent.SpotBuyFeeInBaseFrac), the unwind sells what
-// the wallet received, and Close sells what the wallet holds within
-// Config.MaxSpotBaseFeeFrac of the original buy (PLAN 4.5j, review 2026-09-17).
+// fees are paid in BNB) puts Q × (1 − fee) in the wallet for an order of Q, so
+// Open buys the spot leg GROSSED UP — Q ÷ (1 − fee) rounded up onto the spot
+// grid — and judges it on the fee its FILLS state and the base balance's
+// measured gain (Result.SpotHeldQtyCoin): within the tolerance the smaller one,
+// past it ErrSpotEvidenceConflict with nothing more sent. A wallet that
+// received less than the perp needs is cut to match or unwound, the
+// unwind sells what the wallet received, and Close sells what the wallet holds
+// within Config.MaxSpotBaseFeeFrac of the original buy (PLAN 4.5j, parts 1 and
+// 2, 2026-09-17). A fee above that ceiling is refused before sizing
+// (ErrSpotFeeUnhedged, from Intent.SpotBuyFeeInBaseFrac).
 //
 // There is no third state. In particular there is no "one leg open, will fix
 // it on the next tick": an unhedged leg is a directional bet the strategy

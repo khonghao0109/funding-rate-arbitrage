@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -19,6 +20,7 @@ import (
 	"futures-arbitrage-scanner/internal/broker"
 	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
 	"futures-arbitrage-scanner/internal/broker/brokertest"
+	bybitbroker "futures-arbitrage-scanner/internal/broker/bybit"
 	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/execution"
 )
@@ -69,6 +71,12 @@ type fakeVenue struct {
 	fundingCalls atomic.Int64
 	// balanceErr makes this wallet unreadable.
 	balanceErr error
+	// tradesErr makes the fill list unreadable — Bybit's execution list past
+	// its default 7-day window.
+	tradesErr error
+	// notVisible answers an id the venue does not have the way the Bybit
+	// adapter does — bybit.ErrOrderNotVisible, which is NOT ErrOrderNotFound.
+	notVisible bool
 
 	// bookMu guards the two book knobs below, which the engine's parallel
 	// reads and a test goroutine may touch at once.
@@ -101,6 +109,25 @@ func (f *fakeVenue) GetBalance(ctx context.Context, market broker.Market) ([]bro
 		return nil, f.balanceErr
 	}
 	return f.Fake.GetBalance(ctx, market)
+}
+
+// GetOrder is brokertest's, answering an unknown id as Bybit's adapter does
+// when notVisible is set.
+func (f *fakeVenue) GetOrder(ctx context.Context, q broker.OrderQuery) (broker.Order, error) {
+	o, err := f.Fake.GetOrder(ctx, q)
+	if f.notVisible && errors.Is(err, broker.ErrOrderNotFound) {
+		return broker.Order{}, fmt.Errorf("%w: neither list shows it", bybitbroker.ErrOrderNotVisible)
+	}
+	return o, err
+}
+
+// OrderTrades is brokertest's, with a knob for a fill list the venue no longer
+// answers.
+func (f *fakeVenue) OrderTrades(ctx context.Context, q broker.OrderQuery) ([]broker.Trade, error) {
+	if f.tradesErr != nil {
+		return nil, f.tradesErr
+	}
+	return f.Fake.OrderTrades(ctx, q)
 }
 
 func (f *fakeVenue) Market() broker.Market { return f.market }
@@ -642,15 +669,196 @@ func TestCloseGuard_AnUnmeasurableTouchDefersAndATightOneSends(t *testing.T) {
 	}
 }
 
-// PLAN 4.5j: the account's spot fee reaches execution, which refuses a size whose
-// fee taken in the base coin would leave the wallet short of the perp past the
-// hedge tolerance — and lets a small one through.
-func TestActions_OpenRefusesASizeTheSpotBaseFeeWouldUnhedge(t *testing.T) {
+// PLAN 4.5j, second half, through the page on a Bybit profile: the account's
+// spot fee reaches execution, which buys the spot leg grossed up so the WALLET
+// holds the perp; the hedge status counts that buy net of the base-coin fee its
+// own fills state, so a 20k pair reads HEDGED rather than 0.00026 BTC long; and
+// the close sells the perp's size and ends flat on both legs.
+//
+// This size is the one the first half of 4.5j refused (its 0.00026 BTC fee gap
+// is past the 0.0001 tolerance).
+func TestActions_BybitOpenStatusCloseWithTheSpotFeeInTheBaseCoin(t *testing.T) {
 	p, spot, perp := fakePortal(t)
+	p.markets.profile = profileFor(venueBybit)
+	// Bybit's adapter answers an id nobody sent as NOT VISIBLE, never as not
+	// found — the case review 4.5j part 2 (N1) found every held intent's close,
+	// unwind, reconcile and reduce ids in.
+	spot.notVisible, perp.notVisible = true, true
+	clock := time.Now()
+	p.now = func() time.Time { return clock }
 	spot.spotTakerFrac = 0.001 // Bybit's measured spot taker, charged in BTC on a buy
+	spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: 0.001, RefuseSpotSellBeyondBalance: true})
+	walletBefore := spotBTC(t, spot)
+
 	code, v := postJSON[openView](t, p, "open", "/api/open", openRequest{Symbol: "BTCUSDT", NotionalQuote: 20_000})
-	if v.Hedged || v.Outcome != "both_flat" || !strings.Contains(v.ErrorVI, "thu bằng coin") || orderCount(spot, perp) != 0 {
-		t.Fatalf("a 20k open with a 0.1%% base-coin fee = %d %q, %d orders", code, v.ErrorVI, orderCount(spot, perp))
+	if code != http.StatusOK || !v.Hedged || v.Outcome != "both_open" || v.Alarm || v.ReducedToMatch {
+		t.Fatalf("a 20k open with a 0.1%% base-coin fee = %d %+v", code, v)
 	}
-	openOK(t, p) // 65 quote: a 0.0000008 BTC gap, inside the 0.0001 tolerance
+	if !near(v.Perp.FilledQtyCoin, 0.2597) || !near(v.Spot.FilledQtyCoin, 0.25996) {
+		t.Errorf("perp %v (want 0.2597), spot order %v (want 0.25996 = 0.2597 ÷ 0.999 rounded up)", v.Perp.FilledQtyCoin, v.Spot.FilledQtyCoin)
+	}
+	gained := spotBTC(t, spot) - walletBefore
+	if gained < 0.2597-1e-9 || gained-0.2597 >= spotRulesBTC.StepSizeCoin {
+		t.Errorf("the wallet gained %v beside a 0.2597 perp", gained)
+	}
+
+	st, err := loadState(p.stateDir, v.IntentID)
+	if err != nil || !st.SpotBuyBaseFeeStated || math.Abs(st.SpotBuyBaseFeeQtyCoin-0.00025996) > 1e-12 {
+		t.Fatalf("intent file fee = %v stated %v (%v), want the fills' 0.00025996", st.SpotBuyBaseFeeQtyCoin, st.SpotBuyBaseFeeStated, err)
+	}
+	// Review part 2, B1: the pair outlives the venue's fill list. From the
+	// stored fee the status and the close still read the wallet's leg.
+	spot.tradesErr = errors.New("execution list: no fills in the default 7-day window")
+	p.memo.forget()
+
+	// Inside the grace after a write, an order the venue does not list may
+	// still be in flight: the pair is UNKNOWN, not hedged and not flat.
+	if pos := getJSON[positionsView](t, p, "/api/positions?symbol=BTCUSDT"); pos.Status != statusUnknown {
+		t.Errorf("positions right after the open = %s (%s), want unknown while unlisted ids may be in flight", pos.Status, pos.ReasonVI)
+	}
+	clock = clock.Add(notVisibleGrace + time.Second)
+	p.invalidateVenueReads() // the view cache runs on its own clock
+
+	pos := getJSON[positionsView](t, p, "/api/positions?symbol=BTCUSDT")
+	if pos.Status != statusBothOpen || !near(pos.SpotQtyCoin, gained) || math.Abs(pos.DeltaResidualCoin) >= spotRulesBTC.StepSizeCoin {
+		t.Errorf("positions after open = %s spot %v (wallet gained %v) delta %v (%s)", pos.Status, pos.SpotQtyCoin, gained, pos.DeltaResidualCoin, pos.ReasonVI)
+	}
+
+	code, c := postJSON[closeView](t, p, "close", "/api/close", closeRequest{Symbol: "BTCUSDT", IntentID: v.IntentID})
+	if code != http.StatusOK || !c.Flat || c.Refused || c.Alarm || c.SentUnconfirmed {
+		t.Fatalf("close = %d %+v", code, c)
+	}
+	clock = clock.Add(notVisibleGrace + time.Second)
+	p.invalidateVenueReads()
+	if left := spotBTC(t, spot) - walletBefore; left < 0 || left >= spotRulesBTC.StepSizeCoin {
+		t.Errorf("the wallet kept %v BTC of this pair after a flat close; want under one spot step", left)
+	}
+	if pos := getJSON[positionsView](t, p, "/api/positions?symbol=BTCUSDT"); pos.Status != statusBothFlat {
+		t.Errorf("positions after close = %s (%s)", pos.Status, pos.ReasonVI)
+	}
+	if n := len(perp.Orders()); n != 2 {
+		t.Errorf("%d perp orders, want the open and the close", n)
+	}
+}
+
+func spotBTC(t *testing.T, v *fakeVenue) float64 {
+	t.Helper()
+	balances, err := v.GetBalance(context.Background(), broker.MarketSpot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range balances {
+		if b.Asset == "BTC" {
+			return b.TotalQtyCoin()
+		}
+	}
+	return 0
+}
+
+// badFills answers a spot buy's fills the ways that leave its base-coin fee
+// unknown.
+type badFills struct {
+	*brokertest.Fake
+	trades []broker.Trade
+}
+
+func (b badFills) OrderTrades(context.Context, broker.OrderQuery) ([]broker.Trade, error) {
+	return b.trades, nil
+}
+
+// On a venue that keeps the fee in the base coin, a spot buy whose fills do not
+// say what they charged — or do not add up to the order — leaves the leg
+// UNKNOWN, never counted gross, which would read a hedged pair as long by the
+// fee.
+func TestHedge_ABaseCoinFeeThatCannotBeReadLeavesTheSpotLegUnknown(t *testing.T) {
+	ctx := context.Background()
+	spotFake, perp := brokertest.New(), brokertest.New()
+	spotFake.SetBaseAsset("BTC")
+	openPair(t, spotFake, perp, testIntent, 0.0008)
+	for name, trades := range map[string][]broker.Trade{
+		"a fee in no named asset":  {{TradeID: "1", QtyCoin: 0.0008, CommissionQtyInAsset: 0.0000008}},
+		"fills short of the order": {{TradeID: "1", QtyCoin: 0.0004, CommissionQtyInAsset: 0.0000004, CommissionAsset: "BTC"}},
+	} {
+		h := readIntentHedges(ctx, badFills{spotFake, trades}, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{BaseAsset: "BTC"})[0]
+		if len(h.unreadable()) == 0 {
+			t.Errorf("%s: summed anyway, spot %v", name, h.Spot.QtyCoin)
+		}
+	}
+	// A plain venue with no fee kept in the base coin reads exactly as before,
+	// and one that states its fee nets it out.
+	h := readIntentHedges(ctx, spotFake, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
+	if len(h.unreadable()) != 0 || !near(h.Spot.QtyCoin, 0.0008) {
+		t.Errorf("Binance path: spot %v, unreadable %v", h.Spot.QtyCoin, h.unreadable())
+	}
+	stated := []broker.Trade{{TradeID: "1", QtyCoin: 0.0008, CommissionQtyInAsset: 0.0000008, CommissionAsset: "BTC"}}
+	h = readIntentHedges(ctx, badFills{spotFake, stated}, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{BaseAsset: "BTC"})[0]
+	if len(h.unreadable()) != 0 || !near(h.Spot.QtyCoin, 0.0007992) {
+		t.Errorf("stated fee: spot %v, unreadable %v", h.Spot.QtyCoin, h.unreadable())
+	}
+}
+
+// Review 4.5j part 4, R2: on Bybit a reconcile's own read-back, taken inside the
+// write right after its squaring order, must see that order and read the
+// intent's never-sent ids as absent — or every successful square reports
+// "still unbalanced".
+func TestActions_BybitReconcileReadsItsOwnSquareAsBalanced(t *testing.T) {
+	p, spot, perp := fakePortal(t)
+	p.markets.profile = profileFor(venueBybit)
+	spot.notVisible, perp.notVisible = true, true
+	clock := time.Now()
+	p.now = func() time.Time { return clock }
+
+	v := openOK(t, p)
+	place(t, spot, broker.MarketSpot, broker.SideSell, execution.CloseClientOrderID(v.IntentID, execution.LegSpot), 0.0008)
+	clock = clock.Add(notVisibleGrace + time.Second)
+	p.invalidateVenueReads()
+
+	code, plan := postJSON[reconcileView](t, p, "reconcile", "/api/reconcile", reconcileRequest{Symbol: "BTCUSDT"})
+	if code != http.StatusOK || plan.ToSend != 1 {
+		t.Fatalf("dry run = %d %+v", code, plan)
+	}
+	code, r := postJSON[reconcileView](t, p, "reconcile", "/api/reconcile", reconcileRequest{Symbol: "BTCUSDT", Apply: true, PlanDigest: plan.PlanDigest})
+	if code != http.StatusOK || len(r.Results) != 1 || !r.Results[0].Balanced {
+		t.Fatalf("apply = %d %+v — a successful square read as still unbalanced", code, r)
+	}
+}
+
+// hideOpen answers the intent's OPENING spot order as Bybit does once it has
+// left the order lists — not visible.
+type hideOpen struct {
+	*brokertest.Fake
+	id string
+}
+
+func (h hideOpen) GetOrder(ctx context.Context, q broker.OrderQuery) (broker.Order, error) {
+	if q.ClientOrderID == h.id {
+		return broker.Order{}, fmt.Errorf("%w: gone from both lists", bybitbroker.ErrOrderNotVisible)
+	}
+	o, err := h.Fake.GetOrder(ctx, q)
+	if errors.Is(err, broker.ErrOrderNotFound) {
+		return broker.Order{}, fmt.Errorf("%w: neither list shows it", bybitbroker.ErrOrderNotVisible)
+	}
+	return o, err
+}
+
+// Review 4.5j part 4, R1: a FILLED opening order the venue no longer lists is
+// never read as absent, even for an intent long settled. Read as 0 it would
+// make a held pair look like a naked perp short, and LÀM PHẲNG would buy the
+// perp back off a real spot long.
+func TestHedge_AnUnlistedOpeningOrderIsUnknownNeverAbsent(t *testing.T) {
+	ctx := context.Background()
+	spot, perp := brokertest.New(), brokertest.New()
+	openPair(t, spot, perp, testIntent, 0.0008)
+	fees := hedgeFees{NotVisibleIsAbsent: map[string]bool{testIntent: true}}
+	h := readIntentHedges(ctx, hideOpen{spot, execution.LegClientOrderID(testIntent, execution.LegSpot)},
+		hideOpen{perp, "-"}, newDoneOrders(), "BTCUSDT", []string{testIntent}, fees)[0]
+	if len(h.Spot.UnreadableVI) == 0 {
+		t.Fatalf("an unlisted filled open read as spot %v — absent, not unknown", h.Spot.QtyCoin)
+	}
+	if len(h.Perp.UnreadableVI) != 0 || !near(h.Perp.QtyCoin, -0.0008) {
+		t.Errorf("perp: %v unreadable %v — its never-sent ids should read absent on a settled intent", h.Perp.QtyCoin, h.Perp.UnreadableVI)
+	}
+	if p := planSquare(h, spotRulesBTC, perpRulesBTC, fakeMidQuote, fakeMidQuote); p.Action == "send" {
+		t.Errorf("reconcile would send %s %s %v on an unreadable open", p.Market, p.Side, p.QtyCoin)
+	}
 }

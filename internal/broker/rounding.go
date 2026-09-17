@@ -227,6 +227,28 @@ func RoundOrder(req RoundRequest) (RoundedOrder, error) {
 	return out, nil
 }
 
+// CeilToStep rounds v UP onto a grid of step, with the same step-count
+// tolerance RoundOrder floors with, and snaps the result to the grid's decimals.
+//
+// It is the one deliberate exception to "quantity always goes DOWN", and it is
+// not for an ordinary order. A venue that keeps a spot BUY's fee in the base
+// coin (Bybit, always) credits the wallet Q × (1 − fee) for an order of Q, so
+// a spot leg meant to HOLD Q must buy Q ÷ (1 − fee) — and rounding that down
+// would leave the wallet short of the hedge by up to one step plus the fee,
+// which is the unbalanced pair the rounding rules exist to prevent. Rounded
+// up, the wallet holds Q plus less than one step; the result is still passed
+// through RoundOrder, which refuses it against minQty, maxQty and minNotional
+// like any other size.
+//
+// A v that is not a positive finite number, or a step that is not, returns 0:
+// "no quantity", which RoundOrder refuses by name rather than guessing a grid.
+func CeilToStep(v, step float64) float64 {
+	if !(v > 0) || math.IsInf(v, 0) || !(step > 0) || math.IsInf(step, 0) {
+		return 0
+	}
+	return quantize(math.Ceil(v/step-gridEpsilon)*step, decimalsOf(step))
+}
+
 // resolveDirection turns the caller's stated intent into a concrete direction.
 func resolveDirection(p PriceRounding, side Side) (PriceRounding, error) {
 	switch p {

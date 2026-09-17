@@ -562,10 +562,14 @@ func TestClose_FeeAllowanceIsAnchoredToTheOriginalBuy(t *testing.T) {
 // Review round 2: the perp's partial close lands EXACTLY on the wallet cap, so no
 // fee gap is granted — yet the wallet is empty and a perp step is still short.
 // That is one leg, never a nil error.
+//
+// The position is one opened WITHOUT the gross-up — the intent states no fee
+// while the venue keeps one, as every position opened before PLAN 4.5j's second
+// half did — because a grossed-up open leaves the wallet holding the perp and
+// never reaches the cap.
 func TestClose_PerpRemainderOnTheCapBesideAnEmptyWalletIsOneLeg(t *testing.T) {
 	h := newHarness(t, nil)
 	h.intent.NotionalQuote = 6_000 // 0.1 BTC: fee gap 0.0001 = the tolerance
-	h.intent.SpotBuyFeeInBaseFrac = 0.001
 	h.spot.SetBehaviour(brokertest.Behaviour{FillFractionOnPlace: 1, SpotBuyFeeInBaseFrac: 0.001, RefuseSpotSellBeyondBalance: true})
 	if open, err := h.opener.Open(context.Background(), h.intent); err != nil || open.Outcome != OutcomeBothOpen {
 		t.Fatalf("open: %v%s", err, h.rec.Dump())

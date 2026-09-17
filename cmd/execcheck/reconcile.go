@@ -64,12 +64,14 @@ func intentNets(ctx context.Context, cl clients, intentID, symbol string) (spot,
 		"đóng": execution.CloseClientOrderID(intentID, execution.LegSpot),
 		"gỡ":   execution.UnwindClientOrderID(intentID, execution.LegSpot),
 		"cân":  reconcileClientOrderID(intentID, execution.LegSpot),
+		"thu":  execution.ReduceClientOrderID(intentID, execution.LegSpot),
 	})
 	perp = netFromVenue(ctx, cl.perp, broker.MarketFuturesUSDM, symbol, map[string]string{
 		"mở":   execution.LegClientOrderID(intentID, execution.LegPerp),
 		"đóng": execution.CloseClientOrderID(intentID, execution.LegPerp),
 		"gỡ":   execution.UnwindClientOrderID(intentID, execution.LegPerp),
 		"cân":  reconcileClientOrderID(intentID, execution.LegPerp),
+		"thu":  execution.ReduceClientOrderID(intentID, execution.LegPerp),
 	})
 	return spot, perp
 }

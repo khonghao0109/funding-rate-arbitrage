@@ -117,10 +117,25 @@ type venueProfile struct {
 	// balance, and adding the two counts it twice.
 	UnifiedWallet bool
 
+	// SpotBuyFeeInBaseCoin is true when this venue keeps a spot BUY's fee in the
+	// base coin, so a spot leg's buy fills are counted net of that commission
+	// (hedge.go). Bybit always does; Binance does unless fees are paid in BNB,
+	// and its spot testnet charges 0, so its profile leaves this false — the
+	// mainnet case is a named debt for step 4.6.
+	SpotBuyFeeInBaseCoin bool
+
 	// OrdersBlockedVI, when set, refuses EVERY write on this portal — open,
 	// close, reconcile and the bot — with this reason. The venue is then shown
-	// read-only.
+	// read-only. No shipped profile sets it since the spot leg is judged by the
+	// wallet (PLAN 4.5j, second half); the gate stays for the next venue that
+	// needs one.
 	OrdersBlockedVI string
+
+	// AutotradeBlockedVI, when set, refuses to START the auto-trader — the
+	// start endpoint and -autotrade — while every manual write stays open. Stop,
+	// kill and the pair controls still answer, so nothing that is already
+	// running can be left without its off switch.
+	AutotradeBlockedVI string
 
 	// StateDir is where this venue's intent files live. Separate per venue:
 	// an intent's derived ClientOrderIDs mean something only on the venue that
@@ -145,13 +160,16 @@ func profileFor(kind venueKind) venueProfile {
 			FundingIncomeEndpoint: "/v5/account/transaction-log (type=SETTLEMENT)",
 			UnifiedWallet:         true,
 			StateDir:              stateDirBybit,
-			// Review of 4.5j, round 2 (2026-09-17): a spot BUY's fee is kept in
-			// the base coin, and internal/execution still judges the spot leg by
-			// what its ORDERS filled in three places (a parallel partial fill,
-			// a fee charged above the published rate, a coarse-step size limit
-			// that would halt the bot). Until the spot leg is bought grossed up
-			// and judged by the wallet, no order leaves this portal on Bybit.
-			OrdersBlockedVI: "portal Bybit đang CHỈ ĐỌC: phí mua spot bị thu bằng coin gốc và execution chưa xét chân spot theo số dư ví ở mọi đường (review 4.5j vòng 2) — chưa gửi lệnh nào",
+			// A spot BUY's fee is kept in the base coin. execution buys that leg
+			// grossed up and judges it by the wallet (PLAN 4.5j, second half),
+			// and the hedge status counts its buys net of that commission — which
+			// is what lifted the read-only gate this profile shipped with.
+			SpotBuyFeeInBaseCoin: true,
+			// Review of 4.5j part 2 (B2): the grossed-up spot leg has run
+			// against the fake broker only. Manual open and close through the
+			// page come first; the bot starts on Bybit once that click-through
+			// has passed on the testnet, which is a one-line change here.
+			AutotradeBlockedVI: "auto-trader trên Bybit CHƯA được bật: chân spot mua gộp phí mới chạy trên sàn giả — nghiệm thu mở/đóng bằng tay qua trang trên testnet trước (review 4.5j phần 2, B2)",
 		}
 	}
 	return venueProfile{

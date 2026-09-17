@@ -49,7 +49,7 @@ func TestReadLegNet_SumsTheIntentsOwnOrdersFromTheVenue(t *testing.T) {
 	// An order of ANOTHER intent on the same venue must not count.
 	openPair(t, spot, perp, "xbtcusdt-20260913-075852", 0.0259)
 
-	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent})[0]
+	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
 	if !near(h.Spot.QtyCoin, 0.0008) || !near(h.Perp.QtyCoin, -0.0008) {
 		t.Fatalf("after open: spot %v perp %v, want +0.0008 / -0.0008", h.Spot.QtyCoin, h.Perp.QtyCoin)
 	}
@@ -57,7 +57,7 @@ func TestReadLegNet_SumsTheIntentsOwnOrdersFromTheVenue(t *testing.T) {
 	// The close: perp bought back, spot sold, both under the CLOSE ids.
 	place(t, perp, broker.MarketFuturesUSDM, broker.SideBuy, execution.CloseClientOrderID(testIntent, execution.LegPerp), 0.0008)
 	place(t, spot, broker.MarketSpot, broker.SideSell, execution.CloseClientOrderID(testIntent, execution.LegSpot), 0.0008)
-	h = readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent})[0]
+	h = readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
 	if !near(h.Spot.QtyCoin, 0) || !near(h.Perp.QtyCoin, 0) || !near(h.residualCoin(), 0) {
 		t.Errorf("after close: spot %v perp %v", h.Spot.QtyCoin, h.Perp.QtyCoin)
 	}
@@ -77,7 +77,7 @@ func TestReadLegNet_ANakedSpotLegIsVisible(t *testing.T) {
 	openPair(t, spot, perp, testIntent, 0.0008)
 	place(t, perp, broker.MarketFuturesUSDM, broker.SideBuy, execution.CloseClientOrderID(testIntent, execution.LegPerp), 0.0008)
 
-	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent})[0]
+	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
 	if !near(h.residualCoin(), 0.0008) {
 		t.Fatalf("residual %v, want +0.0008 of naked spot", h.residualCoin())
 	}
@@ -115,7 +115,7 @@ func TestReadLegNet_AnUnreadableOrderIsUnknownNotZero(t *testing.T) {
 	openPair(t, spotFake, perp, testIntent, 0.0008)
 	spot := &flakyVenue{Broker: spotFake, failID: execution.CloseClientOrderID(testIntent, execution.LegSpot)}
 
-	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent})[0]
+	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
 	if len(h.Spot.UnreadableVI) != 1 {
 		t.Fatalf("unreadable = %v, want the one close order", h.Spot.UnreadableVI)
 	}
@@ -137,7 +137,7 @@ func TestReadLegNet_AWorkingOrderIsUnknownAndNotSquared(t *testing.T) {
 		Type: broker.OrderTypeLimitGTC, ClientOrderID: execution.LegClientOrderID(testIntent, execution.LegSpot), QtyCoin: 0.0008, PriceQuote: 70_000}); err != nil {
 		t.Fatal(err)
 	}
-	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent})[0]
+	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
 	if len(h.working()) != 1 {
 		t.Fatalf("working = %v", h.working())
 	}
@@ -156,15 +156,15 @@ func TestDoneOrders_ReadsAFinishedOrderOnce(t *testing.T) {
 	perp := &flakyVenue{Broker: perpFake}
 	memo := newDoneOrders()
 
-	readIntentHedges(ctx, spot, perp, memo, "BTCUSDT", []string{testIntent})
+	readIntentHedges(ctx, spot, perp, memo, "BTCUSDT", []string{testIntent}, hedgeFees{})
 	first := spot.reads.Load() + perp.reads.Load()
-	readIntentHedges(ctx, spot, perp, memo, "BTCUSDT", []string{testIntent})
+	readIntentHedges(ctx, spot, perp, memo, "BTCUSDT", []string{testIntent}, hedgeFees{})
 	second := spot.reads.Load() + perp.reads.Load() - first
-	if first != 8 {
-		t.Errorf("first scan made %d lookups, want 8 (four ids per leg)", first)
+	if first != 10 {
+		t.Errorf("first scan made %d lookups, want 10 (five ids per leg)", first)
 	}
-	if second != 6 {
-		t.Errorf("second scan made %d lookups, want 6 — the two FILLED opens remembered, the six unknown ids asked again", second)
+	if second != 8 {
+		t.Errorf("second scan made %d lookups, want 8 — the two FILLED opens remembered, the eight unknown ids asked again", second)
 	}
 }
 
@@ -298,7 +298,7 @@ func TestPlanSquare_ThePlannedOrderBalancesTheIntent(t *testing.T) {
 	openPair(t, spot, perp, testIntent, 0.0008)
 	place(t, spot, broker.MarketSpot, broker.SideSell, execution.CloseClientOrderID(testIntent, execution.LegSpot), 0.0008)
 
-	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent})[0]
+	h := readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
 	plan := planSquare(h, spotRulesBTC, perpRulesBTC, 77_000, 77_000)
 	if plan.Action != "send" || plan.Market != broker.MarketFuturesUSDM {
 		t.Fatalf("plan = %+v", plan)
@@ -307,7 +307,7 @@ func TestPlanSquare_ThePlannedOrderBalancesTheIntent(t *testing.T) {
 		Type: broker.OrderTypeMarket, ClientOrderID: plan.ClientOrderID, QtyCoin: plan.QtyCoin, ReduceOnly: plan.ReduceOnly}); err != nil {
 		t.Fatal(err)
 	}
-	h = readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent})[0]
+	h = readIntentHedges(ctx, spot, perp, newDoneOrders(), "BTCUSDT", []string{testIntent}, hedgeFees{})[0]
 	if !near(h.residualCoin(), 0) || !h.Perp.ReconcileOrderExists {
 		t.Errorf("after squaring: residual %v, reconcile seen %v", h.residualCoin(), h.Perp.ReconcileOrderExists)
 	}

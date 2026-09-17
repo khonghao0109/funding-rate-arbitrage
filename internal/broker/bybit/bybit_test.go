@@ -205,6 +205,8 @@ func TestExecutionDerivedIDs_FitBybitsOrderLinkID(t *testing.T) {
 			execution.LegClientOrderID("abtcusdt-20260915-054920-740", leg),
 			execution.CloseClientOrderID("abtcusdt-20260915-054920-740", leg),
 			execution.ReconcileClientOrderID("abtcusdt-20260915-054920-740", leg),
+			execution.UnwindClientOrderID("abtcusdt-20260915-054920-740", leg),
+			execution.ReduceClientOrderID("abtcusdt-20260915-054920-740", leg),
 		} {
 			if err := checkOrderLinkID(id); err != nil {
 				t.Errorf("execution id %q refused: %v", id, err)

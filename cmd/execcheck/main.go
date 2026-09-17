@@ -219,31 +219,36 @@ type state struct {
 	NotionalQuote float64 `json:"notional_quote"`
 	TargetQtyCoin float64 `json:"target_qty_coin"`
 
-	SpotClientOrderID   string  `json:"spot_client_order_id"`
-	PerpClientOrderID   string  `json:"perp_client_order_id"`
-	SpotFilledQtyCoin   float64 `json:"spot_filled_qty_coin"`
-	PerpFilledQtyCoin   float64 `json:"perp_filled_qty_coin"`
-	SpotAvgPriceQuote   float64 `json:"spot_avg_fill_price_quote"`
-	PerpAvgPriceQuote   float64 `json:"perp_avg_fill_price_quote"`
-	SpotRefMidQuote     float64 `json:"spot_ref_mid_quote"`
-	PerpRefMidQuote     float64 `json:"perp_ref_mid_quote"`
-	SpotBestAskQuote    float64 `json:"spot_best_ask_quote"`
-	PerpBestBidQuote    float64 `json:"perp_best_bid_quote"`
-	BookSampledAtMs     int64   `json:"book_sampled_at_ms"`
-	UnhedgedWindowMs    int64   `json:"unhedged_window_ms"`
-	ReducedToMatch      bool    `json:"reduced_to_match"`
-	Outcome             string  `json:"outcome"`
-	NextFundingTimeMs   int64   `json:"next_funding_time_ms"`
-	ClosedAtMs          int64   `json:"closed_at_ms"`
-	ClosedQtyCoin       float64 `json:"closed_qty_coin"`
-	RealizedQuote       float64 `json:"realized_quote"`
-	FundingQuote        float64 `json:"funding_received_quote"`
-	CommissionQuote     float64 `json:"commission_quote"`
-	SlippageQuote       float64 `json:"slippage_quote"`
-	SettlementsCounted  int     `json:"settlements_counted"`
-	PairPriceDriftQuote float64 `json:"pair_price_drift_quote"`
-	CloseReasonVI       string  `json:"close_reason_vi,omitempty"`
-	NoteVI              string  `json:"note_vi"`
+	SpotClientOrderID string  `json:"spot_client_order_id"`
+	PerpClientOrderID string  `json:"perp_client_order_id"`
+	SpotFilledQtyCoin float64 `json:"spot_filled_qty_coin"`
+	PerpFilledQtyCoin float64 `json:"perp_filled_qty_coin"`
+	SpotAvgPriceQuote float64 `json:"spot_avg_fill_price_quote"`
+	PerpAvgPriceQuote float64 `json:"perp_avg_fill_price_quote"`
+	SpotRefMidQuote   float64 `json:"spot_ref_mid_quote"`
+	PerpRefMidQuote   float64 `json:"perp_ref_mid_quote"`
+	SpotBestAskQuote  float64 `json:"spot_best_ask_quote"`
+	PerpBestBidQuote  float64 `json:"perp_best_bid_quote"`
+	BookSampledAtMs   int64   `json:"book_sampled_at_ms"`
+	UnhedgedWindowMs  int64   `json:"unhedged_window_ms"`
+	ReducedToMatch    bool    `json:"reduced_to_match"`
+	// The base-coin fee the opening spot buy's fills stated (PLAN 4.5j). Written
+	// by cmd/execportal on a venue that keeps the fee in the base coin; carried
+	// here so a re-save by execcheck does not drop it.
+	SpotBuyBaseFeeQtyCoin float64 `json:"spot_buy_base_fee_qty_coin,omitempty"`
+	SpotBuyBaseFeeStated  bool    `json:"spot_buy_base_fee_stated,omitempty"`
+	Outcome               string  `json:"outcome"`
+	NextFundingTimeMs     int64   `json:"next_funding_time_ms"`
+	ClosedAtMs            int64   `json:"closed_at_ms"`
+	ClosedQtyCoin         float64 `json:"closed_qty_coin"`
+	RealizedQuote         float64 `json:"realized_quote"`
+	FundingQuote          float64 `json:"funding_received_quote"`
+	CommissionQuote       float64 `json:"commission_quote"`
+	SlippageQuote         float64 `json:"slippage_quote"`
+	SettlementsCounted    int     `json:"settlements_counted"`
+	PairPriceDriftQuote   float64 `json:"pair_price_drift_quote"`
+	CloseReasonVI         string  `json:"close_reason_vi,omitempty"`
+	NoteVI                string  `json:"note_vi"`
 }
 
 func statePath(id string) string { return filepath.Join(stateDir, id+".json") }

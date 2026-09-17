@@ -224,6 +224,8 @@ func main() {
 	if *autoOn {
 		if why := p.markets.profile.OrdersBlockedVI; why != "" {
 			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — %s", why)
+		} else if why := p.markets.profile.AutotradeBlockedVI; why != "" {
+			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — %s", why)
 		} else if err := m.both(); err != nil {
 			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — thiếu credential: %v", err)
 		} else if _, err := p.autotrade.Start(autotrade.DefaultPortfolioConfig(symbolList)); err != nil {
