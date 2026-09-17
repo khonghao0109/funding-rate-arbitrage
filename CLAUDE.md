@@ -1151,6 +1151,11 @@ has no Chrome for the click-through and another `execportal` held 8087 all
 session, so nothing has sized itself from a real balance. PLAN 4.5g's criteria 14
 and 15 are open.
 
+**The auto-trader received OPERATIONAL SAFETY REFINEMENTS on 2026-09-17 (Level-1 Single-Exchange Audit P1 fixes: R8 and R6) — shipped in `walkthrough.md`.**
+1. **R8 Part 1 (Stop-loss exits on network-halted pairs):** When a pair is halted solely by consecutive read failures (`readFailures >= 5`, `haltFromRead`), its position is no longer frozen indefinitely. If the venue confirms a clean hedge (`HedgeBothOpen`, 1 intent, matching `IntentID`, within 1 step size), risk exits continue evaluating and dispatching: basis blowout stop (`CheckExitBasis`) and negative funding run (`CheckExitFunding`). Take-profit, settlement-count exit, and new entries remain blocked. Following an emergency close, the pair remains halted under a new sequence number until explicit operator acknowledgement.
+2. **R8 Part 2 (Ack All):** `POST /api/autotrade/ack-all` (header `X-Execportal-Action: autotrade-ack-all`) and UI button `⚡ XÁC NHẬN TẤT CẢ (N CẶP)` atomically release all displayed halted pairs to paused state with zero orders sent, requiring exact `halt_seq` verification to avoid clearing unread halts. Whole-bot halts (e.g., after KILL) remain separate.
+3. **R6 (Pre-flight spread guard on take-profit):** `portal.close` re-reads touch spreads on both books immediately before sending MARKET orders. If spot or perp spread exceeds `MaxSpreadBps` (default 10.0 bps) or is unmeasurable, a take-profit close is deferred (`Deferred=true`), retried next scan without counting as a trade failure (`tradeFailures`). Basis stops, funding exits, and manual closes bypass the spread guard to prioritize position safety.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test

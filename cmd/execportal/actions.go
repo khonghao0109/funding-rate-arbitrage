@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"futures-arbitrage-scanner/internal/broker"
+	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/execution"
 )
 
@@ -418,7 +419,10 @@ type closeView struct {
 	Outcome string `json:"outcome"`
 	Flat    bool   `json:"flat"`
 	Refused bool   `json:"refused"`
-	Alarm   bool   `json:"alarm"`
+	// Deferred is a close the pre-flight spread guard held back (closeGuard):
+	// nothing was sent, Refused is set too, and the bot retries next scan.
+	Deferred bool `json:"deferred"`
+	Alarm    bool `json:"alarm"`
 	// SentUnconfirmed is a closing order that DID reach the venue and filled
 	// nothing the portal could confirm. execution calls that a refusal
 	// (ErrCloseRefused) because no quantity moved; it is not "both legs
@@ -507,10 +511,63 @@ func (p *portal) handleClose(w http.ResponseWriter, r *http.Request) {
 	if reasonVI == "" {
 		reasonVI = "Đóng thủ công bởi người vận hành"
 	}
-	view, status := p.close(ctx, st, reasonVI)
+	// An operator's close is never held back for a spread: a person pressed it.
+	view, status := p.close(ctx, st, reasonVI, closeGuard{})
 	log.Printf("execportal: CLOSE %s %s → %s flat=%v refused=%v alarm=%v closed=%.8f %s",
 		view.IntentID, view.Symbol, view.Outcome, view.Flat, view.Refused, view.Alarm, view.ClosedQtyCoin, view.ErrorVI)
 	writeJSON(w, status, view)
+}
+
+// closeGuard is what a close checks on the books it has just read, before any
+// order is sent.
+type closeGuard struct {
+	// MaxSpreadBps > 0 defers the close when either book's touch is wider than
+	// this, in basis points of that book's mid, or cannot be measured. Only the
+	// bot's take-profit sets it (autotrade.CloseOrder.MaxSpreadBps); a risk exit,
+	// a kill, a stop-and-close and a person's close all send zero, because a
+	// wide book is a reason to wait for a GAIN and never while a hedge breaks.
+	MaxSpreadBps float64
+}
+
+// deferVI is the reason the guard holds the close back, or "" to send.
+//
+// An unmeasurable touch DEFERS here, unlike the scan-time brake in autotrade,
+// which lets it through. The scan's brake judges a reading, and jamming it
+// would silence the take-profit on a missing auxiliary figure; this guard is
+// the last look before two MARKET orders cross the book, and sending them into
+// a touch nobody could read is sending them blind.
+func (g closeGuard) deferVI(spot, perp depth.Summary) string {
+	if !(g.MaxSpreadBps > 0) {
+		return ""
+	}
+	spotBps, spotOK := touchSpreadBps(spot)
+	perpBps, perpOK := touchSpreadBps(perp)
+	if !spotOK || !perpOK {
+		return fmt.Sprintf("không đo được spread tức thời của sổ lệnh (spot %s, perp %s) — hoãn chốt lời để tránh trượt giá mù; chưa gửi lệnh nào",
+			spreadWordVI(spotBps, spotOK), spreadWordVI(perpBps, perpOK))
+	}
+	if spotBps > g.MaxSpreadBps || perpBps > g.MaxSpreadBps {
+		return fmt.Sprintf("Spread sổ lệnh tức thời bị giãn (Spot %.1f bps, Perp %.1f bps > trần %.1f bps) — hoãn đóng để bảo vệ lợi nhuận; chưa gửi lệnh nào",
+			spotBps, perpBps, g.MaxSpreadBps)
+	}
+	return ""
+}
+
+// touchSpreadBps is (best ask − best bid) ÷ mid in basis points, recomputed
+// from the touch prices rather than read from Summary.SpreadPct, so a summary
+// whose derived field was never filled cannot read as a perfectly tight book.
+func touchSpreadBps(b depth.Summary) (float64, bool) {
+	if !(b.MidPriceQuote > 0) || !(b.BestBidQuote > 0) || !(b.BestAskQuote > 0) || b.BestAskQuote < b.BestBidQuote {
+		return 0, false
+	}
+	return (b.BestAskQuote - b.BestBidQuote) / b.MidPriceQuote * 10_000, true
+}
+
+func spreadWordVI(bps float64, ok bool) string {
+	if !ok {
+		return "không đo được"
+	}
+	return fmt.Sprintf("%.1f bps", bps)
 }
 
 // close is execcheck's runClose with ONE deliberate difference: the size.
@@ -522,7 +579,7 @@ func (p *portal) handleClose(w http.ResponseWriter, r *http.Request) {
 // now wrong. So the portal sizes the close from the VENUE's record of THIS
 // intent's own orders, which execution then checks against the venue position
 // rather than trusts (CloseRequest.QtyCoin). Still rule 7; narrower.
-func (p *portal) close(ctx context.Context, st intentState, reasonVI string) (closeView, int) {
+func (p *portal) close(ctx context.Context, st intentState, reasonVI string, guard closeGuard) (closeView, int) {
 	v := closeView{IntentID: st.IntentID, Symbol: st.Symbol, Outcome: string(execution.OutcomeBothOpen),
 		Refused: true, RealizedLabelVI: realizedLabelVI}
 
@@ -535,6 +592,14 @@ func (p *portal) close(ctx context.Context, st intentState, reasonVI string) (cl
 	if err != nil {
 		v.ErrorVI = "chân perp: " + err.Error() + " — chưa gửi lệnh nào"
 		return v, http.StatusBadGateway
+	}
+	// PRE-FLIGHT SPREAD GUARD (audit R6). These two books were read a moment
+	// ago, for this close, and the MARKET orders below cross exactly these
+	// touches. A take-profit is the one close that may wait for a tighter book.
+	if whyVI := guard.deferVI(spotMkt.Book, perpMkt.Book); whyVI != "" {
+		v.Deferred = true
+		v.ErrorVI = whyVI
+		return v, http.StatusConflict
 	}
 	tolerance := math.Max(spotMkt.Rules.StepSizeCoin, perpMkt.Rules.StepSizeCoin)
 

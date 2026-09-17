@@ -53,6 +53,11 @@ const (
 	autotradePairPauseAction  = "autotrade-pair-pause"
 	autotradePairResumeAction = "autotrade-pair-resume"
 	autotradePairAckAction    = "autotrade-pair-ack"
+	// autotradeAckAllAction acknowledges every halted pair the page listed, by
+	// the numbers it showed (audit R8). It sends no order and leaves each pair
+	// paused — but an acknowledged pair's position is adopted and its exits may
+	// then close it, so it goes behind a dialog like a single ACK.
+	autotradeAckAllAction = "autotrade-ack-all"
 
 	// The portal's write lock names what holds it; these appear on the page's
 	// busy line when a button press finds the bot mid-trade.
@@ -325,8 +330,9 @@ func (t portalTrader) Open(ctx context.Context, order autotrade.OpenOrder) autot
 	}
 }
 
-func (t portalTrader) Close(ctx context.Context, symbol, intentID, reasonVI string) autotrade.CloseResult {
+func (t portalTrader) Close(ctx context.Context, order autotrade.CloseOrder) autotrade.CloseResult {
 	p := t.p
+	symbol, intentID := order.Symbol, order.IntentID
 	out := autotrade.CloseResult{IntentID: intentID, Refused: true}
 	symbol, err := p.allowedSymbol(symbol)
 	if err != nil {
@@ -358,15 +364,15 @@ func (t portalTrader) Close(ctx context.Context, symbol, intentID, reasonVI stri
 		out.ErrorVI = fmt.Sprintf("ý định %s là %s, không phải %s", intentID, st.Symbol, symbol)
 		return out
 	}
-	v, _ := p.close(ctx, st, reasonVI)
-	log.Printf("execportal: AUTOTRADE CLOSE %s %s → %s flat=%v refused=%v alarm=%v closed=%.8f %s",
-		v.IntentID, v.Symbol, v.Outcome, v.Flat, v.Refused, v.Alarm, v.ClosedQtyCoin, v.ErrorVI)
+	v, _ := p.close(ctx, st, order.ReasonVI, closeGuard{MaxSpreadBps: order.MaxSpreadBps})
+	log.Printf("execportal: AUTOTRADE CLOSE %s %s → %s flat=%v refused=%v deferred=%v alarm=%v closed=%.8f %s",
+		v.IntentID, v.Symbol, v.Outcome, v.Flat, v.Refused, v.Deferred, v.Alarm, v.ClosedQtyCoin, v.ErrorVI)
 	errorVI := v.ErrorVI
 	if v.CacheErrorVI != "" {
 		errorVI = strings.TrimPrefix(errorVI+" · "+v.CacheErrorVI, " · ")
 	}
 	return autotrade.CloseResult{
-		IntentID: intentID, Refused: v.Refused, SentUnconfirmed: v.SentUnconfirmed, Flat: v.Flat, Alarm: v.Alarm,
+		IntentID: intentID, Refused: v.Refused, Deferred: v.Deferred, SentUnconfirmed: v.SentUnconfirmed, Flat: v.Flat, Alarm: v.Alarm,
 		ClosedQtyCoin: v.ClosedQtyCoin, RemainingQtyCoin: v.RemainingQtyCoin,
 		FundingReceivedQuote: v.FundingReceivedQuote, SettlementsCounted: v.SettlementsCounted,
 		RealizedQuote: v.RealizedQuote, ErrorVI: errorVI,
@@ -733,6 +739,59 @@ func (p *portal) handleAutotradePair(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, autotradeActionView{Status: st})
+}
+
+// autotradeAckAllRequest lists every halted pair the page showed, each with the
+// halt number beside it. Required: acknowledging is only ever of what was read.
+type autotradeAckAllRequest struct {
+	Halts []struct {
+		Symbol  string `json:"symbol"`
+		HaltSeq *int   `json:"halt_seq"`
+	} `json:"halts"`
+}
+
+// autotradeAckAllView is the status after an ACK ALL and what it did.
+type autotradeAckAllView struct {
+	Status  autotrade.StatusView    `json:"status"`
+	Outcome autotrade.AckAllOutcome `json:"outcome"`
+	Cleared int                     `json:"cleared"`
+}
+
+// handleAutotradeAckAll acknowledges, in one confirmed action, every halted pair
+// the page listed (audit R8, part 2). It never sends an order.
+func (p *portal) handleAutotradeAckAll(w http.ResponseWriter, r *http.Request) {
+	var req autotradeAckAllRequest
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if len(req.Halts) == 0 {
+		writeError(w, http.StatusBadRequest, "halts_required", "thiếu halts — xác nhận tất cả phải nêu từng cặp và số DỪNG BẢO VỆ trang đã hiển thị")
+		return
+	}
+	seen := make(map[string]int, len(req.Halts))
+	for _, h := range req.Halts {
+		symbol, err := p.allowedSymbol(h.Symbol)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "bad_symbol", err.Error()+" — không xác nhận cặp nào")
+			return
+		}
+		if h.HaltSeq == nil || *h.HaltSeq <= 0 {
+			writeError(w, http.StatusBadRequest, "halt_seq_required", symbol+" thiếu halt_seq — không xác nhận cặp nào")
+			return
+		}
+		if _, dup := seen[symbol]; dup {
+			writeError(w, http.StatusBadRequest, "duplicate_symbol", symbol+" nêu hai lần — không xác nhận cặp nào")
+			return
+		}
+		seen[symbol] = *h.HaltSeq
+	}
+	st, out, err := p.autotrade.AckAll(seen)
+	if err != nil {
+		writeAutotradeError(w, err, "")
+		return
+	}
+	log.Printf("execportal: AUTOTRADE ACK-ALL → cleared %d pairs %v (still halted %v, bot halt %q)", len(out.Acked), out.Acked, out.StillHalted, out.BotHaltVI)
+	writeJSON(w, http.StatusOK, autotradeAckAllView{Status: st, Outcome: out, Cleared: len(out.Acked)})
 }
 
 // handleAutotradePnL is the auto-trader's result page: closed pairs from the

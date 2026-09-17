@@ -1188,6 +1188,37 @@ async function atAckPair(pair) {
   refreshAll();
 }
 
+// atAckAll acknowledges every halted pair the page is showing, in one confirmed
+// action, each quoted by the number displayed beside it (audit R8). The server
+// refuses the whole batch if any of those numbers is no longer the pair's halt,
+// and never clears the bot's own halt — that is XÁC NHẬN & TẮT.
+async function atAckAll(halts) {
+  if (!halts || halts.length === 0) return;
+  const rows = halts.map((h) => [`${h.symbol} · DỪNG BẢO VỆ #${h.halt_seq}`, h.halt_reason_vi || "—"]);
+  rows.push(["Sau khi xác nhận", "mỗi cặp TẠM DỪNG vào lệnh; vị thế của bot còn trên sàn (nếu có) được tiếp nhận ở lượt quét sau và quản lý tới lúc thoát; không lệnh nào được gửi lúc này; bật lại từng cặp bằng CHO PHÉP"]);
+  const s = at.status;
+  const warning = s && s.halt_reason_vi
+    ? callout(`DỪNG BẢO VỆ của BOT (${s.halt_reason_vi}) KHÔNG được xác nhận ở đây — dùng XÁC NHẬN & TẮT.`, "warn")
+    : callout("Chỉ xác nhận khi đã đọc lý do của TỪNG cặp ở trên. Một DỪNG BẢO VỆ về vị thế (lệch chân, báo động) cần xử lý trên sàn trước.", "warn");
+  if (!(await confirmDialog(`XÁC NHẬN TẤT CẢ ${halts.length} CẶP DỪNG BẢO VỆ?`, rows, "ĐÃ XỬ LÝ — XÁC NHẬN TẤT CẢ", "secondary", warning))) return;
+  at.acting = true;
+  syncAtButtons();
+  const r = await post("autotrade-ack-all", "/api/autotrade/ack-all", { halts: halts.map((h) => ({ symbol: h.symbol, halt_seq: h.halt_seq })) });
+  at.acting = false;
+  if (!r.ok) {
+    atActionFailed("XÁC NHẬN TẤT CẢ", "xác nhận tất cả cặp", r);
+  } else {
+    const out = (r.body && r.body.outcome) || {};
+    const nodes = [callout(`Đã xác nhận ${(out.acked || []).length} cặp — mỗi cặp TẠM DỪNG, không lệnh nào được gửi.`, "ok")];
+    if ((out.still_halted || []).length > 0) nodes.push(callout(`CHƯA xác nhận (DỪNG BẢO VỆ mới, trang chưa hiển thị lúc bấm): ${out.still_halted.join(", ")}`, "warn"));
+    if ((out.exit_in_flight || []).length > 0) nodes.push(callout(`CHƯA xác nhận — lệnh đóng khẩn cấp đang ra sàn: ${out.exit_in_flight.join(", ")}. Cặp sẽ DỪNG BẢO VỆ lại khi lệnh xong; xác nhận sau đó.`, "warn"));
+    if ((out.already_released || []).length > 0) nodes.push(callout(`Không còn dừng lúc bấm, không đổi: ${out.already_released.join(", ")}`, ""));
+    if (out.bot_halt_vi) nodes.push(callout(`DỪNG BẢO VỆ của BOT vẫn giữ: ${out.bot_halt_vi}`, "bad"));
+    showResult("XÁC NHẬN TẤT CẢ", nodes);
+  }
+  refreshAll();
+}
+
 function atToggle() {
   const s = at.status;
   if (!s) return;
@@ -1215,7 +1246,7 @@ export function initExecution(status) {
   });
   fillSymbols(status.symbols || []);
   fillAtSymbols(status.symbols || []);
-  autotradeView.init({ closePair: atClosePair, togglePair: atTogglePair, ackPair: atAckPair });
+  autotradeView.init({ closePair: atClosePair, togglePair: atTogglePair, ackPair: atAckPair, ackAll: atAckAll });
   $("at-form").addEventListener("submit", (ev) => {
     ev.preventDefault();
     atStart();

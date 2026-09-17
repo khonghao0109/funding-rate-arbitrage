@@ -89,12 +89,31 @@ type OpenResult struct {
 	ErrorVI          string
 }
 
+// CloseOrder is what the bot asks the portal to close.
+type CloseOrder struct {
+	Symbol   string
+	IntentID string
+	// ReasonVI is written into the intent file as the close's reason.
+	ReasonVI string
+	// MaxSpreadBps > 0 asks the portal to re-read both books IMMEDIATELY before
+	// sending and to send nothing — Deferred — when either touch is wider than
+	// this or cannot be measured. Only a take-profit sets it: the scan's own
+	// spread brake judged a book that may be seconds old by the time the MARKET
+	// orders go, and a gain can wait a scan where a stop cannot. Zero is no
+	// guard, which is what every risk exit, kill and operator close sends.
+	MaxSpreadBps float64
+}
+
 // CloseResult is the portal's close, reduced the same way.
 type CloseResult struct {
 	IntentID string `json:"intent_id"`
 	Busy     bool   `json:"busy"`
 	// Refused: nothing was sent and both legs are as they were.
 	Refused bool `json:"refused"`
+	// Deferred: the pre-flight spread guard held a take-profit back. Nothing was
+	// sent (Refused is set too), and it is NOT a failed trade: the next scan
+	// re-prices the exit and tries again.
+	Deferred bool `json:"deferred"`
 	// SentUnconfirmed: a closing order reached the venue and filled nothing
 	// the portal could confirm.
 	SentUnconfirmed bool `json:"sent_unconfirmed"`
@@ -124,7 +143,7 @@ type Market interface {
 type Trader interface {
 	Holding(ctx context.Context, symbol string) (Holding, error)
 	Open(ctx context.Context, order OpenOrder) OpenResult
-	Close(ctx context.Context, symbol, intentID, reasonVI string) CloseResult
+	Close(ctx context.Context, order CloseOrder) CloseResult
 	// Account is the two wallets' quote equity, for the periodic rebalance
 	// (capital.go). It is read at most once per RebalanceIntervalHours, never
 	// on the scan's own cadence, and an error only leaves the size where it is.
@@ -201,6 +220,25 @@ type pair struct {
 	// haltMayHold is a halted pair possibly holding legs; it keeps its place
 	// until acknowledged.
 	haltMayHold bool
+	// haltFromRead is a halt raised ONLY because the venue could not be read
+	// MaxConsecutiveFailures times in a row. Such a pair holding the bot's
+	// position keeps its RISK exits — the basis stop and the negative-funding
+	// exit — once a reading proves the one position still hedged (audit R8).
+	// Every other halt clears it: a halt about the position itself acts on
+	// nothing until a person has looked.
+	haltFromRead bool
+	// lastHaltedExitKey de-duplicates the console line of a halted pair whose
+	// only due exit is one a halt may not take.
+	lastHaltedExitKey string
+	// lastDeferKey de-duplicates a take-profit held back by the pre-flight
+	// spread guard, which retries on every scan. Keyed by the KIND of deferral
+	// (wide / unmeasurable), never by its text, which carries live figures.
+	lastDeferKey string
+	// haltRiskRetry is a halted risk exit that went out and came back with
+	// nothing sent (busy, refused): its retries on later scans log only when
+	// the reason changes.
+	haltRiskRetry    bool
+	lastHaltRetryKey string
 }
 
 // entering reports whether the pair may open a position.
@@ -406,6 +444,12 @@ type scanJob struct {
 	// halted is a watch job planned for a halted pair: its reading counts, and
 	// nothing else — not even once an acknowledgement lands during the read.
 	halted bool
+	// haltedRiskOnly is a pair halted by read failures alone while holding the
+	// bot's position: its market is read and its exits judged, but only a RISK
+	// exit may be sent, and only while the pair is still that same halt.
+	haltedRiskOnly bool
+	// haltSeq is the pair's halt number when a haltedRiskOnly job was planned.
+	haltSeq int
 }
 
 // reading is what the venue said to one job.
@@ -423,6 +467,15 @@ type exitPlan struct {
 	cfg      Config
 	pos      PositionView
 	reasonVI string
+	// takeProfitOnly is an exit whose every due reason is the take-profit: the
+	// one exit the portal's pre-flight spread guard may defer.
+	takeProfitOnly bool
+	// haltedRisk is a risk exit of a pair halted by read failures, valid only
+	// while that halt — haltSeq — still stands.
+	haltedRisk bool
+	haltSeq    int
+	// quiet is a retry of a halted risk exit already announced: no EXIT line.
+	quiet bool
 }
 
 type entryPlan struct {
@@ -465,6 +518,16 @@ func (e *Engine) Step(ctx context.Context) {
 		case StateOpening, StateClosing:
 			continue
 		case StateEmergencyHalted:
+			if p.haltFromRead && p.pos != nil {
+				// Halted only because the venue could not be read, while holding
+				// the bot's position (audit R8). Now that reads may be back, the
+				// market is read and the exits judged — and only a RISK exit may
+				// be sent, never an entry and never a take-profit. judgeHaltedRisk
+				// decides whether the reading is clean enough to act on at all.
+				held := *p.pos
+				jobs = append(jobs, scanJob{symbol: s, cfg: p.cfg, pos: &held, haltedRiskOnly: true, haltSeq: p.haltSeq})
+				continue
+			}
 			// Read, never acted on: a halt waits for a person, but its place in
 			// the counts follows the venue — a pair halted flat that a person
 			// then opens takes a place, one read flat again gives it back, and a
@@ -913,6 +976,10 @@ func (e *Engine) judgeHolding(ctx, scanCtx context.Context, job scanJob, r readi
 	} else {
 		e.recordHoldingLocked(p, r.holding)
 	}
+	if job.haltedRiskOnly {
+		e.mu.Unlock()
+		return e.judgeHaltedRisk(ctx, scanCtx, job, r, now)
+	}
 	valid := e.jobValidLocked(p, job)
 	e.mu.Unlock()
 	if !valid {
@@ -993,6 +1060,10 @@ func (e *Engine) judgeHolding(ctx, scanCtx context.Context, job scanJob, r readi
 		}
 		return exitPlan{}, false
 	}
+	if !ex.onlyDue(CheckExitTakeProfit) {
+		// No take-profit waiting on a spread: the next deferral is news.
+		p.lastDeferKey = ""
+	}
 	if !ex.Due {
 		return exitPlan{}, false
 	}
@@ -1003,8 +1074,124 @@ func (e *Engine) judgeHolding(ctx, scanCtx context.Context, job scanJob, r readi
 	if reason == "" {
 		reason = "Điều kiện thoát đạt ngưỡng"
 	}
-	return exitPlan{symbol: p.symbol, cfg: job.cfg, pos: pos, reasonVI: reason}, true
+	return exitPlan{symbol: p.symbol, cfg: job.cfg, pos: pos, reasonVI: reason, takeProfitOnly: ex.onlyDue(CheckExitTakeProfit)}, true
 }
+
+// haltRiskExitKeys are the exits a pair halted by read failures may still take:
+// the ones that protect capital. The take-profit is a GAIN and waits for the
+// operator; the epoch exit is a schedule, not a risk.
+var haltRiskExitKeys = map[CheckKey]bool{CheckExitBasis: true, CheckExitFunding: true}
+
+// haltedRiskJobValidLocked reports whether a haltedRiskOnly job still describes
+// the pair: the SAME read-failure halt, the same position, the bot running. An
+// acknowledgement, a kill, a stop or a second halt while the job read makes the
+// reading worthless for acting. Caller holds mu.
+func (e *Engine) haltedRiskJobValidLocked(p *pair, job scanJob) bool {
+	return e.state == StateRunning && !e.killing && !e.stopping &&
+		p.state == StateEmergencyHalted && p.haltFromRead && p.haltSeq == job.haltSeq &&
+		p.pos != nil && job.pos != nil && p.pos.IntentID == job.pos.IntentID
+}
+
+// judgeHaltedRisk judges a pair halted by read failures alone while it holds
+// the bot's position (audit R8). The holding was already recorded by the
+// caller. It acts only on a reading that proves the position clean — both legs
+// open, exactly the bot's one intent, no residual beyond the coarser step —
+// and then returns an exit only when a RISK exit is due. It never counts a
+// failure, never resets the halt, and never opens anything.
+func (e *Engine) judgeHaltedRisk(ctx, scanCtx context.Context, job scanJob, r reading, now time.Time) (exitPlan, bool) {
+	p := e.pairs[job.symbol]
+	pos := *job.pos
+	if r.holdErr != nil || interrupted(ctx, scanCtx) {
+		// Still unreadable: the halt already says so, and counts nothing more.
+		return exitPlan{}, false
+	}
+	h := r.holding
+	escalate := ""
+	switch {
+	case h.Status == HedgeUnhedged || h.Status == HedgeEvidenceConflict:
+		escalate = fmt.Sprintf("đang DỪNG BẢO VỆ #%d vì đọc sàn hỏng thì sàn báo %s: %s — bot KHÔNG tự làm phẳng, van cắt lỗ tự động TẮT", job.haltSeq, h.Status, h.ReasonVI)
+	case h.Status == HedgeBothOpen && (h.HeldIntents != 1 || h.IntentID != pos.IntentID || !h.FromAutotrade):
+		escalate = fmt.Sprintf("đang DỪNG BẢO VỆ #%d vì đọc sàn hỏng thì sàn cho thấy %d ý định đang giữ (%q), bot giữ %s — không đóng thứ bot không nhận ra, van cắt lỗ tự động TẮT", job.haltSeq, h.HeldIntents, h.IntentID, pos.IntentID)
+	case h.Status != HedgeBothOpen:
+		// Flat (closed by hand?) or undecided: nothing the bot may act on, and
+		// the reading was recorded for the counts.
+		return exitPlan{}, false
+	case math.Abs(h.ResidualQtyCoin) > h.ToleranceQtyCoin+residualEpsilonCoin:
+		escalate = fmt.Sprintf("đang DỪNG BẢO VỆ #%d vì đọc sàn hỏng thì hai chân lệch %.8f coin > dung sai %.8f — van cắt lỗ tự động TẮT", job.haltSeq, h.ResidualQtyCoin, h.ToleranceQtyCoin)
+	}
+	if escalate != "" {
+		e.mu.Lock()
+		if e.haltedRiskJobValidLocked(p, job) {
+			// A new halt with its own number: what the operator read (#seq, a read
+			// failure) no longer describes the pair, so acknowledging it must not
+			// clear this.
+			e.haltPairLocked(p, escalate)
+		}
+		e.mu.Unlock()
+		return exitPlan{}, false
+	}
+	if r.snapErr != nil {
+		return exitPlan{}, false
+	}
+
+	holdCfg := job.cfg
+	if pos.NotionalQuote > 0 {
+		holdCfg.NotionalQuote = pos.NotionalQuote
+	}
+	sig := gauge(holdCfg, r.snap, now, e.marginFrac)
+	ex := assessExit(holdCfg, r.snap, pos, now)
+	sig.ExitChecks, sig.ExitDue = ex.Checks, ex.Due
+	sig.EntryBasisBps, sig.BasisWidenBps = ptr(pos.EntryBasisBps), ex.BasisWidenBps
+	sig.fillHolding(holdCfg, ex.Result)
+
+	var riskReasons, heldBack []string
+	for i, key := range ex.DueKeys {
+		if haltRiskExitKeys[key] {
+			riskReasons = append(riskReasons, ex.ReasonsVI[i])
+		} else {
+			heldBack = append(heldBack, ex.ReasonsVI[i])
+		}
+	}
+	switch {
+	case len(riskReasons) > 0:
+		sig.VerdictVI = fmt.Sprintf("DỪNG BẢO VỆ #%d · VAN RỦI RO NỔ — THOÁT KHẨN CẤP: %s", job.haltSeq, strings.Join(riskReasons, " · "))
+	case len(heldBack) > 0:
+		sig.VerdictVI = fmt.Sprintf("DỪNG BẢO VỆ #%d · điều kiện thoát KHÔNG phải rủi ro (%s) — chờ XÁC NHẬN, không gửi lệnh", job.haltSeq, strings.Join(heldBack, " · "))
+	default:
+		sig.VerdictVI = fmt.Sprintf("DỪNG BẢO VỆ #%d · hai chân hedged sạch — giữ vị thế, van cắt lỗ basis và funding âm vẫn canh", job.haltSeq)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if !e.haltedRiskJobValidLocked(p, job) {
+		return exitPlan{}, false
+	}
+	p.signal = &sig
+	p.lastScanAt = now
+	if len(riskReasons) == 0 {
+		if len(heldBack) > 0 {
+			if key := strings.Join(heldBack, "|"); key != p.lastHaltedExitKey {
+				p.lastHaltedExitKey = key
+				e.logLocked("HALT", p.symbol, sig.VerdictVI)
+			}
+		} else {
+			p.lastHaltedExitKey = ""
+		}
+		return exitPlan{}, false
+	}
+	reason := "Thoát khẩn cấp khi DỪNG BẢO VỆ: " + strings.Join(riskReasons, "; ")
+	if p.haltRiskRetry {
+		// Already announced, and the last attempt sent nothing: the retry says
+		// so only if its outcome changes (afterHaltedRiskExit).
+		return exitPlan{symbol: p.symbol, cfg: job.cfg, pos: pos, reasonVI: reason, haltedRisk: true, haltSeq: job.haltSeq, quiet: true}, true
+	}
+	e.logLocked("HALT_RISK_EXIT", p.symbol, fmt.Sprintf("cặp DỪNG BẢO VỆ #%d (đọc sàn hỏng) nay đọc được, sàn xác nhận %s hedged sạch — van rủi ro nổ, gửi lệnh đóng: %s",
+		job.haltSeq, pos.IntentID, strings.Join(riskReasons, " · ")))
+	return exitPlan{symbol: p.symbol, cfg: job.cfg, pos: pos, reasonVI: reason, haltedRisk: true, haltSeq: job.haltSeq}, true
+}
+
+// residualEpsilonCoin absorbs float noise in a residual compared against a step.
+const residualEpsilonCoin = 1e-9
 
 // warnOverLimit logs, once per change, a portfolio already over its pair limit
 // after every pair of the scan was judged — adopted positions, pairs not proven
@@ -1034,7 +1221,18 @@ func (e *Engine) sendExit(ctx context.Context, x exitPlan) bool {
 		e.mu.Unlock()
 		return false
 	}
-	if p.state != StateInPosition || p.pos == nil || p.pos.IntentID != x.pos.IntentID {
+	if x.haltedRisk {
+		// The halt the exit was judged under must still stand, unchanged: an
+		// acknowledgement or a second halt since then voids it. The number is
+		// defence in depth — a different read-failure halt on the same intent
+		// needs an ack and an adoption in between, which cannot happen inside
+		// one scan while opMu is held — and is kept so this stays true if the
+		// scan is ever split.
+		if p.state != StateEmergencyHalted || !p.haltFromRead || p.haltSeq != x.haltSeq || p.pos == nil || p.pos.IntentID != x.pos.IntentID {
+			e.mu.Unlock()
+			return true
+		}
+	} else if p.state != StateInPosition || p.pos == nil || p.pos.IntentID != x.pos.IntentID {
 		e.mu.Unlock()
 		return true
 	}
@@ -1044,16 +1242,30 @@ func (e *Engine) sendExit(ctx context.Context, x exitPlan) bool {
 	} else if p.signal != nil {
 		verdict = p.signal.VerdictVI
 	}
+	// CLOSING for a halted pair too, while the order is out: an acknowledgement
+	// (which requires the halted state) cannot land in the middle of the close,
+	// and the pair's place is counted as trading. afterHaltedRiskExit puts the
+	// halt back whatever the close did.
 	e.setPairStateLocked(p, StateClosing, false)
-	e.logLocked("EXIT", p.symbol, verdict+" — gửi lệnh đóng "+x.pos.IntentID)
+	if !x.quiet {
+		e.logLocked("EXIT", p.symbol, verdict+" — gửi lệnh đóng "+x.pos.IntentID)
+	}
 	e.mu.Unlock()
 
+	order := CloseOrder{Symbol: x.symbol, IntentID: x.pos.IntentID, ReasonVI: verdict}
+	if x.takeProfitOnly && !x.haltedRisk {
+		order.MaxSpreadBps = x.cfg.MaxExitSpreadBps
+	}
 	// A close is never cancelled: the kill wants it closed too, and a cancelled
 	// close is a close that stopped half-way.
 	tradeCtx, cancelTrade := context.WithTimeout(context.WithoutCancel(ctx), e.actionTimeout)
-	res := e.trader.Close(tradeCtx, x.symbol, x.pos.IntentID, verdict)
+	res := e.trader.Close(tradeCtx, order)
 	cancelTrade()
-	e.afterClose(p, x.cfg, x.pos, res)
+	if x.haltedRisk {
+		e.afterHaltedRiskExit(p, x, res)
+	} else {
+		e.afterClose(p, x.cfg, x.pos, res)
+	}
 	// A busy portal means a manual write is running right now: every reading
 	// of this scan may be out of date, so its remaining trades wait for the
 	// next scan — the exit included.
@@ -1415,9 +1627,25 @@ func (e *Engine) adopt(ctx context.Context, p *pair, h Holding, job scanJob) {
 func (e *Engine) afterClose(p *pair, cfg Config, pos PositionView, res CloseResult) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if !res.Deferred {
+		p.lastDeferKey = ""
+	}
 	switch {
 	case res.Busy:
 		e.logLocked("CLOSE", p.symbol, "portal đang bận thao tác ghi khác — chưa gửi gì, đóng lại lượt sau")
+		e.setPairStateLocked(p, StateInPosition, false)
+	case res.Deferred:
+		// The pre-flight spread guard held a take-profit back. Nothing was sent
+		// and nothing failed: it is not counted towards a halt, and the next
+		// scan re-prices the exit on a fresh book.
+		key := "wide"
+		if strings.Contains(res.ErrorVI, "không đo được") {
+			key = "unmeasurable"
+		}
+		if key != p.lastDeferKey {
+			p.lastDeferKey = key
+			e.logLocked("CLOSE", p.symbol, "HOÃN CHỐT LỜI (van spread trước khi gửi, chưa gửi lệnh nào): "+res.ErrorVI)
+		}
 		e.setPairStateLocked(p, StateInPosition, false)
 	case res.Flat:
 		p.pos = nil
@@ -1443,6 +1671,47 @@ func (e *Engine) afterClose(p *pair, cfg Config, pos PositionView, res CloseResu
 	}
 }
 
+// afterHaltedRiskExit settles a risk exit sent for a pair halted by read
+// failures. Whatever the close did, the pair ends HALTED: a risk exit protects
+// capital, it does not stand in for the operator's acknowledgement, and nothing
+// may open on the pair until that comes.
+func (e *Engine) afterHaltedRiskExit(p *pair, x exitPlan, res CloseResult) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// Nothing reached the venue: the halt the operator read is exactly as it
+	// was — same number, same reason, still read-failure — and the next scan
+	// tries the exit again.
+	keepHalt := func(kind, whyVI string) {
+		if kind != p.lastHaltRetryKey {
+			p.lastHaltRetryKey = kind
+			e.logLocked("HALT_RISK_EXIT", p.symbol, whyVI)
+		}
+		p.haltRiskRetry = true
+		e.setPairStateLocked(p, StateEmergencyHalted, true)
+	}
+	switch {
+	case res.Busy:
+		keepHalt("busy", "portal đang bận thao tác ghi khác — chưa gửi lệnh đóng khẩn cấp, thử lại lượt sau")
+	case res.Refused:
+		keepHalt("refused", "lệnh đóng khẩn cấp bị từ chối trước khi gửi (hai chân nguyên vẹn), thử lại mỗi lượt sau: "+res.ErrorVI)
+	case res.Flat:
+		p.pos = nil
+		p.tradeFailures = 0
+		e.recordHoldingLocked(p, Holding{Status: HedgeBothFlat, ReasonVI: "theo lệnh đóng khẩn cấp vừa xong (execution chứng minh hai chân phẳng từ sàn)",
+			ToleranceQtyCoin: p.holding.ToleranceQtyCoin})
+		// A NEW halt number: the pair the operator read (#x.haltSeq, holding a
+		// position) is not the pair there is now (flat). It keeps no place.
+		e.haltPairMayHoldLocked(p, fmt.Sprintf("ĐÃ CẮT LỖ KHẨN CẤP khi đang DỪNG BẢO VỆ #%d (đọc sàn hỏng): %s — đóng %s PHẲNG cả hai chân %.8f coin · RealizedQuote %+.8f (không phải lãi ròng). Cặp vẫn DỪNG BẢO VỆ, không vào lệnh mới tới khi XÁC NHẬN",
+			x.haltSeq, x.reasonVI, x.pos.IntentID, res.ClosedQtyCoin, res.RealizedQuote), false)
+	case res.Alarm:
+		e.haltPairLocked(p, "ĐÓNG KHẨN CẤP BÁO ĐỘNG — hai chân có thể lệch: "+res.ErrorVI)
+	case res.SentUnconfirmed:
+		e.haltPairLocked(p, "lệnh đóng khẩn cấp ĐÃ GỬI nhưng không xác nhận được khớp: "+res.ErrorVI+" — đọc lại vị thế, không gửi lại")
+	default:
+		e.haltPairLocked(p, fmt.Sprintf("đóng khẩn cấp chưa phẳng: đã đóng %.8f, còn %.8f coin mỗi chân — %s", res.ClosedQtyCoin, res.RemainingQtyCoin, res.ErrorVI))
+	}
+}
+
 func (e *Engine) pairReadFailed(p *pair, job scanJob, whyVI string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -1459,6 +1728,9 @@ func (e *Engine) pairReadFailed(p *pair, job scanJob, whyVI string) {
 		// like any other — a place of unknown size, which holds every entry.
 		mayHold := p.pos != nil || !p.lastGoodFlat
 		e.haltPairMayHoldLocked(p, fmt.Sprintf("%d lần đọc sàn hỏng liên tiếp — ngắt bảo vệ cặp: %s", p.readFailures, whyVI), mayHold)
+		// The one halt that keeps a held position's risk exits once the venue
+		// reads again (judgeHaltedRisk). Set AFTER the halt, which clears it.
+		p.haltFromRead = true
 		return
 	}
 	if p.state == StateEvaluating {
@@ -1487,6 +1759,11 @@ func (e *Engine) haltPairMayHoldLocked(p *pair, whyVI string, mayHold bool) {
 	p.haltSeq = e.haltSeq
 	p.haltMayHold = mayHold
 	p.haltReasonVI = whyVI
+	// Every halt starts as one about the position; pairReadFailed alone marks
+	// its own afterwards.
+	p.haltFromRead = false
+	p.lastHaltedExitKey = ""
+	p.haltRiskRetry, p.lastHaltRetryKey = false, ""
 	p.skipVI = ""
 	e.logLocked("HALT", p.symbol, whyVI)
 	e.setPairStateLocked(p, StateEmergencyHalted, true)
@@ -1821,6 +2098,8 @@ func (e *Engine) resetPairsLocked(keepPositions bool) {
 			p.pos = nil
 		}
 		p.haltReasonVI, p.inRun, p.paused, p.skipVI, p.rank = "", false, false, "", 0
+		p.haltFromRead, p.lastHaltedExitKey = false, ""
+		p.haltRiskRetry, p.lastHaltRetryKey, p.lastDeferKey = false, "", ""
 		p.readFailures, p.tradeFailures = 0, 0
 		p.historyBlindSince = time.Time{}
 		e.setPairStateLocked(p, StateDisabled, true)
@@ -1873,7 +2152,7 @@ func (e *Engine) Kill(ctx context.Context) (StatusView, []OperatorClose, error) 
 					// longer describes it. The bot's halt below still needs
 					// the operator's acknowledgement, and names this.
 					e.logLocked("KILL", p.symbol, "cặp đã phẳng — DỪNG BẢO VỆ trước đó của cặp ("+p.haltReasonVI+") gộp vào DỪNG BẢO VỆ của bot")
-					p.haltReasonVI = ""
+					p.haltReasonVI, p.haltFromRead = "", false
 					e.setPairStateLocked(p, StateDisabled, true)
 				}
 			}
@@ -2056,14 +2335,7 @@ func (e *Engine) PairControl(symbol string, action PairAction, haltSeq int) (Sta
 			return e.statusLocked(), fmt.Errorf("%w (bạn đọc #%d, hiện là #%d: %s)", ErrStaleAcknowledgement, haltSeq, p.haltSeq, p.haltReasonVI)
 		}
 		e.logLocked("ACK", symbol, "người vận hành xác nhận DỪNG BẢO VỆ #"+fmt.Sprint(p.haltSeq)+" ("+p.haltReasonVI+") — cặp TẠM DỪNG; lượt quét sau đọc lại cặp từ sàn và tiếp nhận vị thế của bot nếu còn")
-		p.haltReasonVI, p.pos = "", nil
-		p.readFailures, p.tradeFailures = 0, 0
-		p.historyBlindSince = time.Time{}
-		p.lastEntryKey, p.lastSkipKey = "", ""
-		if p.inRun {
-			p.paused = true
-		}
-		e.restPairLocked(p)
+		e.acknowledgePairLocked(p)
 		if e.state == StateRunning {
 			defer e.poke()
 		}
@@ -2071,6 +2343,118 @@ func (e *Engine) PairControl(symbol string, action PairAction, haltSeq int) (Sta
 		return e.statusLocked(), fmt.Errorf("%w: hành động %q không phải pause, resume hay ack", errConfig, action)
 	}
 	return e.statusLocked(), nil
+}
+
+// acknowledgePairLocked clears one pair's halt and leaves it PAUSED: an
+// acknowledgement never opens anything by itself, and a position still on the
+// venue is adopted at the next scan. Caller holds mu and has checked the halt
+// number the operator read.
+func (e *Engine) acknowledgePairLocked(p *pair) {
+	p.haltReasonVI, p.pos = "", nil
+	p.haltFromRead, p.lastHaltedExitKey = false, ""
+	p.haltRiskRetry, p.lastHaltRetryKey, p.lastDeferKey = false, "", ""
+	p.readFailures, p.tradeFailures = 0, 0
+	p.historyBlindSince = time.Time{}
+	p.lastEntryKey, p.lastSkipKey = "", ""
+	if p.inRun {
+		p.paused = true
+	}
+	e.restPairLocked(p)
+}
+
+// AckAllOutcome is what one ACK ALL did.
+type AckAllOutcome struct {
+	// Acked are the pairs whose halt was cleared, each left PAUSED.
+	Acked []string `json:"acked"`
+	// AlreadyReleased are pairs the page listed that are no longer halted (an
+	// acknowledgement elsewhere): untouched.
+	AlreadyReleased []string `json:"already_released"`
+	// ExitInFlight are listed pairs whose halted risk exit is on its way to the
+	// venue right now. Not acknowledged: they return halted when it settles,
+	// under a new number if it closed them.
+	ExitInFlight []string `json:"exit_in_flight"`
+	// StillHalted are halted pairs the page did NOT list — raised after it was
+	// read — and so not acknowledged.
+	StillHalted []string `json:"still_halted"`
+	// BotHaltVI is the bot's own halt, which ACK ALL never clears: that one is
+	// acknowledged by TẮT (Stop), because a halt of the whole bot — a kill
+	// above all — is not a pair's.
+	BotHaltVI string `json:"bot_halt_vi"`
+}
+
+// ErrNothingToAcknowledge is an ACK ALL that names no pair.
+var ErrNothingToAcknowledge = errors.New("autotrade: xác nhận tất cả không nêu cặp nào — trang phải gửi đúng các DỪNG BẢO VỆ nó đã hiển thị")
+
+// AckAll acknowledges, in one operator action, every halted pair the page
+// showed: seen maps each symbol to the halt number displayed beside it (audit
+// R8, part 2). It is N single acknowledgements made atomically — the same
+// clearing, the same PAUSED result, the same rule that only a halt that was
+// READ is acknowledged:
+//
+//   - one listed pair halted under a DIFFERENT number refuses the whole batch
+//     with ErrStaleAcknowledgement, and nothing is cleared;
+//   - a halted pair the page did not list stays halted;
+//   - the bot's own halt stays — Stop acknowledges it;
+//   - a pair whose halted risk exit is in flight is CLOSING, not halted, and
+//     is left alone.
+//
+// It sends no order and opens nothing: every acknowledged pair is paused, and
+// entries on it need RESUME.
+func (e *Engine) AckAll(seen map[string]int) (StatusView, AckAllOutcome, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out AckAllOutcome
+	if e.busy != "" || e.killing || e.stopping {
+		return e.statusLocked(), out, fmt.Errorf("%w (%s)", ErrBusy, e.busy)
+	}
+	if len(seen) == 0 {
+		return e.statusLocked(), out, ErrNothingToAcknowledge
+	}
+	for symbol, seq := range seen {
+		p, ok := e.pairs[symbol]
+		if !ok {
+			return e.statusLocked(), out, fmt.Errorf("%w: %q", ErrUnknownSymbol, symbol)
+		}
+		if p.state == StateEmergencyHalted && p.haltSeq != seq {
+			return e.statusLocked(), out, fmt.Errorf("%w (%s: bạn đọc #%d, hiện là #%d: %s) — không cặp nào được xác nhận",
+				ErrStaleAcknowledgement, symbol, seq, p.haltSeq, p.haltReasonVI)
+		}
+	}
+	var reasons []string
+	for _, symbol := range e.symbols {
+		p := e.pairs[symbol]
+		seq, listed := seen[symbol]
+		switch {
+		case !listed:
+			if p.state == StateEmergencyHalted {
+				out.StillHalted = append(out.StillHalted, symbol)
+			}
+		case p.state == StateClosing && p.haltFromRead:
+			out.ExitInFlight = append(out.ExitInFlight, symbol)
+		case p.state != StateEmergencyHalted:
+			out.AlreadyReleased = append(out.AlreadyReleased, symbol)
+		default:
+			reasons = append(reasons, fmt.Sprintf("%s #%d (%s)", symbol, seq, p.haltReasonVI))
+			e.acknowledgePairLocked(p)
+			out.Acked = append(out.Acked, symbol)
+		}
+	}
+	out.BotHaltVI = e.haltReasonVI
+	if len(out.Acked) > 0 {
+		line := fmt.Sprintf("người vận hành xác nhận giải phóng %d cặp DỪNG BẢO VỆ — mỗi cặp TẠM DỪNG, lượt quét sau đọc lại từ sàn và tiếp nhận vị thế của bot nếu còn: %s",
+			len(out.Acked), strings.Join(reasons, "; "))
+		if len(out.StillHalted) > 0 {
+			line += " · CHƯA xác nhận (trang chưa hiển thị): " + strings.Join(out.StillHalted, ", ")
+		}
+		if out.BotHaltVI != "" {
+			line += " · DỪNG BẢO VỆ của bot vẫn giữ, xác nhận bằng TẮT: " + out.BotHaltVI
+		}
+		e.logLocked("ACK_ALL", "", line)
+		if e.state == StateRunning {
+			defer e.poke()
+		}
+	}
+	return e.statusLocked(), out, nil
 }
 
 // closeAllForOperator closes the bot's pair on every symbol the portal trades,
@@ -2128,7 +2512,7 @@ func (e *Engine) closeForOperator(ctx context.Context, symbol, why string) Opera
 	}
 
 	for {
-		res := e.trader.Close(actionCtx, symbol, holding.IntentID, reasonVI)
+		res := e.trader.Close(actionCtx, CloseOrder{Symbol: symbol, IntentID: holding.IntentID, ReasonVI: reasonVI})
 		if !res.Busy {
 			oc := OperatorClose{Symbol: symbol, Attempted: true, Result: res, Flat: res.Flat}
 			switch {

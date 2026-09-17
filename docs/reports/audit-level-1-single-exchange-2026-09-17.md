@@ -82,8 +82,8 @@ $$
 3. **Chính thức DỪNG / ĐÓNG BĂNG Chiều Nghịch (Short Spot Margin):** Chuyển toàn bộ nhu cầu Long Futures sang **Perp-Perp 2 Sàn (Bybit + Binance)**.
 
 ### P1 (Ưu tiên tiếp theo)
-1. **Sửa R8:** Khi cặp halt chỉ vì lỗi đọc mạng mà sau đó đọc lại thấy 2 chân vẫn hedged phẳng sạch, cho phép các lối thoát rủi ro (basis widen, funding exit) tiếp tục chạy ngầm. Thêm nút "Xác nhận tất cả (Ack All)" trên UI.
+1. **Sửa R8 (Đã hoàn thành):** Khi cặp halt chỉ vì lỗi đọc mạng mà sau đó đọc lại thấy 2 chân vẫn hedged phẳng sạch, cho phép các lối thoát rủi ro (basis widen, funding exit) tiếp tục chạy ngầm. Thêm nút "Xác nhận tất cả (Ack All)" trên UI (`walkthrough.md`).
 2. **Cân chỉnh R5:** Thêm điều kiện chốt lời khi Basis co hẹp $\ge 15\text{ bps}$ để không bị phụ thuộc vào 100 ngày giữ funding.
-3. **Sửa R6:** Kiểm tra lại spread sổ lệnh ngay tại thời điểm bắn lệnh đóng MARKET.
+3. **Sửa R6 (Đã hoàn thành):** Kiểm tra lại spread sổ lệnh ngay tại thời điểm bắn lệnh đóng MARKET; hoãn chốt lời nếu spread > 10 bps hoặc sổ không đo được mà không đếm lỗi (`walkthrough.md`).
 4. **Sửa R4:** Liệt kê bụi coin lẻ trên trang PnL của portal.
-5. **Sửa R9:** Đồng bộ 3 chỗ sai lệch tài liệu trong `CLAUDE.md`.
+5. **Sửa R9 (Đã hoàn thành):** Đồng bộ 3 chỗ sai lệch tài liệu trong `CLAUDE.md`.

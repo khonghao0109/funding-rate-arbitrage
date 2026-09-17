@@ -639,12 +639,13 @@ func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
 		"handleOpen": {"portal.handler": true}, "handleClose": {"portal.handler": true}, "handleReconcile": {"portal.handler": true},
 		"handleAutotradeStart": {"portal.handler": true}, "handleAutotradeStop": {"portal.handler": true}, "handleAutotradeKill": {"portal.handler": true},
 		"handleAutotradeClosePair": {"portal.handler": true}, "handleAutotradePair": {"portal.handler": true},
+		"handleAutotradeAckAll": {"portal.handler": true},
 		// The bot's Trader and Market wrap openAs and close; the one engine gets
 		// the one pair, built in newAutotrade (review of Q18, round 2). The PnL
 		// page reads its status; main's sampler reads it too.
 		"autotrade": {"portal.handleAutotradeStatus": true, "portal.handleAutotradeStart": true, "portal.handleAutotradeStop": true, "portal.handleAutotradeKill": true,
 			"portal.handleAutotradeClosePair": true, "portal.handleAutotradePair": true, "portal.handleAutotradePnL": true,
-			"newPortal": true, "main": true},
+			"portal.handleAutotradeAckAll": true, "newPortal": true, "main": true},
 	}
 	// Types a value of which is an order path, and the only functions that may
 	// name them outside their own methods.
@@ -775,6 +776,7 @@ func TestAutotrade_EachCallerReachesOnlyItsOwnEngineMethods(t *testing.T) {
 		"portal.handleAutotradeKill":      {"Kill": true},
 		"portal.handleAutotradeClosePair": {"ClosePair": true},
 		"portal.handleAutotradePair":      {"PairControl": true},
+		"portal.handleAutotradeAckAll":    {"AckAll": true},
 		"main":                            {"Run": true, "Start": true, "Status": true},
 	}
 	pnlMayName := map[string]bool{"StatusView": true, "PositionView": true}

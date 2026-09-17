@@ -92,6 +92,7 @@ func TestAutotradeAPI_EveryWriteIsBehindTheWalls(t *testing.T) {
 		"/api/autotrade/kill":       {`{}`, autotradeKillAction},
 		"/api/autotrade/close-pair": {`{"symbol":"BTCUSDT"}`, autotradeClosePairAction},
 		"/api/autotrade/pair":       {`{"symbol":"BTCUSDT","action":"resume"}`, autotradePairResumeAction},
+		"/api/autotrade/ack-all":    {`{"halts":[{"symbol":"BTCUSDT","halt_seq":1}]}`, autotradeAckAllAction},
 	} {
 		// The READ header on a write, and a write's header naming another action.
 		for name, opts := range map[string][]reqOpt{
@@ -1011,5 +1012,105 @@ func TestSymbols_TheAllowListIsTwelveAndARunSizesForWhatIsTicked(t *testing.T) {
 		if err := sub.Validate(list, maxNotionalQuote, 1.5); err != nil {
 			t.Errorf("%d ticked pairs do not validate: %v", n, err)
 		}
+	}
+}
+
+// ------------------------------------------------ audit R6 and R8 through the portal
+
+// The bot's take-profit through the REAL portal close: the scan reads a tight
+// book and decides to take profit, the book widens to 15 bps before the MARKET
+// orders go, and the portal's pre-flight guard sends nothing. The deferral is
+// not a failed trade; the next scan, on a tight book, closes flat.
+func TestAutotradeAPI_ATakeProfitWaitsForATightLiveBook(t *testing.T) {
+	p, spot, perp := botPortal(t)
+	if _, err := p.autotrade.Start(fixedSizePortfolio("BTCUSDT")); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	p.autotrade.Step(ctx)
+	if btc := botPair(t, botStatus(t, p), "BTCUSDT"); btc.State != autotrade.StateInPosition {
+		t.Fatalf("bot did not open: %s %q", btc.State, btc.HaltReasonVI)
+	}
+
+	// The perp converges 3.5% onto the spot — well past the +1.50% target.
+	converged := fakeBookAt(fakeMidQuote * 0.965)
+	perp.bookMu.Lock()
+	perp.book = converged
+	perp.bookMu.Unlock()
+	perp.queueBooks(converged, fakeBookWithSpread(fakeMidQuote*0.965, 15)) // the scan's read, then the close's
+	before := orderCount(spot, perp)
+	p.autotrade.Step(ctx)
+	st := botStatus(t, p)
+	btc := botPair(t, st, "BTCUSDT")
+	if btc.State != autotrade.StateInPosition || btc.TradeFailures != 0 || orderCount(spot, perp) != before {
+		t.Fatalf("after a wide live book: %s failures %d orders %d → %d", btc.State, btc.TradeFailures, before, orderCount(spot, perp))
+	}
+	deferred := false
+	for _, e := range st.Log {
+		if e.Kind == "CLOSE" && strings.Contains(e.MessageVI, "HOÃN CHỐT LỜI") && strings.Contains(e.MessageVI, "Perp 15.0 bps") {
+			deferred = true
+		}
+	}
+	if !deferred {
+		t.Fatalf("no deferral line naming the live spread: %+v", st.Log)
+	}
+
+	p.autotrade.Step(ctx)
+	if btc = botPair(t, botStatus(t, p), "BTCUSDT"); btc.State != autotrade.StateCooldown || math.Abs(perpQty(t, perp, "BTCUSDT")) > 1e-12 {
+		t.Fatalf("on a tight book: %s, perp %v", btc.State, perpQty(t, perp, "BTCUSDT"))
+	}
+}
+
+// ACK ALL through its route: behind its own header, every pair quoted by the
+// number the page showed, one stale number refusing the whole batch, and every
+// released pair PAUSED with no order sent.
+func TestAutotradeAPI_AckAllReleasesTheHaltsThePageListed(t *testing.T) {
+	p, spot, perp := multiBotPortal(t, "BTCUSDT", "ETHUSDT")
+	if _, err := p.autotrade.Start(fixedSizePortfolio("BTCUSDT", "ETHUSDT")); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	spot.setBookErr(errors.New("dial tcp: lookup testnet.binance.vision: no such host"))
+	for i := 0; i < 5; i++ {
+		p.autotrade.Step(ctx)
+	}
+	spot.setBookErr(nil)
+	st := botStatus(t, p)
+	btc, eth := botPair(t, st, "BTCUSDT"), botPair(t, st, "ETHUSDT")
+	if st.HaltedPairs != 2 || btc.State != autotrade.StateEmergencyHalted || eth.State != autotrade.StateEmergencyHalted {
+		t.Fatalf("halted %d: BTC %s ETH %s", st.HaltedPairs, btc.State, eth.State)
+	}
+
+	both := map[string]any{"halts": []map[string]any{{"symbol": "BTCUSDT", "halt_seq": btc.HaltSeq}, {"symbol": "ETHUSDT", "halt_seq": eth.HaltSeq}}}
+	// The single-pair ACK name cannot carry a batch.
+	if rec := do(t, p, http.MethodPost, "/api/autotrade/ack-all", `{"halts":[{"symbol":"BTCUSDT","halt_seq":1}]}`, writeOpts(autotradePairAckAction)...); rec.Code != http.StatusForbidden {
+		t.Errorf("ack-all under the pair ack name = %d", rec.Code)
+	}
+	for body, why := range map[string]string{
+		`{"halts":[]}`:                                   "no pair",
+		`{"halts":[{"symbol":"BTCUSDT"}]}`:               "no halt number",
+		`{"halts":[{"symbol":"DOGEUSDT","halt_seq":1}]}`: "a symbol off the list",
+		`{"halts":[{"symbol":"BTCUSDT","halt_seq":1},{"symbol":"BTCUSDT","halt_seq":1}]}`: "a symbol twice",
+	} {
+		if rec := do(t, p, http.MethodPost, "/api/autotrade/ack-all", body, writeOpts(autotradeAckAllAction)...); rec.Code != http.StatusBadRequest {
+			t.Errorf("ack-all with %s = %d %s", why, rec.Code, rec.Body.String())
+		}
+	}
+	stale := map[string]any{"halts": []map[string]any{{"symbol": "BTCUSDT", "halt_seq": btc.HaltSeq}, {"symbol": "ETHUSDT", "halt_seq": eth.HaltSeq + 100}}}
+	if code, _ := postJSON[autotradeAckAllView](t, p, autotradeAckAllAction, "/api/autotrade/ack-all", stale); code != http.StatusConflict || botStatus(t, p).HaltedPairs != 2 {
+		t.Fatalf("a stale batch = %d, halted %d", code, botStatus(t, p).HaltedPairs)
+	}
+
+	code, out := postJSON[autotradeAckAllView](t, p, autotradeAckAllAction, "/api/autotrade/ack-all", both)
+	if code != http.StatusOK || out.Cleared != 2 || out.Status.HaltedPairs != 0 {
+		t.Fatalf("ack all = %d %+v", code, out.Outcome)
+	}
+	for _, s := range []string{"BTCUSDT", "ETHUSDT"} {
+		if pv := botPair(t, out.Status, s); pv.State != autotrade.StateIdleScanning || !pv.Paused || pv.HaltReasonVI != "" {
+			t.Errorf("%s after ack all: %s paused %v halt %q", s, pv.State, pv.Paused, pv.HaltReasonVI)
+		}
+	}
+	if orderCount(spot, perp) != 0 {
+		t.Errorf("ack all sent %d orders", orderCount(spot, perp))
 	}
 }

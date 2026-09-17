@@ -811,14 +811,31 @@ func priceHolding(snap Snapshot, pos PositionView, after []SettledRate, now time
 
 // exitAssessment is what one reading says about a held pair.
 type exitAssessment struct {
-	Due                  bool
-	ReasonsVI            []string
+	Due       bool
+	ReasonsVI []string
+	// DueKeys names the check behind each entry of ReasonsVI, index for index,
+	// so a caller can tell a risk exit from a take-profit without reading words.
+	DueKeys              []CheckKey
 	Checks               []CheckView
 	SettlementsSinceOpen int
 	BasisWidenBps        *float64
 	// Result is the running result the take-profit exit is judged on, priced
 	// whether or not it fired; Result.OK false says why it could not be.
 	Result holdingResult
+}
+
+// onlyDue reports an exit that is due for exactly one kind of reason, key, and
+// no other.
+func (x exitAssessment) onlyDue(key CheckKey) bool {
+	if !x.Due || len(x.DueKeys) == 0 {
+		return false
+	}
+	for _, k := range x.DueKeys {
+		if k != key {
+			return false
+		}
+	}
+	return true
 }
 
 // assessExit runs every exit check on a held pair. A check that cannot be
@@ -836,6 +853,7 @@ func assessExit(cfg Config, snap Snapshot, pos PositionView, now time.Time) exit
 				reasonVI = name + " (" + detail + ")"
 			}
 			out.ReasonsVI = append(out.ReasonsVI, reasonVI)
+			out.DueKeys = append(out.DueKeys, key)
 		}
 	}
 	add := func(key CheckKey, name string, evaluated, exit bool, detail string) {

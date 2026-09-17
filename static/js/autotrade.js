@@ -88,12 +88,38 @@ function renderStateTile(s) {
   const halt = $("at-halt");
   const lines = [];
   if (s.halt_reason_vi) lines.push(`BOT DỪNG BẢO VỆ — ${s.halt_reason_vi}. Xử lý nguyên nhân, rồi XÁC NHẬN & TẮT trước khi bật lại.`);
-  for (const p of pairsOf(s)) {
-    if (p.state === "emergency_halted") lines.push(`${p.symbol} DỪNG BẢO VỆ #${p.halt_seq} — ${p.halt_reason_vi}. Xác nhận ở Radar cơ hội sau khi đã xử lý.`);
+  // The halted pairs AS THIS RENDER SHOWS THEM, each with its number: ACK ALL
+  // quotes exactly these, so a halt raised after this render is not
+  // acknowledged by a click on it.
+  const halted = pairsOf(s)
+    .filter((p) => p.state === "emergency_halted")
+    .map((p) => ({ symbol: p.symbol, halt_seq: p.halt_seq, halt_reason_vi: p.halt_reason_vi }));
+  for (const p of halted) {
+    lines.push(`${p.symbol} DỪNG BẢO VỆ #${p.halt_seq} — ${p.halt_reason_vi}. Xác nhận ở Radar cơ hội sau khi đã xử lý.`);
   }
-  halt.hidden = lines.length === 0;
-  clear(halt);
-  for (const line of lines) halt.append(el("div", { text: line }));
+  // Rebuilt only when what it says changes: the region is role=alert, and a
+  // button rebuilt on every poll would drop keyboard focus from under a press.
+  // Writable is NOT part of the key: it flips on every write and busy poll, and
+  // rebuilding the alert for it would re-announce every halt line.
+  const key = JSON.stringify([lines, halted.map((p) => p.halt_seq)]);
+  if (halt.dataset.key !== key) {
+    halt.dataset.key = key;
+    halt.hidden = lines.length === 0;
+    clear(halt);
+    for (const line of lines) halt.append(el("div", { text: line }));
+    if (halted.length > 0) {
+      const ackAll = el("button", {
+        cls: "btn primary small mt8",
+        text: `⚡ XÁC NHẬN TẤT CẢ (${halted.length} CẶP)`,
+        title: "xác nhận DỪNG BẢO VỆ của mọi cặp đang hiển thị, theo đúng số trên màn hình; mỗi cặp chuyển sang TẠM DỪNG",
+        attrs: { type: "button", id: "at-ack-all" },
+      });
+      ackAll.addEventListener("click", () => view.handlers.ackAll(halted));
+      halt.append(ackAll);
+    }
+  }
+  const ackAllButton = halt.querySelector("button");
+  if (ackAllButton) ackAllButton.disabled = !view.writable;
   if (s.notice_vi) setText("at-notice", s.notice_vi);
 }
 
@@ -766,7 +792,7 @@ export function tick() {
 
 export const autotradeView = {
   // init takes the write handlers execution.js owns: closePair(symbol),
-  // togglePair(pair), ackPair(pair).
+  // togglePair(pair), ackPair(pair), ackAll(halts).
   init(handlers) {
     view.handlers = handlers;
     $("at-history-filter").addEventListener("change", (ev) => {
@@ -792,6 +818,7 @@ export const autotradeView = {
     if (view.writable === on) return;
     view.writable = on;
     if (view.status) {
+      renderStateTile(view.status);
       renderPositions(view.status);
       renderRadar(view.status);
     }

@@ -325,7 +325,7 @@ func TestUI_OnlyTheExecutionTabWrites(t *testing.T) {
 		"a POST":          regexp.MustCompile(`["'` + "`" + `]POST["'` + "`" + `]|method\s*:`),
 		"the post helper": regexp.MustCompile(`\bpost\b`),
 		"an order endpoint": regexp.MustCompile(`/api/(?:open|close|reconcile)|["'` + "`" + `](?:open|close|reconcile)["'` + "`" + `]` +
-			`|/api/autotrade/(?:start|stop|kill|close-pair|pair)|autotrade-(?:start|stop|kill|close-pair|pair)`),
+			`|/api/autotrade/(?:start|stop|kill|close-pair|pair|ack-all)|autotrade-(?:start|stop|kill|close-pair|pair|ack-all)`),
 		"a raw request": regexp.MustCompile(`\bfetch\s*\(|XMLHttpRequest|sendBeacon|\bimport\s*\(`),
 		// A name assembled at run time reaches what the patterns above look for
 		// by spelling: window["fe"+"tch"], a namespace import, Reflect.
@@ -382,7 +382,8 @@ func TestUI_EveryOrderLeadingWriteFollowsItsDialog(t *testing.T) {
 	}
 	js := string(blob)
 	leading := map[string]bool{"open": true, "close": true, "reconcile": true, "autotrade-start": true, "autotrade-stop-close": true,
-		"autotrade-kill": true, "autotrade-close-pair": true, "autotrade-pair-resume": true, "autotrade-pair-ack": true}
+		"autotrade-kill": true, "autotrade-close-pair": true, "autotrade-pair-resume": true, "autotrade-pair-ack": true,
+		"autotrade-ack-all": true}
 	noOrder := map[string]bool{"autotrade-stop": true, "autotrade-pair-pause": true}
 	fnStart := regexp.MustCompile(`(?m)^(?:export\s+)?(?:async\s+)?function\s+\w+`)
 	postCall := regexp.MustCompile(`\bpost\(\s*"([a-z-]+)"\s*,[^;]*`)

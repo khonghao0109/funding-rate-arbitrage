@@ -108,6 +108,7 @@ func (p *portal) handler() http.Handler {
 	post("/api/autotrade/kill", autotradeKillAction, p.handleAutotradeKill)
 	post("/api/autotrade/close-pair", autotradeClosePairAction, p.handleAutotradeClosePair)
 	postAny("/api/autotrade/pair", []string{autotradePairPauseAction, autotradePairResumeAction, autotradePairAckAction}, p.handleAutotradePair)
+	post("/api/autotrade/ack-all", autotradeAckAllAction, p.handleAutotradeAckAll)
 	// Read-only feeds from cmd/scanner and cmd/paperledger (PLAN Q17): bytes
 	// relayed, never decoded, and not reachable from any order path.
 	get("/api/scanner/funding-history", p.feeds.ScannerHistory)

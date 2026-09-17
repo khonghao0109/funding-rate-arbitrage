@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"futures-arbitrage-scanner/internal/broker"
 	binancebroker "futures-arbitrage-scanner/internal/broker/binance"
 	"futures-arbitrage-scanner/internal/broker/brokertest"
+	"futures-arbitrage-scanner/internal/depth"
 	"futures-arbitrage-scanner/internal/execution"
 )
 
@@ -65,6 +67,28 @@ type fakeVenue struct {
 	fundingCalls atomic.Int64
 	// balanceErr makes this wallet unreadable.
 	balanceErr error
+
+	// bookMu guards the two book knobs below, which the engine's parallel
+	// reads and a test goroutine may touch at once.
+	bookMu sync.Mutex
+	// bookQueue answers the next book reads in order, one each, before falling
+	// back to book — so a scan and the close right after it can see different
+	// books, which is exactly the gap the pre-flight spread guard exists for.
+	bookQueue []exchanges.DepthBook
+	// bookErr makes the book unreadable.
+	bookErr error
+}
+
+func (f *fakeVenue) queueBooks(books ...exchanges.DepthBook) {
+	f.bookMu.Lock()
+	defer f.bookMu.Unlock()
+	f.bookQueue = append(f.bookQueue, books...)
+}
+
+func (f *fakeVenue) setBookErr(err error) {
+	f.bookMu.Lock()
+	defer f.bookMu.Unlock()
+	f.bookErr = err
 }
 
 // GetBalance is brokertest's, with a knob for the wallet a venue will not give
@@ -83,6 +107,16 @@ func (f *fakeVenue) FetchInstrument(context.Context, string) (binancebroker.Mark
 	return f.rules, nil
 }
 func (f *fakeVenue) FetchDepthBook(context.Context, string) (exchanges.DepthBook, error) {
+	f.bookMu.Lock()
+	defer f.bookMu.Unlock()
+	if f.bookErr != nil {
+		return exchanges.DepthBook{}, f.bookErr
+	}
+	if len(f.bookQueue) > 0 {
+		b := f.bookQueue[0]
+		f.bookQueue = f.bookQueue[1:]
+		return b, nil
+	}
 	return f.book, nil
 }
 func (f *fakeVenue) FetchMaintenanceBracket(_ context.Context, symbol string, _ float64) (binancebroker.MaintenanceBracket, error) {
@@ -142,6 +176,17 @@ func fakeBookAt(midQuote float64) exchanges.DepthBook {
 }
 
 func fakeBook() exchanges.DepthBook { return fakeBookAt(fakeMidQuote) }
+
+// fakeBookWithSpread is fakeBookAt with its touch spreadBps wide around mid.
+func fakeBookWithSpread(midQuote, spreadBps float64) exchanges.DepthBook {
+	half := midQuote * spreadBps / 10_000 / 2
+	b := exchanges.DepthBook{Symbol: "BTCUSDT", Source: "test"}
+	for i := 0; i < 30; i++ {
+		b.Bids = append(b.Bids, exchanges.DepthLevel{PriceQuote: midQuote - half - float64(i)*5, QtyNative: 5})
+		b.Asks = append(b.Asks, exchanges.DepthLevel{PriceQuote: midQuote + half + float64(i)*5, QtyNative: 5})
+	}
+	return b
+}
 
 func newFakeVenue(t *testing.T, market broker.Market, rules exchanges.Instrument) *fakeVenue {
 	t.Helper()
@@ -526,5 +571,71 @@ func TestActions_ACloseRecordsItsReasonAndThePageReadsItBack(t *testing.T) {
 	}
 	if !listed || found != botReason {
 		t.Errorf("the page shows %q for %s (listed %v), want %q · trades %+v", found, botIntent, listed, botReason, pnl.Trades)
+	}
+}
+
+// ------------------------------------------------ audit R6: pre-flight spread
+
+// A take-profit close re-reads both books and is DEFERRED when a touch is wider
+// than its ceiling: 15 bps against 10 sends nothing and leaves the intent file
+// as it was. A risk close on the very same book goes out.
+func TestActions_ATakeProfitCloseIsDeferredOnAWideLiveSpreadAndARiskCloseIsNot(t *testing.T) {
+	p, spot, perp := fakePortal(t)
+	v := openOK(t, p)
+	spot.book = fakeBookWithSpread(fakeMidQuote, 15)
+	st, err := loadState(p.stateDir, v.IntentID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := orderCount(spot, perp)
+
+	tp, code := p.close(context.Background(), st, "Chốt lời hội tụ Basis: Net PnL +1.62% trên vốn ≥ ngưỡng +1.50%", closeGuard{MaxSpreadBps: 10})
+	if !tp.Deferred || !tp.Refused || tp.Flat || code != http.StatusConflict || orderCount(spot, perp) != before {
+		t.Fatalf("take-profit on a 15 bps book = %d %+v, orders %d → %d", code, tp, before, orderCount(spot, perp))
+	}
+	if !strings.Contains(tp.ErrorVI, "Spread sổ lệnh tức thời bị giãn (Spot 15.0 bps") || !strings.Contains(tp.ErrorVI, "trần 10.0 bps") {
+		t.Errorf("reason = %q", tp.ErrorVI)
+	}
+	if after, _ := loadState(p.stateDir, v.IntentID); after.ClosedAtMs != 0 || after.NoteVI != "" || !after.tracked() {
+		t.Errorf("a deferred close touched the intent file: %+v", after)
+	}
+
+	// The perp's touch widening defers it just the same.
+	spot.book = fakeBook()
+	perp.book = fakeBookWithSpread(fakePerpMidQuote, 15)
+	if tp, _ = p.close(context.Background(), st, "Chốt lời", closeGuard{MaxSpreadBps: 10}); !tp.Deferred || !strings.Contains(tp.ErrorVI, "Perp 15.0 bps") {
+		t.Fatalf("take-profit on a 15 bps perp book = %+v", tp)
+	}
+
+	// The basis stop on the same 15 bps book: no guard, sent, flat.
+	stop, code := p.close(context.Background(), st, "Cắt lỗ basis nổ: Basis giãn +110.0 bps > 100 bps so với lúc vào", closeGuard{})
+	if code != http.StatusOK || !stop.Flat || stop.Deferred || stop.Refused {
+		t.Fatalf("basis stop on a 15 bps book = %d %+v", code, stop)
+	}
+}
+
+// A touch the guard cannot measure defers a take-profit: two MARKET orders are
+// not sent into a book nobody could read.
+func TestCloseGuard_AnUnmeasurableTouchDefersAndATightOneSends(t *testing.T) {
+	g := closeGuard{MaxSpreadBps: 10}
+	tight := depth.Summary{MidPriceQuote: 100, BestBidQuote: 99.995, BestAskQuote: 100.005} // 1 bps
+	for name, c := range map[string]struct {
+		spot, perp depth.Summary
+		deferred   bool
+		fragment   string
+	}{
+		"both tight":         {tight, tight, false, ""},
+		"exactly the cap":    {depth.Summary{MidPriceQuote: 100, BestBidQuote: 99.95, BestAskQuote: 100.05}, tight, false, ""},
+		"spot 15 bps":        {depth.Summary{MidPriceQuote: 100, BestBidQuote: 99.925, BestAskQuote: 100.075}, tight, true, "giãn"},
+		"no spot bid":        {depth.Summary{MidPriceQuote: 100, BestAskQuote: 100.005}, tight, true, "không đo được"},
+		"crossed perp touch": {tight, depth.Summary{MidPriceQuote: 100, BestBidQuote: 100.01, BestAskQuote: 99.99}, true, "không đo được"},
+	} {
+		why := g.deferVI(c.spot, c.perp)
+		if (why != "") != c.deferred || !strings.Contains(why, c.fragment) {
+			t.Errorf("%s: deferVI = %q, want deferred %v", name, why, c.deferred)
+		}
+	}
+	if why := (closeGuard{}).deferVI(depth.Summary{}, depth.Summary{}); why != "" {
+		t.Errorf("no guard deferred on %q", why)
 	}
 }

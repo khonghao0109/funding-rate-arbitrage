@@ -122,6 +122,11 @@ type venueTrader struct {
 	// binary that string becomes the intent file's close_reason_vi, so a test
 	// that reads it here is reading what the history table will show.
 	closeReasons []string
+	// closeOrders is every order the engine handed Close, in order.
+	closeOrders []CloseOrder
+	// liveSpreadBps is the touch the portal's pre-flight guard would measure
+	// immediately before a close; 0 is a tight book.
+	liveSpreadBps float64
 
 	// The two wallets the rebalance sizes on, and how many times it asked.
 	account      Account
@@ -381,7 +386,8 @@ func (v *venueTrader) reads() int {
 	return v.accountReads
 }
 
-func (v *venueTrader) Close(ctx context.Context, symbol, intentID, reasonVI string) CloseResult {
+func (v *venueTrader) Close(ctx context.Context, order CloseOrder) CloseResult {
+	symbol, intentID, reasonVI := order.Symbol, order.IntentID, order.ReasonVI
 	v.mu.Lock()
 	if v.busy {
 		v.mu.Unlock()
@@ -389,7 +395,14 @@ func (v *venueTrader) Close(ctx context.Context, symbol, intentID, reasonVI stri
 	}
 	v.closes++
 	v.closeReasons = append(v.closeReasons, reasonVI)
+	v.closeOrders = append(v.closeOrders, order)
 	gate, refuse := v.closeGate, v.refuseClose
+	if order.MaxSpreadBps > 0 && v.liveSpreadBps > order.MaxSpreadBps {
+		// The portal's pre-flight guard, as the fake's books would answer it.
+		v.mu.Unlock()
+		return CloseResult{IntentID: intentID, Refused: true, Deferred: true,
+			ErrorVI: fmt.Sprintf("spread tức thời %.1f bps > trần %.1f bps (test)", v.liveSpreadBps, order.MaxSpreadBps)}
+	}
 	var rec *intentRecord
 	for _, in := range v.intents {
 		if in.id == intentID {
@@ -3106,7 +3119,7 @@ func TestPortfolio_AHaltedPositionTheVenueNoLongerShowsIsCountedAtWhatItShows(t 
 	r.wantHedgedOn("BTCUSDT")
 	id := pairOf(t, r.eng.Status(), "BTCUSDT").Position.IntentID
 	ctx := context.Background()
-	if res := r.trader.Close(ctx, "BTCUSDT", id, "manual test close"); !res.Flat {
+	if res := r.trader.Close(ctx, CloseOrder{Symbol: "BTCUSDT", IntentID: id, ReasonVI: "manual test close"}); !res.Flat {
 		t.Fatalf("manual close %+v", res)
 	}
 	if res := r.trader.Open(ctx, OpenOrder{Symbol: "BTCUSDT", NotionalQuote: 500, SignalEntryCostPct: 1}); !res.Hedged {
@@ -3319,7 +3332,7 @@ func TestPortfolio_AnUnhedgedReplacementOfAHeldPositionIsCountedAtItsReading(t *
 	r, _ := heldAt(t)
 	ctx := context.Background()
 	id := pairOf(t, r.eng.Status(), "BTCUSDT").Position.IntentID
-	if res := r.trader.Close(ctx, "BTCUSDT", id, "manual test close"); !res.Flat {
+	if res := r.trader.Close(ctx, CloseOrder{Symbol: "BTCUSDT", IntentID: id, ReasonVI: "manual test close"}); !res.Flat {
 		t.Fatalf("manual close %+v", res)
 	}
 	res := r.trader.Open(ctx, OpenOrder{Symbol: "BTCUSDT", NotionalQuote: 500, SignalEntryCostPct: 1})
@@ -3347,35 +3360,513 @@ func TestPortfolio_AnUnhedgedReplacementOfAHeldPositionIsCountedAtItsReading(t *
 // its holding: no market, no exit, even once its readings match the position
 // again (review round 6).
 func TestPortfolio_AHaltedPairWithAPositionIsReadButNeverJudged(t *testing.T) {
-	r, ft := heldAt(t)
-	ft.setFail("BTCUSDT", errors.New("timeout"))
+	// A halt about the POSITION — here five refused closes — acts on nothing
+	// until a person has looked, whatever its exits say (audit R8 keeps this:
+	// only a halt raised by read failures gets its risk exits back).
+	r := newRig(t)
+	r.start(testConfig())
+	r.step()
+	r.wantState(StateInPosition)
+	r.trader.mu.Lock()
+	r.trader.refuseClose = true
+	r.trader.mu.Unlock()
+	settleAfterTheOpen(r, -0.0003) // an exit is due on every scan
 	for i := 0; i < 5; i++ {
 		r.step()
 	}
-	if btc := pairOf(t, r.eng.Status(), "BTCUSDT"); btc.State != StateEmergencyHalted || btc.Position == nil {
-		t.Fatalf("BTC = %s position %+v", btc.State, btc.Position)
+	btc := r.wantState(StateEmergencyHalted)
+	if btc.Position == nil || !strings.Contains(btc.HaltReasonVI, "bị từ chối liên tiếp") {
+		t.Fatalf("BTC = %s position %+v halt %q", btc.State, btc.Position, btc.HaltReasonVI)
 	}
-	ft.setFail("BTCUSDT", nil)
-	settleAfterTheOpenOn(r, "BTCUSDT", -0.0003) // an exit would be due
+	r.trader.mu.Lock()
+	r.trader.refuseClose = false
+	r.trader.mu.Unlock()
+	r.market.set(func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) }) // the basis stop too
 	r.market.mu.Lock()
 	r.market.symbols = nil
 	r.market.mu.Unlock()
-	reads, closes := ft.readsOf("BTCUSDT"), r.trader.closeCount()
+	closes := r.trader.closeCount()
 	r.step()
 	st := r.step()
 	r.market.mu.Lock()
 	marketBTC := 0
 	for _, s := range r.market.symbols {
-		if s == "BTCUSDT" {
+		if s == testSymbol {
 			marketBTC++
 		}
 	}
 	r.market.mu.Unlock()
-	if ft.readsOf("BTCUSDT")-reads != 2 || marketBTC != 0 || r.trader.closeCount() != closes {
-		t.Errorf("halted BTC over two scans: %d holding reads (want 2), %d market reads (want 0), %d closes", ft.readsOf("BTCUSDT")-reads, marketBTC, r.trader.closeCount()-closes)
+	if marketBTC != 0 || r.trader.closeCount() != closes {
+		t.Errorf("a position-halted BTC over two scans: %d market reads (want 0), %d closes (want 0)", marketBTC, r.trader.closeCount()-closes)
 	}
-	if btc := pairOf(t, st, "BTCUSDT"); btc.HedgeStatus != HedgeBothOpen || btc.State != StateEmergencyHalted {
-		t.Errorf("BTC = %s %s", btc.State, btc.HedgeStatus)
+	if p := pairOf(t, st, testSymbol); p.State != StateEmergencyHalted || p.HaltSeq != btc.HaltSeq {
+		t.Errorf("BTC = %s #%d, want still halted #%d", p.State, p.HaltSeq, btc.HaltSeq)
+	}
+	r.wantVenueHedged()
+}
+
+// ------------------------------------------------ audit R8: halted risk exits
+
+// readHaltBTC holds BTC (the one pair that pays), then makes its holding read
+// fail until the pair halts on read failures, and lets the venue read again.
+func readHaltBTC(t *testing.T) (*rig, *flakyTrader, PairView) {
+	t.Helper()
+	r, ft := heldAt(t)
+	ft.setFail("BTCUSDT", errors.New("dial tcp: lookup demo-fapi.binance.com: no such host"))
+	for i := 0; i < 5; i++ {
+		r.step()
+	}
+	btc := r.wantPair("BTCUSDT", StateEmergencyHalted)
+	if btc.Position == nil || !strings.Contains(btc.HaltReasonVI, "đọc sàn hỏng") {
+		t.Fatalf("BTC = %s position %+v halt %q", btc.State, btc.Position, btc.HaltReasonVI)
+	}
+	ft.setFail("BTCUSDT", nil)
+	return r, ft, btc
+}
+
+// The acceptance case of R8: the network drops five times, the pair halts with
+// its position, the network returns, the venue proves the one position hedged,
+// and the basis stop fires — the close goes out without anyone pressing a
+// button. The pair ends FLAT and STILL HALTED under a new number, and nothing
+// re-opens on it, although its signal would qualify.
+func TestPortfolio_AReadHaltedHedgedPairStillTakesTheBasisStop(t *testing.T) {
+	r, _, btc := readHaltBTC(t)
+	opens, closes := r.trader.openCount(), r.trader.closeCount()
+	r.market.setFor("BTCUSDT", func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) }) // +110 bps
+	st := r.step()
+
+	if r.trader.closeCount() != closes+1 {
+		t.Fatalf("closes %d → %d, want one emergency close · %v", closes, r.trader.closeCount(), logLines(st))
+	}
+	r.wantFlatOn("BTCUSDT")
+	p := r.wantPair("BTCUSDT", StateEmergencyHalted)
+	if p.HaltSeq <= btc.HaltSeq || !strings.Contains(p.HaltReasonVI, "ĐÃ CẮT LỖ KHẨN CẤP") || p.Position != nil || p.SlotUsed {
+		t.Errorf("after the stop: #%d (was #%d) halt %q position %+v slot %v", p.HaltSeq, btc.HaltSeq, p.HaltReasonVI, p.Position, p.SlotUsed)
+	}
+	if !hasLogOn(st, "HALT_RISK_EXIT", "BTCUSDT", "Basis giãn") {
+		t.Errorf("no HALT_RISK_EXIT line naming the basis stop: %v", logLines(st))
+	}
+	r.trader.mu.Lock()
+	order := r.trader.closeOrders[len(r.trader.closeOrders)-1]
+	r.trader.mu.Unlock()
+	if order.MaxSpreadBps != 0 || !strings.Contains(order.ReasonVI, "Thoát khẩn cấp khi DỪNG BẢO VỆ") {
+		t.Errorf("the emergency close order = %+v — a risk exit carries no spread guard", order)
+	}
+
+	// Still halted: BTC pays 3 bps and would qualify, and nothing opens on it.
+	r.market.setFor("BTCUSDT", func(s *Snapshot) { *s = *goodSnapshot(time.Now(), 0.0003) })
+	for i := 0; i < 3; i++ {
+		r.step()
+	}
+	for _, s := range openedSymbols(r)[opens:] {
+		if s == "BTCUSDT" {
+			t.Fatal("a halted pair was re-entered before the operator acknowledged it")
+		}
+	}
+	r.wantPair("BTCUSDT", StateEmergencyHalted)
+	r.wantFlatOn("BTCUSDT")
+}
+
+// The negative-funding exit is the other risk exit a read halt keeps.
+func TestPortfolio_AReadHaltedHedgedPairStillTakesTheNegativeFundingExit(t *testing.T) {
+	r, _, _ := readHaltBTC(t)
+	closes := r.trader.closeCount()
+	settleAfterTheOpenOn(r, "BTCUSDT", -0.0003) // MinHoldEpochs 0 in the test run: one charge is due
+	st := r.step()
+	if r.trader.closeCount() != closes+1 || !hasLogOn(st, "HALT_RISK_EXIT", "BTCUSDT", "Mốc settle sau khi vào") {
+		t.Fatalf("closes %d → %d · %v", closes, r.trader.closeCount(), logLines(st))
+	}
+	r.wantFlatOn("BTCUSDT")
+	r.wantPair("BTCUSDT", StateEmergencyHalted)
+}
+
+// A take-profit is a GAIN: a halted pair waits for the operator, whatever the
+// reading says, and the halt the operator read does not change under them.
+func TestPortfolio_AReadHaltedPairDoesNotTakeProfit(t *testing.T) {
+	r, _, btc := readHaltBTC(t)
+	closes := r.trader.closeCount()
+	r.market.setFor("BTCUSDT", func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*0.965, time.Now()) }) // converged well past +1.50%
+	r.step()
+	st := r.step()
+	if r.trader.closeCount() != closes {
+		t.Fatalf("a halted pair took profit: %d closes · %v", r.trader.closeCount()-closes, logLines(st))
+	}
+	p := r.wantPair("BTCUSDT", StateEmergencyHalted)
+	if p.HaltSeq != btc.HaltSeq || p.Position == nil {
+		t.Errorf("halt #%d (was #%d), position %+v", p.HaltSeq, btc.HaltSeq, p.Position)
+	}
+	if p.Signal == nil || !p.Signal.ExitDue || !strings.Contains(p.Signal.VerdictVI, "KHÔNG phải rủi ro") {
+		t.Errorf("the page does not say the take-profit is held for the operator: %+v", p.Signal)
+	}
+	if !hasLogOn(st, "HALT", "BTCUSDT", "chờ XÁC NHẬN") {
+		t.Errorf("log %v", logLines(st))
+	}
+	r.wantHedgedOn("BTCUSDT")
+}
+
+// Reads back, but the venue no longer shows a clean hedge: the bot does not
+// act on it, and the halt is RE-RAISED under a new number with the risk exits
+// off — the operator read a network halt, and this is not one.
+func TestPortfolio_AReadHaltedPairThatReadsUnhedgedIsReHaltedAndNotTraded(t *testing.T) {
+	r, ft, btc := readHaltBTC(t)
+	ft.setHook(func(symbol string, h Holding, err error) (Holding, error) {
+		if symbol == "BTCUSDT" && err == nil {
+			h.Status, h.ReasonVI = HedgeUnhedged, "spot 0.0025 perp 0 (test)"
+		}
+		return h, err
+	})
+	closes := r.trader.closeCount()
+	r.market.setFor("BTCUSDT", func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) })
+	r.step()
+	p := r.wantPair("BTCUSDT", StateEmergencyHalted)
+	if p.HaltSeq <= btc.HaltSeq || !strings.Contains(p.HaltReasonVI, "van cắt lỗ tự động TẮT") {
+		t.Fatalf("halt #%d %q", p.HaltSeq, p.HaltReasonVI)
+	}
+	// The hedge reads clean again: the halt is no longer a read failure, so
+	// even the basis stop now waits for the operator.
+	ft.setHook(nil)
+	r.step()
+	r.step()
+	if r.trader.closeCount() != closes {
+		t.Errorf("%d closes on a pair whose halt is about its position", r.trader.closeCount()-closes)
+	}
+	r.wantHedgedOn("BTCUSDT")
+}
+
+// Two more readings that are not the bot's clean hedge — another intent on the
+// symbol, and legs apart by more than a step — are escalated exactly like an
+// unhedged one: a new number, the risk exits off, nothing sent (review of R8).
+func TestPortfolio_AReadHaltedPairWhoseReadingIsNotItsCleanHedgeIsReHalted(t *testing.T) {
+	for name, tamper := range map[string]func(h Holding) Holding{
+		"another intent": func(h Holding) Holding {
+			h.IntentID, h.FromAutotrade = "pbtcusdt-20260917-000000-001", false
+			return h
+		},
+		"two intents": func(h Holding) Holding {
+			h.HeldIntents = 2
+			return h
+		},
+		"a residual past the step": func(h Holding) Holding {
+			h.ResidualQtyCoin = h.ToleranceQtyCoin * 3
+			return h
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			r, ft, btc := readHaltBTC(t)
+			ft.setHook(func(symbol string, h Holding, err error) (Holding, error) {
+				if symbol == "BTCUSDT" && err == nil && h.Status == HedgeBothOpen {
+					h = tamper(h)
+				}
+				return h, err
+			})
+			closes := r.trader.closeCount()
+			r.market.setFor("BTCUSDT", func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) })
+			r.step()
+			p := r.wantPair("BTCUSDT", StateEmergencyHalted)
+			if p.HaltSeq <= btc.HaltSeq || !strings.Contains(p.HaltReasonVI, "van cắt lỗ tự động TẮT") {
+				t.Fatalf("halt #%d (was #%d) %q", p.HaltSeq, btc.HaltSeq, p.HaltReasonVI)
+			}
+			ft.setHook(nil)
+			r.step()
+			r.step()
+			if r.trader.closeCount() != closes {
+				t.Errorf("%d closes after the reading escalated the halt", r.trader.closeCount()-closes)
+			}
+			r.wantHedgedOn("BTCUSDT")
+		})
+	}
+}
+
+// The epoch exit is a schedule, not a risk: a read-halted pair past
+// MaxHoldEpochs keeps its position until the operator acknowledges.
+func TestPortfolio_AReadHaltedPairDoesNotTakeTheEpochExit(t *testing.T) {
+	r, ft := newFlakyRig(t)
+	withRates(r, map[string]float64{"BTCUSDT": 0.0003, "ETHUSDT": -0.0001, "SOLUSDT": -0.0001, "BNBUSDT": -0.0001})
+	pc := testPortfolio(allSymbols...)
+	pc.TotalCapitalCapQuote = 3 * testCapital
+	pc.DefaultPairConfig.MaxHoldEpochs = 1
+	pc.DefaultPairConfig.MinNetAPRPct = -10_000 * 0.09 // one settlement cannot pay a round trip; lowered to reach the exit
+	r.start(pc)
+	r.step()
+	r.wantHedgedOn("BTCUSDT")
+	ft.setFail("BTCUSDT", errors.New("timeout"))
+	for i := 0; i < 5; i++ {
+		r.step()
+	}
+	btc := r.wantPair("BTCUSDT", StateEmergencyHalted)
+	ft.setFail("BTCUSDT", nil)
+	settleAfterTheOpenOn(r, "BTCUSDT", 0.0003) // pays, and reaches the one-epoch hold
+	closes := r.trader.closeCount()
+	r.step()
+	st := r.step()
+	p := r.wantPair("BTCUSDT", StateEmergencyHalted)
+	if r.trader.closeCount() != closes || p.HaltSeq != btc.HaltSeq {
+		t.Fatalf("epoch exit on a halted pair: %d closes, halt #%d (was #%d) · %v", r.trader.closeCount()-closes, p.HaltSeq, btc.HaltSeq, logLines(st))
+	}
+	if p.Signal == nil || !strings.Contains(p.Signal.VerdictVI, "chờ XÁC NHẬN") || !strings.Contains(p.Signal.VerdictVI, "đủ số mốc") {
+		t.Errorf("verdict %+v", p.Signal)
+	}
+	r.wantHedgedOn("BTCUSDT")
+}
+
+// A halted risk exit the portal refuses is retried every scan, stays the same
+// halt, and says so once rather than three lines a scan.
+func TestPortfolio_ARefusedHaltedRiskExitRetriesQuietly(t *testing.T) {
+	r, _, btc := readHaltBTC(t)
+	r.trader.mu.Lock()
+	r.trader.refuseClose = true
+	r.trader.mu.Unlock()
+	r.market.setFor("BTCUSDT", func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) })
+	closes := r.trader.closeCount()
+	var st StatusView
+	for i := 0; i < 4; i++ {
+		st = r.step()
+	}
+	p := r.wantPair("BTCUSDT", StateEmergencyHalted)
+	if r.trader.closeCount() != closes+4 || p.HaltSeq != btc.HaltSeq || p.TradeFailures != 0 {
+		t.Fatalf("closes +%d (want 4), halt #%d (was #%d), failures %d", r.trader.closeCount()-closes, p.HaltSeq, btc.HaltSeq, p.TradeFailures)
+	}
+	counts := map[string]int{}
+	for _, e := range st.Log {
+		if e.Symbol == "BTCUSDT" && (e.Kind == "HALT_RISK_EXIT" || e.Kind == "EXIT") {
+			counts[e.Kind]++
+		}
+	}
+	if counts["HALT_RISK_EXIT"] != 2 || counts["EXIT"] != 1 {
+		t.Errorf("log lines over 4 refused retries = %v, want 2 HALT_RISK_EXIT (announce, refusal) and 1 EXIT · %v", counts, logLines(st))
+	}
+	r.trader.mu.Lock()
+	r.trader.refuseClose = false
+	r.trader.mu.Unlock()
+	r.step()
+	r.wantFlatOn("BTCUSDT")
+	if q := r.wantPair("BTCUSDT", StateEmergencyHalted); q.HaltSeq <= btc.HaltSeq {
+		t.Errorf("flat after the retry but halt #%d", q.HaltSeq)
+	}
+}
+
+// A kill pressed while a halted risk exit is on the wire waits for it, finds
+// the pair flat and folds the pair's halt into the bot's; ACK ALL pressed in
+// that window acknowledges nothing and names the pair as in flight.
+func TestPortfolio_AKillOrAckAllDuringAHaltedRiskExit(t *testing.T) {
+	r, _, btc := readHaltBTC(t)
+	gate := make(chan struct{})
+	r.trader.mu.Lock()
+	r.trader.closeGate = gate
+	r.trader.mu.Unlock()
+	r.market.setFor("BTCUSDT", func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) })
+	stepped := make(chan struct{})
+	go func() {
+		defer close(stepped)
+		r.eng.Step(context.Background())
+	}()
+	waitFor(t, func() bool {
+		return r.trader.closeCount() > 0 && pairOf(t, r.eng.Status(), "BTCUSDT").State == StateClosing
+	})
+
+	_, out, err := r.eng.AckAll(map[string]int{"BTCUSDT": btc.HaltSeq})
+	if err != nil || len(out.Acked) != 0 || len(out.ExitInFlight) != 1 {
+		t.Fatalf("ack all during the exit = %v %+v", err, out)
+	}
+
+	killed := make(chan struct{})
+	go func() {
+		defer close(killed)
+		if _, _, err := r.eng.Kill(context.Background()); err != nil {
+			t.Errorf("kill: %v", err)
+		}
+	}()
+	close(gate)
+	<-stepped
+	<-killed
+	st := r.wantBot(StateEmergencyHalted)
+	r.wantFlatOn("BTCUSDT")
+	if p := pairOf(t, st, "BTCUSDT"); p.Position != nil || p.State == StateClosing {
+		t.Errorf("BTC after kill = %s position %+v", p.State, p.Position)
+	}
+}
+
+// An acknowledgement landing between the reading and the send voids the
+// emergency exit: the pair is no longer the halt the exit was judged under.
+func TestPortfolio_AnAcknowledgementBeforeTheSendVoidsAHaltedRiskExit(t *testing.T) {
+	r, _, btc := readHaltBTC(t)
+	closes := r.trader.closeCount()
+	r.market.setFor("BTCUSDT", func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) })
+	r.market.mu.Lock()
+	r.market.afterRead = func() {
+		if _, err := r.eng.PairControl("BTCUSDT", PairAcknowledge, btc.HaltSeq); err != nil {
+			t.Errorf("ack during the read: %v", err)
+		}
+	}
+	r.market.mu.Unlock()
+	r.step()
+	if r.trader.closeCount() != closes {
+		t.Errorf("the exit judged under halt #%d was sent after it was acknowledged", btc.HaltSeq)
+	}
+}
+
+// ------------------------------------------------ audit R8: ACK ALL
+
+func TestPortfolio_AckAllReleasesEveryHaltTheOperatorRead(t *testing.T) {
+	r := newRig(t)
+	r.start(testPortfolio("BTCUSDT", "ETHUSDT"))
+	r.step()
+	r.trader.mu.Lock()
+	r.trader.holdErr = errors.New("venue down")
+	r.trader.mu.Unlock()
+	for i := 0; i < 5; i++ {
+		r.step()
+	}
+	r.trader.mu.Lock()
+	r.trader.holdErr = nil
+	r.trader.mu.Unlock()
+	st := r.eng.Status()
+	btc, eth := pairOf(t, st, "BTCUSDT"), pairOf(t, st, "ETHUSDT")
+	if st.HaltedPairs != 2 || btc.State != StateEmergencyHalted || eth.State != StateEmergencyHalted {
+		t.Fatalf("halted %d: BTC %s ETH %s", st.HaltedPairs, btc.State, eth.State)
+	}
+
+	if _, _, err := r.eng.AckAll(nil); !errors.Is(err, ErrNothingToAcknowledge) {
+		t.Errorf("empty ack all = %v", err)
+	}
+	if _, _, err := r.eng.AckAll(map[string]int{"BTCUSDT": btc.HaltSeq, "XRPUSDT": 1}); !errors.Is(err, ErrUnknownSymbol) {
+		t.Errorf("unknown symbol = %v", err)
+	}
+	// One stale number refuses the whole batch.
+	st, _, err := r.eng.AckAll(map[string]int{"BTCUSDT": btc.HaltSeq, "ETHUSDT": eth.HaltSeq - 1})
+	if !errors.Is(err, ErrStaleAcknowledgement) || st.HaltedPairs != 2 {
+		t.Fatalf("stale batch = %v, halted %d", err, st.HaltedPairs)
+	}
+
+	st, out, err := r.eng.AckAll(map[string]int{"BTCUSDT": btc.HaltSeq, "ETHUSDT": eth.HaltSeq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Acked) != 2 || st.HaltedPairs != 0 || len(out.StillHalted) != 0 {
+		t.Fatalf("ack all = %+v, halted %d", out, st.HaltedPairs)
+	}
+	for _, s := range []string{"BTCUSDT", "ETHUSDT"} {
+		if p := pairOf(t, st, s); p.State != StateIdleScanning || !p.Paused || p.HaltReasonVI != "" || p.ReadFailures != 0 {
+			t.Errorf("%s after ack all: %+v", s, p)
+		}
+	}
+	if !hasLog(st, "ACK_ALL", "giải phóng 2 cặp") {
+		t.Errorf("log %v", logLines(st))
+	}
+	// Paused, not resumed: the next scan adopts both positions and opens nothing.
+	opens := r.trader.openCount()
+	r.step()
+	for _, s := range []string{"BTCUSDT", "ETHUSDT"} {
+		if p := pairOf(t, r.eng.Status(), s); p.State != StateInPosition || p.Position == nil || !p.Position.Adopted {
+			t.Errorf("%s after the scan: %s %+v", s, p.State, p.Position)
+		}
+	}
+	if r.trader.openCount() != opens {
+		t.Errorf("ack all led to %d opens", r.trader.openCount()-opens)
+	}
+}
+
+// A halt the page did not show stays; the bot's own halt stays.
+func TestPortfolio_AckAllLeavesUnlistedHaltsAndTheBotHalt(t *testing.T) {
+	r := newRig(t)
+	r.start(testPortfolio("BTCUSDT", "ETHUSDT"))
+	r.step()
+	r.trader.mu.Lock()
+	r.trader.holdErr = errors.New("venue down")
+	r.trader.mu.Unlock()
+	for i := 0; i < 5; i++ {
+		r.step()
+	}
+	r.trader.mu.Lock()
+	r.trader.holdErr = nil
+	r.trader.mu.Unlock()
+	btc := pairOf(t, r.eng.Status(), "BTCUSDT")
+	st, out, err := r.eng.AckAll(map[string]int{"BTCUSDT": btc.HaltSeq})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Acked) != 1 || len(out.StillHalted) != 1 || out.StillHalted[0] != "ETHUSDT" || pairOf(t, st, "ETHUSDT").State != StateEmergencyHalted {
+		t.Fatalf("outcome %+v", out)
+	}
+
+	if _, _, err := r.eng.Kill(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	st = r.wantBot(StateEmergencyHalted)
+	st, out, err = r.eng.AckAll(map[string]int{"BTCUSDT": 0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if st.State != StateEmergencyHalted || out.BotHaltVI == "" || len(out.Acked) != 0 {
+		t.Errorf("ack all cleared the bot's halt: state %s outcome %+v", st.State, out)
+	}
+}
+
+// ------------------------------------------------ audit R6: pre-flight spread
+
+// A take-profit whose book widened between the scan and the send is DEFERRED:
+// nothing sent, nothing counted, retried until the book is tight again — and
+// never halts the pair however many scans it waits.
+func TestEngine_ATakeProfitDeferredByTheLiveSpreadIsRetriedNotCounted(t *testing.T) {
+	r := newRig(t)
+	pc := testConfig()
+	pc.DefaultPairConfig.MinHoldEpochs = DefaultMinHoldEpochs
+	r.start(pc)
+	r.step()
+	r.wantState(StateInPosition)
+	r.trader.mu.Lock()
+	r.trader.liveSpreadBps = 15
+	r.trader.mu.Unlock()
+	r.market.set(func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*0.965, time.Now()) })
+	var st StatusView
+	for i := 0; i < DefaultMaxFailures+2; i++ {
+		st = r.step()
+		if p := r.wantState(StateInPosition); p.TradeFailures != 0 {
+			t.Fatalf("scan %d: a deferral counted as a failure (%d)", i, p.TradeFailures)
+		}
+	}
+	r.wantVenueHedged()
+	r.trader.mu.Lock()
+	orders := append([]CloseOrder(nil), r.trader.closeOrders...)
+	r.trader.mu.Unlock()
+	if len(orders) != DefaultMaxFailures+2 || orders[0].MaxSpreadBps != DefaultMaxExitSpreadBps {
+		t.Fatalf("close orders %+v", orders)
+	}
+	deferLines := 0
+	for _, e := range st.Log {
+		if e.Kind == "CLOSE" && strings.Contains(e.MessageVI, "HOÃN CHỐT LỜI") {
+			deferLines++
+		}
+	}
+	if deferLines != 1 {
+		t.Errorf("%d deferral lines, want exactly one for an unchanged reason · %v", deferLines, logLines(st))
+	}
+
+	r.trader.mu.Lock()
+	r.trader.liveSpreadBps = 1
+	r.trader.mu.Unlock()
+	r.step()
+	r.wantState(StateCooldown)
+	r.wantVenueFlat()
+}
+
+// A basis STOP never waits for a spread: it goes out with no guard at all.
+func TestEngine_ABasisStopIsSentWhateverTheLiveSpread(t *testing.T) {
+	r := newRig(t)
+	r.start(testConfig())
+	r.step()
+	r.wantState(StateInPosition)
+	r.trader.mu.Lock()
+	r.trader.liveSpreadBps = 15
+	r.trader.mu.Unlock()
+	r.market.set(func(s *Snapshot) { s.PerpBook = book("binance_futures", testMid*1.011, time.Now()) })
+	r.step()
+	r.wantState(StateCooldown)
+	r.wantVenueFlat()
+	r.trader.mu.Lock()
+	defer r.trader.mu.Unlock()
+	if len(r.trader.closeOrders) != 1 || r.trader.closeOrders[0].MaxSpreadBps != 0 {
+		t.Errorf("close orders %+v", r.trader.closeOrders)
 	}
 }
 
