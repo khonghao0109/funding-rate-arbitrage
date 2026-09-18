@@ -39,7 +39,13 @@ if lsof -i :"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     exit 0
 fi
 
-# 4. Khởi chạy Master Command Center
+# 4. Đồng bộ các tệp ý định vị thế mở từ .paper/exec sang .paper/exec-master
+mkdir -p "$REPO_ROOT/.paper/exec-master"
+if [ -d "$REPO_ROOT/.paper/exec" ]; then
+    cp -n "$REPO_ROOT/.paper/exec"/*.json "$REPO_ROOT/.paper/exec-master/" 2>/dev/null || true
+fi
+
+# 5. Khởi chạy Master Command Center
 echo "🚀 Đang khởi chạy Master Command Center trên cổng $PORT..."
 nohup go run ./cmd/execportal -master -port "$PORT" > "$LOG_FILE" 2>&1 &
 MASTER_PID=$!
