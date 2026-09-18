@@ -39,6 +39,15 @@ if lsof -i :"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
     exit 0
 fi
 
+# 3b. Dừng các portal đơn lẻ cũ (8087, 8088, 8089) để tránh lãng phí hạn mức gọi API (Weight limit)
+for old_port in 8087 8088 8089; do
+    if lsof -i :"$old_port" -sTCP:LISTEN >/dev/null 2>&1; then
+        OLD_PID=$(lsof -ti :"$old_port" -sTCP:LISTEN | head -n 1)
+        echo "ℹ Dừng portal cũ PID $OLD_PID (Port $old_port) để giải phóng hạn mức API..."
+        kill -TERM "$OLD_PID" 2>/dev/null || true
+    fi
+done
+
 # 4. Đồng bộ các tệp ý định vị thế mở từ .paper/exec sang .paper/exec-master
 mkdir -p "$REPO_ROOT/.paper/exec-master"
 if [ -d "$REPO_ROOT/.paper/exec" ]; then
@@ -47,7 +56,7 @@ fi
 
 # 5. Khởi chạy Master Command Center
 echo "🚀 Đang khởi chạy Master Command Center trên cổng $PORT..."
-nohup go run ./cmd/execportal -master -port "$PORT" > "$LOG_FILE" 2>&1 &
+nohup go run ./cmd/execportal -master -port "$PORT" -autotrade > "$LOG_FILE" 2>&1 &
 MASTER_PID=$!
 echo "Đã cấp tiến trình PID: $MASTER_PID (Log: $LOG_FILE)"
 

@@ -1545,18 +1545,23 @@ export function initExecution(status) {
     if (execActive()) await fn();
   };
   state.polls = [
-    schedule(refreshAccount, () => (execActive() ? FAST_MS : BACKGROUND_MS)),
-    schedule(refreshPositions, () => (execActive() ? FAST_MS : BACKGROUND_MS)),
-    schedule(refreshOtherHedges, () => BACKGROUND_MS),
-    schedule(refreshMarket, () => MARKET_MS),
-    schedule(onlyHere(refreshOrders), () => (execActive() ? SLOW_MS : 5000)),
-    schedule(onlyHere(refreshIntents), () => (execActive() ? SLOW_MS : 5000)),
-    schedule(onlyHere(refreshFunding), () => (execActive() ? FUNDING_MS : 5000)),
-    schedule(refreshAutotrade, () => (execActive() ? FAST_MS : BACKGROUND_MS)),
-    schedule(refreshPnL, () => (shell.isActive("autotrade") ? PNL_MS : 5000)),
+    schedule(refreshAccount, () => (document.hidden ? 0 : execActive() ? FAST_MS : BACKGROUND_MS)),
+    schedule(refreshPositions, () => (document.hidden ? 0 : execActive() ? FAST_MS : BACKGROUND_MS)),
+    schedule(refreshOtherHedges, () => (document.hidden ? 0 : BACKGROUND_MS)),
+    schedule(refreshMarket, () => (document.hidden ? 0 : MARKET_MS)),
+    schedule(onlyHere(refreshOrders), () => (document.hidden ? 0 : execActive() ? SLOW_MS : 5000)),
+    schedule(onlyHere(refreshIntents), () => (document.hidden ? 0 : execActive() ? SLOW_MS : 5000)),
+    schedule(onlyHere(refreshFunding), () => (document.hidden ? 0 : execActive() ? FUNDING_MS : 5000)),
+    schedule(refreshAutotrade, () => (document.hidden ? 0 : execActive() ? FAST_MS : BACKGROUND_MS)),
+    schedule(refreshPnL, () => (document.hidden ? 0 : shell.isActive("autotrade") ? PNL_MS : 5000)),
   ];
   shell.onTab("manual", { enter: refreshAll });
   shell.onTab("autotrade", { enter: refreshAll });
+  shell.onVisibility((visible) => {
+    if (visible) {
+      for (const p of state.polls) p.kick();
+    }
+  });
   setInterval(() => {
     renderPositionsAge();
     autotradeTick();

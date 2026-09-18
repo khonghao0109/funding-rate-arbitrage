@@ -214,8 +214,8 @@ export function initMaster() {
     state.positionsPoll.kick();
   });
 
-  state.overviewPoll = schedule(refreshMasterOverview, () => (shell.isActive("master") ? ACTIVE_POLL_MS : BG_POLL_MS));
-  state.positionsPoll = schedule(refreshMasterPositions, () => (shell.isActive("master") ? ACTIVE_POLL_MS : BG_POLL_MS));
+  state.overviewPoll = schedule(refreshMasterOverview, () => (document.hidden ? 0 : shell.isActive("master") ? ACTIVE_POLL_MS : BG_POLL_MS));
+  state.positionsPoll = schedule(refreshMasterPositions, () => (document.hidden ? 0 : shell.isActive("master") ? ACTIVE_POLL_MS : BG_POLL_MS));
 
   shell.onTab("master", {
     enter: () => {
