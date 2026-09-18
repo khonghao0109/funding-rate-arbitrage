@@ -736,3 +736,25 @@ func TestResolveMode(t *testing.T) {
 		}
 	}
 }
+
+// The account-info page's own example answer (read 2026-09-17), not a capture.
+func TestFetchAccountInfo_ReadsTheMarginModeAndRefusesAnUnknownOne(t *testing.T) {
+	answer := func(mode string) string {
+		return `{"marginMode":"` + mode + `","updatedTime":"1697078946000","unifiedMarginStatus":4,"dcpStatus":"OFF","timeWindow":10,"smpGroup":0,"isMasterTrader":false,"spotHedgingStatus":"OFF"}`
+	}
+	for _, mode := range []string{MarginModeRegular, MarginModeIsolated, MarginModePortfolio} {
+		m := newMock(t)
+		m.ok("GET /v5/account/info", answer(mode))
+		info, err := newTestClient(t, m).FetchAccountInfo(ctx)
+		if err != nil || info.MarginMode != mode || info.UnifiedMarginStatus != 4 {
+			t.Errorf("%s: %+v %v", mode, info, err)
+		}
+	}
+	for _, mode := range []string{"", "CROSS_MARGIN"} {
+		m := newMock(t)
+		m.ok("GET /v5/account/info", answer(mode))
+		if info, err := newTestClient(t, m).FetchAccountInfo(ctx); err == nil {
+			t.Errorf("marginMode %q accepted as %+v", mode, info)
+		}
+	}
+}

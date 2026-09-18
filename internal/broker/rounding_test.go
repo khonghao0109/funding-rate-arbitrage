@@ -3,6 +3,7 @@ package broker
 import (
 	"errors"
 	"math"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -398,6 +399,74 @@ func TestCeilToStep_RefusesWhatIsNotAQuantityOrAGrid(t *testing.T) {
 	} {
 		if got := CeilToStep(c.v, c.step); got != 0 {
 			t.Errorf("CeilToStep(%v, %v) = %v, want 0 (no quantity) rather than a guessed grid", c.v, c.step, got)
+		}
+	}
+}
+
+// FloorToStep is RoundOrder's own quantity rule on its own: DOWN onto the grid,
+// with the step-count tolerance, and snapped so the shortest decimal form of the
+// result carries no float dust. The cross-venue engine sizes one quantity on the
+// COARSER of two venues' grids with it before either venue's rules are applied.
+func TestFloorToStep_RoundsDownOntoTheGridWithoutFloatDust(t *testing.T) {
+	cases := []struct {
+		name       string
+		v, step    float64
+		want       float64
+		wantString string // strconv.FormatFloat(got, 'f', -1, 64): what a venue client puts on the wire
+	}{
+		{"float dust just above a grid point is not lost", 0.1 + 0.2, 0.1, 0.3, "0.3"},
+		{"0.3 on a 0.0001 grid stays whole (2999.9999999999995 steps)", 0.3, 0.0001, 0.3, "0.3"},
+		{"a genuine hair below a grid point loses the step", 0.29999, 0.1, 0.2, "0.2"},
+		{"binance futures BTCUSDT step", 20_000.0 / 60_123.4, 0.0001, 0.3326, "0.3326"},
+		{"bybit linear BTCUSDT step", 20_000.0 / 60_123.4, 0.001, 0.332, "0.332"},
+		{"whole-coin grid", 2002.9, 1, 2002, "2002"},
+		{"half-step grid", 12345.678, 0.5, 12345.5, "12345.5"},
+		{"exact multiple from multiplication dust", 3000 * 0.001, 0.001, 3, "3"},
+	}
+	for _, c := range cases {
+		got := FloorToStep(c.v, c.step)
+		if got != c.want {
+			t.Errorf("%s: FloorToStep(%v, %v) = %v, want %v", c.name, c.v, c.step, got, c.want)
+		}
+		if got > c.v+gridEpsilon*c.step {
+			t.Errorf("%s: %v is ABOVE %v — a floor that rounds up trades more than was asked for", c.name, got, c.v)
+		}
+		if s := strconv.FormatFloat(got, 'f', -1, 64); s != c.wantString {
+			t.Errorf("%s: FormatFloat(-1) renders %q, want %q — float dust on the wire", c.name, s, c.wantString)
+		}
+		// RoundOrder floors with the same rule, so a FloorToStep result must
+		// survive it unchanged.
+		r, err := RoundOrder(RoundRequest{Rules: exchanges.Instrument{Symbol: "X", StepSizeCoin: c.step},
+			Side: SideBuy, Type: OrderTypeMarket, QtyCoin: got})
+		if err != nil || r.QtyCoin != got {
+			t.Errorf("%s: RoundOrder(%v) = %v, %v — want it unchanged", c.name, got, r.QtyCoin, err)
+		}
+	}
+}
+
+// No sweep of ordinary sizes produces a mantissa tail: every result prints with
+// at most the grid's own decimals.
+func TestFloorToStep_NeverPrintsMoreDecimalsThanTheGrid(t *testing.T) {
+	for _, step := range []float64{1, 0.1, 0.01, 0.001, 0.0001, 0.00001, 0.5, 0.25} {
+		decimals := decimalsOf(step)
+		for i := 1; i <= 5000; i++ {
+			v := float64(i)*0.0137 + float64(i%7)*step/3
+			got := FloorToStep(v, step)
+			s := strconv.FormatFloat(got, 'f', -1, 64)
+			if dot := strings.IndexByte(s, '.'); dot >= 0 && len(s)-dot-1 > decimals {
+				t.Fatalf("FloorToStep(%v, %v) = %s — %d decimals on a %d-decimal grid", v, step, s, len(s)-dot-1, decimals)
+			}
+		}
+	}
+}
+
+func TestFloorToStep_RefusesWhatIsNotAQuantityOrAGrid(t *testing.T) {
+	for _, c := range []struct{ v, step float64 }{
+		{0, 0.001}, {-1, 0.001}, {math.NaN(), 0.001}, {math.Inf(1), 0.001},
+		{1, 0}, {1, -0.1}, {1, math.NaN()}, {1, math.Inf(1)},
+	} {
+		if got := FloorToStep(c.v, c.step); got != 0 {
+			t.Errorf("FloorToStep(%v, %v) = %v, want 0 (no quantity) rather than a guessed grid", c.v, c.step, got)
 		}
 	}
 }

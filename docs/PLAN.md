@@ -100,7 +100,7 @@
 | **1** | Củng cố lõi (Hardening) | 7 | 3–4 tuần | ✅ **7/7 bước · soak 72h ĐẠT** | Scanner đáng tin, có test, có phí |
 | **2** | Funding Rate Monitor | 7 | 4–5 tuần | ✅ **7/7 bước** | Thu thập + lưu funding rate 24/7 |
 | **3** | Signal, Alert & Backtest | 5 | 3–4 tuần | 🔄 **3/5 xong · 3.4 hoãn · 3.5 chạy lần 3 từ 09-12, phán quyết ≥ 09-26** | Tín hiệu có kiểm chứng lịch sử |
-| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.5i client Bybit V5 + `cmd/bybitcheck` 🟡 (2026-09-17: đọc được đồng hồ/ví/vị thế/quyền trên testnet, ví chưa có USDT; chưa có lệnh chéo sàn — không tính vào 5/6) + radar chéo sàn CHỈ ĐỌC 🟡 (2026-09-17, chưa triển khai lên 8085/8087) · 4.5j Chiến lược 1 trên Bybit UTA (spot + linear, `execportal -broker=bybit`) 🟡 (2026-09-17 — Q19; đọc thật 19/19; chân spot mua GỘP PHÍ và xét theo LẦN KHỚP + SỐ DƯ VÍ; lệnh tay mở, auto-trader Bybit còn chặn; chưa nghiệm thu bằng lệnh) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
+| **4** | Execution Engine | 6 | 6–8 tuần | 🔄 **5/6 · 4.1 + 4.2 + 4.4 + 4.5 ✅ TRÊN TESTNET (2026-09-13 — Q14, Q15) · 4.3 sổ paper ✅ (2026-09-11 — Q12) · cổng web vận hành `cmd/execportal` ✅ TRÊN TESTNET (2026-09-14 — Q16), hợp nhất bốn tab scanner/lệnh/sổ giấy/crowding (2026-09-14 — Q17) · Auto-Trader TESTNET trong portal ✅ (2026-09-15 — Q18: bot tự mở/đóng cặp trên testnet bằng tín hiệu của chính testnet; cùng ngày thành ĐA CẶP — xếp hạng Net APR, tối đa 3 cặp đồng thời, hạn mức vốn, dừng bảo vệ theo cặp, trang lãi/lỗ — 4.5e) · 4.5i client Bybit V5 + `cmd/bybitcheck` 🟡 (2026-09-17: đọc được đồng hồ/ví/vị thế/quyền trên testnet, ví chưa có USDT; chưa có lệnh chéo sàn — không tính vào 5/6) + radar chéo sàn CHỈ ĐỌC 🟡 (2026-09-17, chưa triển khai lên 8085/8087) · 4.5j Chiến lược 1 trên Bybit UTA (spot + linear, `execportal -broker=bybit`) 🟡 (2026-09-17 — Q19; đọc thật 19/19; chân spot mua GỘP PHÍ và xét theo LẦN KHỚP + SỐ DƯ VÍ; lệnh tay mở, auto-trader Bybit còn chặn; chưa nghiệm thu bằng lệnh) · 4.5k Động cơ 2 perp–perp chéo sàn + khóa symbol độc quyền + van ký quỹ kép 🟡 (2026-09-17/18 — Q20: chỉ trên SÀN GIẢ, không binary nào link, không lệnh nào tới sàn; ba vòng review đã sửa hết, vòng 4 chưa chạy được; không tính vào 5/6) · 4.6 vốn thật, và việc nối tín hiệu CỦA CỔNG 3.5 → lệnh, vẫn sau phán quyết 3.5 (nối còn sau cả 3.4)** | Bot đặt lệnh được (vốn nhỏ) |
 | **5** | Risk & Vận hành | 5 | 4–6 tuần | ⬜ Chưa bắt đầu | Bot chạy production 24/7 |
 | **6** | Crowding Reversal *(thay Basis Trade — Q11)* | 5 | 4–6 tuần cho 6.1–6.3, rồi ≥6 tháng paper ở 6.5 | 🔄 **1/5 · 6.1 ✅ (2026-09-12, parity 1,55e-14 / signal bằng tuyệt đối)** · 6.2 trở đi chờ cổng 3.5 và 3.4 | Chiến lược thứ hai, ĐỊNH HƯỚNG, port Go có parity, qua cổng riêng |
 | **7** | CEX-DEX Arbitrage | 1 (phác thảo) | 3–6 tháng | 🔒 Khoá | — |
@@ -5348,6 +5348,141 @@ vốn giữa các chuỗi) ghi ở Bước 5.4 với điều kiện tiên quyế
 >   một bước spot mỗi vòng (mục 8 báo cáo); Binance mainnet không trả phí bằng BNB cũng thu phí bằng
 >   coin gốc — hồ sơ Binance chưa bật (nợ 4.6).
 
+#### Bước 4.5k — Động cơ 2 (perp–perp chéo sàn), khóa symbol độc quyền, van ký quỹ kép — 🟡 CODE XONG TRÊN SÀN GIẢ, CHƯA NỐI VÀO BINARY NÀO, CHƯA GỬI LỆNH NÀO (2026-09-17/18, Q20)
+
+> Thiết kế của người vận hành: [`docs/designs/cross-perp-engine-design.md`](designs/cross-perp-engine-design.md).
+> Mọi thứ dưới đây chạy trên `internal/broker/brokertest` và bộ giả của chính test: **không lệnh chéo sàn nào
+> tới bất kỳ sàn nào, kể cả testnet**, và không binary nào trong `cmd/` link `internal/coordinator` hay
+> `internal/execution/crossperp`. Không tiến trình nào được khởi động: 8085/8086/8087 đang chạy, 8088 cũng đang
+> có một `execportal` khác.
+>
+> - **Code:**
+>   - `internal/coordinator` — khóa symbol độc quyền. Ba trạng thái `idle` / `occupied` / `conflict` sau MỘT
+>     mutex. Yêu cầu đầu tiên cho symbol rảnh mở cửa sổ tranh chấp 100 ms (lựa chọn, chưa đo); APR TRÊN VỐN cao
+>     hơn thắng, bằng nhau thì ai đến trước; đã cấp thì không ai giành lại.
+>     `.paper/coordinator-locks.json` ghi nguyên tử (tệp tạm → fsync → rename → fsync thư mục) TRƯỚC khi báo;
+>     tệp hỏng được dời sang bên, không ghi đè. Không cấp gì trước lần đối soát đầu.
+>     `ReconcileActivePositions`: chỉ short → Động cơ 1; một long + một short trên hai sàn → Động cơ 2 (dù lệch
+>     cỡ, độ lệch ghi vào khóa); còn lại → xung đột; sàn không đọc được, hoặc phẳng mà còn lệnh treo → CHƯA XÁC
+>     MINH. `Release`/`ClearConflict` đọc vị thế VÀ lệnh treo của mọi sàn. `MarkOrdersSent` ghi dấu "sắp gửi
+>     lệnh" xuống đĩa TRƯỚC lệnh đầu tiên; `Withdraw` (trả khóa không đọc sàn) chỉ cho khóa cấp trong chính
+>     tiến trình này mà chưa có dấu; `Adopt` chỉ cho khóa từ tệp hoặc suy ra.
+>   - `internal/execution/crossperp` — `Executor` (mở, đóng) và `Engine` (khóa + cặp + van).
+>   - `internal/risk/margin_guard.go` — van ký quỹ kép, đọc 5 s một lần; không import broker.
+>   - Đọc sàn: `binance.Client.FuturesAccountMargin` (`/fapi/v3/account`, tỷ lệ SUY RA từ
+>     `totalMaintMargin ÷ totalMarginBalance`); `bybit.Client.FetchAccountInfo` (`/v5/account/info`
+>     `marginMode`); `accountMMRate` của Bybit đối chiếu với hai tổng cùng câu trả lời, lệch > 2 điểm % là
+>     XUNG ĐỘT. Ký quỹ isolated → không áp dụng. `broker.FloorToStep`.
+> - **Hành vi an toàn (sau ba vòng review):**
+>   1. **Cỡ:** bước chung = max hai bước (từ chối nếu bước thô không chia hết bước mịn); Q =
+>      `FloorToStep`(notional ÷ trung bình hai giá giữa, bước chung); Q × P ≥ max minNotional; mỗi chân qua
+>      `RoundOrder` của chính sàn đó và phải giữ nguyên Q. 5.000 intent ngẫu nhiên: không đuôi float nào.
+>   2. **Mở:** hai sàn phải phẳng và không lệnh treo ngay trước khi gửi; hai LIMIT marketable từ hai goroutine;
+>      hết `LegTimeout` → huỷ → đọc lại tới khi sàn nói lệnh đã kết thúc (huỷ Bybit bất đồng bộ).
+>   3. **Một chân bị từ chối HOẶC mất câu trả lời:** chân kia dừng NGAY (chưa gửi thì không gửi) và trả về ngay,
+>      không chờ đọc lại lệnh huỷ của chính nó. Hai chân được đưa về 0 NGAY bằng MARKET reduce-only định cỡ từ
+>      vị thế sàn, SONG SONG với việc huỷ và hỏi sàn về mọi lệnh chưa xác nhận theo ClientOrderID tất định
+>      (khoảng lặng `AmbiguousSendQuiet` tính từ lúc lệnh gửi TRẢ VỀ). Trong lúc hỏi, chân đó được đọc lại vị
+>      thế mỗi `PollEvery` và gỡ ngay nếu lệnh tới muộn và khớp; lệnh thấy đang treo thì huỷ lại. Hỏi xong thì
+>      gỡ lượt cuối bằng id mới.
+>   4. **Lệnh mở không bao giờ gửi lại, và không bao giờ bị kết luận là chưa tới sàn.** "Không có lệnh" không
+>      chứng minh gì (Binance -1006/-1007 "execution status unknown", 503 "could have been a success", không
+>      giới hạn thời gian; Bybit không bao giờ trả "not found"). Lệnh vẫn không thấy → kết quả phẳng nhưng BÁO
+>      ĐỘNG, khóa giữ, cặp ghi "chưa giải quyết + lệnh mở chưa chứng minh"; chỉ sàn đọc lại được là đã kết thúc,
+>      hoặc người vận hành (`Engine.ConfirmOrdersFinished`), mới cho lệnh đóng nhả khóa.
+>   5. **Khớp một phần:** thu hai chân về cỡ chung nếu cỡ giữ lại đóng được mà không cần miễn trừ reduce-only và
+>      sổ hấp thụ phần cắt trong trượt giá cho phép; không thì gỡ. Một lệnh cắt chưa chứng minh xong → dừng cắt,
+>      gỡ về 0.
+>   6. **Đóng:** chân trên sàn căng (hoặc chân lớn hơn) về 0 TRƯỚC, chân kia về đúng số chân đầu ĐỌC ĐƯỢC SAU,
+>      kể cả khi chân đầu còn lệnh giảm chưa rõ (lệnh đó chỉ làm nó nhỏ thêm). Lệnh huỷ cho lệnh mở chưa chứng
+>      minh gửi trước (không chờ câu trả lời); đọc lại trước khi kết luận, và phần lệnh mở khớp muộn được đóng
+>      nốt. Hai sàn phẳng chỉ là "đã đóng" khi không còn gì có thể khớp.
+>   7. **Lệnh reduce-only chưa rõ bên cạnh hai sàn PHẲNG:** nó không mở được gì, nhưng khi khớp muộn sẽ giảm
+>      BẤT KỲ vị thế nào đang có — vị thế của Động cơ 1 sau khi khóa đã nhả. Nên kết luận phẳng chờ đọc lại từng
+>      lệnh: đã kết thúc là chứng minh; còn treo thì huỷ và chờ; sàn không có → coi là vắng CHỈ khi đã qua
+>      `AmbiguousSendQuiet` kể từ lúc lệnh gửi trả về (tiền lệ portal 4.5j cho lệnh KHÔNG phải lệnh mở, và là
+>      giới hạn recvWindow). Lệnh sàn từng HIỆN ra, hoặc sàn trả "execution status unknown", không bao giờ bị
+>      coi là vắng: kết quả báo động, cặp giữ `PendingOrders`, khóa giữ. **Rủi ro còn lại, ghi rõ:** một yêu cầu
+>      đã vào backend sàn mà không có câu trả lời nào và khớp muộn hơn khoảng lặng sẽ giảm vị thế đang có lúc đó
+>      (câu hỏi Q22).
+>   8. **Bằng chứng mâu thuẫn** (lệnh khớp ≠ vị thế sàn, hoặc sàn ngược chiều): không gửi thêm gì, báo động,
+>      chặn đóng tự động (câu hỏi Q21).
+>   9. **Van:** vàng ≥ 50% chặn Động cơ 2 trên sàn đó; cam ≥ 60% chặn mọi lệnh mở; đỏ ≥ 65% CHỐT — cấm mọi lệnh
+>      mở, đóng từng cặp (cặp phơi nhiễm lớn nhất trên sàn căng nhất trước, chân trên sàn căng nhất CỦA CẶP
+>      trước), đọc lại sau mỗi cặp. KHÔNG BIẾT không bao giờ gây đóng. Mâu thuẫn: chặn toàn hệ thống theo MỌI số
+>      CAO trong `StaleAfter` (không chỉ đỉnh), đóng theo số THẤP, xếp sàn cần cứu theo số CAO; gỡ chốt bằng
+>      `Acknowledge(seq)` khi mọi bằng chứng mới — cả hai số của một mâu thuẫn — đều < 50%.
+>   10. **Sau khởi động lại:** `Adopt` ghi nhận ĐÚNG những gì sàn giữ cho khóa của Động cơ 2 — trong tiêu chí
+>      phòng hộ của executor là cặp; không thì "chưa giải quyết" ở cỡ thật (van thấy và đóng được); hai sàn
+>      phẳng là cặp cỡ 0, lệnh đóng của nó nhả khóa. `Adopt` từ chối chân không có sổ (không định giá được phơi
+>      nhiễm) và khóa được cấp trong chính tiến trình (chủ đang sống).
+> - **Mười chỗ lệch khỏi đặc tả, và vì sao:**
+>   1. Coordinator KHÔNG tính "Net APR": nhận `PriorityAPROnCapitalFrac` kèm `PriorityAPRBasisVI` bắt buộc. Chữ
+>      "net" chỉ thuộc `internal/strategy` (luật 2) và chưa hàm strategy nào định giá Động cơ 2; hai động cơ
+>      buộc vốn khác nhau nên phải so TRÊN VỐN (4.5i đính chính 1).
+>   2. `TryAcquire(ctx, AcquireRequest) (Decision, error)` thay cho `bool` — "bận vì ai" là thông tin người gọi cần.
+>   3. Thêm trạng thái `conflict`: bằng chứng mâu thuẫn thì in cả hai, không hoà giải.
+>   4. `Release` không tin nhãn `both_flat` của người gọi: đọc sàn, cả lệnh treo.
+>   5. Timeout ≠ từ chối; lệnh mở không gửi lại; lệnh mơ hồ không bao giờ bị coi là vắng (ý 4 ở trên).
+>   6. Đặc tả đóng "Short trên Sàn A, Long trên Sàn B" — ngược chiều lệnh mở. Code đóng đúng chiều sàn đang giữ.
+>   7. Đặc tả đóng SONG SONG; code đóng TUẦN TỰ (review vòng 1, M2): đóng song song để lại MỘT chân trần mỗi khi
+>      một sàn từ chối. Tuần tự chỉ che được trường hợp sàn ĐẦU hỏng; giá phải trả là cả lần đóng chân đầu không
+>      phòng hộ (`CloseResult.UnhedgedWindow` đo nó). Gỡ khi mở có lệnh chưa chứng minh thì SONG SONG (ý 3).
+>   8. `< 500 ms` chỉ khẳng định được PHẦN VIỆC CỦA MÁY, trên sàn giả; vòng khứ hồi sàn thật chưa đo, và một kết
+>      nối treo chỉ bị phát hiện khi timeout HTTP của broker hết.
+>   9. Mức cam "rút chu kỳ quét chốt lời xuống 5 s" chưa làm — chưa có vòng thoát của Động cơ 2; van phơi mức qua
+>      `Snapshot`.
+>   10. Mức đỏ "đóng sàn có MMR cao hơn trước" hiểu ở cấp CẶP và cấp CHÂN.
+> - **Đo (sàn giả — không nói gì về sàn thật):**
+>   - `go test -count=1 -race ./...`: **40/40 package có test ĐẠT, 4 package không có test, 0 FAIL, 0 DATA
+>     RACE** (chạy sau khi sửa xong review vòng 3).
+>   - **Ràng buộc < 500 ms**, khẳng định trên sàn trong bộ nhớ: chân long phẳng trong vòng 500 ms kể từ lúc lệnh
+>     gửi của chân short hỏng, trong khi khoảng lặng 800 ms vẫn đang chạy
+>     (`TestOpen_ShortLegLostOnTheNetwork_LongFlatWithin500msAndResultLoud`); ba đường từng vi phạm mốc này đã
+>     được review vòng 3 tìm ra và sửa: lệnh khớp muộn trong lúc hỏi (đo lại 6 ms), chân bị dừng phải chờ lệnh
+>     huỷ bất đồng bộ của chính nó (159 µs), và vòng chờ vị thế kẹt cả `PositionSettleTimeout` (20 µs).
+>   - **Test thuộc tính 150 lượt** (khớp/từ chối/timeout hai phía/huỷ đua khớp ngẫu nhiên): 0 vi phạm bất biến;
+>     21 lượt `both_open`, 78 `unwound_flat`, 51 `both_flat`, trong đó **54 lượt phẳng nhưng BÁO ĐỘNG** — đều là
+>     lượt bơm lỗi "gửi không tới sàn", tức mỗi lần như thế cần người xác nhận (xem nợ 5).
+>   - **Bụi float:** 5.000 intent ngẫu nhiên, không số nào in ra có đuôi IEEE-754.
+>   - **Đột biến có chủ đích: 101/101 làm test ĐỎ** (39 bản của vòng 1–2, 19 bản cập nhật mốc, 42 bản cho các sửa
+>     vòng 3, 1 bản cho bản sửa tự kiểm). Hai bản lúc đầu không đỏ đều là lỗi của chính bộ đột biến/test — một
+>     bản hỏng build, một bản có assertion không cô lập được trường hợp cần kiểm — đã sửa rồi chạy lại.
+> - **Review (mỗi vòng một ngữ cảnh sạch):** vòng 1 — 3 chặn, 9 lớn, 14 nhỏ; vòng 2 — 1 chặn, 6 lớn, 11 nhỏ,
+>   5 chỗ tài liệu nói quá; vòng 3 — 1 chặn, 6 lớn, 8 nhỏ. **Mọi phát hiện đều đã sửa, mỗi bản sửa có test hồi
+>   quy và đột biến riêng.** Phần lớn lỗi của vòng 2 và 3 do chính bản sửa của vòng trước sinh ra, nên mỗi vòng
+>   đều review lại từ đầu. **Vòng 4 đã giao BA lần, cả ba lần agent đều treo vì sự cố hạ tầng (stream watchdog) —
+>   nó chưa phán xét gì; một vòng review ĐỘC LẬP vẫn còn nợ.** Thay vào đó là một lượt TỰ KIỂM theo đúng bộ câu
+>   hỏi đã giao cho vòng 4: tìm được 1 lỗi thật — một lệnh đóng bị từ chối trước khi ra phán quyết (sàn giữ ngược
+>   chiều) trả về danh sách `PendingOrders` RỖNG, nên `Engine` xoá mất chính những lệnh đang giữ khóa lại — và 1
+>   chỗ lãng phí (vòng canh vị thế vẫn đọc sàn sau khi ngân sách gỡ đã hết). Cả hai đã sửa, lỗi kèm test hồi quy
+>   và một đột biến.
+> - **Phát hiện ngoài phạm vi — ghi nợ, KHÔNG sửa ở bước này** (code đã nghiệm thu, portal 8087 đang chạy):
+>   1. `internal/execution.definiteRejection` đọc mọi 4xx — kể cả HTTP 408 "timeout ... waiting for a response
+>      from the backend server" và Binance -1007 — là TỪ CHỐI CHẮC CHẮN, và gửi lại lệnh sau một -2013 tức thì.
+>      Trên Động cơ 1 một chân nhận 408 bị coi là không tồn tại trong khi có thể đã khớp.
+>   2. `binance.parsePosition` cộng hai phía LONG/SHORT của hedge mode → hedge mode LONG 0,1 + SHORT 0,1 đọc là
+>      PHẲNG. Mọi bằng chứng "phẳng" ở đây dựa vào `GetPosition`: tài khoản phải chạy one-way.
+>   3. Fixture tổng hợp `walletAnswer` của `internal/broker/bybit` ghi `accountMMRate "0.0045"` cạnh hai tổng cho
+>      0,045 — lệch 10 lần; đơn vị thật phải đo trên tài khoản có vị thế.
+>   4. **Động cơ 1 (`cmd/execportal`) chưa hỏi coordinator** → khóa chỉ chặn một chiều. Là ĐIỀU KIỆN TRIỂN KHAI:
+>      không chạy Động cơ 2 cạnh một Động cơ 1 bỏ qua khóa trên cùng symbol.
+>   5. Broker làm phẳng lỗi mạng thành chuỗi (để URL có chữ ký không lọt ra), nên một lỗi dial/DNS — chắc chắn
+>      CHƯA gửi byte nào — tới đây vẫn là MƠ HỒ và thành báo động cần người. Một sentinel "chưa gửi gì" trong
+>      `internal/broker` sẽ bỏ phần lớn báo động đó; là thay đổi gói giữ credential, bước riêng.
+> - **Còn mở:**
+>   1. **Review vòng 4** (chưa chạy được, xem trên).
+>   2. **Nối vào một binary** — cần người vận hành quyết, và trước đó phải trả lời Q21, Q22.
+>   3. **Nghiệm thu trên hai testnet**: đo cửa sổ một chân và thời gian gỡ THẬT giữa hai sàn; mọi con số thời
+>      gian ở đây đều là của máy trên sàn giả.
+>   4. Mức cam "quét thoát 5 giây" và vòng thoát của Động cơ 2 (tín hiệu, luật thoát) chưa có.
+>   5. Mô hình giá thanh lý cho chân LONG (`internal/risk` mới mô hình chân short ở ký quỹ isolated).
+>   6. Miễn trừ minNotional của lệnh reduce-only trên Bybit linear chưa đọc được, nên "cỡ giữ lại" đòi đóng được
+>      mà KHÔNG cần miễn trừ.
+>   7. Giới hạn per-UID của Bybit và chi phí weight của việc đọc vị thế mỗi `PollEvery` trong lúc hỏi một lệnh
+>      mơ hồ chưa đo trên sàn thật.
+>   8. Chưa lưu ý định của Động cơ 2 ra đĩa: chỉ khóa được lưu, `Adopt` dựng lại cặp từ vị thế sàn.
+
 #### Bước 4.6 — Chạy thật vốn tối thiểu 🚦
 - Vốn thật **$200–$500**, 1 cặp (BTCUSDT), 1 sàn.
 - Chạy tối thiểu 4 tuần, đối chiếu từng chu kỳ funding với sổ sách bot.
@@ -5774,6 +5909,7 @@ Các package `internal/` hiện đã tạo, mỗi package có `doc.go` nêu trá
 | **Q17** | **Cổng vận hành hợp nhất: `cmd/execportal` (binary giữ credential testnet) RELAY CHỈ ĐỌC dữ liệu của `cmd/scanner` và `cmd/paperledger`** vào cùng trang bốn tab. Giới hạn của Q15/Q16 giữ nguyên, thêm bốn: (1) **relay nguyên văn, không giải mã** — code nằm trong package `cmd/execportal/feeds` chỉ export handler, sức khoẻ và tắt; test ghim bề mặt export, cấm import `internal/` và giải mã JSON, cấm package main đọc feed; (2) **relay không bao giờ làm scanner chờ** — đọc upstream không chặn, trình duyệt chậm thì ngắt relay; chỉ nối khi tab Scanner đang mở, tối đa 3 phiên và 20 phiên/phút; (3) **upstream chỉ là IP loopback, đường cố định**, không theo redirect; (4) **chỉ tab Execution gửi lệnh ghi**, kiểm bằng test đọc JS. Tab Crowding **không có nguồn live** (6.2 vẫn sau 3.5 và 3.4) — vẽ snapshot fixture nghiên cứu. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-14 |
 | **Q18** | **Auto-Trader TESTNET trong `cmd/execportal`: bot tự mở và đóng cặp Chiến lược 1 không cần cú bấm cho từng lệnh**, đảo giới hạn 5 của Q15 CHỈ trên testnet và CHỈ trong package `cmd/execportal/autotrade`. Giữ nguyên mọi giới hạn khác của Q15/Q16/Q17, thêm năm: (1) **quyết mà không thực thi** — package không import `internal/broker`/`internal/execution`, lệnh chỉ qua `openAs`/`close` của portal dưới cùng khoá ghi; test ghim người gọi của mọi hàm gửi lệnh trong package main và cấm transport có ký; (2) **tín hiệu là của testnet** (sổ lệnh, funding đã settle, phí của tài khoản) — không scanner, không nhật ký, không `EvaluateEntry`; từ `strategy` chỉ `RoundTripCost`/`NetAPR`; (3) **không bao giờ tự làm phẳng** — lệch, bằng chứng không khớp, lỗi liên tiếp → DỪNG BẢO VỆ, bật lại cần người vận hành xác nhận; (4) **KILL chỉ đóng cặp của bot và không huỷ lệnh đã gửi**; (5) **bật cần hộp xác nhận hoặc cờ `-autotrade`**. Tín hiệu của cổng 3.5 → lệnh, và vốn thật, vẫn sau 3.5 VÀ 3.4 VÀ 4.6. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-15 |
 | **Q19** | **Chiến lược 1 (long spot + short perp) được chạy trên MỘT tài khoản Bybit V5 Unified Trading Account qua `cmd/execportal -broker=bybit`** — yêu cầu của người vận hành ngày 2026-09-17 (bước 4.5j). Mọi giới hạn của Q15–Q18 giữ nguyên trên sàn mới, thêm bốn: (1) **chỉ `api-testnet.bybit.com` và `api-demo.bybit.com`** — allow-list theo scheme của `broker.NewClient`, không cờ mainnet; (2) **hai chân cùng một sàn**, không có chân mỗi sàn một nơi — lệnh chéo sàn (4.5i giai đoạn 3) vẫn chưa làm; (3) **ví hợp nhất đọc MỘT lần** — portal và bot không bao giờ cộng góc spot với góc futures; (4) **file ý định riêng `.paper/exec-bybit`**, `cmd/execcheck` không đọc; (5) **portal Bybit CHỈ ĐỌC** (403 `venue_read_only`) cho tới khi `internal/execution` xét chân spot theo số dư ví ở mọi đường — review 4.5j vòng 2; **gỡ cùng ngày cho lệnh tay** sau khi người vận hành duyệt phạm vi thiết kế lại chân spot (mua gộp phí, xét theo lần khớp và ví, id riêng cho lệnh cắt — 4.5j phần 2); **auto-trader trên Bybit vẫn bị chặn** cho tới khi nghiệm thu mở/đóng bằng tay trên testnet. Bộ phân bổ vốn và auto-trader là CÙNG code với Binance. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-17 |
+| **Q20** | **Động cơ 2 (perp–perp chéo sàn), Bộ khóa cặp rảnh rỗi và Van ký quỹ kép được XÂY và kiểm trên SÀN GIẢ** — yêu cầu của người vận hành ngày 2026-09-17 (bước 4.5k), dưới bốn ràng buộc của chính yêu cầu đó: (1) **không dừng, không kill, không gửi tín hiệu tới cổng 8085 (scanner), 8086 (paperledger), 8087 (execportal đang giữ vị thế testnet)** — 8088 cũng đang bận, nên KHÔNG tiến trình nào được khởi động và mọi nghiệm thu chạy trên sàn giả; (2) **`go test -count=1 -race ./...` xanh 100%, không data race**; (3) **không được bỏ rơi vị thế**: một chân khớp mà chân kia bị từ chối hoặc đứt mạng thì phải gỡ về phẳng trong < 500 ms — khẳng định được trên sàn giả, chưa đo trên sàn thật; (4) **không có bụi float**: `strconv.FormatFloat(v,'f',-1,64)` cộng cắt theo step/tick của từng sàn. Giới hạn kèm theo: `internal/coordinator` và `internal/execution/crossperp` KHÔNG được binary nào trong `cmd/` link, không lệnh nào tới bất kỳ sàn nào kể cả testnet, và nối vào một binary là bước riêng cần người vận hành quyết. **Quyết định LỘ TRÌNH, đảo ngược được** | 2026-09-18 |
 
 #### Q7 — Vì sao Go cho cả REST
 
@@ -6171,6 +6307,8 @@ mang nhãn đã trừ gì.
 | Q2 | Database: SQLite hay PostgreSQL/TimescaleDB? | GĐ 2.3 | SQLite là đủ ở quy mô này; đổi sau nếu cần |
 | Q3 | Vốn thật dự kiến cho GĐ 4.6? | GĐ 4.6 | $200–500 để kiểm chứng, không phải để kiếm lời |
 | Q6 | Chấp nhận đòn bẩy tối đa bao nhiêu ở chân perp? | GĐ 5.4 | 2–3x; cao hơn thì rủi ro thanh lý vượt lợi ích. Đo 2026-09-07 (CLAUDE.md, mục ký quỹ): toàn bộ phần thưởng trên vốn là +0,83 điểm ở 2×, âm từ 5× |
+| Q21 | Khi LỆNH KHỚP và VỊ THẾ SÀN mâu thuẫn sau khi mở (hoặc một sàn giữ ngược chiều), máy có được gửi một lệnh reduce-only "thăm dò" cỡ max(lệnh, vị thế) lên sàn đang tranh cãi không? | Trước khi nối Động cơ 2 vào lệnh thật (4.5k) | Hiện tại: KHÔNG gửi gì, báo động, người quyết — theo quy tắc "hai nguồn mâu thuẫn thì in cả hai và dừng". Review vòng 2 lập luận lệnh thăm dò là AN TOÀN vì máy khớp lệnh của sàn dùng vị thế thật: khớp nghĩa là chân đó có thật, bị từ chối (-2022) nghĩa là không có, cả hai lối đều kết thúc phẳng. Đổi lại, đó là tự hoà giải bằng một lệnh thật thay vì chờ người |
+| Q22 | Một lệnh reduce-only mất câu trả lời mà sàn nói "không có lệnh này": coi là VẮNG sau khoảng lặng (recvWindow + 1 s), hay GIỮ KHÓA tới khi người xác nhận? | Trước khi nối Động cơ 2 vào lệnh thật (4.5k) | Hiện tại: coi là vắng sau khoảng lặng — tiền lệ portal 4.5j cho lệnh KHÔNG phải lệnh mở. Rủi ro còn lại: yêu cầu đã vào backend sàn, không có câu trả lời nào, khớp muộn hơn khoảng lặng thì giảm vị thế của động cơ kế tiếp. Chặt hơn thì mỗi lần mạng chập lúc đóng đều cần người |
 
 > Q4 (framework FE) đã chuyển thành Q10 ở §7.1. **Q1 (sàn chính: Binance) và
 > Q5 (alert: Telegram) chốt 2026-09-11 và chuyển sang §7.1.**
@@ -6286,7 +6424,7 @@ Kế hoạch này chia nhỏ hơn tài liệu gốc, vì tài liệu gốc gộp
 [✅] GĐ 1  Củng cố lõi                   7/7 bước · soak 72h ĐẠT (2026-09-03 → 09-06, phán quyết 09-07)
 [✅] GĐ 2  Funding Rate Monitor          7/7 bước
 [  ] GĐ 3  Signal, Alert & Backtest      3/5 · 3.4 hoãn · 3.5 CHẠY LẦN 3 từ 2026-09-12 16:09 +07 (lần 1 đứt 09-10 vì máy khởi động lại; lần 2 người vận hành dừng 09-12 vì cửa sổ đã hỏng — 430/708 mốc không có dòng nhật ký), phán quyết ≥ 09-26   ← ĐANG LÀM
-[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.5i Bybit V5 🟡 2026-09-17 (client `internal/broker/bybit` + `cmd/bybitcheck`; testnet: lệch giờ 64–136 ms, 4/5 mục đạt, ví USDT = 0 chưa Faucet; chưa lệnh chéo sàn; đo lệch funding Binance–Bybit trung vị 3,2% APR, 4,8% ngày ≥ 15%; radar chéo sàn chỉ đọc + nhật ký đợt, schema v6, chưa triển khai lên 8085/8087) · 4.5j Bybit spot + portal `-broker=bybit` 🟡 2026-09-17 (Q19; `bybitcheck` 19/19, phí spot 10 bps thu bằng coin gốc, vòng khứ hồi 31 bps; execution mua spot gộp phí, xét mở/gỡ/đóng theo lần khớp và số dư ví, id riêng cho lệnh cắt; lệnh tay mở, auto-trader Bybit còn chặn; chưa nghiệm thu bằng lệnh) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
+[  ] GĐ 4  Execution Engine              5/6 bước · 4.1 + 4.2 + 4.4 + 4.5 ✅ 2026-09-13 TRÊN TESTNET (REST có ký, giao diện lệnh, mở và đóng hai chân thật — Q14, Q15; `cmd/execcheck`: 10/10 lần mở đều phòng hộ, gỡ 0,2–0,3 s khi bơm lỗi thật, một vòng đời qua mốc settle với sai số funding −0,0228%) · 4.3 ✅ 2026-09-11 (sổ paper vốn ảo, `cmd/paperledger`) · cổng web `cmd/execportal` ✅ 2026-09-14 TRÊN TESTNET (Q16: mở/đóng $65 qua giao diện, lệch 0, cửa sổ trần 375 ms, 0 lỗi console; Q17: hợp nhất bốn tab, relay chỉ đọc scanner/sổ giấy, mở/đóng $65 lại qua trang mới, lệch 0, cửa sổ trần 408 ms, 0 lỗi console, relay 6 phút 26.386 frame không làm cổng chậm) · Auto-Trader TESTNET ✅ 2026-09-15 (Q18: bot tự mở $65 BTCUSDT sau 5,0 s — Net APR dự phóng +6,05% trên notional, lệch 0, cửa sổ trần 391 ms; KILL → phẳng sau 6,0 s; 0 lỗi console) · Auto-Trader ĐA CẶP ✅ 2026-09-15 (4.5e: BTC/ETH/SOL/BNB, tối đa 3 cặp, hạn mức vốn đếm theo bằng chứng sàn; trên testnet ETH mở trước BTC theo Net APR, đóng một cặp 5,66 s không đụng cặp kia, KILL 6,7–10,7 s bốn symbol phẳng, `execcheck` 6/6 ý định khớp sàn; 7 vòng review) · 4.5i Bybit V5 🟡 2026-09-17 (client `internal/broker/bybit` + `cmd/bybitcheck`; testnet: lệch giờ 64–136 ms, 4/5 mục đạt, ví USDT = 0 chưa Faucet; chưa lệnh chéo sàn; đo lệch funding Binance–Bybit trung vị 3,2% APR, 4,8% ngày ≥ 15%; radar chéo sàn chỉ đọc + nhật ký đợt, schema v6, chưa triển khai lên 8085/8087) · 4.5j Bybit spot + portal `-broker=bybit` 🟡 2026-09-17 (Q19; `bybitcheck` 19/19, phí spot 10 bps thu bằng coin gốc, vòng khứ hồi 31 bps; execution mua spot gộp phí, xét mở/gỡ/đóng theo lần khớp và số dư ví, id riêng cho lệnh cắt; lệnh tay mở, auto-trader Bybit còn chặn; chưa nghiệm thu bằng lệnh) · 4.5k Động cơ 2 perp–perp chéo sàn + khóa symbol độc quyền + van ký quỹ kép 🟡 2026-09-17/18 (Q20; chỉ SÀN GIẢ: không binary nào link `internal/coordinator` hay `internal/execution/crossperp`, không lệnh nào tới sàn, không tiến trình nào được khởi động; ba vòng review ngữ cảnh sạch đã sửa hết, vòng 4 còn nợ; chưa nghiệm thu trên sàn) · 4.6 vốn thật sau phán quyết 3.5; nối tín hiệu CỦA CỔNG 3.5 → lệnh sau 3.5 VÀ 3.4
 [  ] GĐ 5  Risk & Vận hành               0/5 bước
 [  ] GĐ 6  Crowding Reversal (thay Basis Trade — Q11)  1/5 bước · 6.1 ✅ 2026-09-12 (`internal/crowding`, parity với fixture, 9 định nghĩa) · 6.2 trở đi chờ cổng 3.5 và 3.4
 [🔒] GĐ 7  CEX-DEX                       khoá

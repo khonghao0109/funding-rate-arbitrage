@@ -1232,6 +1232,48 @@ order**: `bybitcheck` reads 19/19 on a funded wallet; the operator's acceptance
 runs `go run ./cmd/execportal -broker bybit -port 8088 -autotrade=false`. The Bybit trap rows
 in the table below carry the details.
 
+**Step 4.5k — Engine 2, the cross-venue perp–perp engine, with the exclusive
+symbol lock and the dual margin guard — was built 2026-09-17/18 (decision Q20)
+against in-memory venues only, and NO command links it.** `internal/coordinator`
+holds the lock: idle / occupied / conflict under one mutex, a 100 ms contest won
+by the higher APR ON CAPITAL (a basis text is required — the coordinator never
+computes "net"), the table written atomically to `.paper/coordinator-locks.json`
+before any grant or release is reported, nothing granted until
+`ReconcileActivePositions` has read every venue's positions and resting orders,
+and `Release` proven on those venues. An owner marks the lock on disk before its
+first order (`MarkOrdersSent`); only an unmarked lock granted in this process can
+be withdrawn without a venue read, and `Adopt` is for locks from the file or
+inferred, never one whose owner is live. `internal/execution/crossperp` sizes both
+perp legs on the coarser step (`broker.FloorToStep`) and sends them in parallel. A
+leg refused OR whose send lost its answer stops the other AT ONCE and returns
+unconfirmed, and both legs are driven to zero while that order is cancelled and
+asked about by its derived id — the leg still being asked about is re-read every
+PollEvery and flattened again whenever it holds something. An opening order is
+never resent and "no such order" never proves it absent, so such an open ends flat
+but LOUD, the lock kept, the pair recorded where the margin guard sees it. A
+reduce-only order that cannot be proven finished keeps the lock too: it would
+reduce whatever the venue holds when it executes — the next engine's position —
+so a flat verdict first reads each one back, and takes "not shown" as absent only
+past the quiet period and never for one the venue showed or answered "execution
+status unknown". The operator's 500 ms unwind rule is asserted for this machine's
+own work on fakes; no cross-venue round trip has been measured. Close is
+SEQUENTIAL — stressed venue first, the second leg down to what the first really
+holds — and a flat verdict counts only when nothing that may still execute is
+left. `internal/risk/margin_guard.go` blocks Engine 2 on a venue at 50%, every
+open at 60%, and latches at 65% to close Engine 2's pairs; an unknown venue never
+causes a close, and conflicting evidence blocks on the highest figure of the
+window and closes on the lower one. Three clean-context reviews (3 + 1 + 1
+blocking, 9 + 6 + 6 major, several of them introduced by the previous round's own
+fixes) and every finding fixed; a FOURTH was launched three times and stalled on
+infrastructure every time, so **an independent round-4 review is still owed** — a
+self-review against its own brief stood in and found one more defect (a close
+refused before its verdict reported no pending orders, so the engine forgot what
+was holding the lock), fixed with a test and a mutation. 101 mutations all red,
+`go test -race ./...` 40/40 with no data race.
+**Engine 1 (`cmd/execportal`) does not ask the coordinator**, so running Engine 2
+beside it on the same symbols is a deployment precondition violated, not a case
+the lock handles. PLAN 4.5k.
+
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
 the pandas semantics written in its doc.go first, and its parity test
@@ -1629,8 +1671,29 @@ internal/
                      between entry and exit, commission in a non-quote asset,
                      and the cost of capital are reported BESIDE it, never
                      folded in
+    crossperp/       Engine 2 (4.5k): long perp on one venue, short perp on
+                     another, both legs on the coarser step. Parallel open; a leg
+                     refused or lost stops the other and both flatten at once
+                     while the lost order is asked about; an opening order is
+                     never resent nor ever called absent; sequential close; the
+                     Engine holds the coordinator lock until the venues read flat
+                     and quiet AND every order of the intent is proven finished or
+                     past its quiet period, and implements risk.EmergencyCloser.
+                     Tested against brokertest only; linked by no command
+  coordinator/       the exclusive symbol lock between Engine 1 and Engine 2
+                     (4.5k): idle / occupied / conflict, a contest won by APR ON
+                     CAPITAL, .paper/coordinator-locks.json written before a grant
+                     or release is reported, reconcile from the venues' positions
+                     and resting orders, release proven on the venues, and a
+                     durable "orders sent" mark that ends Withdraw. Reads
+                     positions through any broker.Broker and places no order;
+                     linked by no command
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
-                     holds the perp liquidation model strategy calls
+                     holds the perp liquidation model strategy calls; since
+                     2026-09-17 the dual-venue MarginGuard (4.5k): 5 s reads,
+                     50/60/65% tiers, a red latch acknowledged by sequence number,
+                     unknown never closing anything. It decides and never imports
+                     a broker
 static/              the operator page (Q17, moved here 2026-09-15): vanilla ES
                      modules in js/ (scanner, execution, autotrade — the bot's
                      read-only view — paper, crowding, shell,
@@ -1675,7 +1738,9 @@ its Binance implementation on 2026-09-13 (step 4.2), and is still the only
 package that may hold a credential.
 `backtest` has been real code since step 3.3 (2026-09-04) and `risk` since the
 liquidation model of 2026-09-07; `crowding` (6.1) and `paper` (4.3) arrived on
-2026-09-11/12. Read the relevant `doc.go` before adding code to any of them,
+2026-09-11/12; `coordinator` and `execution/crossperp` arrived on 2026-09-17
+(4.5k, Q20) and are linked by no command — they hold Engine 2 and its symbol lock,
+proven against fakes only. Read the relevant `doc.go` before adding code to any of them,
 empty or not — the boundaries written there are the contract, not a suggestion,
 and `paper/doc.go` plus `execution/doc.go` are where rule 7's one exception is
 bounded.

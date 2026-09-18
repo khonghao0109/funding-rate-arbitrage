@@ -249,6 +249,27 @@ func CeilToStep(v, step float64) float64 {
 	return quantize(math.Ceil(v/step-gridEpsilon)*step, decimalsOf(step))
 }
 
+// FloorToStep rounds v DOWN onto a grid of step — RoundOrder's own quantity
+// rule, with the same step-count tolerance — and snaps the result to the grid's
+// decimals, so its shortest decimal form carries no float dust:
+// strconv.FormatFloat(FloorToStep(0.1+0.2, 0.1), 'f', -1, 64) is "0.3", never
+// "0.30000000000000004".
+//
+// It exists for a caller that must size ONE quantity on the coarser of two
+// venues' grids before either venue's own rules are applied — the cross-venue
+// perp–perp engine (internal/execution/crossperp), whose two legs sit on two
+// different venues. It checks no minimum and no maximum: the result still goes
+// through RoundOrder on each venue, which refuses it by name.
+//
+// A v that is not a positive finite number, or a step that is not, returns 0:
+// "no quantity", which RoundOrder refuses rather than guessing a grid.
+func FloorToStep(v, step float64) float64 {
+	if !(v > 0) || math.IsInf(v, 0) || !(step > 0) || math.IsInf(step, 0) {
+		return 0
+	}
+	return quantize(math.Floor(v/step+gridEpsilon)*step, decimalsOf(step))
+}
+
 // resolveDirection turns the caller's stated intent into a concrete direction.
 func resolveDirection(p PriceRounding, side Side) (PriceRounding, error) {
 	switch p {

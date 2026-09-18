@@ -242,6 +242,39 @@ func (c *Client) FetchWallet(ctx context.Context, coins ...string) (Wallet, erro
 	return w, nil
 }
 
+// Bybit's margin modes, verbatim from GET /v5/account/info.
+const (
+	MarginModeIsolated  = "ISOLATED_MARGIN"
+	MarginModeRegular   = "REGULAR_MARGIN"
+	MarginModePortfolio = "PORTFOLIO_MARGIN"
+)
+
+// AccountInfo is GET /v5/account/info as far as a margin guard needs it.
+type AccountInfo struct {
+	// MarginMode is kept verbatim. Anything but the three documented values
+	// is an error, not a guess.
+	MarginMode          string
+	UnifiedMarginStatus int
+}
+
+// FetchAccountInfo reads the account's margin mode.
+func (c *Client) FetchAccountInfo(ctx context.Context) (AccountInfo, error) {
+	var res struct {
+		MarginMode          string `json:"marginMode"`
+		UnifiedMarginStatus int    `json:"unifiedMarginStatus"`
+	}
+	if err := c.getSigned(ctx, epAccountInfo, nil, &res); err != nil {
+		return AccountInfo{}, err
+	}
+	switch res.MarginMode {
+	case MarginModeIsolated, MarginModeRegular, MarginModePortfolio:
+		return AccountInfo{MarginMode: res.MarginMode, UnifiedMarginStatus: res.UnifiedMarginStatus}, nil
+	case "":
+		return AccountInfo{}, fmt.Errorf("bybit: /v5/account/info answered no marginMode — refused rather than assumed cross")
+	}
+	return AccountInfo{}, fmt.Errorf("bybit: /v5/account/info answered marginMode %q, which the documentation does not list", res.MarginMode)
+}
+
 // GetBalance implements broker.Broker from the unified wallet.
 //
 // # One wallet, two views

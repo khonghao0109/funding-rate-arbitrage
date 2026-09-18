@@ -101,3 +101,11 @@ const (
 // settleCoinUSDT is the only settle coin this package trades on linear, and the
 // asset a linear fill's commission is taken in.
 const settleCoinUSDT = "USDT"
+
+// GET /v5/account/info — "marginMode": ISOLATED_MARGIN, REGULAR_MARGIN or
+// PORTFOLIO_MARGIN (read 2026-09-17). Read by the cross-venue margin guard,
+// because "All account wide fields are not applicable to isolated margin"
+// (wallet-balance page): on an isolated account accountMMRate says nothing about
+// the positions at risk. The per-UID limit for this endpoint was not read.
+var epAccountInfo = broker.Endpoint{Path: "/v5/account/info", WeightIP: 1,
+	DocURL: "https://bybit-exchange.github.io/docs/v5/account/account-info"}
