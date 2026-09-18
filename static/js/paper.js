@@ -4,7 +4,7 @@
 // APR is strategy.NetAPR's figure at entry, shown BESIDE the paper P&L, never
 // converted into it.
 
-import { $, el, clear, setText, isNum, fmt, api, schedule, chartOptions, chartsReady, emptyRow, NEON } from "./core.js";
+import { $, el, clear, setText, isNum, fmt, api, schedule, chartOptions, chartsReady, emptyRow, NEON, registerChart } from "./core.js";
 import { shell } from "./shell.js";
 
 const POLL_MS = 60000;
@@ -16,7 +16,7 @@ const sign = (v) => (isNum(v) && v !== 0 ? (v > 0 ? "pos" : "neg") : "");
 
 function ensureChart() {
   if (state.chart || !chartsReady() || shell.active !== "paper") return;
-  state.chart = window.LightweightCharts.createChart($("pp-equity"), chartOptions({ timeScale: { secondsVisible: false } }));
+  state.chart = registerChart(window.LightweightCharts.createChart($("pp-equity"), chartOptions({ timeScale: { secondsVisible: false } })));
   state.series = state.chart.addAreaSeries({
     lineColor: NEON.cyan,
     topColor: "rgba(0, 242, 254, 0.28)",

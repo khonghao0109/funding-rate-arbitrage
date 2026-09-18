@@ -116,16 +116,28 @@ export const fmt = {
     return new Date(ms).toISOString().replace("T", " ").slice(0, 16) + "Z";
   },
   age(ms, nowMs) {
-    if (!isNum(ms) || ms <= 0) return "chưa đọc";
+    const lang = document.documentElement.lang || "vi";
+    if (!isNum(ms) || ms <= 0) {
+      return lang === "en" ? "unread" : lang === "zh" ? "未读取" : "chưa đọc";
+    }
     const sec = Math.max(0, Math.round(((nowMs || Date.now()) - ms) / 1000));
-    return sec < 1 ? "vừa đọc" : `đọc ${sec}s trước`;
+    if (sec < 1) {
+      return lang === "en" ? "just now" : lang === "zh" ? "刚刚" : "vừa đọc";
+    }
+    return lang === "en" ? `${sec}s ago` : lang === "zh" ? `${sec}秒前` : `đọc ${sec}s trước`;
   },
   duration(seconds) {
+    const lang = document.documentElement.lang || "vi";
     if (!isNum(seconds) || seconds < 0) return "—";
     if (seconds < 60) return `${Math.round(seconds)}s`;
-    if (seconds < 3600) return `${Math.floor(seconds / 60)} phút`;
+    if (seconds < 3600) {
+      const min = Math.floor(seconds / 60);
+      return lang === "en" ? `${min}m` : lang === "zh" ? `${min}分钟` : `${min} phút`;
+    }
     const h = Math.floor(seconds / 3600);
     const m = Math.floor((seconds % 3600) / 60);
+    if (lang === "en") return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    if (lang === "zh") return m > 0 ? `${h}小时 ${m}分` : `${h}小时`;
     return m > 0 ? `${h}g ${m}p` : `${h}g`;
   },
 };
@@ -138,7 +150,20 @@ export function signCls(x) {
 // Accepts a colour only in the forms the scanner's meta actually uses; it is
 // applied through the CSSOM, never through markup.
 export function safeColor(value) {
-  return /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/.test(String(value ?? "")) ? String(value) : "#808a99";
+  const col = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/.test(String(value ?? "")) ? String(value) : "#808a99";
+  if (typeof document !== "undefined" && document.documentElement && document.documentElement.dataset.theme === "light" && col.startsWith("#") && col.length >= 7) {
+    const r = parseInt(col.slice(1, 3), 16);
+    const g = parseInt(col.slice(3, 5), 16);
+    const b = parseInt(col.slice(5, 7), 16);
+    const lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
+    if (lum > 0.52) {
+      const dr = Math.max(0, Math.round(r * 0.5)).toString(16).padStart(2, "0");
+      const dg = Math.max(0, Math.round(g * 0.5)).toString(16).padStart(2, "0");
+      const db = Math.max(0, Math.round(b * 0.5)).toString(16).padStart(2, "0");
+      return `#${dr}${dg}${db}`;
+    }
+  }
+  return col;
 }
 
 // flash marks a value that just changed. One animation, restarted.
@@ -228,24 +253,51 @@ export function schedule(fn, everyMs) {
 
 // ------------------------------------------------------------------ charts
 
+const activeCharts = new Set();
+
+export function registerChart(chart) {
+  if (chart) activeCharts.add(chart);
+  return chart;
+}
+
+export function updateChartsTheme(theme) {
+  const isLight = theme === "light";
+  for (const chart of activeCharts) {
+    try {
+      chart.applyOptions({
+        layout: {
+          textColor: isLight ? "#334155" : "#aeb8c7",
+        },
+        grid: {
+          vertLines: { color: isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.04)" },
+          horzLines: { color: isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.05)" },
+        },
+        rightPriceScale: { borderColor: isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.1)" },
+        timeScale: { borderColor: isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.1)" },
+      });
+    } catch (_) {}
+  }
+}
+
 // Lightweight Charts theme shared by every chart on the page.
 export function chartOptions(extra) {
+  const isLight = document.documentElement.dataset.theme === "light";
   const base = {
     autoSize: true,
     layout: {
       background: { type: "solid", color: "rgba(0,0,0,0)" },
-      textColor: "#aeb8c7",
+      textColor: isLight ? "#334155" : "#aeb8c7",
       fontSize: 11,
       fontFamily: "JetBrains Mono, ui-monospace, Menlo, monospace",
       attributionLogo: false,
     },
     grid: {
-      vertLines: { color: "rgba(255,255,255,0.04)" },
-      horzLines: { color: "rgba(255,255,255,0.05)" },
+      vertLines: { color: isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.04)" },
+      horzLines: { color: isLight ? "rgba(0,0,0,0.06)" : "rgba(255,255,255,0.05)" },
     },
     crosshair: { mode: 0 },
-    rightPriceScale: { borderColor: "rgba(255,255,255,0.1)" },
-    timeScale: { borderColor: "rgba(255,255,255,0.1)", timeVisible: true, secondsVisible: false },
+    rightPriceScale: { borderColor: isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.1)" },
+    timeScale: { borderColor: isLight ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.1)", timeVisible: true, secondsVisible: false },
     localization: { locale: "vi-VN" },
   };
   return deepMerge(base, extra || {});
@@ -263,4 +315,4 @@ export function chartsReady() {
   return typeof window.LightweightCharts !== "undefined";
 }
 
-export const NEON = { cyan: "#00f2fe", blue: "#4facfe", neg: "#ff4b4b", warn: "#ffb020", text2: "#aeb8c7" };
+export const NEON = { cyan: "#00f2fe", blue: "#4facfe", neg: "#ff4b4b", warn: "#ffb020", text2: "#aeb8c7", pos: "#10b981", live: "#10b981" };

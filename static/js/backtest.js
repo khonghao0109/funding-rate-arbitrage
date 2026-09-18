@@ -12,7 +12,7 @@
 // STATED cost — there is no historical order book — and a reader who cannot see
 // that cannot read the profit.
 
-import { $, el, clear, setText, isNum, fmt, api, schedule, chartOptions, chartsReady, emptyRow, signCls, NEON } from "./core.js";
+import { $, el, clear, setText, isNum, fmt, api, schedule, chartOptions, chartsReady, emptyRow, signCls, NEON, registerChart } from "./core.js";
 import { shell } from "./shell.js";
 
 const POLL_MS = 300000;
@@ -24,7 +24,7 @@ const usdt = (v, d) => (isNum(v) ? fmt.quote(v, d === undefined ? 2 : d, true) :
 
 function ensureChart() {
   if (state.chart || !chartsReady() || shell.active !== "backtest") return;
-  state.chart = window.LightweightCharts.createChart($("bt-equity"), chartOptions({ timeScale: { secondsVisible: false } }));
+  state.chart = registerChart(window.LightweightCharts.createChart($("bt-equity"), chartOptions({ timeScale: { secondsVisible: false } })));
   state.series = state.chart.addAreaSeries({
     lineColor: NEON.cyan,
     topColor: "rgba(0, 242, 254, 0.28)",

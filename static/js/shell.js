@@ -4,6 +4,7 @@
 // thing to find only when looking at the Execution tab.
 
 import { $, setText, fmt, isNum } from "./core.js";
+import { t, onLanguageChange } from "./i18n.js";
 
 const TABS = ["master", "scanner", "radar", "crossperp", "autotrade", "manual", "paper", "backtest", "crowding"];
 const TAB_ALIASES = {
@@ -143,6 +144,10 @@ export const shell = {
     document.addEventListener("visibilitychange", () => {
       for (const fn of visibilityHandlers) fn(!document.hidden);
     });
+    onLanguageChange(() => {
+      this.updateHeaderLabels();
+      renderBalanceAge();
+    });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(moveInk);
   },
 
@@ -200,7 +205,7 @@ export const shell = {
     isMasterMode = Boolean(active);
     if (isMasterMode) {
       setText("venue-badge", "[MASTER · BINANCE + BYBIT TESTNET]");
-      setText("brand-desc", "Hệ Thống Hợp Nhất · Động cơ 1 + Động cơ 2 + Scanner + Paper Ledger · Quản trị vốn liên sàn");
+      setText("brand-desc", t("brand_subtitle_master"));
       this.updateHeaderLabels();
     }
   },
@@ -217,13 +222,14 @@ export const shell = {
   },
 
   updateHeaderLabels() {
-    if (bybitEquityUSD !== null || isMasterMode) {
-      setText("bal-spot-usdt-k", "Binance Spot · USDT");
-      setText("bal-futures-usdt-k", "Binance Futures · USDT");
-      setText("bal-bybit-usdt-k", "Bybit Linear · USD");
-      setText("bal-bybit-sub", "Hợp nhất UTA");
-      setText("bal-total-usdt-k", "TỔNG VỐN LIÊN SÀN (USD)");
-      setText("bal-total-sub", "Binance + Bybit");
+    setText("bal-spot-usdt-k", t("binance_spot"));
+    setText("bal-futures-usdt-k", t("binance_futures"));
+    setText("bal-bybit-usdt-k", t("bybit_linear"));
+    setText("bal-bybit-sub", t("bybit_sub"));
+    setText("bal-total-usdt-k", t("total_equity"));
+    setText("bal-total-sub", t("binance_bybit"));
+    if (isMasterMode) {
+      setText("brand-desc", t("brand_subtitle_master"));
     }
   },
 
@@ -292,7 +298,7 @@ export const shell = {
       const chip = $("chip-hedge");
       chip.dataset.status = "unknown";
       this.setChip("chip-hedge", "idle", "—", "chưa đọc symbol nào");
-      setText("chip-hedge-k", "Phòng hộ");
+      setText("chip-hedge-k", t("chip_hedge"));
       $("tab-exec-alarm").hidden = true;
       return;
     }
@@ -309,9 +315,11 @@ export const shell = {
     if (stale && state === "ok") state = "warn";
     const title = entries.map(([sym, p]) => `${sym}: ${p.status_vi || p.status}${p.read_at_ms ? " · " + fmt.age(p.read_at_ms) : ""}${p.reason_vi ? " — " + p.reason_vi : ""}`).join("\n");
     const allGood = status === "both_open" || status === "both_flat";
-    const word = allGood && entries.length > 1 ? `${entries.length}/${entries.length} ổn · ${worst.status_vi || status}` : worst.status_vi || status;
-    this.setChip("chip-hedge", state, stale ? `CŨ · ${word}` : word, title);
-    setText("chip-hedge-k", allGood && entries.length > 1 ? "Phòng hộ mọi symbol" : `Phòng hộ ${worstSymbol}`);
+    const okWord = t("hedge_ok");
+    const word = allGood && entries.length > 1 ? `${entries.length}/${entries.length} ${okWord} · ${worst.status_vi || status}` : (worst.status_vi || status);
+    const stalePrefix = t("hedge_stale") + " · ";
+    this.setChip("chip-hedge", state, stale ? `${stalePrefix}${word}` : word, title);
+    setText("chip-hedge-k", allGood && entries.length > 1 ? t("hedge_all_ok") : `${t("chip_hedge")} ${worstSymbol}`);
     $("tab-exec-alarm").hidden = !(status === "unhedged" || status === "evidence_conflict");
   },
 };

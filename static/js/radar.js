@@ -11,6 +11,7 @@
 
 import { $, el, clear, setText, isNum, fmt, api, schedule, emptyRow, signCls } from "./core.js";
 import { shell } from "./shell.js";
+import { t, onLanguageChange } from "./i18n.js";
 
 const POLL_MS = 5000;
 const EVENTS_POLL_MS = 30000;
@@ -23,15 +24,21 @@ const FILTER_KEY = "portal.radar.filter";
 
 const state = { radarPoll: null, eventsPoll: null, filter: "all", days: "7", last: null };
 
-const STATUS = {
-  good: { text: "CƠ HỘI TỐT", cls: "good" },
-  wait_liquidity: { text: "CHỜ THANH KHOẢN", cls: "stale" },
-  watch: { text: "THEO DÕI", cls: "wait" },
-  normal: { text: "BÌNH THƯỜNG", cls: "wait" },
-  unavailable: { text: "THIẾU DỮ LIỆU", cls: "bad" },
+const STATUS_MAP = {
+  good: { key: "rd_status_good", cls: "good" },
+  wait_liquidity: { key: "rd_status_liquidity", cls: "stale" },
+  watch: { key: "rd_status_watch", cls: "wait" },
+  normal: { key: "rd_status_normal", cls: "wait" },
+  unavailable: { key: "rd_status_nodata", cls: "bad" },
 };
 
-const REASON_VI = { below: "chênh hết", flip: "đổi chiều", stale: "dữ liệu cũ", restart: "khởi động lại", "": "đang mở" };
+const REASON_KEYS = {
+  below: "rd_reason_below",
+  flip: "rd_reason_flip",
+  stale: "rd_reason_stale",
+  restart: "rd_reason_restart",
+  "": "rd_reason_open",
+};
 
 function venueName(leg) {
   return (leg && leg.venue ? leg.venue : leg && leg.source ? leg.source : "?").toUpperCase();
@@ -101,7 +108,8 @@ function bookCell(p) {
 }
 
 function statusCell(p) {
-  const s = STATUS[p.status] || { text: String(p.status || "?").toUpperCase(), cls: "wait" };
+  const item = STATUS_MAP[p.status];
+  const s = item ? { text: t(item.key), cls: item.cls } : { text: String(p.status || "?").toUpperCase(), cls: "wait" };
   const td = el("td", null, [el("span", { cls: "badge " + s.cls, text: s.text })]);
   if ((p.notes_vi || []).length) td.title = p.notes_vi.join("\n");
   return td;
@@ -234,14 +242,16 @@ async function refreshEvents() {
   }
   clear(body);
   for (const e of events) {
+    const reasonKey = REASON_KEYS[e.end_reason];
+    const reasonText = reasonKey ? t(reasonKey) : (e.end_reason || "—");
     body.append(el("tr", null, [
       el("td", { cls: "strong", text: e.symbol }),
       el("td", { cls: "r num", text: `≥ ${e.threshold_apr_pct}%` }),
       el("td", { text: e.direction ? e.direction.replaceAll("_", " ") : "—" }),
       el("td", { cls: "num", text: fmt.time(e.started_at_ms) }),
-      el("td", { cls: "r num", text: e.ended_at_ms ? fmt.duration(e.duration_sec) : "đang mở" }),
+      el("td", { cls: "r num", text: e.ended_at_ms ? fmt.duration(e.duration_sec) : t("rd_reason_open") }),
       el("td", { cls: "r num", text: fmt.pct(e.peak_gross_apr_pct, 1) }),
-      el("td", null, [el("span", { cls: "badge " + (e.end_reason === "" ? "stale" : e.end_reason === "below" || e.end_reason === "flip" ? "wait" : "bad"), text: REASON_VI[e.end_reason] || e.end_reason })]),
+      el("td", null, [el("span", { cls: "badge " + (e.end_reason === "" ? "stale" : e.end_reason === "below" || e.end_reason === "flip" ? "wait" : "bad"), text: reasonText })]),
     ]));
   }
 }
@@ -294,5 +304,8 @@ export function initRadar() {
       state.radarPoll.kick();
       state.eventsPoll.kick();
     }
+  });
+  onLanguageChange(() => {
+    if (state.last) render(state.last);
   });
 }

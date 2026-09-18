@@ -8,7 +8,7 @@
 // flips) are counted on this page and say so. The target is a fraction of
 // equity before any cost — not an order.
 
-import { $, el, clear, setText, isNum, fmt, api, chartOptions, chartsReady, NEON } from "./core.js";
+import { $, el, clear, setText, isNum, fmt, api, chartOptions, chartsReady, NEON, registerChart } from "./core.js";
 import { shell } from "./shell.js";
 
 const state = { data: null, asset: "BTC", days: 365, charts: [], series: {}, syncing: false, loading: null };
@@ -33,7 +33,7 @@ async function load() {
 function ensureCharts() {
   if (state.charts.length || !chartsReady() || shell.active !== "crowding") return;
   const LWC = window.LightweightCharts;
-  const make = (id) => LWC.createChart($(id), chartOptions({ timeScale: { secondsVisible: false }, rightPriceScale: { minimumWidth: 72 } }));
+  const make = (id) => registerChart(LWC.createChart($(id), chartOptions({ timeScale: { secondsVisible: false }, rightPriceScale: { minimumWidth: 72 } })));
   const ratio = make("cr-ratio");
   const score = make("cr-score");
   const target = make("cr-target");

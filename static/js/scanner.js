@@ -12,7 +12,7 @@
 // after it stops showing: each session is one more client the gate process
 // builds spread matrices for.
 
-import { $, el, clear, setText, isNum, fmt, safeColor, flash, api, chartOptions, chartsReady, emptyRow, NEON } from "./core.js";
+import { $, el, clear, setText, isNum, fmt, safeColor, flash, api, chartOptions, chartsReady, emptyRow, NEON, registerChart } from "./core.js";
 import { shell } from "./shell.js";
 
 const WIRE_VERSION = 1;
@@ -1010,14 +1010,14 @@ class ScannerTab {
   ensureCharts() {
     if (!chartsReady() || shell.active !== "scanner") return;
     if (!this.chart) {
-      this.chart = window.LightweightCharts.createChart($("sc-chart"), chartOptions({
+      this.chart = registerChart(window.LightweightCharts.createChart($("sc-chart"), chartOptions({
         timeScale: { secondsVisible: true },
         handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
-      }));
+      })));
       this.syncLineSeries();
     }
     if (!this.historyChart) {
-      this.historyChart = window.LightweightCharts.createChart($("sc-history-chart"), chartOptions({ timeScale: { secondsVisible: false } }));
+      this.historyChart = registerChart(window.LightweightCharts.createChart($("sc-history-chart"), chartOptions({ timeScale: { secondsVisible: false } })));
     }
   }
 
@@ -1140,11 +1140,11 @@ class ScannerTab {
     if (!lines) {
       if (!this.candleSeries) {
         this.candleSeries = this.chart.addCandlestickSeries({
-          upColor: NEON.cyan,
+          upColor: "#10b981",
           downColor: NEON.neg,
-          borderUpColor: NEON.cyan,
+          borderUpColor: "#10b981",
           borderDownColor: NEON.neg,
-          wickUpColor: NEON.cyan,
+          wickUpColor: "#10b981",
           wickDownColor: NEON.neg,
           priceLineVisible: false,
         });

@@ -4,6 +4,7 @@
 
 import { $, el, clear, setText, isNum, fmt, api, schedule } from "./core.js";
 import { shell } from "./shell.js";
+import { t, onLanguageChange } from "./i18n.js";
 
 const ACTIVE_POLL_MS = 3000;
 const BG_POLL_MS = 10000;
@@ -16,11 +17,11 @@ const state = {
 };
 
 const TIERS = {
-  green: { label: "AN TOÀN", cls: "tier-green" },
-  yellow: { label: "CẢNH BÁO", cls: "tier-yellow" },
-  orange: { label: "CHẶN MỞ", cls: "tier-orange" },
-  red: { label: "ĐÓNG CẶP", cls: "tier-red" },
-  unknown: { label: "CHƯA ĐỌC", cls: "tier-unknown" },
+  green: { key: "safe", cls: "tier-green" },
+  yellow: { key: "warning", cls: "tier-yellow" },
+  orange: { key: "block_open", cls: "tier-orange" },
+  red: { key: "close_pairs", cls: "tier-red" },
+  unknown: { key: "syncing", cls: "tier-unknown" },
 };
 
 function renderOverview(ov) {
@@ -36,7 +37,7 @@ function renderOverview(ov) {
 
   // Header timestamp
   if (ov.read_at_ms > 0) {
-    setText("mst-read-age", `Vừa cập nhật (${fmt.age(ov.read_at_ms)})`);
+    setText("mst-read-age", `${t("syncing")} (${fmt.age(ov.read_at_ms)})`);
   }
 
   // Combined Equity
@@ -46,34 +47,33 @@ function renderOverview(ov) {
 
   // Margin Guard
   const bTier = TIERS[ov.margin.binance_tier] || TIERS.unknown;
-  setText("mst-margin-binance-tier", bTier.label, "mst-tier-badge " + bTier.cls);
+  setText("mst-margin-binance-tier", t(bTier.key), "mst-tier-badge " + bTier.cls);
   setText("mst-margin-binance-pct", isNum(ov.margin.binance_mmr_pct) ? fmt.pct(ov.margin.binance_mmr_pct, 2) : "—");
 
   const byTier = TIERS[ov.margin.bybit_tier] || TIERS.unknown;
-  setText("mst-margin-bybit-tier", byTier.label, "mst-tier-badge " + byTier.cls);
+  setText("mst-margin-bybit-tier", t(byTier.key), "mst-tier-badge " + byTier.cls);
   setText("mst-margin-bybit-pct", isNum(ov.margin.bybit_mmr_pct) ? fmt.pct(ov.margin.bybit_mmr_pct, 2) : "—");
 
   if (ov.margin.emergency) {
-    setText("mst-margin-status", "NGẮT KHẨN CẤP", "mst-kpi-status-badge alarm");
+    setText("mst-margin-status", t("emergency"), "mst-kpi-status-badge alarm");
   } else {
-    setText("mst-margin-status", "KIỂM SOÁT TỐT", "mst-kpi-status-badge ok");
+    setText("mst-margin-status", t("under_control"), "mst-kpi-status-badge ok");
   }
 
   // Engine 1
   if (ov.engine1.autotrade_running) {
-    setText("mst-e1-status", "TỰ ĐỘNG BẬT", "mst-engine-badge active");
+    setText("mst-e1-status", t("auto_running"), "mst-engine-badge active");
   } else {
-    setText("mst-e1-status", "SẴN SÀNG", "mst-engine-badge idle");
+    setText("mst-e1-status", t("ready"), "mst-engine-badge idle");
   }
   setText("mst-e1-pairs", ov.engine1.active_pairs_count);
   setText("mst-e1-pnl", "$" + fmt.quote(ov.engine1.total_pnl_quote, 2, true));
 
   // Engine 2
   if (ov.engine2.pilot_running) {
-    const pMode = ov.engine2.pilot_mode === "active" ? "PHI CÔNG CHỦ ĐỘNG" : "PHI CÔNG TƯ VẤN";
-    setText("mst-e2-status", pMode, "mst-engine-badge active");
+    setText("mst-e2-status", t("auto_running"), "mst-engine-badge active");
   } else {
-    setText("mst-e2-status", "SẴN SÀNG", "mst-engine-badge idle");
+    setText("mst-e2-status", t("ready"), "mst-engine-badge idle");
   }
   setText("mst-e2-pairs", ov.engine2.active_pairs_count);
 
@@ -92,29 +92,29 @@ function renderLocksGrid(locks) {
   clear(grid);
 
   if (!locks || locks.length === 0) {
-    grid.append(el("div", { cls: "empty-state", text: "Đang đồng bộ bảng khóa cặp từ coordinator…" }));
+    grid.append(el("div", { cls: "empty-state", text: t("syncing") }));
     return;
   }
 
   for (const item of locks) {
     let stateCls = "state-idle";
-    let stateWord = "RẢNH RỖI";
-    let ownerDesc = "Mở cho cả 2 ĐC";
+    let stateWord = t("idle");
+    let ownerDesc = "Multi-Engine";
 
     if (item.state === "occupied") {
       if (item.owner_engine === "engine_1_cash_and_carry") {
         stateCls = "state-occupied-e1";
-        stateWord = "ĐC 1 GIỮ";
+        stateWord = t("held_e1");
         ownerDesc = "Cash & Carry";
       } else {
         stateCls = "state-occupied-e2";
-        stateWord = "ĐC 2 GIỮ";
+        stateWord = t("held_e2");
         ownerDesc = "Cross-Perp";
       }
     } else if (item.state === "conflict") {
       stateCls = "state-conflict";
-      stateWord = "XUNG ĐỘT";
-      ownerDesc = "Cần kiểm tra";
+      stateWord = t("conflict");
+      ownerDesc = t("warning");
     }
 
     const card = el("div", { cls: "mst-lock-item " + stateCls }, [
@@ -136,24 +136,25 @@ function renderPositions(resp) {
   clear(tbody);
 
   if (!resp || !resp.positions || resp.positions.length === 0) {
-    setText("mst-positions-count", "0 VỊ THẾ ĐANG MỞ");
-    const emptyTd = el("td", { cls: "empty", text: "Hiện không có vị thế nào đang mở" });
+    setText("mst-positions-count", `0 ${t("active_positions")}`);
+    const emptyTd = el("td", { cls: "empty", text: t("no_open_positions") });
     emptyTd.colSpan = 11;
     tbody.append(el("tr", { attrs: { id: "mst-positions-empty" } }, [emptyTd]));
     return;
   }
 
-  setText("mst-positions-count", `${resp.positions.length} VỊ THẾ ĐANG MỞ`);
+  setText("mst-positions-count", `${resp.positions.length} ${t("active_positions")}`);
 
   for (const pos of resp.positions) {
     const isE1 = pos.engine_id === "engine_1_cash_and_carry";
     const engineBadgeCls = isE1 ? "badge-e1" : "badge-e2";
+    const engineTitle = isE1 ? t("engine_1_short") : t("engine_2_short");
     const pnlVal = isNum(pos.unrealized_pnl_usd) ? pos.unrealized_pnl_usd : 0;
     const pnlCls = pnlVal > 0 ? "pos" : pnlVal < 0 ? "neg" : "muted";
 
     const tr = el("tr", null, [
       el("td", { cls: "fw-bold" }, [el("span", { cls: "sym-tag", text: pos.symbol })]),
-      el("td", null, [el("span", { cls: "mst-tbl-badge " + engineBadgeCls, text: pos.engine_title })]),
+      el("td", null, [el("span", { cls: "mst-tbl-badge " + engineBadgeCls, text: engineTitle })]),
       el("td", { cls: "muted", text: pos.strategy }),
       el("td", { cls: "dir long", text: pos.long_leg }),
       el("td", { cls: "dir short", text: pos.short_leg }),
@@ -165,7 +166,7 @@ function renderPositions(resp) {
       el("td", { cls: "r" }, [
         el("button", {
           cls: "btn tiny",
-          text: isE1 ? "Xem ĐC 1" : "Xem ĐC 2",
+          text: isE1 ? t("view_e1") : t("view_e2"),
           attrs: { type: "button" },
         }),
       ]),
@@ -230,4 +231,10 @@ export function initMaster() {
       state.positionsPoll.kick();
     }
   });
+
+  onLanguageChange(() => {
+    if (state.lastOverview) renderOverview(state.lastOverview);
+    if (state.lastPositions) renderPositions(state.lastPositions);
+  });
 }
+

@@ -11,8 +11,9 @@
 // what it takes off and what it leaves out, and those labels are printed under
 // the chart. A gain and a loss differ by sign and by word as well as by colour.
 
-import { $, el, clear, setText, isNum, fmt, signCls, chartOptions, chartsReady, emptyRow } from "./core.js";
+import { $, el, clear, setText, isNum, fmt, signCls, chartOptions, chartsReady, emptyRow, registerChart } from "./core.js";
 import { shell } from "./shell.js";
+import { t, onLanguageChange } from "./i18n.js";
 
 // Chart marks only — text keeps the page's .pos/.neg ink. Teal against rose,
 // checked for colour-vision separation on the page's dark surface.
@@ -41,9 +42,9 @@ const usdt = (x, digits) => (isNum(x) ? `${fmt.quote(x, digits === undefined ? 4
 // resultWord says gain or loss in words. A figure that includes an open pair
 // is provisional — its exit's fees and slippage are still to come — and says so.
 function resultWord(x, provisional) {
-  if (!isNum(x) || Math.abs(x) < 5e-9) return "hoà";
-  const word = x > 0 ? "lãi" : "lỗ";
-  return provisional ? "tạm " + word : word;
+  if (!isNum(x) || Math.abs(x) < 5e-9) return t("at_flat");
+  const word = x > 0 ? t("at_profit") : t("at_loss");
+  return provisional ? (x > 0 ? t("at_unrealized_profit") : t("at_unrealized_loss")) : word;
 }
 
 // The chart library draws UTC; the page prints local time everywhere else. The
@@ -66,7 +67,7 @@ function renderStateTile(s) {
   const badge = $("at-badge");
   const max = s.portfolio ? s.portfolio.max_concurrent_positions : 0;
   let word = s.state_vi || s.state;
-  if (s.state === "running") word = `ĐANG CHẠY · ${s.open_positions}/${max} CẶP`;
+  if (s.state === "running") word = `${t("at_running_prefix")} · ${s.open_positions}/${max} ${t("at_pairs_suffix")}`;
   if (s.busy) word += ` · ĐANG ${s.busy === "kill" ? "KILL" : s.busy === "stop" ? "DỪNG" : "ĐÓNG CẶP"}`;
   badge.dataset.state = s.state;
   badge.dataset.busy = s.busy ? "true" : "false";
@@ -176,10 +177,10 @@ function renderResultTiles(v, s) {
 function ensureCharts() {
   if (view.charts || !chartsReady() || shell.active !== "autotrade") return;
   const LWC = window.LightweightCharts;
-  const equity = LWC.createChart($("at-pnl-chart"), chartOptions({
+  const equity = registerChart(LWC.createChart($("at-pnl-chart"), chartOptions({
     rightPriceScale: { minimumWidth: 84, scaleMargins: { top: 0.15, bottom: 0.15 } },
     timeScale: { secondsVisible: false },
-  }));
+  })));
   const curve = equity.addBaselineSeries({
     baseValue: { type: "price", price: 0 },
     topLineColor: GAIN,
@@ -197,12 +198,12 @@ function ensureCharts() {
     lastValueVisible: true,
     priceFormat: { type: "price", precision: 4, minMove: 0.0001 },
   });
-  curve.createPriceLine({ price: 0, color: "rgba(174, 184, 199, 0.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "hoà vốn" });
+  curve.createPriceLine({ price: 0, color: "rgba(174, 184, 199, 0.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: t("at_breakeven") });
 
-  const bars = LWC.createChart($("at-bars-chart"), chartOptions({
+  const bars = registerChart(LWC.createChart($("at-bars-chart"), chartOptions({
     rightPriceScale: { minimumWidth: 84 },
     timeScale: { secondsVisible: false },
-  }));
+  })));
   const histogram = bars.addHistogramSeries({
     priceLineVisible: false,
     lastValueVisible: false,
@@ -485,7 +486,7 @@ function renderPositions(s) {
   $("at-pos-flat").hidden = positions.length > 0;
   $("at-pos-wrap").hidden = positions.length === 0;
   setText("at-pos-flat-text", s.state === "running"
-    ? "Tất cả các cặp đang phẳng — Bot sẵn sàng đón cơ hội"
+    ? t("at_pos_flat_msg")
     : s.state === "emergency_halted" ? "Bot DỪNG BẢO VỆ và không giữ cặp nào mà nó nhận ra — đọc lý do phía trên"
       : "Bot đang tắt — không giữ cặp nào");
   clear(body);
@@ -848,3 +849,8 @@ export const autotradeView = {
     setText("at-pnl-age", "CŨ — " + message, "hint warn");
   },
 };
+
+onLanguageChange(() => {
+  if (view.status) autotrade.renderStatus(view.status);
+  if (view.pnl) autotrade.renderPnL(view.pnl);
+});

@@ -182,6 +182,132 @@
   background: rgba(15, 23, 42, 0.4);
 }
 
+/* --- Light-theme overrides for hardcoded dark-mode backgrounds --- */
+[data-theme="light"] .chart {
+  background: rgba(15, 23, 42, 0.04);
+  border-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="light"] .at-kpi-card {
+  background: linear-gradient(145deg, rgba(241, 245, 249, 0.9), rgba(255, 255, 255, 0.95));
+  border-color: rgba(15, 23, 42, 0.1);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .at-kpi-val {
+  color: var(--text);
+}
+
+[data-theme="light"] .at-kpi-lbl {
+  color: var(--text-2);
+}
+
+[data-theme="light"] .at-kpi-sub {
+  color: var(--text-3);
+}
+
+[data-theme="light"] .mst-kpi-val {
+  color: var(--text);
+}
+
+[data-theme="light"] .mst-kpi-card {
+  background: rgba(255, 255, 255, 0.95);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+
+[data-theme="light"] .box {
+  background: rgba(15, 23, 42, 0.03);
+}
+
+[data-theme="light"] .box.danger {
+  background: linear-gradient(160deg, rgba(220, 38, 38, 0.06), rgba(255, 255, 255, 0.95));
+}
+
+[data-theme="light"] .paper-banner {
+  background: rgba(217, 119, 6, 0.06);
+  border-color: rgba(217, 119, 6, 0.2);
+  color: var(--text);
+}
+
+[data-theme="light"] .research-banner {
+  background: rgba(37, 99, 235, 0.06);
+  border-color: rgba(37, 99, 235, 0.2);
+  color: var(--text);
+}
+
+[data-theme="light"] .conn .label {
+  color: var(--text);
+}
+
+[data-theme="light"] .pill {
+  background: rgba(15, 23, 42, 0.07);
+  color: var(--text-2);
+}
+
+[data-theme="light"] .status-banner {
+  color: var(--text);
+}
+
+[data-theme="light"] .status-banner[data-status="both_open"] {
+  background: rgba(5, 150, 105, 0.08);
+  border-color: rgba(5, 150, 105, 0.25);
+}
+
+[data-theme="light"] .status-banner[data-status="unknown"] {
+  background: rgba(217, 119, 6, 0.08);
+  border-color: rgba(217, 119, 6, 0.25);
+}
+
+[data-theme="light"] .status-banner[data-status="unhedged"] {
+  background: rgba(220, 38, 38, 0.08);
+  border-color: rgba(220, 38, 38, 0.25);
+}
+
+[data-theme="light"] .big {
+  color: var(--text);
+}
+
+[data-theme="light"] .leg h3 {
+  color: var(--text-2);
+}
+
+[data-theme="light"] .delta .big {
+  color: var(--text);
+}
+
+[data-theme="light"] .at-notice {
+  background: rgba(217, 119, 6, 0.06);
+  border-color: rgba(217, 119, 6, 0.2);
+}
+
+[data-theme="light"] .card .tag {
+  opacity: 0.85;
+}
+
+[data-theme="light"] .testnet-line {
+  color: var(--text-2);
+}
+
+[data-theme="light"] .chart-label {
+  color: var(--text-2);
+}
+
+[data-theme="light"] .chart-label .legend span {
+  color: var(--text-3);
+}
+
+[data-theme="light"] .event-list li {
+  border-left-color: rgba(15, 23, 42, 0.12);
+}
+
+[data-theme="light"] .readiness .mark.done {
+  color: var(--pos);
+}
+
+[data-theme="light"] .readiness .mark.todo {
+  color: var(--text-3);
+}
+
 /* 2 --------------------------------------------------------------- base */
 *,
 *::before,

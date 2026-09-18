@@ -19,6 +19,7 @@
 
 import { $, el, clear, setText, isNum, fmt, api, schedule, emptyRow } from "./core.js";
 import { shell } from "./shell.js";
+import { t, onLanguageChange } from "./i18n.js";
 
 const ACTIVE_MS = 4000;
 // The tab badge must be able to alarm while another tab is showing, so the two
@@ -46,11 +47,11 @@ const view = {
 // Every tier is a WORD and a mark as well as a colour (UX: never state by
 // colour alone), and "không đọc được" is its own state — never a green one.
 const TIER = {
-  green: { word: "AN TOÀN", mark: "●", whyVI: "dưới mọi ngưỡng của van" },
-  yellow: { word: "VÀNG · CHẶN Đ.CƠ 2", mark: "▲", whyVI: "van chặn Động cơ 2 mở thêm trên sàn này" },
-  orange: { word: "CAM · CHẶN MỌI LỆNH MỞ", mark: "▲▲", whyVI: "van chặn mọi lệnh mở trên cả hai sàn" },
-  red: { word: "ĐỎ · ĐANG ĐÓNG CẶP", mark: "■", whyVI: "chốt đỏ: van tự đóng các cặp của Động cơ 2" },
-  unknown: { word: "KHÔNG ĐỌC ĐƯỢC", mark: "?", whyVI: "không có số đo — chặn mở mới, KHÔNG bao giờ tự đóng" },
+  green: { word: "AN TOÀN", key: "safe", mark: "●", whyVI: "dưới mọi ngưỡng của van" },
+  yellow: { word: "VÀNG · CHẶN Đ.CƠ 2", key: "warning", mark: "▲", whyVI: "van chặn Động cơ 2 mở thêm trên sàn này" },
+  orange: { word: "CAM · CHẶN MỌI LỆNH MỞ", key: "block_open", mark: "▲▲", whyVI: "van chặn mọi lệnh mở trên cả hai sàn" },
+  red: { word: "ĐỎ · ĐANG ĐÓNG CẶP", key: "close_pairs", mark: "■", whyVI: "chốt đỏ: van tự đóng các cặp của Động cơ 2" },
+  unknown: { word: "KHÔNG ĐỌC ĐƯỢC", key: "syncing", mark: "?", whyVI: "không có số đo — chặn mở mới, KHÔNG bao giờ tự đóng" },
 };
 
 const LOCK_STATE = {
@@ -515,7 +516,7 @@ function renderPilot(p) {
       ? "PHI CÔNG TỰ ĐỘNG ĐANG BẬT VÀ ĐƯỢC GỬI LỆNH — nó có thể tự mở cặp trên các symbol này"
       : p.enabled
         ? "Phi công tự động BẬT nhưng CHỈ TƯ VẤN — nó tính và hiển thị, không được gửi lệnh"
-        : "Phi công tự động TẮT — chỉ người vận hành mở/đóng ở tab này";
+        : t("cp_pilot_off");
   box.append(el("div", { cls: "strong", text: wordVI }));
   if (p.enabled) {
     box.append(
@@ -578,7 +579,7 @@ function renderAlarm() {
     head,
     items.length
       ? `${items.length} việc CẦN NGƯỜI — máy không được phép tự xử lý bất kỳ mục nào bên dưới`
-      : "KHÔNG CÓ GÌ MẮC KẸT — không xung đột khóa, không cặp treo, không lệnh chưa chứng minh, van ký quỹ đọc được cả hai sàn"
+      : t("cp_alarm_calm")
   );
   $("tab-crossperp-alarm").hidden = items.length === 0;
   setText("tab-crossperp-alarm", items.length ? String(items.length) : "!");
@@ -813,5 +814,10 @@ export function initCrossperp() {
   shell.onTab("crossperp", { enter: () => crossperpView.refresh() });
   shell.onVisibility((visible) => {
     if (visible) crossperpView.refresh();
+  });
+  onLanguageChange(() => {
+    if (view.status) crossperpView.renderStatus(view.status);
+    if (view.margin) crossperpView.renderMargin(view.margin);
+    if (view.locks) crossperpView.renderLocks(view.locks);
   });
 }
