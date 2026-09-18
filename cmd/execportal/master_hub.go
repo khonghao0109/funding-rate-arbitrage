@@ -45,11 +45,15 @@ type masterMargin struct {
 }
 
 type masterEngine1 struct {
-	Enabled          bool    `json:"enabled"`
-	Strategy         string  `json:"strategy"`
-	AutotradeRunning bool    `json:"autotrade_running"`
-	ActivePairsCount int     `json:"active_pairs_count"`
-	TotalPnLQuote    float64 `json:"total_pnl_quote"`
+	Enabled           bool    `json:"enabled"`
+	Strategy          string  `json:"strategy"`
+	AutotradeRunning  bool    `json:"autotrade_running"`
+	ActivePairsCount  int     `json:"active_pairs_count"`
+	TotalPnLQuote     float64 `json:"total_pnl_quote"`
+	BinancePairsCount int     `json:"binance_pairs_count"`
+	BinancePnLQuote   float64 `json:"binance_pnl_quote"`
+	BybitPairsCount   int     `json:"bybit_pairs_count"`
+	BybitPnLQuote     float64 `json:"bybit_pnl_quote"`
 }
 
 type masterEngine2 struct {
@@ -193,25 +197,6 @@ func (p *portal) buildMasterOverview(ctx context.Context) masterOverview {
 				out.Engine2.PilotMode = "active"
 			}
 		}
-
-		// Coordinator Locks
-		lView := p.cross.locksView()
-		out.Coordinator.TotalSymbols = len(lView.Locks)
-		out.Coordinator.Locks = lView.Locks
-		for _, l := range lView.Locks {
-			switch l.State {
-			case coordinator.StateIdle:
-				out.Coordinator.IdleCount++
-			case coordinator.StateOccupied:
-				if l.OwnerEngine == coordinator.EngineCashAndCarry {
-					out.Coordinator.OccupiedE1Count++
-				} else if l.OwnerEngine == coordinator.EngineCrossPerp {
-					out.Coordinator.OccupiedE2Count++
-				}
-			case coordinator.StateConflict:
-				out.Coordinator.ConflictCount++
-			}
-		}
 	}
 
 	// 3. Engine 1 Auto-trader Status
@@ -225,6 +210,69 @@ func (p *portal) buildMasterOverview(ctx context.Context) masterOverview {
 		}
 	}
 	out.Engine1.TotalPnLQuote = driftSum
+	if p.markets.profile.Kind == venueBybit {
+		out.Engine1.BybitPairsCount = atSt.OpenPositions
+		out.Engine1.BybitPnLQuote = driftSum
+	} else {
+		out.Engine1.BinancePairsCount = atSt.OpenPositions
+		out.Engine1.BinancePnLQuote = driftSum
+	}
+
+	// Coordinator Locks (ensure all 13 symbols are represented)
+	all13Symbols := []string{
+		"AAVEUSDT", "BNBUSDT", "BTCUSDT", "DOGEUSDT", "ETHUSDT",
+		"HYPEUSDT", "LINKUSDT", "LTCUSDT", "NEARUSDT", "SOLUSDT",
+		"SUIUSDT", "UNIUSDT", "XRPUSDT",
+	}
+	lockMap := make(map[string]coordinator.SymbolLock)
+	if p.cross != nil {
+		lView := p.cross.locksView()
+		for _, l := range lView.Locks {
+			lockMap[l.Symbol] = l
+		}
+	}
+	for _, pos := range atSt.Positions {
+		if _, exists := lockMap[pos.Symbol]; !exists {
+			lockMap[pos.Symbol] = coordinator.SymbolLock{
+				Symbol:      pos.Symbol,
+				State:       coordinator.StateOccupied,
+				OwnerEngine: coordinator.EngineCashAndCarry,
+				Venues:      []string{string(p.markets.profile.Kind) + "_futures"},
+			}
+		}
+	}
+
+	allLocks := make([]coordinator.SymbolLock, 0, len(all13Symbols))
+	for _, sym := range all13Symbols {
+		if l, ok := lockMap[sym]; ok {
+			allLocks = append(allLocks, l)
+		} else {
+			allLocks = append(allLocks, coordinator.SymbolLock{
+				Symbol: sym,
+				State:  coordinator.StateIdle,
+			})
+		}
+	}
+	out.Coordinator.Locks = allLocks
+	out.Coordinator.TotalSymbols = len(allLocks)
+	out.Coordinator.IdleCount = 0
+	out.Coordinator.OccupiedE1Count = 0
+	out.Coordinator.OccupiedE2Count = 0
+	out.Coordinator.ConflictCount = 0
+	for _, l := range allLocks {
+		switch l.State {
+		case coordinator.StateIdle:
+			out.Coordinator.IdleCount++
+		case coordinator.StateOccupied:
+			if l.OwnerEngine == coordinator.EngineCashAndCarry {
+				out.Coordinator.OccupiedE1Count++
+			} else if l.OwnerEngine == coordinator.EngineCrossPerp {
+				out.Coordinator.OccupiedE2Count++
+			}
+		case coordinator.StateConflict:
+			out.Coordinator.ConflictCount++
+		}
+	}
 
 	out.TotalEquityUSD = out.Balances.BinanceTotalUSDT + out.Balances.BybitEquityUSD
 	return out
@@ -241,14 +289,20 @@ func (p *portal) buildMasterPositions(ctx context.Context) masterPositionsRespon
 		if pos.PairDriftQuote != nil {
 			pnl = *pos.PairDriftQuote
 		}
+		longLeg := "Binance Spot"
+		shortLeg := "Binance Futures"
+		if p.markets.profile.Kind == venueBybit {
+			longLeg = "Bybit Spot"
+			shortLeg = "Bybit Linear"
+		}
 		items = append(items, masterPositionItem{
 			ID:               pos.IntentID,
 			Symbol:           pos.Symbol,
 			EngineID:         string(coordinator.EngineCashAndCarry),
 			EngineTitle:      "Động cơ 1",
 			Strategy:         "Spot LONG + Perp SHORT",
-			LongLeg:          string(p.markets.profile.Kind) + " Spot",
-			ShortLeg:         string(p.markets.profile.Kind) + " Perp",
+			LongLeg:          longLeg,
+			ShortLeg:         shortLeg,
 			QtyCoin:          pos.QtyCoin,
 			NotionalUSD:      pos.NotionalQuote,
 			EntryPriceLong:   pos.SpotEntryAvgQuote,

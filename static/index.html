@@ -141,19 +141,50 @@
         </div>
       </div>
 
-      <div class="mst-kpi-grid">
-        <article class="card mst-kpi-card">
+      <!-- Row 1: Total Combined Equity & Balance History Chart -->
+      <div class="mst-equity-row">
+        <article class="card mst-kpi-card mst-equity-summary-card">
           <div class="mst-kpi-head">
-            <span class="mst-kpi-tag" data-i18n="combined_equity">TỔNG VỐN TÀI SẢN</span>
-            <span class="mst-kpi-sub" data-i18n="combined_equity_sub">Combined Equity</span>
+            <div>
+              <span class="mst-kpi-tag" data-i18n="combined_equity">TỔNG VỐN TÀI SẢN</span>
+              <span class="mst-kpi-sub" data-i18n="combined_equity_sub">Combined Equity</span>
+            </div>
+            <span class="mst-kpi-status-badge ok" data-i18n="live_sync">TRỰC TIẾP</span>
           </div>
           <div class="mst-kpi-val" id="mst-total-equity">—</div>
-          <div class="mst-kpi-meta">
-            <span>Binance: <strong id="mst-binance-equity">—</strong></span>
-            <span>Bybit: <strong id="mst-bybit-equity">—</strong></span>
+          <div class="mst-kpi-meta mst-equity-breakdown">
+            <div class="mst-equity-venue-item">
+              <span class="mst-venue-dot binance"></span>
+              <span class="mst-venue-title">Binance:</span>
+              <strong id="mst-binance-equity">—</strong>
+            </div>
+            <div class="mst-equity-venue-item">
+              <span class="mst-venue-dot bybit"></span>
+              <span class="mst-venue-title">Bybit:</span>
+              <strong id="mst-bybit-equity">—</strong>
+            </div>
           </div>
         </article>
 
+        <article class="card mst-chart-card mst-equity-chart-card">
+          <div class="mst-chart-head">
+            <div class="mst-chart-title-group">
+              <span class="mst-chart-title" data-i18n="equity_chart_title">BIẾN ĐỘNG SỐ DƯ CÁC VÍ</span>
+              <span class="mst-chart-sub" data-i18n="equity_chart_sub">Wallet Balance Trends</span>
+            </div>
+            <div class="mst-chart-legend">
+              <span class="mst-legend-item"><span class="mst-dot cyan"></span> <span data-i18n="total_equity_lbl">Tổng vốn</span></span>
+              <span class="mst-legend-item"><span class="mst-dot yellow"></span> Binance</span>
+              <span class="mst-legend-item"><span class="mst-dot purple"></span> Bybit</span>
+            </div>
+          </div>
+          <div class="mst-chart-container" id="mst-equity-chart"></div>
+        </article>
+      </div>
+
+      <!-- Row 2: Dual Margin Guard, Engine 1 (Per-Venue Breakdown), Engine 2 -->
+      <div class="mst-engines-row">
+        <!-- Dual Margin Guard -->
         <article class="card mst-kpi-card" id="mst-margin-card">
           <div class="mst-kpi-head">
             <span class="mst-kpi-tag" data-i18n="dual_margin_guard">VAN KÝ QUỸ KÉP</span>
@@ -173,24 +204,47 @@
           </div>
         </article>
 
-        <article class="card mst-kpi-card">
+        <!-- Engine 1 (Cash & Carry) with Per-Venue Breakdown -->
+        <article class="card mst-kpi-card mst-e1-card">
           <div class="mst-kpi-head">
-            <span class="mst-kpi-tag" data-i18n="engine_1_title">ĐỘNG CƠ 1 (CASH & CARRY)</span>
+            <span class="mst-kpi-tag" data-i18n="engine_1_title">ĐỘNG CƠ 1 (CASH &amp; CARRY)</span>
             <span class="mst-engine-badge" id="mst-e1-status">—</span>
           </div>
           <div class="mst-kpi-engine-body">
-            <div class="mst-stat-row">
-              <span data-i18n="running_pairs">Số cặp đang chạy:</span>
+            <div class="mst-stat-row total-row">
+              <span data-i18n="running_pairs">Tổng số cặp:</span>
               <strong id="mst-e1-pairs">0</strong>
-            </div>
-            <div class="mst-stat-row">
-              <span data-i18n="unrealized_pnl">Lãi/lỗ tạm tính:</span>
+              <span class="spacer"></span>
+              <span data-i18n="unrealized_pnl">Tổng PnL:</span>
               <strong id="mst-e1-pnl">—</strong>
+            </div>
+            <div class="mst-venue-breakdown">
+              <div class="mst-venue-chip binance">
+                <div class="mst-venue-chip-header">
+                  <span class="mst-venue-dot binance"></span>
+                  <strong>Binance</strong>
+                </div>
+                <div class="mst-venue-chip-stats">
+                  <span><span data-i18n="pairs_short">Cặp:</span> <strong id="mst-e1-binance-pairs">0</strong></span>
+                  <span><span data-i18n="pnl_short">PnL:</span> <strong id="mst-e1-binance-pnl">—</strong></span>
+                </div>
+              </div>
+              <div class="mst-venue-chip bybit">
+                <div class="mst-venue-chip-header">
+                  <span class="mst-venue-dot bybit"></span>
+                  <strong>Bybit</strong>
+                </div>
+                <div class="mst-venue-chip-stats">
+                  <span><span data-i18n="pairs_short">Cặp:</span> <strong id="mst-e1-bybit-pairs">0</strong></span>
+                  <span><span data-i18n="pnl_short">PnL:</span> <strong id="mst-e1-bybit-pnl">—</strong></span>
+                </div>
+              </div>
             </div>
           </div>
         </article>
 
-        <article class="card mst-kpi-card">
+        <!-- Engine 2 (Cross-Perp) -->
+        <article class="card mst-kpi-card mst-e2-card">
           <div class="mst-kpi-head">
             <span class="mst-kpi-tag" data-i18n="engine_2_title">ĐỘNG CƠ 2 (CROSS-PERP)</span>
             <span class="mst-engine-badge" id="mst-e2-status">—</span>
@@ -202,49 +256,31 @@
             </div>
             <div class="mst-stat-row">
               <span data-i18n="leg_latency">Độ trễ 2 chân:</span>
-              <strong id="mst-e2-pnl">&lt; 60 ms</strong>
+              <strong id="mst-e2-latency">&lt; 60 ms</strong>
+            </div>
+            <div class="mst-stat-row">
+              <span data-i18n="unrealized_pnl">PnL tạm tính:</span>
+              <strong id="mst-e2-pnl">$0.00</strong>
             </div>
           </div>
         </article>
       </div>
 
-      <div class="mst-subsystem-bar">
-        <button class="mst-nav-card" type="button" id="mst-nav-scanner">
-          <span class="mst-nav-icon">📡</span>
-          <div class="mst-nav-text">
-            <strong>Scanner (8085)</strong>
-            <span data-i18n="nav_scanner_desc">Quét Funding thời gian thực</span>
+      <!-- Row 3: Unrealized PnL Trend Chart Card -->
+      <article class="card mst-chart-card mst-pnl-trend-card">
+        <div class="mst-chart-head">
+          <div class="mst-chart-title-group">
+            <span class="mst-chart-title" data-i18n="pnl_chart_title">BIẾN ĐỘNG UNREALIZED PNL CÁC ĐỘNG CƠ ($)</span>
+            <span class="mst-chart-sub" data-i18n="pnl_chart_sub">Unrealized PnL Trends ($) — Engine 1 (Binance &amp; Bybit) &amp; Engine 2 (Cross-Perp)</span>
           </div>
-        </button>
-        <button class="mst-nav-card" type="button" id="mst-nav-radar">
-          <span class="mst-nav-icon">🎯</span>
-          <div class="mst-nav-text">
-            <strong data-i18n="nav_radar">Radar Chéo Sàn</strong>
-            <span data-i18n="nav_radar_desc">Lọc chênh lệch ≥ 25% APR</span>
+          <div class="mst-chart-legend">
+            <span class="mst-legend-item"><span class="mst-dot green"></span> <span data-i18n="e1_binance_lbl">ĐC 1 Binance</span></span>
+            <span class="mst-legend-item"><span class="mst-dot purple"></span> <span data-i18n="e1_bybit_lbl">ĐC 1 Bybit</span></span>
+            <span class="mst-legend-item"><span class="mst-dot sky"></span> <span data-i18n="e2_cross_lbl">ĐC 2 Cross-Perp</span></span>
           </div>
-        </button>
-        <button class="mst-nav-card" type="button" id="mst-nav-e1">
-          <span class="mst-nav-icon">🪙</span>
-          <div class="mst-nav-text">
-            <strong data-i18n="nav_e1_title">Động Cơ 1</strong>
-            <span data-i18n="nav_e1_desc">Spot Long + Perp Short</span>
-          </div>
-        </button>
-        <button class="mst-nav-card" type="button" id="mst-nav-e2">
-          <span class="mst-nav-icon">⚡</span>
-          <div class="mst-nav-text">
-            <strong data-i18n="nav_e2_title">Động Cơ 2</strong>
-            <span data-i18n="nav_e2_desc">Bybit Perp + Binance Perp</span>
-          </div>
-        </button>
-        <button class="mst-nav-card" type="button" id="mst-nav-paper">
-          <span class="mst-nav-icon">📑</span>
-          <div class="mst-nav-text">
-            <strong data-i18n="nav_paper_title">Paper Ledger (8086)</strong>
-            <span data-i18n="nav_paper_desc">Sổ cái ảo & Kiểm toán PnL</span>
-          </div>
-        </button>
-      </div>
+        </div>
+        <div class="mst-chart-container" id="mst-pnl-chart"></div>
+      </article>
 
       <article class="card mst-section-card">
         <div class="card-head">
