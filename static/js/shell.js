@@ -60,8 +60,10 @@ function moveInk() {
   const ink = $("tab-ink");
   const button = active && $("tab-" + active);
   if (!ink || !button) return;
-  ink.style.transform = `translateX(${button.offsetLeft}px) scaleX(${button.offsetWidth})`;
+  ink.style.transform = `translateY(${button.offsetTop}px)`;
+  ink.style.height = `${button.offsetHeight}px`;
 }
+
 
 function select(rawName, focus) {
   const name = TAB_ALIASES[rawName] || rawName;

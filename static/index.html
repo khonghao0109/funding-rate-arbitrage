@@ -14,100 +14,112 @@
 </head>
 <body>
   <a class="skip-link" href="#main">Bỏ qua tới nội dung</a>
+  <div class="demo-badge">[BINANCE TESTNET DEMO]</div>
   <div class="backdrop" aria-hidden="true"></div>
-  <div class="demo-badge" role="note" id="venue-badge">[BINANCE TESTNET DEMO]</div>
+  <div class="app-layout" id="app-layout">
+    <!-- 1. LEFT VERTICAL SIDEBAR -->
+    <aside class="app-sidebar" id="app-sidebar">
+      <div class="sidebar-top">
+        <div class="sidebar-brand">
+          <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
+            <defs>
+              <linearGradient id="neon" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stop-color="#00f2fe"/>
+                <stop offset="100%" stop-color="#4facfe"/>
+              </linearGradient>
+            </defs>
+            <path d="M20 3 35 11.5v17L20 37 5 28.5v-17Z" fill="none" stroke="url(#neon)" stroke-width="2.5"/>
+            <path d="M13 17h14l-4-4M27 23H13l4 4" fill="none" stroke="url(#neon)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <div class="brand-text">
+            <h1 class="brand-h1" data-i18n="brand_title">ARBITRAGE PRO</h1>
+            <p id="brand-desc" data-i18n="brand_subtitle">Trạm Giao Dịch Trọng Tài</p>
+          </div>
+        </div>
 
-  <header class="shell-header" id="shell-header">
-    <div class="header-row">
-      <div class="brand">
-        <svg class="brand-mark" viewBox="0 0 40 40" aria-hidden="true">
-          <defs>
-            <linearGradient id="neon" x1="0" y1="0" x2="1" y2="1">
-              <stop offset="0" stop-color="#00f2fe"/>
-              <stop offset="1" stop-color="#4facfe"/>
-            </linearGradient>
-          </defs>
-          <path d="M20 3 35 11.5v17L20 37 5 28.5v-17Z" fill="none" stroke="url(#neon)" stroke-width="2"/>
-          <path d="M13 17h14l-4-4M27 23H13l4 4" fill="none" stroke="url(#neon)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-        <div>
-          <h1>FUNDING ARB <span>OPERATOR PORTAL</span></h1>
-          <p id="brand-desc">Chiến lược 1 · spot LONG + perp SHORT · một trang cho scanner, lệnh, sổ giấy và crowding · chỉ testnet</p>
+        <nav class="tabs sidebar-nav" role="tablist" aria-label="Phân hệ" id="tabs">
+          <span class="tab-ink" id="tab-ink" aria-hidden="true"></span>
+          <button class="tab" role="tab" id="tab-master" data-tab="master" aria-controls="panel-master" aria-selected="true" tabindex="0">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span data-i18n="nav_master">Tổng Hành Dinh</span>
+          </button>
+          <button class="tab" role="tab" id="tab-scanner" data-tab="scanner" aria-controls="panel-scanner" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            <span data-i18n="nav_scanner">Market Scanner</span>
+          </button>
+          <button class="tab" role="tab" id="tab-radar" data-tab="radar" aria-controls="panel-radar" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12l6-6"/><path d="M4.9 19.1a10 10 0 1 1 14.2 0"/><path d="M8.5 15.5a5 5 0 1 1 7 0"/><circle cx="12" cy="12" r="1"/></svg>
+            <span data-i18n="nav_radar">Radar Chéo Sàn</span>
+            <span class="tab-count" id="tab-radar-alarm" hidden>≥25%</span>
+          </button>
+          <button class="tab" role="tab" id="tab-crossperp" data-tab="crossperp" aria-controls="panel-crossperp" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h4l9 10h5"/><path d="M3 17h4l9-10h5"/><path d="M18 4l3 3-3 3"/><path d="M18 14l3 3-3 3"/></svg>
+            <span data-i18n="nav_crossperp">Động cơ 2 (Perp–Perp)</span>
+            <span class="tab-count" id="tab-crossperp-alarm" hidden>!</span>
+          </button>
+          <button class="tab" role="tab" id="tab-autotrade" data-tab="autotrade" aria-controls="panel-autotrade" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+            <span data-i18n="nav_autotrade">Động cơ 1 (Cash & Carry)</span>
+            <span class="tab-count" id="tab-exec-alarm" hidden>!</span>
+          </button>
+          <button class="tab" role="tab" id="tab-manual" data-tab="manual" aria-controls="panel-manual" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20V4M7 4 4 7M7 4l3 3M17 4v16M17 20l-3-3M17 20l3-3"/></svg>
+            <span data-i18n="nav_manual">Thao Tác Lệnh</span>
+          </button>
+          <button class="tab" role="tab" id="tab-paper" data-tab="paper" aria-controls="panel-paper" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
+            <span data-i18n="nav_paper">Sổ Cái & PnL</span>
+          </button>
+          <button class="tab" role="tab" id="tab-backtest" data-tab="backtest" aria-controls="panel-backtest" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-6 6"/></svg>
+            <span data-i18n="nav_backtest">Backtest 3 Năm</span>
+          </button>
+          <button class="tab" role="tab" id="tab-crowding" data-tab="crowding" aria-controls="panel-crowding" aria-selected="false" tabindex="-1">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.7"/></svg>
+            <span data-i18n="nav_crowding">Đám Đông</span>
+          </button>
+        </nav>
+      </div>
+
+      <div class="sidebar-bottom">
+        <div class="sidebar-controls">
+          <button type="button" class="theme-toggle-btn" id="theme-toggle-btn" title="Chuyển chế độ Sáng / Tối">
+            <span id="theme-toggle-icon">🌙</span>
+            <span id="theme-toggle-text" data-i18n="theme_dark">Tối</span>
+          </button>
+          <div class="lang-pills" id="lang-switcher" aria-label="Ngôn ngữ">
+            <button type="button" class="lang-btn active" data-lang="vi">VI</button>
+            <button type="button" class="lang-btn" data-lang="en">EN</button>
+            <button type="button" class="lang-btn" data-lang="zh">ZH</button>
+          </div>
+        </div>
+
+        <div class="sidebar-chips">
+          <div class="chips" role="status" aria-live="polite" aria-label="Trạng thái kết nối">
+            <div class="chip venue-chip" id="chip-venue" title="Sàn và chế độ"><span class="chip-k">CHẾ ĐỘ</span><span class="chip-v badge" id="venue-badge">[MASTER]</span></div>
+            <div class="chip" id="chip-scanner" data-state="idle" title="Relay Scanner WS"><span class="dot"></span><span class="chip-k">Scanner</span><span class="chip-v" id="chip-scanner-v">—</span></div>
+            <div class="chip" id="chip-spot" data-state="idle" title="API Binance Spot"><span class="dot"></span><span class="chip-k">Spot</span><span class="chip-v" id="chip-spot-v">—</span></div>
+            <div class="chip" id="chip-futures" data-state="idle" title="API Binance Futures"><span class="dot"></span><span class="chip-k">Futures</span><span class="chip-v" id="chip-futures-v">—</span></div>
+            <div class="chip" id="chip-bybit" data-state="idle" title="API Bybit Linear"><span class="dot"></span><span class="chip-k">Bybit</span><span class="chip-v" id="chip-bybit-v">—</span></div>
+            <div class="chip" id="chip-skew" data-state="idle" title="Lệch đồng hồ"><span class="dot"></span><span class="chip-k">Lệch</span><span class="chip-v" id="chip-skew-v">—</span></div>
+            <div class="chip chip-hedge" id="chip-hedge" data-state="idle" data-status="unknown" title="Tình trạng phòng hộ"><span class="dot"></span><span class="chip-k" id="chip-hedge-k">Phòng hộ</span><span class="chip-v" id="chip-hedge-v">—</span></div>
+          </div>
         </div>
       </div>
-      <div class="chips" role="status" aria-live="polite" aria-label="Trạng thái kết nối">
-        <div class="chip" id="chip-scanner" data-state="idle" title="Relay WebSocket chỉ đọc tới cmd/scanner">
-          <span class="dot"></span><span class="chip-k">Scanner WS</span><span class="chip-v" id="chip-scanner-v">—</span>
-        </div>
-        <div class="chip" id="chip-spot" data-state="idle" title="API Binance Spot testnet">
-          <span class="dot"></span><span class="chip-k">API Spot</span><span class="chip-v" id="chip-spot-v">—</span>
-        </div>
-        <div class="chip" id="chip-futures" data-state="idle" title="API Binance Futures testnet">
-          <span class="dot"></span><span class="chip-k">API Futures</span><span class="chip-v" id="chip-futures-v">—</span>
-        </div>
-        <div class="chip" id="chip-bybit" data-state="idle" title="API Bybit Linear testnet">
-          <span class="dot"></span><span class="chip-k">API Bybit</span><span class="chip-v" id="chip-bybit-v">—</span>
-        </div>
-        <div class="chip" id="chip-skew" data-state="idle" title="Lệch đồng hồ đo tại điểm giữa vòng khứ hồi; dương = đồng hồ sàn đi trước">
-          <span class="dot"></span><span class="chip-k">Lệch đồng hồ</span><span class="chip-v" id="chip-skew-v">—</span>
-        </div>
-        <div class="chip chip-hedge" id="chip-hedge" data-state="idle" data-status="unknown" title="Trạng thái phòng hộ của symbol đang giao dịch, đọc từ sàn">
-          <span class="dot"></span><span class="chip-k" id="chip-hedge-k">Phòng hộ</span><span class="chip-v" id="chip-hedge-v">—</span>
-        </div>
-      </div>
-    </div>
+    </aside>
 
-    <div class="header-row balances" aria-label="Số dư ví testnet">
-      <div class="bal"><div class="bal-k"><span id="bal-spot-usdt-k">Ví Spot · USDT</span><span id="bal-spot-age"></span></div><div class="bal-v" id="bal-spot-usdt">—</div></div>
-      <div class="bal"><div class="bal-k"><span id="bal-futures-usdt-k">Ví Futures · USDT</span></div><div class="bal-v" id="bal-futures-usdt">—</div></div>
-      <div class="bal" id="bal-bybit-box"><div class="bal-k"><span id="bal-bybit-usdt-k">Ví Bybit · UTA</span><span id="bal-bybit-sub">Linear Perp</span></div><div class="bal-v" id="bal-bybit-usdt">—</div></div>
-      <div class="bal total"><div class="bal-k"><span id="bal-total-usdt-k">Tổng USDT · Spot + Futures</span><span id="bal-total-sub">không quy đổi coin</span></div><div class="bal-v" id="bal-total-usdt">—</div></div>
-      <div class="bal"><div class="bal-k"><span>Ví Spot · <span id="bal-base-asset">BTC</span></span><span>gồm số dư cấp sẵn</span></div><div class="bal-v" id="bal-spot-base">—</div></div>
-    </div>
+    <!-- 2. MAIN APP CANVAS -->
+    <div class="app-main-canvas">
+      <header class="app-topbar" id="shell-header">
+        <div class="header-row balances" aria-label="Số dư ví testnet">
+          <div class="bal"><div class="bal-k"><span id="bal-spot-usdt-k" data-i18n="binance_spot">Binance Spot · USDT</span><span id="bal-spot-age"></span></div><div class="bal-v" id="bal-spot-usdt">—</div></div>
+          <div class="bal"><div class="bal-k"><span id="bal-futures-usdt-k" data-i18n="binance_futures">Binance Futures · USDT</span></div><div class="bal-v" id="bal-futures-usdt">—</div></div>
+          <div class="bal" id="bal-bybit-box"><div class="bal-k"><span id="bal-bybit-usdt-k" data-i18n="bybit_linear">Bybit Linear · USD</span><span id="bal-bybit-sub">Hợp nhất UTA</span></div><div class="bal-v" id="bal-bybit-usdt">—</div></div>
+          <div class="bal total"><div class="bal-k"><span id="bal-total-usdt-k" data-i18n="total_equity">TỔNG VỐN LIÊN SÀN (USD)</span><span id="bal-total-sub">Binance + Bybit</span></div><div class="bal-v" id="bal-total-usdt">—</div></div>
+          <div class="bal"><div class="bal-k"><span>Ví Spot · <span id="bal-base-asset">BTC</span></span><span>gồm số dư cấp sẵn</span></div><div class="bal-v" id="bal-spot-base">—</div></div>
+        </div>
+      </header>
 
-    <nav class="tabs" role="tablist" aria-label="Phân hệ" id="tabs">
-      <button class="tab" role="tab" id="tab-master" data-tab="master" aria-controls="panel-master" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        ⚡ Trung Tâm Chỉ Huy
-      </button>
-      <button class="tab" role="tab" id="tab-scanner" data-tab="scanner" aria-controls="panel-scanner" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        Market Scanner
-      </button>
-      <button class="tab" role="tab" id="tab-radar" data-tab="radar" aria-controls="panel-radar" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 12l6-6"/><path d="M4.9 19.1a10 10 0 1 1 14.2 0"/><path d="M8.5 15.5a5 5 0 1 1 7 0"/><circle cx="12" cy="12" r="1"/></svg>
-        Radar Chéo Sàn
-        <span class="tab-count" id="tab-radar-alarm" hidden>≥25%</span>
-      </button>
-      <button class="tab" role="tab" id="tab-crossperp" data-tab="crossperp" aria-controls="panel-crossperp" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h4l9 10h5"/><path d="M3 17h4l9-10h5"/><path d="M18 4l3 3-3 3"/><path d="M18 14l3 3-3 3"/></svg>
-        Động cơ 2 (Perp–Perp Chéo Sàn)
-        <span class="tab-count" id="tab-crossperp-alarm" hidden>!</span>
-      </button>
-      <button class="tab" role="tab" id="tab-autotrade" data-tab="autotrade" aria-controls="panel-autotrade" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
-        Auto-Trader (Funding Arb)
-      </button>
-      <button class="tab" role="tab" id="tab-manual" data-tab="manual" aria-controls="panel-manual" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 20V4M7 4 4 7M7 4l3 3M17 4v16M17 20l-3-3M17 20l3-3"/></svg>
-        Manual Execution
-        <span class="tab-count" id="tab-exec-alarm" hidden>!</span>
-      </button>
-      <button class="tab" role="tab" id="tab-paper" data-tab="paper" aria-controls="panel-paper" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6M9 12h6M9 16h3"/></svg>
-        Paper Ledger
-      </button>
-      <button class="tab" role="tab" id="tab-backtest" data-tab="backtest" aria-controls="panel-backtest" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M18 9l-5 5-4-4-6 6"/></svg>
-        Backtest 3 Năm
-      </button>
-      <button class="tab" role="tab" id="tab-crowding" data-tab="crowding" aria-controls="panel-crowding" aria-selected="false" tabindex="-1">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3"/><path d="M3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M21 20a6 6 0 0 0-4-5.7"/></svg>
-        Crowding Reversal
-      </button>
-      <span class="tab-ink" id="tab-ink" aria-hidden="true"></span>
-    </nav>
-  </header>
 
   <main id="main" tabindex="-1">
     <div class="callout warn served-elsewhere" id="served-elsewhere" role="alert" hidden>
@@ -120,12 +132,12 @@
     <section class="tab-panel" id="panel-master" role="tabpanel" aria-labelledby="tab-master" hidden>
       <div class="mst-header-bar">
         <div class="mst-title-block">
-          <h2 class="mst-main-title">BẢNG ĐIỀU KHIỂN CHỈ HUY TRUNG TÂM (MASTER COMMAND HUB)</h2>
-          <p class="mst-subtitle">Gộp toàn bộ hệ thống · Scanner (8085) · Động cơ 1 · Động cơ 2 (Chéo Sàn) · Paper Ledger (8086) · Khóa cặp độc quyền</p>
+          <h2 class="mst-main-title" data-i18n="nav_master">Tổng Hành Dinh</h2>
+          <p class="mst-subtitle">Multi-Venue Arbitrage Operations</p>
         </div>
         <div class="mst-controls">
-          <span class="mst-age" id="mst-read-age">Đang đồng bộ…</span>
-          <button class="btn small" type="button" id="mst-refresh">Làm mới</button>
+          <span class="mst-age" id="mst-read-age" data-i18n="syncing">Đang đồng bộ…</span>
+          <button class="btn small" type="button" id="mst-refresh" data-i18n="refresh">Làm mới</button>
         </div>
       </div>
 
@@ -237,17 +249,16 @@
       <article class="card mst-section-card">
         <div class="card-head">
           <div class="mst-section-title">
-            <h3>MA TRẬN KHÓA CẶP ĐỘC QUYỀN (EXCLUSIVE SYMBOL LOCK MATRIX)</h3>
+            <h3 data-i18n="lock_matrix">MA TRẬN KHÓA 13 CẶP COIN</h3>
             <span class="mst-pill">13 Symbols</span>
           </div>
           <div class="mst-lock-stats">
-            <span class="mst-lock-stat idle"><strong id="mst-lock-idle-count">0</strong> Rảnh rỗi</span>
-            <span class="mst-lock-stat e1"><strong id="mst-lock-e1-count">0</strong> ĐC 1 giữ</span>
-            <span class="mst-lock-stat e2"><strong id="mst-lock-e2-count">0</strong> ĐC 2 giữ</span>
-            <span class="mst-lock-stat conflict"><strong id="mst-lock-conflict-count">0</strong> Xung đột</span>
+            <span class="mst-lock-stat idle"><strong id="mst-lock-idle-count">0</strong> <span data-i18n="idle">Rảnh rỗi</span></span>
+            <span class="mst-lock-stat e1"><strong id="mst-lock-e1-count">0</strong> ĐC 1</span>
+            <span class="mst-lock-stat e2"><strong id="mst-lock-e2-count">0</strong> ĐC 2</span>
+            <span class="mst-lock-stat conflict"><strong id="mst-lock-conflict-count">0</strong> <span data-i18n="conflict">Xung đột</span></span>
           </div>
         </div>
-        <p class="mst-section-desc">Bộ khóa liên tiến trình ngăn Động cơ 1 và Động cơ 2 mở trùng symbol. Cặp đang bận được bảo vệ nguyên tử.</p>
         <div class="mst-lock-grid" id="mst-lock-grid">
         </div>
       </article>
@@ -255,11 +266,10 @@
       <article class="card mst-section-card">
         <div class="card-head">
           <div class="mst-section-title">
-            <h3>DANH MỤC VỊ THẾ TOÀN BỘ HỆ THỐNG (CONSOLIDATED POSITIONS)</h3>
+            <h3 data-i18n="active_positions">VỊ THẾ LIÊN SÀN ĐANG MỞ</h3>
             <span class="mst-badge-count" id="mst-positions-count">0 VỊ THẾ ĐANG MỞ</span>
           </div>
         </div>
-        <p class="mst-section-desc">Tất cả vị thế đang phòng hộ thực tế trên sàn của cả Động cơ 1 và Động cơ 2 gom về một bảng duy nhất.</p>
         <div class="table-wrap">
           <table class="data-table" aria-label="Danh mục vị thế toàn hệ thống">
             <thead>
@@ -477,8 +487,6 @@
 
     <!-- ===================================================== ĐỘNG CƠ 2 (4.5k) -->
     <section class="tab-panel" id="panel-crossperp" role="tabpanel" aria-labelledby="tab-crossperp" hidden>
-      <p class="note">CHỈ TESTNET — Động cơ 2 giữ <strong>LONG perp một sàn + SHORT perp sàn kia</strong> (PLAN 4.5k, quyết định Q20). Mỗi symbol chỉ thuộc MỘT động cơ tại một thời điểm: bộ điều phối giữ khóa và chỉ nhả khi <strong>cả hai sàn đọc về phẳng và im lặng</strong>. Trang này đọc trạng thái từ portal và chỉ gửi lệnh sau khi người vận hành xác nhận.</p>
-
       <div class="callout warn" id="cp-disabled" role="status" hidden>Động cơ 2 chưa được bật.</div>
 
       <div class="cp-live" id="cp-live" hidden>
@@ -507,7 +515,6 @@
           </div>
           <div class="cp-gauges" id="cp-gauges"></div>
           <p class="note mt12" id="cp-margin-scale">—</p>
-          <p class="note mt8">Tỷ lệ là <strong>ký quỹ duy trì trên vốn chủ sở hữu của tài khoản</strong>, sàn thanh lý ở 100%. <strong>KHÔNG BIẾT không bao giờ là an toàn</strong>: một sàn không đọc được sẽ chặn mở mới chứ không đóng gì, và khi hai bằng chứng lệch nhau van chặn theo số cao hơn, đóng theo số thấp hơn.</p>
         </article>
 
         <!-- 4. CẶP ĐANG MỞ -->
@@ -633,7 +640,6 @@
             </div>
             <div class="busy-line" id="cp-busy"></div>
             <p class="note mt8" id="cp-limits">—</p>
-            <p class="note mt8">Hai chân được làm tròn về <strong>bước lớn hơn trong hai sàn</strong> và gửi song song. Một chân bị từ chối — hoặc mất câu trả lời khi gửi — sẽ dừng chân kia NGAY và kéo cả hai về 0; lệnh mở không bao giờ được gửi lại, và "không thấy lệnh" không bao giờ được coi là chứng minh lệnh không tồn tại. Đóng thì <strong>tuần tự</strong>: sàn căng ký quỹ trước.</p>
           </form>
         </article>
       </div>
@@ -1350,9 +1356,11 @@
   </main>
 
   <footer class="shell-footer">
-    <p>Mọi con số về vị thế, số dư, lệnh và funding testnet đọc lại TỪ SÀN (quy tắc 7); file ý định chỉ là cache. Mọi vị thế do người vận hành bấm — không có đường nào từ tín hiệu sống tới lệnh (PLAN Q15–Q17): tab Scanner và Paper là relay CHỈ ĐỌC, không một dòng Go nào của portal giải mã chúng.</p>
-    <p>Không con số nào ở đây là "lãi ròng" trừ nơi ghi rõ phần đã trừ. Portal chỉ nói chuyện với testnet: <span id="footer-hosts">—</span>. Biểu đồ: <a href="https://www.tradingview.com/" rel="noopener noreferrer" target="_blank">TradingView Lightweight Charts™</a> (Apache-2.0) · phông Inter, JetBrains Mono (SIL OFL 1.1), đóng gói sẵn trong binary.</p>
+    <p>Arbitrage Pro Terminal · Testnet: <span id="footer-hosts">—</span> · Charts by <a href="https://www.tradingview.com/" rel="noopener noreferrer" target="_blank">TradingView</a></p>
   </footer>
+    </div><!-- /.app-main-canvas -->
+  </div><!-- /.app-layout -->
+
 
   <dialog id="confirm" aria-labelledby="confirm-title">
     <form method="dialog" id="confirm-form">

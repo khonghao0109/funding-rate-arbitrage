@@ -2,6 +2,7 @@
 
 import { $, api, schedule } from "./core.js";
 import { shell } from "./shell.js";
+import { initI18nAndTheme } from "./i18n.js";
 import { initExecution, onStatus, onPortalDown } from "./execution.js";
 import { initMaster } from "./master.js";
 import { initScanner } from "./scanner.js";
@@ -14,6 +15,7 @@ import { initCrowding } from "./crowding.js";
 const STATUS_MS = 5000;
 
 async function boot() {
+  initI18nAndTheme();
   shell.init();
 
   let first = await api("/api/status");
