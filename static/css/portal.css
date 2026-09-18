@@ -2842,3 +2842,476 @@ dialog .actions {
   color: var(--warn);
   font-weight: 700;
 }
+
+/* --------------------------------------------- Động cơ 2 · perp–perp (4.5k)
+ *
+ * The panel is ranked by ONE question — is anything stranded — so the alarm
+ * rail and the margin gauges own the top of it and the controls sit last.
+ * Every state here is a WORD and a shape as well as a colour: an unreadable
+ * margin ratio must not be able to look like a safe one, so `unknown` gets a
+ * hatched track and a dashed border no green gauge has.
+ */
+#panel-crossperp .cp-live {
+  display: grid;
+  gap: var(--space-4);
+}
+
+/* 1. the red latch */
+#panel-crossperp .cp-emergency {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+  border-left-width: 4px;
+  animation: blink-border 1s steps(2, start) infinite;
+}
+
+#panel-crossperp .cp-emergency-text {
+  flex: 1 1 320px;
+  min-width: 0;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+/* 2. the stranded rail */
+#panel-crossperp .cp-alarm {
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--glass-border-strong);
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+#panel-crossperp .cp-alarm-head {
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+#panel-crossperp .cp-alarm[data-state="calm"] {
+  border-left-color: var(--cyan);
+  background: var(--cyan-soft);
+}
+
+#panel-crossperp .cp-alarm[data-state="calm"] .cp-alarm-head {
+  color: var(--cyan);
+}
+
+#panel-crossperp .cp-alarm[data-state="alarm"] {
+  border-color: var(--neg-line);
+  border-left-color: var(--neg);
+  background: var(--neg-soft);
+}
+
+#panel-crossperp .cp-alarm[data-state="alarm"] .cp-alarm-head {
+  color: var(--neg);
+}
+
+#panel-crossperp .cp-alarm-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#panel-crossperp .cp-alarm-list:not(:empty) {
+  margin-top: var(--space-2);
+  display: grid;
+  gap: 4px;
+}
+
+#panel-crossperp .cp-alarm-list li {
+  padding-left: 1.1rem;
+  color: var(--text);
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+  text-indent: -1.1rem;
+}
+
+#panel-crossperp .cp-alarm-list li::before {
+  content: "▸ ";
+  color: var(--neg);
+  font-weight: 700;
+}
+
+/* 3. the dual margin gauges */
+#panel-crossperp .cp-gauges {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--space-3);
+}
+
+#panel-crossperp .cp-gauge {
+  padding: var(--space-3);
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+#panel-crossperp .cp-gauge-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+#panel-crossperp .cp-gauge-venue {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+
+#panel-crossperp .cp-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 9px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: help;
+}
+
+#panel-crossperp .cp-gauge-val {
+  margin-top: var(--space-2);
+  font-size: var(--fs-2xl);
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
+}
+
+#panel-crossperp .cp-gauge-unit,
+#panel-crossperp .cp-gauge-sub {
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+#panel-crossperp .cp-gauge-sub {
+  margin-top: 6px;
+}
+
+#panel-crossperp .cp-track {
+  position: relative;
+  height: 10px;
+  margin-top: var(--space-2);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+#panel-crossperp .cp-fill {
+  display: block;
+  height: 100%;
+  width: 0;
+  border-radius: 5px 0 0 5px;
+  background: var(--text-3);
+  transition: width var(--dur-slow) var(--ease-out), background-color var(--dur) var(--ease-out);
+}
+
+#panel-crossperp .cp-tick {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.55);
+}
+
+#panel-crossperp .cp-tick[data-at="yellow"] {
+  background: var(--warn);
+}
+
+#panel-crossperp .cp-tick[data-at="orange"] {
+  background: #ff7a1a;
+}
+
+#panel-crossperp .cp-tick[data-at="red"] {
+  background: var(--neg);
+}
+
+#panel-crossperp .cp-problem {
+  margin-top: var(--space-2);
+  padding: 6px var(--space-2);
+  border-left: 3px solid var(--warn);
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+}
+
+/* A tier is a colour, a word and — for the two that are not statements about
+ * safety — a texture, so the gauge still reads correctly with no colour and
+ * with no motion. */
+#panel-crossperp .cp-gauge[data-tier="green"] {
+  border-color: var(--cyan-line);
+}
+#panel-crossperp .cp-gauge[data-tier="green"] .cp-fill {
+  background: var(--neon);
+}
+#panel-crossperp .cp-gauge[data-tier="green"] .cp-tier,
+#panel-crossperp .cp-gauge[data-tier="green"] .cp-gauge-val {
+  color: var(--cyan);
+}
+#panel-crossperp .cp-gauge[data-tier="green"] .cp-tier {
+  border-color: var(--cyan-line);
+  background: var(--cyan-soft);
+}
+
+#panel-crossperp .cp-gauge[data-tier="yellow"] {
+  border-color: var(--warn-line);
+}
+#panel-crossperp .cp-gauge[data-tier="yellow"] .cp-fill {
+  background: var(--warn);
+}
+#panel-crossperp .cp-gauge[data-tier="yellow"] .cp-tier,
+#panel-crossperp .cp-gauge[data-tier="yellow"] .cp-gauge-val {
+  color: var(--warn);
+}
+#panel-crossperp .cp-gauge[data-tier="yellow"] .cp-tier {
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+}
+
+#panel-crossperp .cp-gauge[data-tier="orange"] {
+  border-color: #ff7a1a;
+  background: rgba(255, 122, 26, 0.09);
+}
+#panel-crossperp .cp-gauge[data-tier="orange"] .cp-fill {
+  background: #ff7a1a;
+}
+#panel-crossperp .cp-gauge[data-tier="orange"] .cp-tier,
+#panel-crossperp .cp-gauge[data-tier="orange"] .cp-gauge-val {
+  color: #ff9548;
+}
+#panel-crossperp .cp-gauge[data-tier="orange"] .cp-tier {
+  border-color: #ff7a1a;
+  background: rgba(255, 122, 26, 0.16);
+}
+
+#panel-crossperp .cp-gauge[data-tier="red"] {
+  border-color: var(--neg);
+  background: var(--neg-soft);
+}
+#panel-crossperp .cp-gauge[data-tier="red"] .cp-fill {
+  background: var(--neg);
+}
+#panel-crossperp .cp-gauge[data-tier="red"] .cp-tier,
+#panel-crossperp .cp-gauge[data-tier="red"] .cp-gauge-val {
+  color: var(--neg);
+}
+#panel-crossperp .cp-gauge[data-tier="red"] .cp-tier {
+  border-color: var(--neg-line);
+  background: rgba(255, 75, 75, 0.2);
+}
+
+/* "No reading" must never be able to pass for "safe": dashed border, hatched
+ * track, empty fill, and the figure reads KHÔNG CÓ SỐ rather than 0%. */
+#panel-crossperp .cp-gauge[data-tier="unknown"] {
+  border-style: dashed;
+  border-color: var(--warn-line);
+  background: repeating-linear-gradient(135deg, rgba(255, 176, 32, 0.1) 0 8px, rgba(255, 255, 255, 0.02) 8px 16px);
+}
+#panel-crossperp .cp-gauge[data-tier="unknown"] .cp-track {
+  background: repeating-linear-gradient(135deg, rgba(255, 176, 32, 0.28) 0 6px, rgba(255, 255, 255, 0.06) 6px 12px);
+}
+#panel-crossperp .cp-gauge[data-tier="unknown"] .cp-gauge-val {
+  color: var(--warn);
+  font-size: var(--fs-lg);
+}
+#panel-crossperp .cp-gauge[data-tier="unknown"] .cp-tier {
+  border-style: dashed;
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* 4-5. the two tables */
+#panel-crossperp .cp-table td {
+  vertical-align: top;
+}
+
+#panel-crossperp tr.cp-row-alarm td {
+  background: rgba(255, 75, 75, 0.07);
+}
+
+#panel-crossperp tr.cp-row-alarm td:first-child {
+  box-shadow: inset 3px 0 0 var(--neg);
+}
+
+#panel-crossperp .strong {
+  font-weight: 700;
+}
+
+#panel-crossperp .cp-leg {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+#panel-crossperp .cp-side {
+  min-width: 46px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+#panel-crossperp .cp-side[data-side="long"] {
+  color: var(--gain);
+}
+
+#panel-crossperp .cp-side[data-side="short"] {
+  color: var(--loss);
+}
+
+#panel-crossperp .cp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+#panel-crossperp .cp-flag {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: 4px;
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+#panel-crossperp .cp-flag[data-level="ok"] {
+  border-color: var(--live-line);
+  background: rgba(44, 245, 154, 0.12);
+  color: var(--live);
+}
+
+#panel-crossperp .cp-flag[data-level="info"] {
+  border-color: rgba(79, 172, 254, 0.45);
+  color: var(--blue);
+}
+
+#panel-crossperp .cp-flag[data-level="bad"] {
+  border-color: var(--neg);
+  background: var(--neg-soft);
+  color: var(--neg);
+}
+
+#panel-crossperp .cp-state {
+  display: inline-block;
+  padding: 2px 9px;
+  border: 1px solid var(--glass-border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+#panel-crossperp .cp-state[data-state="idle"] {
+  border-color: rgba(255, 255, 255, 0.18);
+  color: var(--text-3);
+}
+
+#panel-crossperp .cp-state[data-state="occupied"] {
+  border-color: rgba(79, 172, 254, 0.45);
+  background: rgba(79, 172, 254, 0.12);
+  color: var(--blue);
+}
+
+/* A conflict is an alarm, not a status. */
+#panel-crossperp .cp-state[data-state="conflict"] {
+  border-color: var(--neg);
+  background: var(--neg-soft);
+  color: var(--neg);
+  animation: blink 1.2s steps(2, start) infinite alternate;
+}
+
+#panel-crossperp .cp-why {
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  white-space: normal;
+}
+
+#panel-crossperp .cp-pending {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+#panel-crossperp .cp-pending li {
+  padding-left: var(--space-2);
+  border-left: 2px solid var(--neg);
+}
+
+/* Matches .btn.small (32px) so the row's select and its button line up and
+ * neither is smaller than the rest of the page's controls. */
+#panel-crossperp select.cp-first {
+  min-height: 32px;
+  max-width: 230px;
+  font-size: var(--fs-xs);
+}
+
+/* 6. last open / last close, side by side once there is room */
+#panel-crossperp .cp-last-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+
+#panel-crossperp .cp-sub-title {
+  margin-bottom: var(--space-2);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+#panel-crossperp .events {
+  max-height: 220px;
+  margin: var(--space-2) 0 0;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #panel-crossperp .cp-emergency,
+  #panel-crossperp .cp-alarm[data-state="alarm"] {
+    background-image: repeating-linear-gradient(135deg, rgba(255, 75, 75, 0.16) 0 8px, transparent 8px 16px);
+  }
+}
+
+@media (max-width: 600px) {
+  #panel-crossperp .cp-gauges,
+  #panel-crossperp .cp-last-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+#panel-crossperp .cp-pilot {
+  display: grid;
+  gap: 4px;
+}
+
+/* A refusal the page made itself ("KHÔNG gửi gì cả — …") is an error, not the
+ * amber "working…" that .busy-line otherwise paints. */
+#panel-crossperp .busy-line.neg {
+  color: var(--neg);
+  font-weight: 600;
+}

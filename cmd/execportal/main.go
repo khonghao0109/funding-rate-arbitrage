@@ -52,6 +52,7 @@ import (
 
 	"futures-arbitrage-scanner/cmd/execportal/autotrade"
 	"futures-arbitrage-scanner/cmd/execportal/feeds"
+	"futures-arbitrage-scanner/internal/coordinator"
 	"futures-arbitrage-scanner/internal/execution"
 
 	"github.com/joho/godotenv"
@@ -98,6 +99,21 @@ func main() {
 		autoOn   = flag.Bool("autotrade", true, "switch the TESTNET auto-trader on at launch, with its shipped parameters on every -symbols entry (PLAN Q18); on by default — pass -autotrade=false to launch in paused state")
 		brokerFl = flag.String("broker", string(venueBinance), "the venue BOTH legs trade on: binance (testnet) or bybit (testnet or demo, chosen by BYBIT_MODE) — never a leg on each")
 		btJSON   = flag.String("backtest-json", "docs/reports/backtest-3y-latest.json", "the three-year backtest report the Backtest tab draws, built OUTSIDE this process by tools/report/bt3y.py; it is read from disk and cached by modification time, and the tab says so when the file is absent")
+
+		// Engine 2 (PLAN 4.5k step 4). Off unless asked for, because it dials a
+		// SECOND venue's credential and builds the lock that Engine 1 then has
+		// to consult: a portal that did that by default would change what every
+		// existing invocation does.
+		crossOn = flag.Bool("crossperp", false, "wire Engine 2 — the cross-venue perp–perp engine, the exclusive symbol lock and the dual margin guard (needs BOTH Binance USDⓈ-M and Bybit linear credentials)")
+		// The pilot DECIDES either way; this flag only lets it SEND. Off is the
+		// shipped default and the state every acceptance so far has run in.
+		crossPilotOn  = flag.Bool("crossperp-pilot", false, "let Engine 2's funding-spread pilot place and close orders by itself on the testnets; off leaves it advisory — it still measures and still shows every signal")
+		crossNotional = flag.Float64("crossperp-notional", 100, "notional in quote on ONE leg of a pair the pilot opens")
+		crossLocks    = flag.String("crossperp-locks", coordinator.DefaultLocksPath, "where the exclusive symbol lock table is written; it is a CACHE and the venues are the evidence (rule 7)")
+		// Two portals sharing an intent directory could send the same derived
+		// ClientOrderID twice, so the second one refuses to start (lockStateDir).
+		// An Engine-2 portal beside a running Engine-1 one needs its own.
+		stateDirFl = flag.String("state-dir", "", "override the intent directory; empty uses the venue's own (.paper/exec for Binance, .paper/exec-bybit for Bybit). A portal started beside another one MUST name a different directory")
 	)
 	flag.Parse()
 	_ = godotenv.Load()
@@ -137,11 +153,31 @@ func main() {
 	}
 
 	m := dialMarketsFor(kind)
+	if dir := strings.TrimSpace(*stateDirFl); dir != "" {
+		m.profile.StateDir = dir
+	}
 	p := newPortal(m, symbolList, bindIP, *port, execSettings{
 		MarginFrac: *marginFr, MaxSlippageBps: *slipBps, LegTimeout: *legTmo, ActionTimeout: *actTmo,
 		BacktestJSONPath: *btJSON,
 	}, time.Now)
 	p.feeds = feeds.New(scannerAddr, paperAddr, time.Now)
+
+	if *crossOn {
+		crossSet := defaultCrossSettings()
+		crossSet.MaxSlippageBps, crossSet.LegTimeout, crossSet.ActionTimeout = *slipBps, *legTmo, *actTmo
+		crossSet.LocksPath, crossSet.PerpMarginFrac = *crossLocks, *marginFr
+		pilotCfg := defaultCrossPilotConfig()
+		pilotCfg.Enabled, pilotCfg.NotionalQuote, pilotCfg.PerpMarginFrac = *crossPilotOn, *crossNotional, *marginFr
+		desk, err := newCrossDesk(dialCrossVenues(), symbolList, crossSet, pilotCfg, time.Now)
+		if err != nil {
+			p.crossOffVI = "Động cơ 2 KHÔNG dựng được: " + err.Error()
+			log.Printf("execportal: -crossperp BỊ TỪ CHỐI — %v", err)
+		} else {
+			p.attachCross(desk)
+			log.Printf("execportal: ĐỘNG CƠ 2 BẬT trên %s ⟷ %s — bảng khóa %s; phi công %s",
+				crossVenueBinance, crossVenueBybit, *crossLocks, pilotModeVI(*crossPilotOn))
+		}
+	}
 
 	log.Printf("execportal: sàn %s — CHỈ host phi-mainnet: %s", m.profile.LabelVI, strings.Join(m.profile.AllowedHosts, ", "))
 	if m.profile.UnifiedWallet {
@@ -207,6 +243,13 @@ func main() {
 		p.autotrade.Run(botCtx)
 		close(botDone)
 	}()
+	// Engine 2's own loops: the 5-second dual margin read, the pilot's scan, and
+	// a retry of any lock a release could not give back. They start here, after
+	// the listener exists and Ctrl-C is caught, for the same reason the bot does.
+	if p.cross != nil {
+		startCross(botCtx, p.cross, *actTmo)
+	}
+
 	// The equity series of the PnL page: one sample a minute while the bot runs
 	// or holds a pair (pnl.go). It reads, and never trades.
 	go func() {
@@ -221,7 +264,17 @@ func main() {
 			}
 		}
 	}()
-	if *autoOn {
+	// -autotrade defaults to true, and that default is right for the portal it
+	// was written for: one venue, one strategy. It is WRONG for an Engine-2
+	// portal, which is normally started beside a running Engine-1 one — the two
+	// bots would then trade Strategy 1 on the same account from two processes.
+	// So with -crossperp the bot starts only when -autotrade was passed BY NAME.
+	autoStart := *autoOn
+	if *crossOn && !flagWasSet("autotrade") {
+		autoStart = false
+		log.Printf("execportal: auto-trader Động cơ 1 KHÔNG tự bật vì -crossperp đang bật — nêu -autotrade tường minh nếu thật sự muốn CẢ HAI động cơ chạy từ tiến trình này")
+	}
+	if autoStart {
 		if why := p.markets.profile.OrdersBlockedVI; why != "" {
 			log.Printf("execportal: -autotrade BỊ TỪ CHỐI — %s", why)
 		} else if why := p.markets.profile.AutotradeBlockedVI; why != "" {
@@ -332,3 +385,59 @@ func parseSymbols(raw string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// flagWasSet reports whether a flag was named on the command line, as opposed
+// to carrying its default. It is how -crossperp can change what -autotrade's
+// DEFAULT means without changing what an explicit -autotrade means.
+func flagWasSet(name string) bool {
+	found := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
+}
+
+func pilotModeVI(enabled bool) string {
+	if enabled {
+		return "ĐƯỢC PHÉP GỬI LỆNH (-crossperp-pilot)"
+	}
+	return "chỉ TƯ VẤN — đo và hiển thị, không gửi lệnh nào"
+}
+
+// startCross brings Engine 2 up: reconcile the lock table against both venues,
+// adopt whatever it says this engine still holds, then run the guard, the pilot
+// and the release retry until the context ends.
+//
+// A failed reconcile is logged and NOT fatal: the coordinator grants nothing
+// until it has succeeded, so the failure mode is "Engine 2 cannot open", which
+// is the safe one. Everything else on the page keeps working.
+func startCross(ctx context.Context, desk *crossDesk, actionTimeout time.Duration) {
+	boot, cancel := context.WithTimeout(context.Background(), actionTimeout)
+	defer cancel()
+	if err := desk.reconcileLocks(boot); err != nil {
+		log.Printf("execportal/crossperp: ĐỐI SOÁT KHỞI ĐỘNG HỎNG (%v) — Động cơ 2 sẽ TỪ CHỐI mọi lệnh mở cho tới khi đối soát được; bấm ĐỐI SOÁT LẠI trên trang", err)
+	} else {
+		desk.adoptPairs(boot)
+	}
+
+	go desk.runMarginGuard(ctx)
+	go desk.pilot.Run(ctx)
+	go func() {
+		ticker := time.NewTicker(crossReleaseRetryEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				desk.retryReleases(ctx)
+			}
+		}
+	}()
+}
+
+// crossReleaseRetryEvery is how often a lock held only because its release
+// failed is offered back to the coordinator again.
+const crossReleaseRetryEvery = 60 * time.Second

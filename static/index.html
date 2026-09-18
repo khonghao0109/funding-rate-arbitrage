@@ -71,6 +71,11 @@
         Radar Chéo Sàn
         <span class="tab-count" id="tab-radar-alarm" hidden>≥25%</span>
       </button>
+      <button class="tab" role="tab" id="tab-crossperp" data-tab="crossperp" aria-controls="panel-crossperp" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h4l9 10h5"/><path d="M3 17h4l9-10h5"/><path d="M18 4l3 3-3 3"/><path d="M18 14l3 3-3 3"/></svg>
+        Động cơ 2 (Perp–Perp Chéo Sàn)
+        <span class="tab-count" id="tab-crossperp-alarm" hidden>!</span>
+      </button>
       <button class="tab" role="tab" id="tab-autotrade" data-tab="autotrade" aria-controls="panel-autotrade" aria-selected="false" tabindex="-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
         Auto-Trader (Funding Arb)
@@ -292,6 +297,170 @@
           </table>
         </div>
       </article>
+    </section>
+
+    <!-- ===================================================== ĐỘNG CƠ 2 (4.5k) -->
+    <section class="tab-panel" id="panel-crossperp" role="tabpanel" aria-labelledby="tab-crossperp" hidden>
+      <p class="note">CHỈ TESTNET — Động cơ 2 giữ <strong>LONG perp một sàn + SHORT perp sàn kia</strong> (PLAN 4.5k, quyết định Q20). Mỗi symbol chỉ thuộc MỘT động cơ tại một thời điểm: bộ điều phối giữ khóa và chỉ nhả khi <strong>cả hai sàn đọc về phẳng và im lặng</strong>. Trang này đọc trạng thái từ portal và chỉ gửi lệnh sau khi người vận hành xác nhận.</p>
+
+      <div class="callout warn" id="cp-disabled" role="status" hidden>Động cơ 2 chưa được bật.</div>
+
+      <div class="cp-live" id="cp-live" hidden>
+        <!-- 1. VAN KÝ QUỸ ĐỎ — thứ duy nhất được đứng trên mọi thứ khác -->
+        <div class="callout bad cp-emergency" id="cp-emergency" role="alert" hidden>
+          <div class="cp-emergency-text" id="cp-emergency-text">—</div>
+          <button type="button" class="btn danger small" id="cp-ack-margin">XÁC NHẬN ĐÃ ĐỌC CHỐT ĐỎ</button>
+        </div>
+
+        <!-- 2. CÁI GÌ ĐANG MẮC KẸT — câu hỏi duy nhất người vận hành cần trả lời -->
+        <div class="cp-alarm" id="cp-alarm" data-state="calm" role="status" aria-atomic="true">
+          <p class="cp-alarm-head" id="cp-alarm-head">Đang đọc trạng thái Động cơ 2…</p>
+          <ul class="cp-alarm-list" id="cp-alarm-list"></ul>
+        </div>
+
+        <!-- 2b. CÓ AI KHÁC ĐANG QUYẾT ĐỊNH TRÊN CÁC SYMBOL NÀY KHÔNG -->
+        <div class="callout cp-pilot" id="cp-pilot" role="status" hidden></div>
+
+        <!-- 3. THƯỚC ĐO MMR VAN KÉP -->
+        <article class="card" aria-labelledby="cp-margin-title">
+          <div class="card-head">
+            <h2 id="cp-margin-title">Thước đo MMR van kép</h2>
+            <span class="tag gross">ĐỌC TỪ SÀN</span>
+            <span class="spacer"></span>
+            <span class="hint" id="cp-margin-age">chưa đọc</span>
+          </div>
+          <div class="cp-gauges" id="cp-gauges"></div>
+          <p class="note mt12" id="cp-margin-scale">—</p>
+          <p class="note mt8">Tỷ lệ là <strong>ký quỹ duy trì trên vốn chủ sở hữu của tài khoản</strong>, sàn thanh lý ở 100%. <strong>KHÔNG BIẾT không bao giờ là an toàn</strong>: một sàn không đọc được sẽ chặn mở mới chứ không đóng gì, và khi hai bằng chứng lệch nhau van chặn theo số cao hơn, đóng theo số thấp hơn.</p>
+        </article>
+
+        <!-- 4. CẶP ĐANG MỞ -->
+        <article class="card" aria-labelledby="cp-pairs-title">
+          <div class="card-head">
+            <h2 id="cp-pairs-title">Cặp đang mở</h2>
+            <span class="spacer"></span>
+            <span class="hint" id="cp-pairs-count">—</span>
+          </div>
+          <div class="table-wrap">
+            <table class="cp-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Hai chân (sàn · coin)</th>
+                  <th class="r">Lệch hai chân (coin)</th>
+                  <th>Trạng thái</th>
+                  <th>Lệnh chưa chứng minh xong</th>
+                  <th>Hành động</th>
+                </tr>
+              </thead>
+              <tbody id="cp-pairs"><tr><td class="empty" colspan="6">—</td></tr></tbody>
+            </table>
+          </div>
+          <p class="note mt8">Số lượng mỗi chân là của <strong>ý định</strong> Động cơ 2 đang ghi nhận; bằng chứng cuối cùng luôn là vị thế đọc từ sàn (quy tắc 7). Một cặp <strong>chưa giải quyết</strong> hoặc <strong>bị chặn đóng</strong> không tự khỏi: máy không được phép tự hoà giải hai bằng chứng lệch nhau (Q21), nên nó chờ người.</p>
+        </article>
+
+        <!-- 5. BẢNG KHÓA CẶP -->
+        <article class="card" aria-labelledby="cp-locks-title">
+          <div class="card-head">
+            <h2 id="cp-locks-title">Bảng khóa cặp rảnh rỗi</h2>
+            <span class="spacer"></span>
+            <span class="hint" id="cp-reconciled">chưa đối soát</span>
+            <button type="button" class="btn ghost small" id="cp-reconcile">ĐỐI SOÁT LẠI (không gửi lệnh)</button>
+          </div>
+          <div class="table-wrap">
+            <table class="cp-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Tình trạng</th>
+                  <th>Động cơ chủ</th>
+                  <th>Ý định</th>
+                  <th>Sàn</th>
+                  <th class="r">APR ưu tiên / vốn</th>
+                  <th>Chi tiết · bằng chứng</th>
+                </tr>
+              </thead>
+              <tbody id="cp-locks"><tr><td class="empty" colspan="7">—</td></tr></tbody>
+            </table>
+          </div>
+          <p class="note mt8" id="cp-locks-note">—</p>
+          <p class="note mt8" id="cp-lockfile">—</p>
+        </article>
+
+        <!-- 6. KẾT QUẢ LẦN MỞ / ĐÓNG GẦN NHẤT -->
+        <article class="card" aria-labelledby="cp-last-title">
+          <div class="card-head">
+            <h2 id="cp-last-title">Kết quả lần mở / đóng gần nhất</h2>
+            <span class="spacer"></span>
+            <span class="hint">cửa sổ hở là khoảng thời gian CHỈ MỘT chân nằm trên sàn</span>
+          </div>
+          <div class="cp-last-grid">
+            <div id="cp-last-open"></div>
+            <div id="cp-last-close"></div>
+          </div>
+        </article>
+
+        <!-- 7. NHẬT KÝ -->
+        <article class="card" aria-labelledby="cp-events-title">
+          <div class="card-head">
+            <h2 id="cp-events-title">Nhật ký Động cơ 2 &amp; van ký quỹ</h2>
+            <span class="spacer"></span>
+            <span class="hint">mới nhất trước</span>
+          </div>
+          <ol class="at-console" id="cp-events"><li class="at-empty">chưa có sự kiện</li></ol>
+        </article>
+
+        <!-- 8. BÀN ĐIỀU KHIỂN — thao tác thường ngày nằm DƯỚI phần trạng thái -->
+        <article class="card" aria-labelledby="cp-form-title">
+          <div class="card-head">
+            <h2 id="cp-form-title">Bảng điều khiển mở / đóng thủ công</h2>
+            <span class="tag gross">GỬI LỆNH THẬT TRÊN TESTNET</span>
+            <span class="spacer"></span>
+            <span class="hint" id="cp-venues">—</span>
+          </div>
+          <form id="cp-form" novalidate>
+            <div class="at-fields">
+              <div class="field">
+                <label for="cp-symbol">Symbol</label>
+                <select id="cp-symbol"></select>
+              </div>
+              <div class="field">
+                <label for="cp-long">Sàn LONG perp</label>
+                <select id="cp-long"></select>
+              </div>
+              <div class="field">
+                <label for="cp-short">Sàn SHORT perp</label>
+                <select id="cp-short"></select>
+              </div>
+              <div class="field">
+                <span class="lbl" id="cp-size-lbl">Cỡ vị thế — chọn ĐÚNG MỘT đơn vị</span>
+                <div class="radios" role="radiogroup" aria-labelledby="cp-size-lbl">
+                  <label><input type="radio" name="cp_size_unit" id="cp-size-notional" value="notional_quote" checked> notional (quote)</label>
+                  <label><input type="radio" name="cp_size_unit" id="cp-size-qty" value="qty_coin"> khối lượng (coin)</label>
+                </div>
+                <input type="number" id="cp-size" min="0" step="any" inputmode="decimal" aria-describedby="cp-size-hint">
+                <div class="hint" id="cp-size-hint">—</div>
+              </div>
+              <div class="field">
+                <label for="cp-apr">APR kỳ vọng trên VỐN (%/năm)</label>
+                <input type="number" id="cp-apr" step="any" inputmode="decimal" value="0" aria-describedby="cp-apr-hint">
+                <div class="hint" id="cp-apr-hint">CHỈ để tranh khóa symbol với Động cơ 1 — không phải lãi, và bộ điều phối không bao giờ tự tính "ròng".</div>
+              </div>
+              <div class="field">
+                <label for="cp-apr-basis">Con số APR đó đã trừ những gì (bắt buộc)</label>
+                <input type="text" id="cp-apr-basis" maxlength="200" aria-describedby="cp-apr-basis-hint">
+                <div class="hint" id="cp-apr-basis-hint">Portal từ chối yêu cầu để trống ô này.</div>
+              </div>
+            </div>
+            <div class="at-actions mt12">
+              <button type="submit" class="btn primary" id="cp-open">[MỞ CẶP CHÉO SÀN]</button>
+            </div>
+            <div class="busy-line" id="cp-busy"></div>
+            <p class="note mt8" id="cp-limits">—</p>
+            <p class="note mt8">Hai chân được làm tròn về <strong>bước lớn hơn trong hai sàn</strong> và gửi song song. Một chân bị từ chối — hoặc mất câu trả lời khi gửi — sẽ dừng chân kia NGAY và kéo cả hai về 0; lệnh mở không bao giờ được gửi lại, và "không thấy lệnh" không bao giờ được coi là chứng minh lệnh không tồn tại. Đóng thì <strong>tuần tự</strong>: sàn căng ký quỹ trước.</p>
+          </form>
+        </article>
+      </div>
     </section>
 
     <section class="tab-panel" id="panel-autotrade" role="tabpanel" aria-labelledby="tab-autotrade" hidden>

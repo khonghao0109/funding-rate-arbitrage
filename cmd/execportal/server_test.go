@@ -383,8 +383,19 @@ func TestUI_EveryOrderLeadingWriteFollowsItsDialog(t *testing.T) {
 	js := string(blob)
 	leading := map[string]bool{"open": true, "close": true, "reconcile": true, "autotrade-start": true, "autotrade-stop-close": true,
 		"autotrade-kill": true, "autotrade-close-pair": true, "autotrade-pair-resume": true, "autotrade-pair-ack": true,
-		"autotrade-ack-all": true}
-	noOrder := map[string]bool{"autotrade-stop": true, "autotrade-pair-pause": true}
+		"autotrade-ack-all": true,
+		// Engine 2 (PLAN 4.5k step 4). The first two send orders. The other
+		// three send none and are here anyway, because each one REMOVES a stop
+		// that is holding the machine back — a pair the engine refused to close
+		// on conflicting evidence, a red margin latch, a halted pilot — and
+		// decision Q21 makes each of those a person's decision, which is exactly
+		// what a dialog is. A click that quietly re-armed the machine would be
+		// the same defect as a click that quietly traded.
+		"crossperp-open": true, "crossperp-close": true,
+		"crossperp-unblock": true, "crossperp-ack-margin": true, "crossperp-pilot": true}
+	// Reconcile only READS both venues and rewrites the lock table from what
+	// they say; it can refuse an open but can never cause one.
+	noOrder := map[string]bool{"autotrade-stop": true, "autotrade-pair-pause": true, "crossperp-reconcile": true}
 	fnStart := regexp.MustCompile(`(?m)^(?:export\s+)?(?:async\s+)?function\s+\w+`)
 	postCall := regexp.MustCompile(`\bpost\(\s*"([a-z-]+)"\s*,[^;]*`)
 	starts := fnStart.FindAllStringIndex(js, -1)

@@ -109,6 +109,21 @@ func (p *portal) handler() http.Handler {
 	post("/api/autotrade/close-pair", autotradeClosePairAction, p.handleAutotradeClosePair)
 	postAny("/api/autotrade/pair", []string{autotradePairPauseAction, autotradePairResumeAction, autotradePairAckAction}, p.handleAutotradePair)
 	post("/api/autotrade/ack-all", autotradeAckAllAction, p.handleAutotradeAckAll)
+	// Engine 2 — the cross-venue perp–perp engine, its exclusive symbol lock and
+	// the dual margin guard (PLAN 4.5k step 4). Every one of these answers
+	// {"enabled":false} when the desk is not wired, so the page can tell "off"
+	// from "broken" without a second request.
+	get("/api/crossperp/status", p.handleCrossStatus)
+	get("/api/coordinator/locks", p.handleCoordinatorLocks)
+	get("/api/risk/margin", p.handleRiskMargin)
+	post("/api/crossperp/open", crossOpenAction, p.handleCrossOpen)
+	post("/api/crossperp/close", crossCloseAction, p.handleCrossClose)
+	// Reconcile and unblock send NO order. They are writes because they change
+	// what the machine believes, and Q21 makes the second one a person's word.
+	post("/api/crossperp/reconcile", crossReconcileAction, p.handleCrossReconcile)
+	post("/api/crossperp/unblock", crossUnblockAction, p.handleCrossUnblock)
+	post("/api/crossperp/pilot", crossPilotAction, p.handleCrossPilot)
+	post("/api/risk/margin/ack", crossAckMarginAction, p.handleCrossAckMargin)
 	// Read-only feeds from cmd/scanner and cmd/paperledger (PLAN Q17): bytes
 	// relayed, never decoded, and not reachable from any order path.
 	get("/api/scanner/funding-history", p.feeds.ScannerHistory)

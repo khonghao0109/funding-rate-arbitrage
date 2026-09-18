@@ -287,6 +287,16 @@ func (p *portal) openAs(ctx context.Context, req openRequest, intentPrefix strin
 		return v, http.StatusInternalServerError
 	}
 
+	// The exclusive symbol lock (PLAN 4.5k step 4). It is taken LAST, after every
+	// cheaper refusal, and before the first order: a lock held while a book read
+	// fails is a symbol Engine 2 could not have used and did not need to lose.
+	// When Engine 2 is not wired there is no lock and settle is a no-op.
+	settleLock, lockWhyVI := p.acquireEngine1(ctx, req.Symbol, intentID, "Động cơ 1: spot long + perp short trên "+p.markets.profile.LabelVI)
+	if lockWhyVI != "" {
+		v.ErrorVI = lockWhyVI + " — chưa gửi lệnh nào"
+		return v, http.StatusConflict
+	}
+
 	startedAt := time.Now()
 	res, openErr := tr.Open(ctx, intent)
 	v.ElapsedMs = time.Since(startedAt).Milliseconds()
@@ -294,6 +304,11 @@ func (p *portal) openAs(ctx context.Context, req openRequest, intentPrefix strin
 	v.Outcome, v.Hedged, v.ReducedToMatch = string(res.Outcome), res.Hedged(), res.ReducedToMatch
 	v.RefusedBeforePlacing = errors.Is(openErr, execution.ErrRefusedBeforePlacing)
 	v.Alarm = errors.Is(openErr, execution.ErrUnwindIncomplete) || errors.Is(openErr, execution.ErrFlatEvidenceConflict)
+	// Keep the lock whenever the venues may hold something: a hedged pair, or a
+	// loud result where an order that has not been proven finished stands beside
+	// whatever the positions read. Only a run that is BOTH flat and quiet gives
+	// the symbol back, and even then the coordinator re-reads the venues first.
+	settleLock(ctx, v.Hedged || v.Alarm)
 	v.TargetQtyCoin, v.ResidualQtyCoin = res.TargetQtyCoin, res.ResidualQtyCoin
 	v.Spot, v.Perp = toLegView(res.Spot), toLegView(res.Perp)
 	v.SpotBestAskQuote, v.PerpBestBidQuote = spotMkt.Book.BestAskQuote, perpMkt.Book.BestBidQuote
@@ -771,6 +786,13 @@ func (p *portal) close(ctx context.Context, st intentState, reasonVI string, gua
 		st.NoteVI = ""
 		if reasonVI != "" {
 			st.CloseReasonVI = reasonVI
+		}
+		// Both legs proved flat by execution's own machine. Hand the symbol
+		// back — the coordinator reads every venue again before it writes idle,
+		// so this never rests on what this process believes (Q22).
+		if whyVI := p.releaseEngine1(ctx, st.Symbol, st.IntentID); whyVI != "" {
+			v.ErrorVI = strings.TrimSpace(v.ErrorVI + " " + whyVI)
+			st.NoteVI = whyVI
 		}
 	}
 	if err := saveState(p.stateDir, st); err != nil {

@@ -134,6 +134,14 @@ type portal struct {
 	fundingKeyMu sync.Mutex
 	fundingKeys  map[string]string
 
+	// cross is Engine 2's desk (crossperp.go, PLAN 4.5k step 4): the cross-venue
+	// perp–perp engine, the exclusive symbol lock and the dual margin guard. It
+	// is nil unless -crossperp was passed AND both venues answered a credential,
+	// and crossOffVI then says which of the two it was. Engine 1 consults the
+	// coordinator only when it is non-nil (engine1Lock).
+	cross      *crossDesk
+	crossOffVI string
+
 	// pnl keeps the auto-trader's equity samples (pnl.go).
 	pnl *pnlTracker
 
@@ -179,7 +187,22 @@ func newPortal(m markets, symbols []string, bindIP, port string, settings execSe
 		pnl:          newPnLTracker(),
 	}
 	p.autotrade = newAutotrade(p)
+	p.crossOffVI = "Động cơ 2 CHƯA BẬT trên tiến trình này — khởi động lại portal với cờ -crossperp " +
+		"(cần credential của CẢ HAI sàn: Binance USDⓈ-M testnet và Bybit linear testnet). " +
+		"Khi chưa bật thì bộ khóa cặp rảnh rỗi KHÔNG tồn tại, nên Động cơ 1 ở đây cũng KHÔNG hỏi khóa."
 	return p
+}
+
+// attachCross wires Engine 2's desk (crossperp.go). main calls it once, and
+// only after both venues answered a credential; before that the Engine-2 routes
+// answer {"enabled":false} with crossOffVI, and Engine 1 consults no lock.
+//
+// The desk borrows the portal's ONE intent-id source, so an id the pilot mints
+// and an id a button mints can never collide.
+func (p *portal) attachCross(d *crossDesk) {
+	d.mintID = p.mintIntentIDWith
+	p.cross = d
+	p.crossOffVI = ""
 }
 
 // acquire takes the write lock or reports what holds it.

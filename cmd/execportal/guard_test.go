@@ -694,6 +694,37 @@ func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
 		"handleAutotradeStart": {"portal.handler": true}, "handleAutotradeStop": {"portal.handler": true}, "handleAutotradeKill": {"portal.handler": true},
 		"handleAutotradeClosePair": {"portal.handler": true}, "handleAutotradePair": {"portal.handler": true},
 		"handleAutotradeAckAll": {"portal.handler": true},
+		// Engine 2 (PLAN 4.5k step 4). Its order paths are pinned exactly like
+		// Engine 1's: two functions reach crossperp.Engine, and only a route
+		// handler or the pilot's own scan step may call them. The margin guard's
+		// emergency close is deliberately NOT in this list — it calls the engine
+		// from inside internal/risk, where its callers are pinned by that
+		// package's own tests, because an emergency must not wait behind a page.
+		"openPair":        {"portal.handleCrossOpen": true, "crossPilot.enterOne": true},
+		"closePair":       {"portal.handleCrossClose": true, "crossPilot.exitOne": true},
+		"handleCrossOpen": {"portal.handler": true}, "handleCrossClose": {"portal.handler": true},
+		"handleCrossReconcile": {"portal.handler": true}, "handleCrossUnblock": {"portal.handler": true},
+		"handleCrossPilot": {"portal.handler": true}, "handleCrossAckMargin": {"portal.handler": true},
+		// The lock itself: Engine 1 asks in exactly two places, and the raw
+		// coordinator calls that grant or mark a lock are named in exactly one.
+		"acquireEngine1": {"portal.openAs": true},
+		"releaseEngine1": {"portal.close": true},
+		"TryAcquire":     {"portal.acquireEngine1": true},
+		"MarkOrdersSent": {"portal.acquireEngine1": true},
+		"Withdraw":       {"portal.acquireEngine1": true},
+		// The desk and the engine behind it. A read handler that could also
+		// reach Open or Close would be an order path no dialog guards.
+		"cross": {"portal.crossOff": true, "portal.attachCross": true, "main": true,
+			"portal.handleCrossStatus": true, "portal.handleCoordinatorLocks": true, "portal.handleRiskMargin": true,
+			"portal.handleCrossOpen": true, "portal.handleCrossClose": true, "portal.handleCrossReconcile": true,
+			"portal.handleCrossUnblock": true, "portal.handleCrossPilot": true, "portal.handleCrossAckMargin": true,
+			"portal.acquireEngine1": true, "portal.releaseEngine1": true},
+		"engine2": {"crossDesk.adoptPairs": true, "crossDesk.openPair": true, "crossDesk.closePair": true,
+			"crossDesk.statusView": true, "crossDesk.unblockClose": true, "crossDesk.confirmOrders": true,
+			"crossDesk.retryReleases": true, "newCrossDesk": true,
+			"crossPilot.stopReasonVI": true, "crossPilot.exitOne": true, "crossPilot.enterOne": true},
+		"marginGuard": {"newCrossDesk": true, "crossDesk.marginView": true, "crossDesk.acknowledgeMargin": true,
+			"crossDesk.runMarginGuard": true, "crossPilot.stressedVenue": true},
 		// The bot's Trader and Market wrap openAs and close; the one engine gets
 		// the one pair, built in newAutotrade (review of Q18, round 2). The PnL
 		// page reads its status; main's sampler reads it too.
@@ -782,7 +813,8 @@ func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
 			})
 		}
 	}
-	for _, name := range []string{"PlaceOrder", "NewOpener", "sendSquare", "reconcile", "open", "openAs", "close"} {
+	for _, name := range []string{"PlaceOrder", "NewOpener", "sendSquare", "reconcile", "open", "openAs", "close",
+		"openPair", "closePair", "acquireEngine1", "releaseEngine1", "TryAcquire", "MarkOrdersSent", "cross", "engine2", "marginGuard"} {
 		if seen[name] == 0 {
 			t.Errorf("no use of .%s found — the test is not reading the package it guards", name)
 		}

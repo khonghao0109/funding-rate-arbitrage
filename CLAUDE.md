@@ -1270,9 +1270,48 @@ self-review against its own brief stood in and found one more defect (a close
 refused before its verdict reported no pending orders, so the engine forgot what
 was holding the lock), fixed with a test and a mutation. 101 mutations all red,
 `go test -race ./...` 40/40 with no data race.
-**Engine 1 (`cmd/execportal`) does not ask the coordinator**, so running Engine 2
-beside it on the same symbols is a deployment precondition violated, not a case
-the lock handles. PLAN 4.5k.
+PLAN 4.5k.
+
+**Step 4.5l — Engine 2 WIRED INTO THE PORTAL, and one real cross-venue pair
+opened and closed on the testnets — 2026-09-18 (Q20 extended).** `cmd/execportal
+-crossperp` dials a SECOND perp client (Bybit linear beside Binance USDⓈ-M),
+builds the coordinator on both, runs the 5-second dual margin guard, and serves
+six routes — `/api/crossperp/{status,open,close,reconcile,unblock,pilot}`,
+`/api/coordinator/locks`, `/api/risk/margin` — behind the same header, Host and
+confirm-dialog walls as every other write. **Both engines now ask the same
+lock**: `openAs` takes it after every cheaper refusal and before the first order,
+marks it durably as about to send, and `close` gives it back only after
+execution proved both legs flat — the coordinator then re-reads every venue
+before it writes idle. A new tab draws the MMR gauges, the lock table and the
+pairs; an `unknown` margin tier is drawn so it can never be mistaken for green.
+Three safety defaults, because this portal normally runs BESIDE a live Engine-1
+one: `-crossperp` is off unless asked; with it the Engine-1 auto-trader does NOT
+start unless `-autotrade` is named explicitly; and `-state-dir` gives the new
+portal its own intent directory, since `lockStateDir` flocks `.paper/exec`.
+**Accepted with real orders on `ADAUSDT`** (long Bybit testnet / short Binance
+demo, 360 ADA a leg): `both_open`, residual **0 coin**, **unhedged window 57 ms**
+over the real internet, both positions read back +360/−360, 0 pending orders;
+sequential close `both_flat` in one round with **0 resting orders on either
+venue** and a **759 ms** unhedged window — the price of closing one leg after the
+other; lock `idle → occupied → idle`, confirmed by an independent reconcile of
+both venues. **BTCUSDT was REFUSED by the lock** (HTTP 409, no ClientOrderID
+minted) because the portal on 8087 holds a live short there and the coordinator
+had inferred that from the venue. The acceptance found one defect and it is
+fixed: a manual Engine-2 open was refused for "widening" because it states no
+signal cost, so `Intent.MaxEntryCostWidenBpsOverride` now carries Engine 1's
+4.4b exemption per intent (+Inf = do not check, NaN refused) and the PILOT keeps
+the shipped 5 bps. The pilot itself is **advisory** — it measures each venue's
+funding on that venue's OWN measured cadence and ranks after cost on capital,
+and sends nothing without `-crossperp-pilot`, which has never been on.
+**Q21 and Q22 are now decided**: a conflict sends no probe and halts every
+symbol, and a lost reduce-only is absent only after the quiet period AND a
+`GetPosition` of 0 on both venues. **Limits:** the 8087 portal runs an older
+binary and asks nobody — what protects it is the coordinator READING its
+positions, which narrows the race rather than closing it; on the SHARED venue
+Engine 1's own one-position-per-symbol check fires before the lock does (proved
+live); the lock exists only under `-crossperp`; and testnet funding is not
+mainnet funding, so the pilot's 160%/yr ETHUSDT reading is two disjoint fake
+markets, not an edge. No independent review of 4.5l has run. PLAN 4.5l.
 
 **Step 6.1 (crowding core) shipped 2026-09-12.** `internal/crowding` ports
 the research package's whole nine-definition path (not four functions) with
@@ -1553,6 +1592,14 @@ cmd/execportal/      the unified operator page on Binance TESTNET (PLAN Q16, Q17
                      status and /pnl, POST start / stop / kill / close-pair /
                      pair; its orders go through openAs and close
                      (autotrade.go), never a second path, one at a time
+                     With -crossperp it also runs ENGINE 2 (4.5l): a second perp
+                     client on Bybit linear beside Binance USDⓈ-M, the exclusive
+                     symbol lock both engines now ask, the 5 s dual margin guard,
+                     six /api/crossperp + /api/coordinator + /api/risk routes and
+                     a tab. crossperp.go is the desk, crossperp_actions.go the two
+                     order paths, crosssignal.go the ADVISORY pilot, engine1lock.go
+                     Engine 1's side of the lock. Off by default, and with it the
+                     Engine-1 auto-trader does not self-start
   autotrade/         the auto-trader's state machine (Q18, multi-pair since
                      4.5e): DECIDES from the testnet's own books, settled
                      funding and account fees, through strategy.RoundTripCost/
@@ -1686,8 +1733,8 @@ internal/
                      or release is reported, reconcile from the venues' positions
                      and resting orders, release proven on the venues, and a
                      durable "orders sent" mark that ends Withdraw. Reads
-                     positions through any broker.Broker and places no order;
-                     linked by no command
+                     positions through any broker.Broker and places no order.
+                     Linked into cmd/execportal by 4.5l, where BOTH engines ask it
   risk/              margin, kill switch, capital limits — since 2026-09-07 it
                      holds the perp liquidation model strategy calls; since
                      2026-09-17 the dual-venue MarginGuard (4.5k): 5 s reads,
@@ -1739,8 +1786,9 @@ package that may hold a credential.
 `backtest` has been real code since step 3.3 (2026-09-04) and `risk` since the
 liquidation model of 2026-09-07; `crowding` (6.1) and `paper` (4.3) arrived on
 2026-09-11/12; `coordinator` and `execution/crossperp` arrived on 2026-09-17
-(4.5k, Q20) and are linked by no command — they hold Engine 2 and its symbol lock,
-proven against fakes only. Read the relevant `doc.go` before adding code to any of them,
+(4.5k, Q20) and were linked into `cmd/execportal` on 2026-09-18 (4.5l) behind the
+`-crossperp` flag — they hold Engine 2 and its symbol lock, and have now opened
+and closed one real cross-venue pair on the two testnets. Read the relevant `doc.go` before adding code to any of them,
 empty or not — the boundaries written there are the contract, not a suggestion,
 and `paper/doc.go` plus `execution/doc.go` are where rule 7's one exception is
 bounded.
@@ -1839,6 +1887,26 @@ go run ./cmd/execportal -port 8087 -autotrade    # + switch the TESTNET auto-tra
 curl -s -H 'X-Execportal-Action: read' http://127.0.0.1:8087/api/autotrade/status
 sqlite3 -readonly "file:data/scanner.db?mode=ro" ".backup '/tmp/paper.db'" && go run ./cmd/paperledger -db /tmp/paper.db
 curl -s -H 'X-Execportal-Action: read' 'http://127.0.0.1:8087/api/positions?symbol=BTCUSDT'
+
+# Engine 2 (step 4.5l): the SAME portal with -crossperp, which dials a second
+# perp client and wires the exclusive symbol lock into BOTH engines. It must not
+# share an intent directory with a running portal (lockStateDir flocks it), and
+# with -crossperp the Engine-1 auto-trader does NOT self-start.
+go run ./cmd/execportal -port 8089 -crossperp -state-dir .paper/exec-crossperp \
+  -scanner-addr "" -paper-addr "" -symbols BTCUSDT,ETHUSDT,ADAUSDT
+curl -s -H 'X-Execportal-Action: read' http://127.0.0.1:8089/api/coordinator/locks
+curl -s -H 'X-Execportal-Action: read' http://127.0.0.1:8089/api/risk/margin
+# One cross-venue pair by hand. long_venue/short_venue are binance_futures and
+# bybit_linear; state exactly one of notional_quote and qty_coin; the APR is only
+# what the intent competes for the symbol with, so its basis text is required.
+curl -s -X POST http://127.0.0.1:8089/api/crossperp/open \
+  -H 'X-Execportal-Action: crossperp-open' -H 'Content-Type: application/json' \
+  -d '{"symbol":"ADAUSDT","long_venue":"bybit_linear","short_venue":"binance_futures","notional_quote":77,"expected_apr_on_capital_frac":0.2,"expected_apr_basis_vi":"nhap tay"}'
+curl -s -X POST http://127.0.0.1:8089/api/crossperp/close \
+  -H 'X-Execportal-Action: crossperp-close' -H 'Content-Type: application/json' \
+  -d '{"symbol":"ADAUSDT","first_venue":"binance_futures","reason_vi":"dong tay"}'
+# -crossperp-pilot lets the funding-spread pilot trade by itself. It has NEVER
+# been switched on; without it the pilot measures and shows and sends nothing.
 
 # Re-record each venue's testdata/ from the live venues. Opens real sockets, so
 # it is skipped by default; run it when a venue changes its payloads.

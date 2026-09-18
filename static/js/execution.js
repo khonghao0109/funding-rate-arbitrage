@@ -11,10 +11,16 @@
 // (confirmed), stops it, kills it (confirmed), closes one of its pairs
 // (confirmed), pauses or — confirmed — resumes a pair, and acknowledges a
 // pair's halt. autotrade.js draws what the bot decided and sends nothing.
+//
+// The Động cơ 2 tab (PLAN 4.5k, Q20) is the same shape: crossperp.js draws the
+// cross-venue perp–perp desk and sends nothing, and the five writes it needs —
+// mở, đóng, đối soát, bỏ chặn, nhả chốt đỏ ký quỹ — live at the end of this
+// file, each behind its own dialog.
 
 import { $, el, clear, setText, isNum, tidy, fmt, signCls, api, post, schedule, emptyRow } from "./core.js";
 import { shell } from "./shell.js";
 import { autotradeView, tick as autotradeTick } from "./autotrade.js";
+import { crossperpView } from "./crossperp.js";
 
 const FAST_MS = 3000;
 const BACKGROUND_MS = 15000;
@@ -1229,6 +1235,250 @@ function atToggle() {
   }
 }
 
+// ---------------------------------------------- Động cơ 2 (PLAN 4.5k, Q20)
+//
+// The cross-venue perp–perp desk's five writes. crossperp.js draws that tab and
+// sends nothing; these are the only functions in the page that reach its
+// endpoints. All five ask first — including the three that place no order
+// (đối soát, bỏ chặn, xác nhận chốt đỏ), because each one changes what the
+// machine is allowed to do next, and Q21/Q22 forbid the machine resolving any
+// of them on its own.
+
+function cpBusy(on, labelVI) {
+  state.acting = on;
+  crossperpView.setBusy(on, labelVI);
+  syncButtons();
+}
+
+// cpUnknown is what a cross-venue write answers when the PORTAL did not answer.
+// Engine 2 has legs on two exchanges, so the honest instruction is to reconcile
+// — which reads both venues and sends nothing — never to press again.
+function cpUnknown(actionVI) {
+  return [
+    callout(`KẾT CỤC CHƯA RÕ — portal không trả lời. Thao tác ${actionVI} CÓ THỂ đã chạy trên một hoặc cả hai sàn.`, "bad"),
+    callout("ĐỪNG bấm lại. Bấm ĐỐI SOÁT LẠI (không gửi lệnh) để đọc vị thế và lệnh còn treo từ CẢ HAI sàn, rồi đọc bảng khóa: khóa chỉ về RẢNH khi hai sàn đã đọc phẳng và im.", ""),
+  ];
+}
+
+function cpFailed(titleVI, actionVI, r) {
+  if (r.status === 0 || r.unreadable) {
+    showResult(titleVI + " — KẾT CỤC CHƯA RÕ", cpUnknown(actionVI));
+  } else {
+    showResult(titleVI + " — KHÔNG thực hiện", [callout((r.body && r.body.error_vi) || `HTTP ${r.status}`, "bad")]);
+  }
+}
+
+// cpOpenPair takes the plan crossperp.js read off its form — already validated
+// there — and repeats every field of it back before anything is sent.
+async function cpOpenPair(plan) {
+  const sizeRow = plan.sizeKey === "qty_coin"
+    ? `${fmt.coin(plan.sizeValue)} coin mỗi chân (portal quy ra notional bằng giá giữa sổ của chân LONG)`
+    : `${fmt.quote(plan.sizeValue, 2)} quote mỗi chân`;
+  const rows = [
+    ["Symbol", plan.symbol],
+    ["Chân LONG perp", plan.longVenue],
+    ["Chân SHORT perp", plan.shortVenue],
+    ["Cỡ vị thế", sizeRow],
+    ["Trần bàn Động cơ 2", `${fmt.quote(plan.maxNotionalQuote, 0)} quote mỗi chân · trượt giá ${fmt.bps(plan.maxSlippageBps, 1)} bps`],
+    ["APR tranh khóa", `${fmt.pct(plan.aprPct, 2, true)}/năm trên VỐN — CHỈ để tranh khóa symbol với Động cơ 1, KHÔNG phải lãi`],
+    ["Con số đó đã trừ", plan.aprBasisVI],
+    ["Sẽ làm", "xin khóa symbol; hai chân làm tròn về BƯỚC LỚN HƠN của hai sàn rồi gửi SONG SONG"],
+  ];
+  const warning = callout(
+    "Một chân bị từ chối — hoặc mất câu trả lời khi gửi — sẽ dừng chân kia NGAY và kéo cả hai về 0. Lệnh mở KHÔNG BAO GIỜ được gửi lại, và \"không thấy lệnh\" không bao giờ được coi là chứng minh lệnh không tồn tại: một lần mở như thế kết thúc phẳng nhưng GIỮ khóa và kêu to.",
+    "warn"
+  );
+  if (!(await confirmDialog("MỞ CẶP PERP–PERP CHÉO SÀN?", rows, "XÁC NHẬN MỞ CHÉO SÀN", "primary", warning))) return;
+
+  const body = {
+    symbol: plan.symbol,
+    long_venue: plan.longVenue,
+    short_venue: plan.shortVenue,
+    expected_apr_on_capital_frac: plan.aprOnCapitalFrac,
+    expected_apr_basis_vi: plan.aprBasisVI,
+  };
+  // Exactly one size reaches the portal: it refuses a request naming both.
+  body[plan.sizeKey] = plan.sizeValue;
+
+  cpBusy(true, `đang mở ${plan.symbol} trên ${plan.longVenue} + ${plan.shortVenue}…`);
+  const r = await post("crossperp-open", "/api/crossperp/open", body);
+  cpBusy(false);
+  const v = r.body || {};
+  if (r.status === 0 || r.unreadable) {
+    showResult("MỞ CHÉO SÀN — KẾT CỤC CHƯA RÕ", cpUnknown("mở"));
+  } else {
+    const headline = v.alarm
+      ? "⚠ BÁO ĐỘNG — còn lệnh có thể thực thi; khóa được GIỮ, đọc cả hai sàn ngay"
+      : v.hedged
+        ? "ĐÃ MỞ · HAI CHÂN CÂN NHAU"
+        : v.lock_refused
+          ? "TỪ CHỐI VÌ KHÓA SYMBOL — không lệnh nào được gửi"
+          : v.refused_before_placing
+            ? "TỪ CHỐI TRƯỚC KHI GỬI — không có gì trên sàn"
+            : "KHÔNG MỞ ĐƯỢC · đã kéo cả hai chân về phẳng";
+    showResult(`MỞ CHÉO SÀN ${v.intent_id || plan.symbol}`, [
+      callout(headline, v.alarm ? "bad" : v.hedged ? "ok" : "warn"),
+      kvList([
+        ["Kết cục", `${v.outcome || "—"}${v.reduced_to_match ? " · đã thu nhỏ về chân ngắn" : ""}`],
+        ["Cửa sổ hở (chỉ một chân trên sàn)", `${v.unhedged_window_ms} ms`],
+        ["Lệch hai chân", `${fmt.coin(v.delta_imbalance_qty_coin, true)} coin (dung sai ${fmt.coin(v.tolerance_qty_coin)})`, signCls(-Math.abs(v.delta_imbalance_qty_coin || 0))],
+        ["Cỡ đã gửi", `${fmt.coin(v.target_qty_coin)} coin · ${fmt.quote(v.notional_quote, 2)} quote mỗi chân`],
+        ["Cỡ đó lấy từ đâu", v.size_basis_vi || "—"],
+      ]),
+      v.error_vi ? callout("Lý do: " + v.error_vi, v.alarm ? "bad" : "") : null,
+      callout("Chi tiết đầy đủ của lần mở này nằm ở thẻ “Kết quả lần mở / đóng gần nhất” trên tab Động cơ 2.", ""),
+    ]);
+  }
+  crossperpView.refresh();
+}
+
+// cpClosePair closes ONE cross-venue pair. Close is SEQUENTIAL: the stressed
+// venue first, then the second leg down to what the first really holds.
+async function cpClosePair(pair, firstVenue) {
+  const rows = [
+    ["Symbol · ý định", `${pair.symbol} · ${pair.intent_id || "—"}`],
+    ["Đang giữ", `LONG ${pair.long_venue} ${fmt.coin(pair.long_qty_coin)} coin · SHORT ${pair.short_venue} ${fmt.coin(pair.short_qty_coin)} coin`],
+    ["Sàn đóng trước", firstVenue || "để máy chọn chân lớn hơn (van ký quỹ vẫn được quyền chỉ định sàn căng)"],
+    ["Sẽ làm", "đóng TUẦN TỰ, reduce-only; chân thứ hai chỉ hạ đúng bằng phần chân thứ nhất thật sự đã đóng"],
+    ["Khóa symbol", "chỉ về RẢNH khi cả hai sàn đọc phẳng, không còn lệnh treo, và mọi lệnh của ý định đã chứng minh xong"],
+  ];
+  const warning = callout(
+    "Nếu một thứ còn có thể thực thi, kết cục là PHẲNG NHƯNG GIỮ KHÓA — đó là đúng, không phải lỗi: một lệnh reduce-only chưa chứng minh xong sẽ cắt vào vị thế của động cơ sau.",
+    "warn"
+  );
+  if (!(await confirmDialog(`ĐÓNG CẶP CHÉO SÀN ${pair.symbol}?`, rows, "XÁC NHẬN ĐÓNG CHÉO SÀN", "danger", warning))) return;
+
+  cpBusy(true, `đang đóng ${pair.symbol} trên hai sàn…`);
+  const r = await post("crossperp-close", "/api/crossperp/close", {
+    symbol: pair.symbol,
+    first_venue: firstVenue || "",
+    reason_vi: "người vận hành bấm ĐÓNG trên tab Động cơ 2",
+  });
+  cpBusy(false);
+  const v = r.body || {};
+  if (r.status === 0 || r.unreadable) {
+    showResult("ĐÓNG CHÉO SÀN — KẾT CỤC CHƯA RÕ", cpUnknown("đóng"));
+  } else {
+    const headline = v.alarm
+      ? "⚠ BÁO ĐỘNG — hai chân có thể lệch; ĐỌC SÀN, ĐỪNG bấm đóng lại"
+      : v.already_flat
+        ? "CẶP ĐÃ PHẲNG SẴN — không lệnh nào cần gửi"
+        : v.refused
+          ? "TỪ CHỐI TRƯỚC KHI GỬI — không lệnh nào tới sàn"
+          : v.lock_released
+            ? "ĐÃ ĐÓNG · HAI CHÂN PHẲNG VÀ KHÓA ĐÃ NHẢ"
+            : "ĐÓNG XONG NHƯNG KHÓA CHƯA NHẢ — còn thứ có thể thực thi";
+    showResult(`ĐÓNG CHÉO SÀN ${v.intent_id || pair.symbol}`, [
+      callout(headline, v.alarm ? "bad" : v.lock_released || v.already_flat ? "ok" : "warn"),
+      kvList([
+        ["Kết cục", v.outcome || "—"],
+        ["Cửa sổ hở (chỉ một chân trên sàn)", `${v.unhedged_window_ms} ms`],
+        ["Chân đóng trước", v.first_venue ? `${v.first_venue} (${v.first_leg || "—"})` : "máy chọn"],
+        ["Lệnh còn nằm trên sàn", v.resting_orders < 0 ? "không đọc được" : String(v.resting_orders)],
+        ["Khóa symbol", v.lock_state_vi || (v.lock_released ? "đã nhả" : "còn giữ")],
+      ]),
+      v.error_vi ? callout("Lý do: " + v.error_vi, v.alarm ? "bad" : "") : null,
+    ]);
+  }
+  crossperpView.refresh();
+}
+
+// cpReconcile re-reads every venue and rebuilds the lock table. It sends NO
+// order — it is the one Engine-2 write worth running while wondering what is
+// going on — but it does spend venue weight and it moves the lock table, so it
+// still asks.
+async function cpReconcile() {
+  const rows = [
+    ["Sẽ làm", "đọc vị thế và lệnh còn treo của MỌI symbol trên CẢ HAI sàn, rồi dựng lại bảng khóa từ những gì sàn nói"],
+    ["Gửi lệnh nào không", "KHÔNG — không một lệnh nào rời máy"],
+    ["Vì sao cần", "bộ điều phối không cấp khóa nào cho tới khi một lần đối soát đọc được mọi sàn; đây cũng là cách phục hồi sau khi mất mạng"],
+  ];
+  if (!(await confirmDialog("ĐỐI SOÁT LẠI BẢNG KHÓA?", rows, "XÁC NHẬN ĐỐI SOÁT", "secondary"))) return;
+
+  cpBusy(true, "đang đọc cả hai sàn và dựng lại bảng khóa…");
+  const r = await post("crossperp-reconcile", "/api/crossperp/reconcile", {});
+  cpBusy(false);
+  if (!r.ok) {
+    cpFailed("ĐỐI SOÁT", "đối soát", r);
+  } else {
+    const locks = (r.body && r.body.locks) || [];
+    const conflicts = locks.filter((k) => k.state === "conflict").length;
+    const unverified = Object.keys((r.body && r.body.unverified) || {});
+    showResult("ĐỐI SOÁT", [
+      callout(
+        `Đã đọc lại ${locks.length} khóa — ${conflicts} XUNG ĐỘT, ${unverified.length} symbol CHƯA XÁC MINH. Không lệnh nào được gửi.`,
+        conflicts || unverified.length ? "warn" : "ok"
+      ),
+      unverified.length ? callout("Chưa xác minh (không được cấp khóa): " + unverified.join(", "), "warn") : null,
+    ]);
+  }
+  crossperpView.refresh();
+}
+
+// cpUnblockClose is a person saying "I have read the conflicting evidence" about
+// ONE pair. It sends no order; it only lets a later close be attempted.
+async function cpUnblockClose(pair) {
+  const rows = [
+    ["Symbol · ý định", `${pair.symbol} · ${pair.intent_id || "—"}`],
+    ["Đang bị chặn vì", pair.close_blocked_vi || "—"],
+    ["Sẽ làm", "bỏ chặn để lần ĐÓNG sau được thử — KHÔNG gửi lệnh nào lúc này"],
+    ["Điều kiện để bấm", "đã tự đọc vị thế của cặp này trên CẢ HAI sàn và hiểu vì sao hai bằng chứng lệch nhau"],
+  ];
+  const warning = callout("Máy KHÔNG được phép tự hoà giải hai bằng chứng lệch nhau (Q21). Bấm nút này là người vận hành nhận trách nhiệm cho phần đó.", "warn");
+  if (!(await confirmDialog(`BỎ CHẶN ĐÓNG CHO ${pair.symbol}?`, rows, "ĐÃ ĐỌC — BỎ CHẶN", "danger", warning))) return;
+
+  cpBusy(true, `đang bỏ chặn đóng cho ${pair.symbol}…`);
+  const r = await post("crossperp-unblock", "/api/crossperp/unblock", { symbol: pair.symbol });
+  cpBusy(false);
+  if (!r.ok) cpFailed(`BỎ CHẶN ${pair.symbol}`, "bỏ chặn đóng", r);
+  else showResult(`BỎ CHẶN ${pair.symbol}`, [callout("Đã bỏ chặn. Không lệnh nào được gửi — bấm ĐÓNG CẶP khi đã sẵn sàng.", "ok")]);
+  crossperpView.refresh();
+}
+
+// cpConfirmOrders is a person saying "I have PROVEN those orders are finished".
+// It sends no order either, and it is the heavier of the two: after it, the
+// engine may treat orders it never saw finish as absent.
+async function cpConfirmOrders(pair) {
+  const rows = [
+    ["Symbol · ý định", `${pair.symbol} · ${pair.intent_id || "—"}`],
+    ["Lệnh chưa chứng minh xong", String((pair.pending_orders || []).length || "lệnh MỞ của ý định")],
+    ["Sẽ làm", "đánh dấu những lệnh đó là ĐÃ KẾT THÚC — KHÔNG gửi lệnh nào lúc này"],
+    ["Điều kiện để bấm", "đã tự kiểm tra trên giao diện của TỪNG sàn rằng những lệnh này không thể thực thi nữa"],
+  ];
+  const warning = callout(
+    "Sai ở đây là đắt nhất: một lệnh vẫn còn sống sẽ cắt vào vị thế của động cơ tiếp theo nhận symbol này. Nếu còn nghi ngờ, ĐỐI SOÁT LẠI thay vì xác nhận.",
+    "warn"
+  );
+  if (!(await confirmDialog(`XÁC NHẬN LỆNH CỦA ${pair.symbol} ĐÃ KẾT THÚC?`, rows, "ĐÃ CHỨNG MINH — XÁC NHẬN", "danger", warning))) return;
+
+  cpBusy(true, `đang ghi nhận lệnh của ${pair.symbol} đã kết thúc…`);
+  const r = await post("crossperp-unblock", "/api/crossperp/unblock", { symbol: pair.symbol, intent_id: pair.intent_id });
+  cpBusy(false);
+  if (!r.ok) cpFailed(`XÁC NHẬN LỆNH ${pair.symbol}`, "xác nhận lệnh đã kết thúc", r);
+  else showResult(`XÁC NHẬN LỆNH ${pair.symbol}`, [callout("Đã ghi nhận. Không lệnh nào được gửi.", "ok")]);
+  crossperpView.refresh();
+}
+
+// cpAckMargin releases the margin valve's red latch, quoting the sequence number
+// the page was showing — so a latch raised after the operator read the screen is
+// refused rather than cleared unread.
+async function cpAckMargin(seenSeq) {
+  const rows = [
+    [`CHỐT ĐỎ #${seenSeq}`, "van ký quỹ đã tự đóng (hoặc đang đóng) các cặp của Động cơ 2"],
+    ["Sẽ làm", "nhả chốt để van cấp khóa trở lại — KHÔNG mở lại vị thế nào, KHÔNG gửi lệnh nào"],
+    ["Portal từ chối nếu", `đã có chốt mới hơn #${seenSeq}, hoặc tỷ lệ ký quỹ vẫn chưa xuống dưới ngưỡng nhả`],
+  ];
+  const warning = callout("Chỉ xác nhận sau khi đã đọc nhật ký van và thấy tỷ lệ ký quỹ của cả hai sàn đã thật sự xuống.", "warn");
+  if (!(await confirmDialog(`XÁC NHẬN CHỐT ĐỎ KÝ QUỸ #${seenSeq}?`, rows, "ĐÃ XỬ LÝ — NHẢ CHỐT", "secondary", warning))) return;
+
+  cpBusy(true, "đang nhả chốt đỏ ký quỹ…");
+  const r = await post("crossperp-ack-margin", "/api/risk/margin/ack", { seen_seq: seenSeq });
+  cpBusy(false);
+  if (!r.ok) cpFailed("NHẢ CHỐT ĐỎ", "nhả chốt đỏ ký quỹ", r);
+  else showResult("NHẢ CHỐT ĐỎ", [callout("Đã nhả chốt. Không lệnh nào được gửi; không vị thế nào được mở lại.", "ok")]);
+  crossperpView.refresh();
+}
+
 // -------------------------------------------------------------------- boot
 
 function refreshAll() {
@@ -1247,6 +1497,15 @@ export function initExecution(status) {
   fillSymbols(status.symbols || []);
   fillAtSymbols(status.symbols || []);
   autotradeView.init({ closePair: atClosePair, togglePair: atTogglePair, ackPair: atAckPair, ackAll: atAckAll });
+  // Engine 2's tab draws itself and sends nothing; these are its only writes.
+  crossperpView.setActions({
+    openPair: cpOpenPair,
+    closePair: cpClosePair,
+    reconcile: cpReconcile,
+    unblockClose: cpUnblockClose,
+    confirmOrders: cpConfirmOrders,
+    ackMargin: cpAckMargin,
+  });
   $("at-form").addEventListener("submit", (ev) => {
     ev.preventDefault();
     atStart();

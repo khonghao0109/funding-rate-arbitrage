@@ -105,9 +105,9 @@ func planOpen(intent Intent, cfg Config) (openPlan, error) {
 	}
 	out.EntryCostPct = out.LongFill.SlippagePct + out.ShortFill.SlippagePct
 	out.WidenBps = (out.EntryCostPct - intent.SignalEntryCostPct) * 100
-	if out.WidenBps > cfg.MaxEntryCostWidenBps {
+	if tolerance := intent.entryCostWidenBps(cfg); out.WidenBps > tolerance {
 		return out, fmt.Errorf("%w: chi phí vào giờ %.4f%% so với %.4f%% lúc sinh tín hiệu, rộng thêm %.2f bps > %.2f bps",
-			ErrBookWidened, out.EntryCostPct, intent.SignalEntryCostPct, out.WidenBps, cfg.MaxEntryCostWidenBps)
+			ErrBookWidened, out.EntryCostPct, intent.SignalEntryCostPct, out.WidenBps, tolerance)
 	}
 
 	longCap, err := marketableLimitQuote(long.Book.BestAskQuote, broker.SideBuy, cfg.MaxSlippageBps, "chân long (mua, từ giá chào bán tốt nhất)")
@@ -175,6 +175,10 @@ func validateIntent(i Intent) error {
 		return fmt.Errorf("%w: notional %v không phải số dương hữu hạn", ErrIntentInvalid, i.NotionalQuote)
 	case math.IsNaN(i.SignalEntryCostPct) || math.IsInf(i.SignalEntryCostPct, 0):
 		return fmt.Errorf("%w: chi phí vào lúc sinh tín hiệu %v không hữu hạn", ErrIntentInvalid, i.SignalEntryCostPct)
+	case i.MaxEntryCostWidenBpsOverride != nil && math.IsNaN(*i.MaxEntryCostWidenBpsOverride):
+		// +Inf is a real setting here — "do not check" — but NaN compares false
+		// against everything, so a NaN tolerance would silently accept any book.
+		return fmt.Errorf("%w: dung sai nới chi phí vào là NaN — NaN so sánh nào cũng sai, nên sổ rộng bao nhiêu cũng lọt", ErrIntentInvalid)
 	case i.Long.Venue.Name == "" || i.Short.Venue.Name == "":
 		return fmt.Errorf("%w: một chân không có tên sàn", ErrIntentInvalid)
 	case i.Long.Venue.Name == i.Short.Venue.Name:

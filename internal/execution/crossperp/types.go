@@ -102,6 +102,32 @@ type Intent struct {
 	// notional, when the signal was made. The books are re-priced against it
 	// before anything is sent; see Config.MaxEntryCostWidenBps.
 	SignalEntryCostPct float64
+
+	// MaxEntryCostWidenBpsOverride, when non-nil, replaces Config's tolerance for
+	// THIS intent alone.
+	//
+	// It exists because a MANUAL open has no earlier signal to widen from. Its
+	// SignalEntryCostPct is 0, so every real book "widens" past it by whatever
+	// that book's own cost is, and the shipped 5 bps refuses every press on any
+	// pair thinner than a major — measured on the Bybit testnet's ADAUSDT, where
+	// the two books price the entry at 12.1 bps and the open was refused before
+	// sending. Engine 1 has had the same exemption since 4.4b: cmd/execportal's
+	// openAs sets execution.Config.MaxEntryCostWidenBps to +Inf unless the
+	// caller supplied a signal cost, because for a button press the cost the
+	// decision was made at IS the cost the book prices now.
+	//
+	// +Inf means "no tolerance check"; NaN is refused. A caller that DID price
+	// an entry leaves this nil and gets the shipped tolerance, so the signal
+	// path is not weakened by the manual one's exemption.
+	MaxEntryCostWidenBpsOverride *float64
+}
+
+// entryCostWidenBps is the tolerance this intent is judged on.
+func (i Intent) entryCostWidenBps(cfg Config) float64 {
+	if i.MaxEntryCostWidenBpsOverride != nil {
+		return *i.MaxEntryCostWidenBpsOverride
+	}
+	return cfg.MaxEntryCostWidenBps
 }
 
 // LockHolder is what Open asks the coordinator before sending anything.

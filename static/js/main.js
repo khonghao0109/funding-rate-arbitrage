@@ -1,4 +1,4 @@
-// Entry point: wait for the portal, then start the five tabs and the header.
+// Entry point: wait for the portal, then start every tab and the header.
 
 import { $, api, schedule } from "./core.js";
 import { shell } from "./shell.js";
@@ -6,6 +6,7 @@ import { initExecution, onStatus, onPortalDown } from "./execution.js";
 import { initScanner } from "./scanner.js";
 import { initPaper } from "./paper.js";
 import { initRadar } from "./radar.js";
+import { initCrossperp } from "./crossperp.js";
 import { initBacktest } from "./backtest.js";
 import { initCrowding } from "./crowding.js";
 
@@ -34,6 +35,7 @@ async function boot() {
   initScanner();
   initPaper();
   initRadar();
+  initCrossperp();
   initBacktest();
   initCrowding();
   shell.start();

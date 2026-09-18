@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"futures-arbitrage-scanner/internal/depth"
 )
 
 func TestCommonStepCoin_IsTheCoarserStepAndRefusesIncommensurableGrids(t *testing.T) {
@@ -127,4 +129,69 @@ func TestPlanOpen_NoFloatDustReachesTheWire(t *testing.T) {
 	if checked < 4000 {
 		t.Fatalf("only %d of 5000 random intents were sized — the sweep proves little", checked)
 	}
+}
+
+// A manual open has no earlier signal to widen from, so its tolerance is its
+// own. The shipped tolerance must still bind on an intent that does not ask for
+// the exemption — otherwise one caller's convenience would disarm the check for
+// the signal path too.
+func TestPlanOpen_ThePerIntentWidenToleranceOverridesTheConfigsAndOnlyForThatIntent(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.MaxEntryCostWidenBps = 5
+
+	// A book thin enough that the entry really costs more than five basis
+	// points, which is the state every manual press met on the Bybit testnet's
+	// ADAUSDT (12.1 bps measured 2026-09-18).
+	thin := func(source string, mid float64) depth.Summary {
+		b := deepBook(source, mid, h.cfg.Now().UnixMilli())
+		b.BidDepthWithinTightQuote, b.AskDepthWithinTightQuote = 500, 500
+		b.BidDepthWithinWideQuote, b.AskDepthWithinWideQuote = 30_000, 30_000
+		return b
+	}
+	base := func() Intent {
+		in := h.intent()
+		// A button press states no signal cost, which is exactly why the
+		// shipped tolerance refuses it: every real book widens past zero.
+		in.SignalEntryCostPct = 0
+		in.Long.Book, in.Short.Book = thin(venueBybit, 60_000), thin(venueBinance, 60_000)
+		return in
+	}
+	infinity, nan, tight := math.Inf(1), math.NaN(), 0.0
+
+	t.Run("without the override the shipped tolerance refuses a widened book", func(t *testing.T) {
+		if _, err := planOpen(base(), h.cfg); !errors.Is(err, ErrBookWidened) {
+			t.Fatalf("err = %v, want ErrBookWidened — the shipped tolerance must still bind", err)
+		}
+	})
+	t.Run("+Inf means the tolerance is not checked, and the cost is still measured", func(t *testing.T) {
+		in := base()
+		in.MaxEntryCostWidenBpsOverride = &infinity
+		plan, err := planOpen(in, h.cfg)
+		if errors.Is(err, ErrBookWidened) {
+			t.Fatalf("a manual open was refused for widening: %v", err)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Logf("entry cost on the thin book = %.4f%% (%.2f bps)", plan.EntryCostPct, plan.WidenBps)
+		if plan.EntryCostPct <= 0 {
+			t.Errorf("EntryCostPct = %v — the cost must still be MEASURED and reported, only not acted on", plan.EntryCostPct)
+		}
+	})
+	t.Run("an override can TIGHTEN where the config would not", func(t *testing.T) {
+		loose := h.cfg
+		loose.MaxEntryCostWidenBps = 10_000
+		in := base()
+		in.MaxEntryCostWidenBpsOverride = &tight
+		if _, err := planOpen(in, loose); !errors.Is(err, ErrBookWidened) {
+			t.Fatalf("err = %v, want ErrBookWidened — an override must bind in both directions", err)
+		}
+	})
+	t.Run("NaN is refused rather than accepting every book", func(t *testing.T) {
+		in := base()
+		in.MaxEntryCostWidenBpsOverride = &nan
+		if err := validateIntent(in); !errors.Is(err, ErrIntentInvalid) {
+			t.Fatalf("err = %v, want ErrIntentInvalid — NaN compares false against everything", err)
+		}
+	})
 }
