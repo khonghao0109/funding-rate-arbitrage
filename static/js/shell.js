@@ -17,6 +17,10 @@ const HEDGE_STALE_MS = 45000;
 const balances = { readAtMs: 0, failedVI: "" };
 // unifiedWallet is set from /api/status: spot and futures share ONE wallet.
 let unifiedWallet = false;
+let bybitEquityUSD = null;
+let isMasterMode = false;
+let lastBinanceSpotUSDT = 0;
+let lastBinanceFuturesUSDT = 0;
 
 // The age under the balances is redrawn every second from the read stamp, so a
 // figure that stopped refreshing says so instead of reading "vừa đọc" forever.
@@ -190,6 +194,37 @@ export const shell = {
     for (const id of ["chip-spot", "chip-futures", "chip-skew"]) this.setChip(id, "bad", "portal?", message);
   },
 
+  setMasterMode(active) {
+    isMasterMode = Boolean(active);
+    if (isMasterMode) {
+      setText("venue-badge", "[MASTER · BINANCE + BYBIT TESTNET]");
+      setText("brand-desc", "Hệ Thống Hợp Nhất · Động cơ 1 + Động cơ 2 + Scanner + Paper Ledger · Quản trị vốn liên sàn");
+      this.updateHeaderLabels();
+    }
+  },
+
+  setBybitEquity(usd) {
+    if (isNum(usd)) {
+      bybitEquityUSD = usd;
+      this.setChip("chip-bybit", "ok", "OK", "API Bybit Linear · UTA Testnet");
+      this.updateHeaderLabels();
+      setText("bal-bybit-usdt", fmt.quote(bybitEquityUSD, 2));
+      const total = lastBinanceSpotUSDT + lastBinanceFuturesUSDT + bybitEquityUSD;
+      setText("bal-total-usdt", fmt.quote(total, 2));
+    }
+  },
+
+  updateHeaderLabels() {
+    if (bybitEquityUSD !== null || isMasterMode) {
+      setText("bal-spot-usdt-k", "Binance Spot · USDT");
+      setText("bal-futures-usdt-k", "Binance Futures · USDT");
+      setText("bal-bybit-usdt-k", "Bybit Linear · USD");
+      setText("bal-bybit-sub", "Hợp nhất UTA");
+      setText("bal-total-usdt-k", "TỔNG VỐN LIÊN SÀN (USD)");
+      setText("bal-total-sub", "Binance + Bybit");
+    }
+  },
+
   renderAccount(a, baseAsset) {
     const markets = [["chip-spot", a.spot], ["chip-futures", a.futures]];
     for (const [id, m] of markets) {
@@ -215,9 +250,17 @@ export const shell = {
     const spotUSDT = find(a.spot.balances, "USDT");
     const futUSDT = find(a.futures.balances, "USDT");
     const base = find(a.spot.balances, baseAsset);
+    lastBinanceSpotUSDT = spotUSDT ? spotUSDT.total_qty_in_asset : 0;
+    lastBinanceFuturesUSDT = futUSDT ? futUSDT.total_qty_in_asset : 0;
     setText("bal-spot-usdt", spotUSDT ? fmt.quote(spotUSDT.total_qty_in_asset, 2) : "—");
     setText("bal-futures-usdt", futUSDT ? fmt.quote(futUSDT.total_qty_in_asset, 2) : "—");
-    if (unifiedWallet) {
+    if (bybitEquityUSD !== null || isMasterMode) {
+      this.updateHeaderLabels();
+      if (bybitEquityUSD !== null) {
+        setText("bal-bybit-usdt", fmt.quote(bybitEquityUSD, 2));
+        setText("bal-total-usdt", fmt.quote(lastBinanceSpotUSDT + lastBinanceFuturesUSDT + bybitEquityUSD, 2));
+      }
+    } else if (unifiedWallet) {
       // The futures view names USDT even at zero; the spot view lists only
       // non-zero coins, so it is not the one to read the wallet from.
       setText("bal-total-usdt", futUSDT ? fmt.quote(futUSDT.total_qty_in_asset, 2) : "—");
@@ -230,6 +273,7 @@ export const shell = {
     balances.failedVI = "";
     renderBalanceAge();
   },
+
 
   renderAccountFailed(messageVI) {
     balances.failedVI = messageVI || "lần đọc số dư lỗi";

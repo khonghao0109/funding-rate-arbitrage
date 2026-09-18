@@ -456,6 +456,16 @@ th.r {
   color: transparent;
 }
 
+#bal-bybit-box {
+  border-color: rgba(247, 166, 0, 0.28);
+  background: linear-gradient(135deg, rgba(247, 166, 0, 0.07), rgba(255, 204, 0, 0.03)), var(--glass);
+}
+
+#bal-bybit-box .bal-v {
+  color: #f7a600;
+}
+
+
 .tabs {
   position: relative;
   display: flex;

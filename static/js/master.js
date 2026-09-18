@@ -27,6 +27,13 @@ function renderOverview(ov) {
   if (!ov) return;
   state.lastOverview = ov;
 
+  if (ov.mode === "master") {
+    shell.setMasterMode(true);
+  }
+  if (ov.balances && isNum(ov.balances.bybit_equity_usd)) {
+    shell.setBybitEquity(ov.balances.bybit_equity_usd);
+  }
+
   // Header timestamp
   if (ov.read_at_ms > 0) {
     setText("mst-read-age", `Vừa cập nhật (${fmt.age(ov.read_at_ms)})`);

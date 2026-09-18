@@ -32,7 +32,7 @@
         </svg>
         <div>
           <h1>FUNDING ARB <span>OPERATOR PORTAL</span></h1>
-          <p>Chiến lược 1 · spot LONG + perp SHORT · một trang cho scanner, lệnh, sổ giấy và crowding · chỉ testnet</p>
+          <p id="brand-desc">Chiến lược 1 · spot LONG + perp SHORT · một trang cho scanner, lệnh, sổ giấy và crowding · chỉ testnet</p>
         </div>
       </div>
       <div class="chips" role="status" aria-live="polite" aria-label="Trạng thái kết nối">
@@ -44,6 +44,9 @@
         </div>
         <div class="chip" id="chip-futures" data-state="idle" title="API Binance Futures testnet">
           <span class="dot"></span><span class="chip-k">API Futures</span><span class="chip-v" id="chip-futures-v">—</span>
+        </div>
+        <div class="chip" id="chip-bybit" data-state="idle" title="API Bybit Linear testnet">
+          <span class="dot"></span><span class="chip-k">API Bybit</span><span class="chip-v" id="chip-bybit-v">—</span>
         </div>
         <div class="chip" id="chip-skew" data-state="idle" title="Lệch đồng hồ đo tại điểm giữa vòng khứ hồi; dương = đồng hồ sàn đi trước">
           <span class="dot"></span><span class="chip-k">Lệch đồng hồ</span><span class="chip-v" id="chip-skew-v">—</span>
@@ -57,7 +60,8 @@
     <div class="header-row balances" aria-label="Số dư ví testnet">
       <div class="bal"><div class="bal-k"><span id="bal-spot-usdt-k">Ví Spot · USDT</span><span id="bal-spot-age"></span></div><div class="bal-v" id="bal-spot-usdt">—</div></div>
       <div class="bal"><div class="bal-k"><span id="bal-futures-usdt-k">Ví Futures · USDT</span></div><div class="bal-v" id="bal-futures-usdt">—</div></div>
-      <div class="bal total"><div class="bal-k"><span id="bal-total-usdt-k">Tổng USDT · Spot + Futures</span><span>không quy đổi coin</span></div><div class="bal-v" id="bal-total-usdt">—</div></div>
+      <div class="bal" id="bal-bybit-box"><div class="bal-k"><span id="bal-bybit-usdt-k">Ví Bybit · UTA</span><span id="bal-bybit-sub">Linear Perp</span></div><div class="bal-v" id="bal-bybit-usdt">—</div></div>
+      <div class="bal total"><div class="bal-k"><span id="bal-total-usdt-k">Tổng USDT · Spot + Futures</span><span id="bal-total-sub">không quy đổi coin</span></div><div class="bal-v" id="bal-total-usdt">—</div></div>
       <div class="bal"><div class="bal-k"><span>Ví Spot · <span id="bal-base-asset">BTC</span></span><span>gồm số dư cấp sẵn</span></div><div class="bal-v" id="bal-spot-base">—</div></div>
     </div>
 
