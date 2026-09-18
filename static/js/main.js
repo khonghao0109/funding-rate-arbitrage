@@ -3,6 +3,7 @@
 import { $, api, schedule } from "./core.js";
 import { shell } from "./shell.js";
 import { initExecution, onStatus, onPortalDown } from "./execution.js";
+import { initMaster } from "./master.js";
 import { initScanner } from "./scanner.js";
 import { initPaper } from "./paper.js";
 import { initRadar } from "./radar.js";
@@ -31,6 +32,7 @@ async function boot() {
   }
   shell.renderStatus(first.body);
 
+  initMaster();
   initExecution(first.body);
   initScanner();
   initPaper();

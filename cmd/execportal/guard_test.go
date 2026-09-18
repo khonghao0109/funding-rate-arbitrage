@@ -718,7 +718,8 @@ func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
 			"portal.handleCrossStatus": true, "portal.handleCoordinatorLocks": true, "portal.handleRiskMargin": true,
 			"portal.handleCrossOpen": true, "portal.handleCrossClose": true, "portal.handleCrossReconcile": true,
 			"portal.handleCrossUnblock": true, "portal.handleCrossPilot": true, "portal.handleCrossAckMargin": true,
-			"portal.acquireEngine1": true, "portal.releaseEngine1": true},
+			"portal.acquireEngine1": true, "portal.releaseEngine1": true,
+			"portal.buildMasterOverview": true, "portal.buildMasterPositions": true},
 		"engine2": {"crossDesk.adoptPairs": true, "crossDesk.openPair": true, "crossDesk.closePair": true,
 			"crossDesk.statusView": true, "crossDesk.unblockClose": true, "crossDesk.confirmOrders": true,
 			"crossDesk.retryReleases": true, "newCrossDesk": true,
@@ -730,7 +731,8 @@ func TestExecportal_EveryOrderPathHasFixedCallers(t *testing.T) {
 		// page reads its status; main's sampler reads it too.
 		"autotrade": {"portal.handleAutotradeStatus": true, "portal.handleAutotradeStart": true, "portal.handleAutotradeStop": true, "portal.handleAutotradeKill": true,
 			"portal.handleAutotradeClosePair": true, "portal.handleAutotradePair": true, "portal.handleAutotradePnL": true,
-			"portal.handleAutotradeAckAll": true, "newPortal": true, "main": true},
+			"portal.handleAutotradeAckAll": true, "newPortal": true, "main": true,
+			"portal.buildMasterOverview": true, "portal.buildMasterPositions": true},
 	}
 	// Types a value of which is an order path, and the only functions that may
 	// name them outside their own methods.
@@ -857,6 +859,8 @@ func TestAutotrade_EachCallerReachesOnlyItsOwnEngineMethods(t *testing.T) {
 	allowedMethods := map[string]map[string]bool{
 		"portal.handleAutotradeStatus":    {"Status": true},
 		"portal.handleAutotradePnL":       {"Status": true},
+		"portal.buildMasterOverview":      {"Status": true},
+		"portal.buildMasterPositions":     {"Status": true},
 		"portal.handleAutotradeStart":     {"Start": true},
 		"portal.handleAutotradeStop":      {"Stop": true},
 		"portal.handleAutotradeKill":      {"Kill": true},

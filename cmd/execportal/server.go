@@ -124,6 +124,11 @@ func (p *portal) handler() http.Handler {
 	post("/api/crossperp/unblock", crossUnblockAction, p.handleCrossUnblock)
 	post("/api/crossperp/pilot", crossPilotAction, p.handleCrossPilot)
 	post("/api/risk/margin/ack", crossAckMarginAction, p.handleCrossAckMargin)
+
+	// Master Command Center — Unified Gateway Hub routes
+	get("/api/master/overview", p.handleMasterOverview)
+	get("/api/master/positions", p.handleMasterPositions)
+
 	// Read-only feeds from cmd/scanner and cmd/paperledger (PLAN Q17): bytes
 	// relayed, never decoded, and not reachable from any order path.
 	get("/api/scanner/funding-history", p.feeds.ScannerHistory)

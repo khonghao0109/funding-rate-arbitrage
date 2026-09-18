@@ -5,7 +5,7 @@
 
 import { $, setText, fmt, isNum } from "./core.js";
 
-const TABS = ["scanner", "radar", "crossperp", "autotrade", "manual", "paper", "backtest", "crowding"];
+const TABS = ["master", "scanner", "radar", "crossperp", "autotrade", "manual", "paper", "backtest", "crowding"];
 const TAB_ALIASES = {
   execution: "manual",
 };
@@ -92,6 +92,10 @@ export const shell = {
     return active;
   },
 
+  select(name, focus) {
+    select(name, focus);
+  },
+
   // isActive is true when the tab is selected AND the page is visible.
   isActive(name) {
     const resolved = TAB_ALIASES[name] || name;
@@ -141,7 +145,7 @@ export const shell = {
     const fromHash = location.hash.slice(1);
     const resolvedHash = TAB_ALIASES[fromHash] || fromHash;
     const rem = remembered();
-    select(TABS.includes(resolvedHash) ? resolvedHash : TABS.includes(rem) ? rem : "scanner", false);
+    select(TABS.includes(resolvedHash) ? resolvedHash : TABS.includes(rem) ? rem : "master", false);
   },
 
   setChip(id, state, value, title) {

@@ -114,9 +114,22 @@ func main() {
 		// ClientOrderID twice, so the second one refuses to start (lockStateDir).
 		// An Engine-2 portal beside a running Engine-1 one needs its own.
 		stateDirFl = flag.String("state-dir", "", "override the intent directory; empty uses the venue's own (.paper/exec for Binance, .paper/exec-bybit for Bybit). A portal started beside another one MUST name a different directory")
+
+		// Master Command Center: unified gateway for Scanner + Engine 1 + Engine 2 + Paper Ledger
+		masterOn = flag.Bool("master", false, "run as the unified Master Command Center (default port 8080): enables Engine 1, Engine 2 (crossperp), coordinator, dual margin guard, and relays to scanner and paperledger")
 	)
 	flag.Parse()
 	_ = godotenv.Load()
+
+	if *masterOn {
+		if !flagWasSet("port") {
+			*port = "8080"
+		}
+		if !flagWasSet("state-dir") {
+			*stateDirFl = filepath.Join(".paper", "exec-master")
+		}
+		*crossOn = true
+	}
 
 	bindIP, err := checkBind(*bind)
 	if err != nil {
@@ -288,7 +301,18 @@ func main() {
 		}
 	}
 	go func() {
-		log.Printf("execportal: http://%s", listener.Addr())
+		if *masterOn {
+			log.Printf("========================================================================")
+			log.Printf("⚡ ARBITRAGE MASTER COMMAND CENTER · UNIFIED OPERATOR PORTAL")
+			log.Printf("   Dashboard URL: http://%s", listener.Addr())
+			log.Printf("   Engine 1: Cash & Carry (Spot + Perp)")
+			log.Printf("   Engine 2: Cross-Venue Perp–Perp (Binance USD-M ⟷ Bybit Linear)")
+			log.Printf("   Exclusive Symbol Lock: Coordinator Active (13 Symbols)")
+			log.Printf("   Dual Margin Guard: 50%% (Yellow) | 60%% (Orange) | 65%% (Emergency Red)")
+			log.Printf("========================================================================")
+		} else {
+			log.Printf("execportal: http://%s", listener.Addr())
+		}
 		if err := srv.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("execportal: HTTP server stopped: %v", err)
 			stop()

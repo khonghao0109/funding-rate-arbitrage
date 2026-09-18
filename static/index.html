@@ -62,6 +62,10 @@
     </div>
 
     <nav class="tabs" role="tablist" aria-label="Phân hệ" id="tabs">
+      <button class="tab" role="tab" id="tab-master" data-tab="master" aria-controls="panel-master" aria-selected="false" tabindex="-1">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        ⚡ Trung Tâm Chỉ Huy
+      </button>
       <button class="tab" role="tab" id="tab-scanner" data-tab="scanner" aria-controls="panel-scanner" aria-selected="false" tabindex="-1">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         Market Scanner
@@ -108,6 +112,174 @@
       <code>cmd/scanner</code>, vốn phục vụ thư mục <code>static/</code> thẳng từ đĩa. Mở trang vận hành ở
       <code>127.0.0.1:8087</code> (từ gốc repo: <code>go run ./cmd/execportal -port 8087</code>).
     </div>
+    <!-- ============================================================ MASTER COMMAND CENTER -->
+    <section class="tab-panel" id="panel-master" role="tabpanel" aria-labelledby="tab-master" hidden>
+      <div class="mst-header-bar">
+        <div class="mst-title-block">
+          <h2 class="mst-main-title">BẢNG ĐIỀU KHIỂN CHỈ HUY TRUNG TÂM (MASTER COMMAND HUB)</h2>
+          <p class="mst-subtitle">Gộp toàn bộ hệ thống · Scanner (8085) · Động cơ 1 · Động cơ 2 (Chéo Sàn) · Paper Ledger (8086) · Khóa cặp độc quyền</p>
+        </div>
+        <div class="mst-controls">
+          <span class="mst-age" id="mst-read-age">Đang đồng bộ…</span>
+          <button class="btn small" type="button" id="mst-refresh">Làm mới</button>
+        </div>
+      </div>
+
+      <div class="mst-kpi-grid">
+        <article class="card mst-kpi-card">
+          <div class="mst-kpi-head">
+            <span class="mst-kpi-tag">TỔNG VỐN TÀI SẢN</span>
+            <span class="mst-kpi-sub">Combined Equity</span>
+          </div>
+          <div class="mst-kpi-val" id="mst-total-equity">—</div>
+          <div class="mst-kpi-meta">
+            <span>Binance: <strong id="mst-binance-equity">—</strong></span>
+            <span>Bybit: <strong id="mst-bybit-equity">—</strong></span>
+          </div>
+        </article>
+
+        <article class="card mst-kpi-card" id="mst-margin-card">
+          <div class="mst-kpi-head">
+            <span class="mst-kpi-tag">VAN KÝ QUỸ KÉP</span>
+            <span class="mst-kpi-status-badge" id="mst-margin-status">KIỂM SOÁT</span>
+          </div>
+          <div class="mst-margin-rows">
+            <div class="mst-margin-row">
+              <span class="mst-venue-lbl">Binance Futures:</span>
+              <span class="mst-tier-badge" id="mst-margin-binance-tier">—</span>
+              <span class="mst-mmr-val" id="mst-margin-binance-pct">—</span>
+            </div>
+            <div class="mst-margin-row">
+              <span class="mst-venue-lbl">Bybit Linear:</span>
+              <span class="mst-tier-badge" id="mst-margin-bybit-tier">—</span>
+              <span class="mst-mmr-val" id="mst-margin-bybit-pct">—</span>
+            </div>
+          </div>
+        </article>
+
+        <article class="card mst-kpi-card">
+          <div class="mst-kpi-head">
+            <span class="mst-kpi-tag">ĐỘNG CƠ 1 (CASH & CARRY)</span>
+            <span class="mst-engine-badge" id="mst-e1-status">—</span>
+          </div>
+          <div class="mst-kpi-engine-body">
+            <div class="mst-stat-row">
+              <span>Số cặp đang chạy:</span>
+              <strong id="mst-e1-pairs">0</strong>
+            </div>
+            <div class="mst-stat-row">
+              <span>Lãi/lỗ tạm tính:</span>
+              <strong id="mst-e1-pnl">—</strong>
+            </div>
+          </div>
+        </article>
+
+        <article class="card mst-kpi-card">
+          <div class="mst-kpi-head">
+            <span class="mst-kpi-tag">ĐỘNG CƠ 2 (CROSS-PERP)</span>
+            <span class="mst-engine-badge" id="mst-e2-status">—</span>
+          </div>
+          <div class="mst-kpi-engine-body">
+            <div class="mst-stat-row">
+              <span>Số cặp đang chạy:</span>
+              <strong id="mst-e2-pairs">0</strong>
+            </div>
+            <div class="mst-stat-row">
+              <span>Độ trễ 2 chân:</span>
+              <strong id="mst-e2-pnl">&lt; 60 ms</strong>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <div class="mst-subsystem-bar">
+        <button class="mst-nav-card" type="button" id="mst-nav-scanner">
+          <span class="mst-nav-icon">📡</span>
+          <div class="mst-nav-text">
+            <strong>Scanner (8085)</strong>
+            <span>Quét Funding thời gian thực</span>
+          </div>
+        </button>
+        <button class="mst-nav-card" type="button" id="mst-nav-radar">
+          <span class="mst-nav-icon">🎯</span>
+          <div class="mst-nav-text">
+            <strong>Radar Chéo Sàn</strong>
+            <span>Lọc chênh lệch ≥ 25% APR</span>
+          </div>
+        </button>
+        <button class="mst-nav-card" type="button" id="mst-nav-e1">
+          <span class="mst-nav-icon">🪙</span>
+          <div class="mst-nav-text">
+            <strong>Động Cơ 1</strong>
+            <span>Spot Long + Perp Short</span>
+          </div>
+        </button>
+        <button class="mst-nav-card" type="button" id="mst-nav-e2">
+          <span class="mst-nav-icon">⚡</span>
+          <div class="mst-nav-text">
+            <strong>Động Cơ 2</strong>
+            <span>Bybit Perp + Binance Perp</span>
+          </div>
+        </button>
+        <button class="mst-nav-card" type="button" id="mst-nav-paper">
+          <span class="mst-nav-icon">📑</span>
+          <div class="mst-nav-text">
+            <strong>Paper Ledger (8086)</strong>
+            <span>Sổ cái ảo & Kiểm toán PnL</span>
+          </div>
+        </button>
+      </div>
+
+      <article class="card mst-section-card">
+        <div class="card-head">
+          <div class="mst-section-title">
+            <h3>MA TRẬN KHÓA CẶP ĐỘC QUYỀN (EXCLUSIVE SYMBOL LOCK MATRIX)</h3>
+            <span class="mst-pill">13 Symbols</span>
+          </div>
+          <div class="mst-lock-stats">
+            <span class="mst-lock-stat idle"><strong id="mst-lock-idle-count">0</strong> Rảnh rỗi</span>
+            <span class="mst-lock-stat e1"><strong id="mst-lock-e1-count">0</strong> ĐC 1 giữ</span>
+            <span class="mst-lock-stat e2"><strong id="mst-lock-e2-count">0</strong> ĐC 2 giữ</span>
+            <span class="mst-lock-stat conflict"><strong id="mst-lock-conflict-count">0</strong> Xung đột</span>
+          </div>
+        </div>
+        <p class="mst-section-desc">Bộ khóa liên tiến trình ngăn Động cơ 1 và Động cơ 2 mở trùng symbol. Cặp đang bận được bảo vệ nguyên tử.</p>
+        <div class="mst-lock-grid" id="mst-lock-grid">
+        </div>
+      </article>
+
+      <article class="card mst-section-card">
+        <div class="card-head">
+          <div class="mst-section-title">
+            <h3>DANH MỤC VỊ THẾ TOÀN BỘ HỆ THỐNG (CONSOLIDATED POSITIONS)</h3>
+            <span class="mst-badge-count" id="mst-positions-count">0 VỊ THẾ ĐANG MỞ</span>
+          </div>
+        </div>
+        <p class="mst-section-desc">Tất cả vị thế đang phòng hộ thực tế trên sàn của cả Động cơ 1 và Động cơ 2 gom về một bảng duy nhất.</p>
+        <div class="table-wrap">
+          <table class="data-table" aria-label="Danh mục vị thế toàn hệ thống">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Động cơ</th>
+                <th>Chiến lược</th>
+                <th>Chân Long</th>
+                <th>Chân Short</th>
+                <th class="r">Khối lượng</th>
+                <th class="r">Giá Long</th>
+                <th class="r">Giá Short</th>
+                <th class="r">PnL tạm tính</th>
+                <th>Trạng thái</th>
+                <th class="r">Thao tác</th>
+              </tr>
+            </thead>
+            <tbody id="mst-positions-tbody">
+              <tr id="mst-positions-empty"><td colspan="11" class="empty">Hiện không có vị thế nào đang mở</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
     <!-- ============================================================ SCANNER -->
     <section class="tab-panel" id="panel-scanner" role="tabpanel" aria-labelledby="tab-scanner" hidden>
       <div class="scanner-grid">

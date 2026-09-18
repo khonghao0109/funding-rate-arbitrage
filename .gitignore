@@ -34,3 +34,4 @@ data/
 *.db-shm
 .paper/
 .agents/
+.logs/
